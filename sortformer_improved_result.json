@@ -1,0 +1,757 @@
+{
+  "success": true,
+  "method": "sortformer_fallback",
+  "model_type": "rule_based",
+  "speaker_segments": [
+    {
+      "speakerId": "Speaker_1",
+      "startTime": 1.5,
+      "endTime": 6.5,
+      "confidence": 0.7,
+      "text": ""
+    },
+    {
+      "speakerId": "Speaker_1",
+      "startTime": 8.0,
+      "endTime": 10.5,
+      "confidence": 0.7,
+      "text": ""
+    },
+    {
+      "speakerId": "Speaker_0",
+      "startTime": 10.5,
+      "endTime": 13.5,
+      "confidence": 0.7,
+      "text": ""
+    },
+    {
+      "speakerId": "Speaker_0",
+      "startTime": 14.0,
+      "endTime": 25.5,
+      "confidence": 0.7,
+      "text": ""
+    },
+    {
+      "speakerId": "Speaker_1",
+      "startTime": 27.5,
+      "endTime": 30.5,
+      "confidence": 0.7,
+      "text": ""
+    },
+    {
+      "speakerId": "Speaker_1",
+      "startTime": 62.0,
+      "endTime": 67.5,
+      "confidence": 0.7,
+      "text": ""
+    },
+    {
+      "speakerId": "Speaker_0",
+      "startTime": 70.0,
+      "endTime": 72.5,
+      "confidence": 0.7,
+      "text": ""
+    },
+    {
+      "speakerId": "Speaker_1",
+      "startTime": 73.5,
+      "endTime": 76.5,
+      "confidence": 0.7,
+      "text": ""
+    },
+    {
+      "speakerId": "Speaker_1",
+      "startTime": 89.0,
+      "endTime": 92.5,
+      "confidence": 0.7,
+      "text": ""
+    },
+    {
+      "speakerId": "Speaker_1",
+      "startTime": 103.0,
+      "endTime": 105.5,
+      "confidence": 0.7,
+      "text": ""
+    },
+    {
+      "speakerId": "Speaker_0",
+      "startTime": 108.0,
+      "endTime": 110.5,
+      "confidence": 0.7,
+      "text": ""
+    },
+    {
+      "speakerId": "Speaker_0",
+      "startTime": 126.0,
+      "endTime": 129.5,
+      "confidence": 0.7,
+      "text": ""
+    },
+    {
+      "speakerId": "Speaker_0",
+      "startTime": 142.0,
+      "endTime": 145.0,
+      "confidence": 0.7,
+      "text": ""
+    },
+    {
+      "speakerId": "Speaker_1",
+      "startTime": 149.5,
+      "endTime": 154.0,
+      "confidence": 0.7,
+      "text": ""
+    },
+    {
+      "speakerId": "Speaker_1",
+      "startTime": 166.5,
+      "endTime": 169.5,
+      "confidence": 0.7,
+      "text": ""
+    },
+    {
+      "speakerId": "Speaker_0",
+      "startTime": 170.5,
+      "endTime": 173.5,
+      "confidence": 0.7,
+      "text": ""
+    },
+    {
+      "speakerId": "Speaker_1",
+      "startTime": 176.0,
+      "endTime": 179.5,
+      "confidence": 0.7,
+      "text": ""
+    },
+    {
+      "speakerId": "Speaker_0",
+      "startTime": 181.0,
+      "endTime": 188.5,
+      "confidence": 0.7,
+      "text": ""
+    },
+    {
+      "speakerId": "Speaker_1",
+      "startTime": 195.0,
+      "endTime": 199.5,
+      "confidence": 0.7,
+      "text": ""
+    },
+    {
+      "speakerId": "Speaker_1",
+      "startTime": 204.5,
+      "endTime": 207.0,
+      "confidence": 0.7,
+      "text": ""
+    },
+    {
+      "speakerId": "Speaker_0",
+      "startTime": 236.5,
+      "endTime": 240.0,
+      "confidence": 0.7,
+      "text": ""
+    },
+    {
+      "speakerId": "Speaker_0",
+      "startTime": 241.5,
+      "endTime": 245.5,
+      "confidence": 0.7,
+      "text": ""
+    },
+    {
+      "speakerId": "Speaker_0",
+      "startTime": 251.0,
+      "endTime": 253.5,
+      "confidence": 0.7,
+      "text": ""
+    },
+    {
+      "speakerId": "Speaker_1",
+      "startTime": 258.5,
+      "endTime": 262.0,
+      "confidence": 0.7,
+      "text": ""
+    },
+    {
+      "speakerId": "Speaker_1",
+      "startTime": 263.0,
+      "endTime": 265.5,
+      "confidence": 0.7,
+      "text": ""
+    },
+    {
+      "speakerId": "Speaker_1",
+      "startTime": 267.5,
+      "endTime": 273.0,
+      "confidence": 0.7,
+      "text": ""
+    },
+    {
+      "speakerId": "Speaker_0",
+      "startTime": 287.0,
+      "endTime": 290.5,
+      "confidence": 0.7,
+      "text": ""
+    },
+    {
+      "speakerId": "Speaker_0",
+      "startTime": 296.0,
+      "endTime": 300.5,
+      "confidence": 0.7,
+      "text": ""
+    },
+    {
+      "speakerId": "Speaker_1",
+      "startTime": 308.0,
+      "endTime": 311.0,
+      "confidence": 0.7,
+      "text": ""
+    },
+    {
+      "speakerId": "Speaker_1",
+      "startTime": 338.5,
+      "endTime": 341.5,
+      "confidence": 0.7,
+      "text": ""
+    },
+    {
+      "speakerId": "Speaker_0",
+      "startTime": 341.5,
+      "endTime": 344.0,
+      "confidence": 0.7,
+      "text": ""
+    },
+    {
+      "speakerId": "Speaker_1",
+      "startTime": 376.5,
+      "endTime": 380.0,
+      "confidence": 0.7,
+      "text": ""
+    },
+    {
+      "speakerId": "Speaker_0",
+      "startTime": 384.0,
+      "endTime": 387.0,
+      "confidence": 0.7,
+      "text": ""
+    },
+    {
+      "speakerId": "Speaker_0",
+      "startTime": 387.5,
+      "endTime": 390.5,
+      "confidence": 0.7,
+      "text": ""
+    },
+    {
+      "speakerId": "Speaker_1",
+      "startTime": 391.5,
+      "endTime": 395.0,
+      "confidence": 0.7,
+      "text": ""
+    },
+    {
+      "speakerId": "Speaker_1",
+      "startTime": 430.0,
+      "endTime": 432.5,
+      "confidence": 0.7,
+      "text": ""
+    },
+    {
+      "speakerId": "Speaker_0",
+      "startTime": 454.5,
+      "endTime": 458.5,
+      "confidence": 0.7,
+      "text": ""
+    },
+    {
+      "speakerId": "Speaker_1",
+      "startTime": 463.0,
+      "endTime": 465.5,
+      "confidence": 0.7,
+      "text": ""
+    },
+    {
+      "speakerId": "Speaker_0",
+      "startTime": 476.0,
+      "endTime": 479.0,
+      "confidence": 0.7,
+      "text": ""
+    },
+    {
+      "speakerId": "Speaker_1",
+      "startTime": 485.5,
+      "endTime": 491.0,
+      "confidence": 0.7,
+      "text": ""
+    },
+    {
+      "speakerId": "Speaker_1",
+      "startTime": 504.5,
+      "endTime": 507.5,
+      "confidence": 0.7,
+      "text": ""
+    },
+    {
+      "speakerId": "Speaker_1",
+      "startTime": 508.0,
+      "endTime": 510.5,
+      "confidence": 0.7,
+      "text": ""
+    },
+    {
+      "speakerId": "Speaker_1",
+      "startTime": 529.5,
+      "endTime": 535.5,
+      "confidence": 0.7,
+      "text": ""
+    },
+    {
+      "speakerId": "Speaker_0",
+      "startTime": 537.5,
+      "endTime": 541.0,
+      "confidence": 0.7,
+      "text": ""
+    },
+    {
+      "speakerId": "Speaker_0",
+      "startTime": 543.0,
+      "endTime": 547.0,
+      "confidence": 0.7,
+      "text": ""
+    },
+    {
+      "speakerId": "Speaker_0",
+      "startTime": 548.5,
+      "endTime": 551.0,
+      "confidence": 0.7,
+      "text": ""
+    },
+    {
+      "speakerId": "Speaker_1",
+      "startTime": 556.0,
+      "endTime": 558.5,
+      "confidence": 0.7,
+      "text": ""
+    },
+    {
+      "speakerId": "Speaker_1",
+      "startTime": 559.0,
+      "endTime": 561.5,
+      "confidence": 0.7,
+      "text": ""
+    },
+    {
+      "speakerId": "Speaker_1",
+      "startTime": 570.0,
+      "endTime": 572.5,
+      "confidence": 0.7,
+      "text": ""
+    },
+    {
+      "speakerId": "Speaker_0",
+      "startTime": 572.5,
+      "endTime": 577.5,
+      "confidence": 0.7,
+      "text": ""
+    },
+    {
+      "speakerId": "Speaker_0",
+      "startTime": 589.0,
+      "endTime": 591.5,
+      "confidence": 0.7,
+      "text": ""
+    },
+    {
+      "speakerId": "Speaker_1",
+      "startTime": 591.5,
+      "endTime": 594.0,
+      "confidence": 0.7,
+      "text": ""
+    },
+    {
+      "speakerId": "Speaker_0",
+      "startTime": 595.5,
+      "endTime": 600.5,
+      "confidence": 0.7,
+      "text": ""
+    },
+    {
+      "speakerId": "Speaker_1",
+      "startTime": 621.0,
+      "endTime": 624.0,
+      "confidence": 0.7,
+      "text": ""
+    },
+    {
+      "speakerId": "Speaker_0",
+      "startTime": 655.0,
+      "endTime": 658.0,
+      "confidence": 0.7,
+      "text": ""
+    },
+    {
+      "speakerId": "Speaker_1",
+      "startTime": 670.0,
+      "endTime": 673.5,
+      "confidence": 0.7,
+      "text": ""
+    },
+    {
+      "speakerId": "Speaker_0",
+      "startTime": 674.5,
+      "endTime": 677.0,
+      "confidence": 0.7,
+      "text": ""
+    },
+    {
+      "speakerId": "Speaker_0",
+      "startTime": 677.5,
+      "endTime": 681.0,
+      "confidence": 0.7,
+      "text": ""
+    },
+    {
+      "speakerId": "Speaker_1",
+      "startTime": 681.0,
+      "endTime": 687.0,
+      "confidence": 0.7,
+      "text": ""
+    },
+    {
+      "speakerId": "Speaker_0",
+      "startTime": 689.0,
+      "endTime": 694.0,
+      "confidence": 0.7,
+      "text": ""
+    },
+    {
+      "speakerId": "Speaker_1",
+      "startTime": 695.0,
+      "endTime": 697.5,
+      "confidence": 0.7,
+      "text": ""
+    },
+    {
+      "speakerId": "Speaker_1",
+      "startTime": 698.0,
+      "endTime": 700.5,
+      "confidence": 0.7,
+      "text": ""
+    },
+    {
+      "speakerId": "Speaker_0",
+      "startTime": 700.5,
+      "endTime": 703.5,
+      "confidence": 0.7,
+      "text": ""
+    },
+    {
+      "speakerId": "Speaker_0",
+      "startTime": 706.5,
+      "endTime": 710.0,
+      "confidence": 0.7,
+      "text": ""
+    },
+    {
+      "speakerId": "Speaker_1",
+      "startTime": 715.0,
+      "endTime": 718.0,
+      "confidence": 0.7,
+      "text": ""
+    },
+    {
+      "speakerId": "Speaker_1",
+      "startTime": 722.0,
+      "endTime": 725.0,
+      "confidence": 0.7,
+      "text": ""
+    },
+    {
+      "speakerId": "Speaker_1",
+      "startTime": 725.5,
+      "endTime": 730.5,
+      "confidence": 0.7,
+      "text": ""
+    },
+    {
+      "speakerId": "Speaker_1",
+      "startTime": 731.0,
+      "endTime": 739.5,
+      "confidence": 0.7,
+      "text": ""
+    },
+    {
+      "speakerId": "Speaker_0",
+      "startTime": 739.5,
+      "endTime": 742.0,
+      "confidence": 0.7,
+      "text": ""
+    },
+    {
+      "speakerId": "Speaker_0",
+      "startTime": 746.0,
+      "endTime": 749.0,
+      "confidence": 0.7,
+      "text": ""
+    },
+    {
+      "speakerId": "Speaker_1",
+      "startTime": 751.0,
+      "endTime": 753.5,
+      "confidence": 0.7,
+      "text": ""
+    },
+    {
+      "speakerId": "Speaker_1",
+      "startTime": 755.0,
+      "endTime": 758.0,
+      "confidence": 0.7,
+      "text": ""
+    },
+    {
+      "speakerId": "Speaker_1",
+      "startTime": 776.0,
+      "endTime": 778.5,
+      "confidence": 0.7,
+      "text": ""
+    },
+    {
+      "speakerId": "Speaker_1",
+      "startTime": 784.5,
+      "endTime": 787.0,
+      "confidence": 0.7,
+      "text": ""
+    },
+    {
+      "speakerId": "Speaker_0",
+      "startTime": 790.5,
+      "endTime": 794.5,
+      "confidence": 0.7,
+      "text": ""
+    },
+    {
+      "speakerId": "Speaker_1",
+      "startTime": 794.5,
+      "endTime": 799.0,
+      "confidence": 0.7,
+      "text": ""
+    },
+    {
+      "speakerId": "Speaker_0",
+      "startTime": 803.0,
+      "endTime": 805.5,
+      "confidence": 0.7,
+      "text": ""
+    },
+    {
+      "speakerId": "Speaker_0",
+      "startTime": 810.0,
+      "endTime": 813.0,
+      "confidence": 0.7,
+      "text": ""
+    },
+    {
+      "speakerId": "Speaker_0",
+      "startTime": 821.5,
+      "endTime": 824.0,
+      "confidence": 0.7,
+      "text": ""
+    },
+    {
+      "speakerId": "Speaker_1",
+      "startTime": 824.0,
+      "endTime": 827.0,
+      "confidence": 0.7,
+      "text": ""
+    },
+    {
+      "speakerId": "Speaker_0",
+      "startTime": 828.5,
+      "endTime": 831.5,
+      "confidence": 0.7,
+      "text": ""
+    },
+    {
+      "speakerId": "Speaker_0",
+      "startTime": 840.5,
+      "endTime": 843.5,
+      "confidence": 0.7,
+      "text": ""
+    },
+    {
+      "speakerId": "Speaker_1",
+      "startTime": 847.5,
+      "endTime": 850.5,
+      "confidence": 0.7,
+      "text": ""
+    },
+    {
+      "speakerId": "Speaker_0",
+      "startTime": 860.5,
+      "endTime": 864.0,
+      "confidence": 0.7,
+      "text": ""
+    },
+    {
+      "speakerId": "Speaker_0",
+      "startTime": 864.5,
+      "endTime": 869.5,
+      "confidence": 0.7,
+      "text": ""
+    },
+    {
+      "speakerId": "Speaker_1",
+      "startTime": 873.5,
+      "endTime": 876.0,
+      "confidence": 0.7,
+      "text": ""
+    },
+    {
+      "speakerId": "Speaker_1",
+      "startTime": 876.5,
+      "endTime": 881.0,
+      "confidence": 0.7,
+      "text": ""
+    },
+    {
+      "speakerId": "Speaker_0",
+      "startTime": 882.0,
+      "endTime": 884.5,
+      "confidence": 0.7,
+      "text": ""
+    },
+    {
+      "speakerId": "Speaker_1",
+      "startTime": 893.5,
+      "endTime": 896.5,
+      "confidence": 0.7,
+      "text": ""
+    },
+    {
+      "speakerId": "Speaker_1",
+      "startTime": 912.0,
+      "endTime": 914.5,
+      "confidence": 0.7,
+      "text": ""
+    },
+    {
+      "speakerId": "Speaker_0",
+      "startTime": 914.5,
+      "endTime": 917.0,
+      "confidence": 0.7,
+      "text": ""
+    },
+    {
+      "speakerId": "Speaker_0",
+      "startTime": 927.5,
+      "endTime": 930.0,
+      "confidence": 0.7,
+      "text": ""
+    },
+    {
+      "speakerId": "Speaker_1",
+      "startTime": 946.0,
+      "endTime": 948.5,
+      "confidence": 0.7,
+      "text": ""
+    },
+    {
+      "speakerId": "Speaker_1",
+      "startTime": 966.0,
+      "endTime": 975.5,
+      "confidence": 0.7,
+      "text": ""
+    },
+    {
+      "speakerId": "Speaker_1",
+      "startTime": 978.5,
+      "endTime": 983.0,
+      "confidence": 0.7,
+      "text": ""
+    },
+    {
+      "speakerId": "Speaker_0",
+      "startTime": 1013.5,
+      "endTime": 1016.0,
+      "confidence": 0.7,
+      "text": ""
+    },
+    {
+      "speakerId": "Speaker_1",
+      "startTime": 1020.0,
+      "endTime": 1022.5,
+      "confidence": 0.7,
+      "text": ""
+    },
+    {
+      "speakerId": "Speaker_1",
+      "startTime": 1023.5,
+      "endTime": 1026.0,
+      "confidence": 0.7,
+      "text": ""
+    },
+    {
+      "speakerId": "Speaker_1",
+      "startTime": 1039.5,
+      "endTime": 1042.0,
+      "confidence": 0.7,
+      "text": ""
+    },
+    {
+      "speakerId": "Speaker_0",
+      "startTime": 1047.5,
+      "endTime": 1051.0,
+      "confidence": 0.7,
+      "text": ""
+    },
+    {
+      "speakerId": "Speaker_1",
+      "startTime": 1052.5,
+      "endTime": 1055.0,
+      "confidence": 0.7,
+      "text": ""
+    },
+    {
+      "speakerId": "Speaker_1",
+      "startTime": 1055.5,
+      "endTime": 1059.5,
+      "confidence": 0.7,
+      "text": ""
+    },
+    {
+      "speakerId": "Speaker_0",
+      "startTime": 1062.0,
+      "endTime": 1067.0,
+      "confidence": 0.7,
+      "text": ""
+    },
+    {
+      "speakerId": "Speaker_0",
+      "startTime": 1071.5,
+      "endTime": 1074.5,
+      "confidence": 0.7,
+      "text": ""
+    },
+    {
+      "speakerId": "Speaker_0",
+      "startTime": 1076.5,
+      "endTime": 1080.5,
+      "confidence": 0.7,
+      "text": ""
+    },
+    {
+      "speakerId": "Speaker_1",
+      "startTime": 1080.5,
+      "endTime": 1086.5,
+      "confidence": 0.7,
+      "text": ""
+    }
+  ],
+  "metadata": {
+    "total_speakers": 2,
+    "total_segments": 106,
+    "audio_file": "test.mp3",
+    "processed_at": "2024-01-01T00:00:00Z",
+    "device_used": "cpu",
+    "note": "Using fallback rule-based method - install full NeMo for Sortformer models"
+  }
+}

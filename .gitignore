@@ -40,3 +40,10 @@ yarn-error.log*
 *.tsbuildinfo
 next-env.d.ts
 .env.local
+
+# Python virtualenvs (very large; exclude from VCS and Turbopack crawling)
+/scripts/nemo_env/
+/scripts/pyannote_env/
+
+# Large media samples
+*.mp3
