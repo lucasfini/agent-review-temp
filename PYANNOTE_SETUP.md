@@ -1,189 +1,259 @@
-# PyAnnote Speaker Diarization Setup
+# PyAnnote + NeMo Speaker Diarization Setup
 
-This project now supports PyAnnote, an open-source machine learning model for accurate speaker diarization. PyAnnote provides significantly better speaker detection accuracy compared to rule-based approaches.
+This project supports **PyAnnote** (recommended for Apple Silicon) and **NeMo Sortformer** (for Linux + CUDA) for accurate, AI-powered speaker diarization.
 
-## Why PyAnnote?
+## Why PyAnnote / NeMo?
 
 - **Higher Accuracy**: Machine learning-based speaker detection vs rule-based heuristics
-- **Cost Effective**: Free open-source alternative to expensive solutions like Picovoice Falcon
+- **Cost Effective**: Free open-source alternative to expensive solutions
 - **Better Boundaries**: Precise speaker change detection and timing
 - **State-of-the-art**: Uses the latest advances in speaker diarization research
 
-## Installation
+## Recommended Setup by Platform
 
-### Prerequisites
+### macOS (Apple Silicon: M1/M2/M3/M4) - RECOMMENDED
 
-1. **Python 3.8+** installed on your system
-2. **Node.js** application already running
+**Fast, reliable diarization using PyAnnote + MPS (Metal Performance Shaders):**
 
-### Step 1: Install Python Dependencies
-
-Due to Python's externally-managed-environment restrictions, you need to use a virtual environment:
-
-#### Option A: Using Virtual Environment (Recommended)
+#### 1. Install PyAnnote with MPS support
 
 ```bash
 cd scripts
-
-# Create virtual environment
-python3 -m venv pyannote_env
-
-# Activate virtual environment
-source pyannote_env/bin/activate
-
-# Install dependencies
-pip install -r requirements.txt
-
-# Test installation
-python test_pyannote.py
+./setup_pyannote.sh
 ```
 
-#### Option B: Using pipx (Alternative)
+The script will:
+- Detect Apple Silicon and install **PyTorch 2.9.0** with MPS support
+- Verify MPS is available (you'll see: `device: mps`)
+- Exit with error if running under Rosetta (x86_64) - must use native arm64 Python
+- Install PyAnnote.audio and all dependencies
+
+#### 2. Configure environment variables
+
+Add to your `.env` or `.env.local`:
 
 ```bash
-# Install pipx if not already installed
-brew install pipx
+PYANNOTE_PYTHON_PATH=/full/path/to/scripts/pyannote_env/bin/python
+HUGGING_FACE_ACCESS_TOKEN=your_hf_token_here
 
-# Install PyAnnote in isolated environment
-pipx install pyannote.audio
-pipx inject pyannote.audio torch torchaudio soundfile librosa transformers accelerate
+# Performance tuning:
+EXPECTED_SPEAKERS=2                # Lock to 2 speakers for podcasts/interviews
+PYANNOTE_MERGE_GAP_S=1.2          # Merge speaker turns within 1.2s
+PYANNOTE_WINDOWED=true            # Enable for >15min files (5min windows, 1s overlap)
+
+# Word-level alignment (optional fine-tuning):
+SPEAKER_WORD_COLLAR_S=0.15        # Word-to-speaker matching tolerance
+SPEAKER_MIN_TURN_S=0.8            # Minimum speaker turn duration
+SPEAKER_SANDWICH_MAX_S=0.6        # Max duration for sandwich smoothing
+SAME_SPEAKER_GAP_S=1.2            # Merge same-speaker segments within gap
 ```
 
-#### Option C: System Install (Not Recommended)
+#### 3. Expected Performance
+
+- **With MPS (GPU):** ~3x audio duration
+  - Example: 18-minute audio → ~54 minutes processing
+  - Logs show: `device: mps` and `Timeout calculation (mps): ...`
+- **CPU fallback:** ~20x audio duration (much slower)
+
+#### 4. NeMo Behavior on macOS
+
+- NeMo requires Linux + CUDA, so it's **automatically skipped** on macOS
+- You'll see: `[NEMO] Skipping NeMo: CUDA/Linux required on darwin`
+- PyAnnote handles all diarization ✅ (this is the correct behavior!)
+
+---
+
+### Linux + NVIDIA GPU (NeMo Sortformer)
+
+**Only for Linux machines with NVIDIA CUDA GPUs:**
+
+#### Requirements
+
+- Linux OS (Ubuntu/Debian recommended)
+- NVIDIA GPU with CUDA drivers (`nvidia-smi` must work)
+- Python 3.10 or 3.11 (**NOT 3.12+**, NeMo doesn't support it yet)
+
+#### Installation
 
 ```bash
-# Only if you understand the risks
-pip3 install -r requirements.txt --break-system-packages --user
+cd scripts
+./setup_nemo.sh
 ```
 
-### Step 2: Set Python Path
+The script will:
+- **Exit immediately on macOS/Darwin** with message to use PyAnnote instead
+- Check for NVIDIA GPU (`nvidia-smi`)
+- Refuse Python 3.12+ (asks you to create Python 3.10/3.11 venv)
+- Install CUDA-enabled PyTorch and NeMo toolkit
 
-Configure the Python path based on your installation method:
+#### Behavior
 
-#### If using Virtual Environment:
+- NeMo is **only attempted** on `process.platform === 'linux'` with CUDA
+- If CUDA unavailable, automatically falls back to PyAnnote
+- Generally faster and more accurate than PyAnnote on CUDA hardware
 
-Add to your `.env` file in the project root:
+---
 
-```
-PYANNOTE_PYTHON_PATH=/Users/lucasfiniello/Desktop/Projects/audiorepurpose/scripts/pyannote_env/bin/python
-```
+### Intel Macs (CPU-only)
 
-Or export temporarily:
+> **Performance Warning:** PyTorch cannot use MPS on Intel Macs, so PyAnnote runs on CPU only (~20x slower).
 
-```bash
-export PYANNOTE_PYTHON_PATH="$(pwd)/scripts/pyannote_env/bin/python"
-```
+**Recommendations:**
+- Use `EXPECTED_SPEAKERS=2` to reduce search space
+- Enable `PYANNOTE_WINDOWED=true` for incremental progress and logs
+- Consider processing on a GPU machine (Apple Silicon or Linux+CUDA)
 
-#### If using pipx:
+---
 
-```bash
-export PYANNOTE_PYTHON_PATH="$(pipx environment --value PIPX_LOCAL_VENVS)/pyannote-audio/bin/python"
-```
+## Environment Variables Reference
 
-#### If using system install:
+### Core Configuration
 
-```bash
-export PYANNOTE_PYTHON_PATH="/usr/bin/python3"
-```
+| Variable | Default | Description |
+|----------|---------|-------------|
+| `PYANNOTE_PYTHON_PATH` | `python3` | Path to Python with PyAnnote installed |
+| `HUGGING_FACE_ACCESS_TOKEN` | (required) | HuggingFace token for model access |
+| `EXPECTED_SPEAKERS` | auto | Lock speaker count (e.g., `2` for interviews) |
 
-### Step 3: Test Installation
+### Performance Tuning
 
-Test that PyAnnote is working:
+| Variable | Default | Description |
+|----------|---------|-------------|
+| `PYANNOTE_MERGE_GAP_S` | `1.2` | Merge consecutive same-speaker segments within gap |
+| `PYANNOTE_WINDOWED` | `false` | Enable windowed processing for long files |
+| `PYANNOTE_WINDOW_DURATION_S` | `300` | Window size in seconds (5 minutes) |
+| `PYANNOTE_WINDOW_OVERLAP_S` | `1` | Overlap between windows |
 
-```bash
-python3 scripts/pyannote_diarization.py --help
-```
+### Word-Level Alignment
 
-### Step 4: GPU Acceleration (Optional)
+| Variable | Default | Description |
+|----------|---------|-------------|
+| `SPEAKER_WORD_COLLAR_S` | `0.15` | Word-to-speaker timestamp tolerance |
+| `SPEAKER_MIN_TURN_S` | `0.8` | Minimum speaker turn duration |
+| `SPEAKER_SANDWICH_MAX_S` | `0.6` | Max duration for sandwich smoothing |
+| `SAME_SPEAKER_GAP_S` | `1.2` | Merge same-speaker with gap ≤ this |
 
-For faster processing with NVIDIA GPUs:
-
-```bash
-pip install torch torchvision torchaudio --index-url https://download.pytorch.org/whl/cu118
-```
-
-## Usage
-
-Once installed, the system will automatically:
-
-1. **Check Availability**: On startup, the system checks if PyAnnote is available
-2. **Automatic Fallback**: If PyAnnote is not available, it falls back to rule-based detection
-3. **Enhanced Processing**: When available, PyAnnote processes audio files for better speaker detection
-4. **Seamless Integration**: No changes needed to the UI or workflow
+---
 
 ## Troubleshooting
 
-### Common Issues
+### macOS: "MPS is unavailable on Apple Silicon"
 
-1. **"Module not found" errors**
+**Cause:** You're running under Rosetta (x86_64) instead of native arm64.
+
+**Solutions:**
+1. Check Python architecture:
    ```bash
-   pip install --upgrade pyannote.audio
+   python -c "import platform; print(platform.machine())"
+   # Should print 'arm64', not 'x86_64'
    ```
 
-2. **GPU/CUDA errors** (if using GPU acceleration)
+2. Use arm64 Python:
    ```bash
-   pip install torch torchvision torchaudio --index-url https://download.pytorch.org/whl/cpu
+   arch -arm64 python3.11 -m venv pyannote_env
    ```
 
-3. **Permission errors**
+3. Use pyenv with native Python:
    ```bash
-   pip install --user pyannote.audio
+   pyenv install 3.11.9
+   pyenv local 3.11.9
+   cd scripts && ./setup_pyannote.sh
    ```
 
-### Checking Status
+### NeMo on macOS: "Skipping NeMo"
 
-The application logs will show PyAnnote availability status:
+**This is expected!** NeMo requires Linux + CUDA. On macOS, the system:
+1. Instantly returns `false` from `checkNeMoAvailability()` (no slow probe)
+2. Logs: `[NEMO] Skipping NeMo: CUDA/Linux required on darwin`
+3. Falls back to PyAnnote + MPS (which is fast and accurate!)
+
+### Python 3.12 with NeMo
+
+**NeMo doesn't support Python 3.12 yet.**
+
+Create a Python 3.11 venv:
+```bash
+pyenv install 3.11.9
+pyenv local 3.11.9
+python3.11 -m venv nemo_env
+source nemo_env/bin/activate
+cd scripts && ./setup_nemo.sh
+```
+
+---
+
+## Testing Your Setup
+
+### Test PyAnnote
+
+```bash
+cd scripts
+source pyannote_env/bin/activate
+python pyannote_diarization.py --help
+```
+
+### Verify MPS (Apple Silicon)
+
+```bash
+python -c "import torch; print('torch', torch.__version__)"
+python -c "import torch; print('mps:', torch.backends.mps.is_available())"
+# Should print: mps: True
+```
+
+### Upload Test Audio
+
+Upload a podcast through your app and check logs for:
 
 ```
-🎯 MAIN: PyAnnote availability: ✅ Available
+[PYANNOTE] Checking availability...
+[PYANNOTE] Availability check: ✅ Available
+[PYANNOTE] 🎯 Using device: mps
+[PYANNOTE] ⏱️ Timeout calculation (mps): 18.0min audio → 54.0min timeout (3x)
 ```
 
-or
+---
+
+## Architecture
+
+### Pipeline Flow
 
 ```
-🎯 MAIN: PyAnnote availability: ❌ Not available
-🎯 MAIN: PyAnnote setup instructions:
-...
+Audio Upload
+    ↓
+Whisper Transcription (with word-level timestamps)
+    ↓
+Speaker Diarization:
+    • NeMo (Linux + CUDA) OR
+    • PyAnnote (macOS MPS / CPU fallback)
+    ↓
+Word-Level Alignment (lib/speaker-align.ts)
+    • Assign words to speakers via timestamp overlap
+    • Group contiguous words per speaker
+    • Smooth flip-flops (sandwich/min-turn rules)
+    ↓
+Final Transcript with Speaker Attribution
 ```
 
-### Performance Notes
+### Platform Detection Logic
 
-- **CPU Processing**: Works on any system but may be slower for large files
-- **GPU Processing**: Significantly faster with NVIDIA GPUs and CUDA
-- **Memory Usage**: Requires ~2-4GB RAM for typical podcast files
-- **Processing Time**: Usually 1-3x real-time (e.g., 10 minutes for a 30-minute podcast)
+**NeMo** (`lib/nemo-integration.ts:checkNeMoAvailability`):
+- Instantly returns `false` if `process.platform !== 'linux'`
+- Caches result to avoid repeated probes
+- Only checks Python/CUDA on Linux
 
-## Model Information
+**PyAnnote** (`lib/pyannote-integration.ts`):
+- Always available as fallback
+- Device detection: `mps` > `cuda` > `cpu`
+- MPS-aware timeout multipliers
 
-PyAnnote uses pretrained models from Hugging Face:
-
-- **Model**: `pyannote/speaker-diarization-3.1`
-- **License**: MIT (for non-commercial use)
-- **Paper**: https://arxiv.org/abs/2301.13593
-
-Some models may require a Hugging Face token for access. If needed:
-
-1. Create account at https://huggingface.co
-2. Get your token from https://huggingface.co/settings/tokens
-3. Set environment variable: `export HUGGING_FACE_HUB_TOKEN=your_token_here`
-
-## Benefits Over Rule-Based Detection
-
-| Feature | Rule-Based | PyAnnote |
-|---------|------------|----------|
-| Accuracy | ~60-70% | ~85-95% |
-| Speaker Changes | Basic heuristics | ML-trained detection |
-| Audio Quality | Sensitive to noise | Robust to noise |
-| Languages | English-focused | Multi-language |
-| Setup | No dependencies | Python setup required |
+---
 
 ## Support
 
-If you encounter issues:
+For issues:
+1. Check logs for `[PYANNOTE]` or `[NEMO]` messages
+2. Verify `device: mps` appears for Apple Silicon
+3. Confirm `HUGGING_FACE_ACCESS_TOKEN` is set
+4. Test with smaller files first (<5 minutes)
 
-1. Check the application logs for PyAnnote status messages
-2. Verify Python dependencies are installed correctly
-3. Test with smaller audio files first
-4. Check system requirements (RAM, Python version)
-
-The system gracefully falls back to rule-based detection if PyAnnote is unavailable, so your application will continue working regardless of setup status.
+The system gracefully falls back to PyAnnote if NeMo is unavailable, so your application continues working regardless of platform.

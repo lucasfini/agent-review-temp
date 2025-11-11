@@ -1,10 +1,9 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { supabaseAdmin } from '@/lib/supabase/server';
-import { calculateCostEstimate } from '@/lib/cost-estimation';
 
 export async function POST(request: NextRequest) {
   try {
-    const { projectId, selectedContentTypes, estimatedCost } = await request.json();
+    const { projectId, selectedContentTypes, estimatedCost, selectedModelId, contentKeywords } = await request.json();
 
     if (!projectId || !selectedContentTypes || selectedContentTypes.length === 0) {
       return NextResponse.json(
@@ -61,7 +60,9 @@ export async function POST(request: NextRequest) {
         projectId,
         transcription: project.transcription_text,
         selectedContentTypes,
-        segments: []
+        segments: [],
+        modelId: selectedModelId,
+        contentKeywords
       })
     }).catch(error => {
       console.error('Failed to start content generation:', error);

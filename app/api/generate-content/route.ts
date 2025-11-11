@@ -7,6 +7,7 @@ import {
   logContentGeneration,
   ConversationLogEntry 
 } from '@/lib/conversation-logger';
+import { buildContentCacheKey, cacheGeneratedContent, getCachedGeneratedContent, hashTranscription } from '@/lib/content-cache';
 
 const openai = new OpenAI({
   apiKey: process.env.OPENAI_API_KEY,
@@ -26,9 +27,12 @@ export async function POST(request: NextRequest) {
   const startTime = Date.now();
   const errors: string[] = [];
   const warnings: string[] = [];
-  
+  let projectId: string | undefined;
+
   try {
-    const { projectId, transcription, segments, selectedContentTypes, speakerData } = await request.json();
+    const payload = await request.json();
+    projectId = payload.projectId;
+    const { transcription, segments, selectedContentTypes, speakerData, forceRefresh, modelId, contentKeywords } = payload;
 
     if (!projectId || !transcription) {
       return NextResponse.json(
@@ -36,6 +40,23 @@ export async function POST(request: NextRequest) {
         { status: 400 }
       );
     }
+    
+    const supportedOpenAIModels = new Set([
+      'gpt-4o',
+      'gpt-4o-mini',
+      'gpt-4.1',
+      'gpt-4.1-mini',
+      'gpt-4-turbo',
+      'gpt-4'
+    ]);
+    const fallbackModel = 'gpt-4-turbo';
+    const modelToUse = modelId && supportedOpenAIModels.has(modelId) ? modelId : fallbackModel;
+    
+    if (modelId && modelToUse !== modelId) {
+      warnings.push(`Requested model ${modelId} is not supported for OpenAI generation. Falling back to ${modelToUse}.`);
+    }
+
+    console.log(`Using AI model: ${modelToUse}`);
 
     // Default to all content types if none specified (backward compatibility)
     const contentTypes = selectedContentTypes || [
@@ -51,26 +72,86 @@ export async function POST(request: NextRequest) {
     console.log(`Starting content generation for project ${projectId}...`);
     console.log(`Selected content types:`, contentTypes);
 
-    // Step 1: Analyze content for different categories
-    const analysisStartTime = Date.now();
-    const analysis = await analyzeContent(transcription);
-    const analysisTime = Date.now() - analysisStartTime;
-    
-    // Log analysis results
-    await logAnalysisResults(projectId, transcription, analysis, analysisTime);
+    const transcriptionHash = hashTranscription(transcription);
+    const keywordEntries = contentKeywords
+      ? Object.entries(contentKeywords)
+          .map(([key, value]) => [key, typeof value === 'string' ? value.trim() : ''] as [string, string])
+          .filter(([, value]) => value.length > 0)
+      : [];
 
-    // Step 2: Generate platform-specific content based on selection
-    const contentStartTime = Date.now();
-    const generatedContent = await generatePlatformContentWithLogging(
-      transcription, 
-      analysis, 
+    const normalizedKeywordMap = keywordEntries.reduce<Record<string, string>>((acc, [key, value]) => {
+      acc[key] = value.trim();
+      return acc;
+    }, {});
+
+    const keywordSignature = keywordEntries.length
+      ? JSON.stringify(keywordEntries.sort(([a], [b]) => a.localeCompare(b)))
+      : null;
+
+    const cacheKey = buildContentCacheKey({ 
+      projectId, 
       contentTypes, 
-      projectId
-    );
-    const contentGenerationTime = Date.now() - contentStartTime;
+      transcriptionHash,
+      modelId: modelToUse,
+      keywordsSignature: keywordSignature
+    });
+
+    let analysis: ContentAnalysis | undefined;
+    let generatedContent: any[] = [];
+    let analysisTime = 0;
+    let contentGenerationTime = 0;
+    let fromCache = false;
+
+    if (!forceRefresh) {
+      const cached = await getCachedGeneratedContent(cacheKey);
+      if (cached) {
+        fromCache = true;
+        analysis = cached.analysis as unknown as ContentAnalysis;
+        generatedContent = cached.generatedContent || [];
+        console.log(`[CONTENT CACHE] ✅ Hit for project ${projectId} (${contentTypes.join(', ')})`);
+      }
+    }
+
+    if (!fromCache) {
+      // Step 1: Analyze content for different categories
+      const analysisStartTime = Date.now();
+      analysis = await analyzeContent(transcription, modelToUse);
+      analysisTime = Date.now() - analysisStartTime;
+      
+      // Log analysis results
+      await logAnalysisResults(projectId, transcription, analysis, analysisTime);
+
+      // Step 2: Generate platform-specific content based on selection
+      const contentStartTime = Date.now();
+      generatedContent = await generatePlatformContentWithLogging(
+        transcription, 
+        analysis, 
+        contentTypes, 
+        projectId,
+        modelToUse,
+        Object.keys(normalizedKeywordMap).length ? normalizedKeywordMap : undefined
+      );
+      contentGenerationTime = Date.now() - contentStartTime;
+    }
+
+    // Ensure analysis is defined (should always be set by cache or generation)
+    if (!analysis) {
+      throw new Error('Analysis was not generated');
+    }
 
     // Step 3: Save all generated content to database
     await saveGeneratedContent(projectId, generatedContent);
+
+    if (!fromCache) {
+      await cacheGeneratedContent({
+        cacheKey,
+        projectId,
+        contentTypes,
+        transcriptionHash,
+        analysis: analysis as unknown as Record<string, unknown>,
+        generatedContent
+      });
+    }
 
     const totalProcessingTime = Date.now() - startTime;
     
@@ -88,7 +169,9 @@ export async function POST(request: NextRequest) {
       analysis,
       generatedContent: generatedContent.map(content => ({
         ...content,
-        generationTime: contentGenerationTime / generatedContent.length // Approximate per-piece time
+        generationTime: generatedContent.length > 0
+          ? contentGenerationTime / generatedContent.length
+          : 0
       })),
       processingMetadata: {
         totalProcessingTime,
@@ -108,7 +191,8 @@ export async function POST(request: NextRequest) {
       projectId,
       analysis,
       contentPieces: generatedContent.length,
-      processingTime: totalProcessingTime
+      processingTime: totalProcessingTime,
+      cached: fromCache
     });
 
   } catch (error) {
@@ -118,7 +202,7 @@ export async function POST(request: NextRequest) {
     // Log the failed attempt
     try {
       const failedLog: ConversationLogEntry = {
-        projectId: request.json ? (await request.json()).projectId : 'unknown',
+        projectId: projectId || 'unknown',
         timestamp: new Date().toISOString(),
         transcriptionInfo: { originalLength: 0, segmentCount: 0, speakerCount: 0, duration: 0 },
         speakerData: { speakers: {}, segments: [] },
@@ -144,7 +228,7 @@ export async function POST(request: NextRequest) {
   }
 }
 
-async function analyzeContent(transcription: string): Promise<ContentAnalysis> {
+async function analyzeContent(transcription: string, model: string): Promise<ContentAnalysis> {
   const analysisPrompt = `
 You are a content analysis expert. Analyze this podcast transcription and return ONLY a valid JSON object with this exact structure:
 
@@ -168,7 +252,7 @@ ${transcription}
 `;
 
   const response = await openai.chat.completions.create({
-    model: 'gpt-4-turbo', // Switch to GPT-4 Turbo for larger context window
+    model,
     messages: [{ 
       role: 'system', 
       content: 'You are a JSON-only response generator. Return only valid JSON, no explanations or other text.' 
@@ -274,37 +358,93 @@ async function generatePlatformContentWithLogging(
   transcription: string, 
   analysis: ContentAnalysis, 
   selectedTypes: string[], 
-  projectId: string
+  projectId: string,
+  model: string,
+  contentKeywords?: Record<string, string>
 ) {
   const contentPromises = [];
 
   // Only generate selected content types
   if (selectedTypes.includes('twitter_threads')) {
-    contentPromises.push(generateTwitterThreadsWithLogging(transcription, analysis, projectId));
+    contentPromises.push(
+      generateTwitterThreadsWithLogging(
+        transcription, 
+        analysis, 
+        projectId, 
+        model, 
+        contentKeywords?.twitter_threads
+      )
+    );
   }
   
   if (selectedTypes.includes('linkedin_posts')) {
-    contentPromises.push(generateLinkedInPostsWithLogging(transcription, analysis, projectId));
+    contentPromises.push(
+      generateLinkedInPostsWithLogging(
+        transcription, 
+        analysis, 
+        projectId, 
+        model, 
+        contentKeywords?.linkedin_posts
+      )
+    );
   }
   
   if (selectedTypes.includes('instagram_content')) {
-    contentPromises.push(generateInstagramContentWithLogging(transcription, analysis, projectId));
+    contentPromises.push(
+      generateInstagramContentWithLogging(
+        transcription, 
+        analysis, 
+        projectId, 
+        model, 
+        contentKeywords?.instagram_content
+      )
+    );
   }
   
   if (selectedTypes.includes('blog_post')) {
-    contentPromises.push(generateBlogPostWithLogging(transcription, analysis, projectId));
+    contentPromises.push(
+      generateBlogPostWithLogging(
+        transcription, 
+        analysis, 
+        projectId, 
+        model, 
+        contentKeywords?.blog_post
+      )
+    );
   }
   
   if (selectedTypes.includes('newsletter')) {
-    contentPromises.push(generateNewsletterContentWithLogging(transcription, analysis, projectId));
+    contentPromises.push(
+      generateNewsletterContentWithLogging(
+        transcription, 
+        analysis, 
+        projectId, 
+        model, 
+        contentKeywords?.newsletter
+      )
+    );
   }
   
   if (selectedTypes.includes('show_notes')) {
-    contentPromises.push(generateShowNotesWithLogging(transcription, analysis, projectId));
+    contentPromises.push(
+      generateShowNotesWithLogging(
+        transcription, 
+        analysis, 
+        projectId, 
+        model, 
+        contentKeywords?.show_notes
+      )
+    );
   }
   
   if (selectedTypes.includes('quote_graphics')) {
-    contentPromises.push(generateQuoteGraphicsWithLogging(analysis, projectId));
+    contentPromises.push(
+      generateQuoteGraphicsWithLogging(
+        analysis, 
+        projectId, 
+        contentKeywords?.quote_graphics
+      )
+    );
   }
 
   console.log(`Generating ${contentPromises.length} content types...`);
@@ -330,7 +470,12 @@ async function generatePlatformContentWithLogging(
   }
 }
 
-async function generateTwitterThreads(transcription: string, analysis: ContentAnalysis) {
+async function generateTwitterThreads(
+  transcription: string, 
+  analysis: ContentAnalysis, 
+  model: string,
+  keywords?: string
+) {
   const hooks = analysis.hooks.sort((a, b) => b.hook_strength - a.hook_strength).slice(0, 4);
   
   // Ensure we have at least 4 hooks by creating fallbacks if needed
@@ -343,13 +488,18 @@ async function generateTwitterThreads(transcription: string, analysis: ContentAn
   }
   
   const threads = [];
-  console.log(`Generating 4 Twitter threads (${hooks.length} from analysis, ${4 - hooks.length} fallbacks)...`);
+  console.log(`Generating 4 X threads (${hooks.length} from analysis, ${4 - hooks.length} fallbacks)...`);
   
   for (let i = 0; i < 4; i++) {
     const hook = allHooks[i];
+    const keywordInstruction = keywords
+      ? `\nFocus on incorporating these listener priorities or keywords when relevant: ${keywords}\n`
+      : '';
+
     const prompt = `
 Create a Twitter/X thread (6-8 tweets) starting with this hook: "${hook.text}"
 
+${keywordInstruction}
 Requirements:
 - First tweet MUST be an attention-grabbing hook
 - Each tweet under 280 characters
@@ -369,7 +519,7 @@ Context from podcast: ${transcription.substring(0, 2000)}...
     while (retryCount < maxRetries) {
       try {
         response = await openai.chat.completions.create({
-          model: 'gpt-4-turbo',
+          model,
           messages: [{ role: 'user', content: prompt }],
           temperature: 0.7,
           max_tokens: 1000,
@@ -400,7 +550,7 @@ Context from podcast: ${transcription.substring(0, 2000)}...
     threads.push({
       type: 'social_post',
       platform: 'twitter',
-      title: `Twitter Thread #${i + 1}: ${hook.text.substring(0, 50)}...`,
+      title: `X Thread #${i + 1}: ${hook.text.substring(0, 50)}...`,
       content: response?.choices[0]?.message?.content || '',
       metadata: { hook_strength: hook.hook_strength, thread_number: i + 1 }
     });
@@ -409,7 +559,12 @@ Context from podcast: ${transcription.substring(0, 2000)}...
   return threads;
 }
 
-async function generateLinkedInPosts(transcription: string, analysis: ContentAnalysis) {
+async function generateLinkedInPosts(
+  transcription: string, 
+  analysis: ContentAnalysis, 
+  model: string,
+  keywords?: string
+) {
   const insights = analysis.actionable_insights.sort((a, b) => b.value - a.value).slice(0, 3);
   
   // Ensure we have at least 3 insights
@@ -426,9 +581,14 @@ async function generateLinkedInPosts(transcription: string, analysis: ContentAna
   
   for (let i = 0; i < 3; i++) {
     const insight = allInsights[i];
+    const keywordInstruction = keywords
+      ? `\nPrioritize weaving in these themes or keywords where natural: ${keywords}\n`
+      : '';
+
     const prompt = `
 Create a LinkedIn post based on this insight: "${insight.text}"
 
+${keywordInstruction}
 Requirements:
 - Professional tone but engaging
 - 1300-1500 characters (LinkedIn sweet spot)
@@ -441,7 +601,7 @@ Context: ${transcription.substring(0, 2000)}...
 `;
 
     const response = await openai.chat.completions.create({
-      model: 'gpt-4-turbo',
+      model,
       messages: [{ role: 'user', content: prompt }],
       temperature: 0.6,
     });
@@ -458,15 +618,25 @@ Context: ${transcription.substring(0, 2000)}...
   return posts;
 }
 
-async function generateInstagramContent(transcription: string, analysis: ContentAnalysis) {
+async function generateInstagramContent(
+  transcription: string, 
+  analysis: ContentAnalysis, 
+  model: string,
+  keywords?: string
+) {
   const content = [];
   
   // Carousel posts with key takeaways
   const topicsCarousel = analysis.keyTopics.slice(0, 5);
   
+  const keywordInstruction = keywords
+    ? `\nIncorporate these keywords into captions or slide copy when appropriate: ${keywords}\n`
+    : '';
+
   const carouselPrompt = `
 Create an Instagram carousel post with ${topicsCarousel.length} slides based on these topics: ${topicsCarousel.join(', ')}
 
+${keywordInstruction}
 Requirements:
 - Slide 1: Eye-catching title slide with main benefit
 - Slides 2-${topicsCarousel.length + 1}: One key point per slide with explanation
@@ -479,7 +649,7 @@ Context: ${transcription.substring(0, 1500)}...
 `;
 
   const carouselResponse = await openai.chat.completions.create({
-    model: 'gpt-4-turbo',
+    model,
     messages: [{ role: 'user', content: carouselPrompt }],
     temperature: 0.7,
   });
@@ -495,10 +665,20 @@ Context: ${transcription.substring(0, 1500)}...
   return content;
 }
 
-async function generateBlogPost(transcription: string, analysis: ContentAnalysis) {
+async function generateBlogPost(
+  transcription: string, 
+  analysis: ContentAnalysis, 
+  model: string,
+  keywords?: string
+) {
+  const keywordInstruction = keywords
+    ? `\nBlend in these SEO or messaging keywords naturally: ${keywords}\n`
+    : '';
+
   const prompt = `
 Create a comprehensive blog post (3000+ words) based on this podcast transcription.
 
+${keywordInstruction}
 Structure:
 1. SEO-optimized title
 2. Compelling introduction with hook
@@ -520,7 +700,7 @@ Transcription: ${transcription}
 `;
 
   const response = await openai.chat.completions.create({
-    model: 'gpt-4-turbo',
+    model,
     messages: [{ role: 'user', content: prompt }],
     temperature: 0.5,
   });
@@ -534,10 +714,20 @@ Transcription: ${transcription}
   }];
 }
 
-async function generateNewsletterContent(transcription: string, analysis: ContentAnalysis) {
+async function generateNewsletterContent(
+  transcription: string, 
+  analysis: ContentAnalysis, 
+  model: string,
+  keywords?: string
+) {
+  const keywordInstruction = keywords
+    ? `\nHighlight these strategic keywords in subject line or body copy when it makes sense: ${keywords}\n`
+    : '';
+
   const prompt = `
 Create newsletter content based on this podcast episode.
 
+${keywordInstruction}
 Structure:
 1. Subject line (50 characters, high open rate)
 2. Opening hook
@@ -554,7 +744,7 @@ Key insights to include: ${analysis.actionable_insights.slice(0, 4).map(i => i.t
 `;
 
   const response = await openai.chat.completions.create({
-    model: 'gpt-4-turbo',
+    model,
     messages: [{ role: 'user', content: prompt }],
     temperature: 0.6,
   });
@@ -568,10 +758,20 @@ Key insights to include: ${analysis.actionable_insights.slice(0, 4).map(i => i.t
   }];
 }
 
-async function generateShowNotes(transcription: string, analysis: ContentAnalysis) {
+async function generateShowNotes(
+  transcription: string, 
+  analysis: ContentAnalysis, 
+  model: string,
+  keywords?: string
+) {
+  const keywordInstruction = keywords
+    ? `\nEnsure the summary references these focus keywords/topics where relevant: ${keywords}\n`
+    : '';
+
   const prompt = `
 Create detailed show notes for this podcast episode.
 
+${keywordInstruction}
 Structure:
 1. Episode summary (2-3 sentences)
 2. Key topics discussed with timestamps (estimate based on content)
@@ -587,7 +787,7 @@ Key topics: ${analysis.keyTopics.join(', ')}
 `;
 
   const response = await openai.chat.completions.create({
-    model: 'gpt-4-turbo',
+    model,
     messages: [{ role: 'user', content: prompt }],
     temperature: 0.4,
   });
@@ -601,8 +801,17 @@ Key topics: ${analysis.keyTopics.join(', ')}
   }];
 }
 
-async function generateQuoteGraphics(analysis: ContentAnalysis) {
-  const topQuotes = analysis.quotes.slice(0, 2);
+async function generateQuoteGraphics(analysis: ContentAnalysis, keywords?: string) {
+  let topQuotes = analysis.quotes.slice(0, 2);
+  if (keywords) {
+    const keywordList = keywords.toLowerCase().split(' ').filter(Boolean);
+    const matchedQuotes = analysis.quotes.filter(quote =>
+      keywordList.some(keyword => quote.text.toLowerCase().includes(keyword))
+    );
+    if (matchedQuotes.length) {
+      topQuotes = matchedQuotes.slice(0, 2);
+    }
+  }
   
   return topQuotes.map((quote, index) => ({
     type: 'quote_graphic',
@@ -640,10 +849,16 @@ async function saveGeneratedContent(projectId: string, contentPieces: any[]) {
 
 // Logging wrapper functions for content generation
 
-async function generateTwitterThreadsWithLogging(transcription: string, analysis: ContentAnalysis, projectId: string) {
+async function generateTwitterThreadsWithLogging(
+  transcription: string, 
+  analysis: ContentAnalysis, 
+  projectId: string, 
+  model: string,
+  keywords?: string
+) {
   const startTime = Date.now();
   try {
-    const result = await generateTwitterThreads(transcription, analysis);
+    const result = await generateTwitterThreads(transcription, analysis, model, keywords);
     const processingTime = Date.now() - startTime;
     
     // Log each thread separately
@@ -653,7 +868,7 @@ async function generateTwitterThreadsWithLogging(transcription: string, analysis
         projectId,
         'twitter',
         `thread_${i + 1}`,
-        `Twitter thread hook: ${analysis.hooks[i]?.text || 'Generated hook'}`,
+        `X thread hook: ${analysis.hooks[i]?.text || 'Generated hook'}`,
         thread.content,
         thread.metadata,
         processingTime / result.length
@@ -667,10 +882,16 @@ async function generateTwitterThreadsWithLogging(transcription: string, analysis
   }
 }
 
-async function generateLinkedInPostsWithLogging(transcription: string, analysis: ContentAnalysis, projectId: string) {
+async function generateLinkedInPostsWithLogging(
+  transcription: string, 
+  analysis: ContentAnalysis, 
+  projectId: string, 
+  model: string,
+  keywords?: string
+) {
   const startTime = Date.now();
   try {
-    const result = await generateLinkedInPosts(transcription, analysis);
+    const result = await generateLinkedInPosts(transcription, analysis, model, keywords);
     const processingTime = Date.now() - startTime;
     
     for (let i = 0; i < result.length; i++) {
@@ -693,10 +914,16 @@ async function generateLinkedInPostsWithLogging(transcription: string, analysis:
   }
 }
 
-async function generateInstagramContentWithLogging(transcription: string, analysis: ContentAnalysis, projectId: string) {
+async function generateInstagramContentWithLogging(
+  transcription: string, 
+  analysis: ContentAnalysis, 
+  projectId: string, 
+  model: string,
+  keywords?: string
+) {
   const startTime = Date.now();
   try {
-    const result = await generateInstagramContent(transcription, analysis);
+    const result = await generateInstagramContent(transcription, analysis, model, keywords);
     const processingTime = Date.now() - startTime;
     
     await logContentGeneration(
@@ -716,10 +943,16 @@ async function generateInstagramContentWithLogging(transcription: string, analys
   }
 }
 
-async function generateBlogPostWithLogging(transcription: string, analysis: ContentAnalysis, projectId: string) {
+async function generateBlogPostWithLogging(
+  transcription: string, 
+  analysis: ContentAnalysis, 
+  projectId: string, 
+  model: string,
+  keywords?: string
+) {
   const startTime = Date.now();
   try {
-    const result = await generateBlogPost(transcription, analysis);
+    const result = await generateBlogPost(transcription, analysis, model, keywords);
     const processingTime = Date.now() - startTime;
     
     await logContentGeneration(
@@ -739,10 +972,16 @@ async function generateBlogPostWithLogging(transcription: string, analysis: Cont
   }
 }
 
-async function generateNewsletterContentWithLogging(transcription: string, analysis: ContentAnalysis, projectId: string) {
+async function generateNewsletterContentWithLogging(
+  transcription: string, 
+  analysis: ContentAnalysis, 
+  projectId: string, 
+  model: string,
+  keywords?: string
+) {
   const startTime = Date.now();
   try {
-    const result = await generateNewsletterContent(transcription, analysis);
+    const result = await generateNewsletterContent(transcription, analysis, model, keywords);
     const processingTime = Date.now() - startTime;
     
     await logContentGeneration(
@@ -762,10 +1001,16 @@ async function generateNewsletterContentWithLogging(transcription: string, analy
   }
 }
 
-async function generateShowNotesWithLogging(transcription: string, analysis: ContentAnalysis, projectId: string) {
+async function generateShowNotesWithLogging(
+  transcription: string, 
+  analysis: ContentAnalysis, 
+  projectId: string, 
+  model: string,
+  keywords?: string
+) {
   const startTime = Date.now();
   try {
-    const result = await generateShowNotes(transcription, analysis);
+    const result = await generateShowNotes(transcription, analysis, model, keywords);
     const processingTime = Date.now() - startTime;
     
     await logContentGeneration(
@@ -785,10 +1030,14 @@ async function generateShowNotesWithLogging(transcription: string, analysis: Con
   }
 }
 
-async function generateQuoteGraphicsWithLogging(analysis: ContentAnalysis, projectId: string) {
+async function generateQuoteGraphicsWithLogging(
+  analysis: ContentAnalysis, 
+  projectId: string,
+  keywords?: string
+) {
   const startTime = Date.now();
   try {
-    const result = await generateQuoteGraphics(analysis);
+    const result = await generateQuoteGraphics(analysis, keywords);
     const processingTime = Date.now() - startTime;
     
     for (let i = 0; i < result.length; i++) {

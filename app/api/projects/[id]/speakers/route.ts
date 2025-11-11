@@ -20,7 +20,7 @@ export async function PATCH(
     const { error } = await supabaseAdmin
       .from('projects')
       .update({
-        speaker_data: JSON.stringify(speakerData)
+        speaker_data: speakerData
       })
       .eq('id', projectId);
 

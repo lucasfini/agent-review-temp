@@ -1,164 +1,108 @@
 // Cost estimation utility for content generation
 
-export interface ContentType {
-  id: string;
-  name: string;
-  description: string;
-  count: number;
-  estimatedTokens: number;
-  costPerPiece: number;
-  platform: string;
-  enabled: boolean;
+import { CONTENT_TYPES, type ContentType } from '@/lib/content-types';
+import { calculateTokenRequirements, type TokenEstimate } from '@/lib/models/token-estimation';
+import { getModelById, MODEL_SPECS, type ModelSpec } from '@/lib/models/config';
+
+export { CONTENT_TYPES };
+export type { ContentType };
+
+export interface CostBreakdownEntry {
+  type: string;
+  contentTypeId?: string;
+  pieces: number;
+  tokens: number;
+  inputTokens: number;
+  outputTokens: number;
+  cost: number;
 }
 
 export interface CostEstimate {
+  modelId: string;
+  modelName: string;
   totalPieces: number;
   totalTokens: number;
   totalCost: number;
-  breakdown: Array<{
-    type: string;
-    pieces: number;
-    tokens: number;
-    cost: number;
-  }>;
+  breakdown: CostBreakdownEntry[];
+  tokenEstimate: TokenEstimate | null;
 }
 
-// OpenAI pricing (as of 2024)
-const GPT4_INPUT_COST_PER_1K = 0.03;   // $0.03 per 1K input tokens
-const GPT4_OUTPUT_COST_PER_1K = 0.06;  // $0.06 per 1K output tokens
+export interface CostEstimateOptions {
+  modelId?: string;
+  tokenEstimate?: TokenEstimate | null;
+}
 
-// Estimated token usage per content type
-export const CONTENT_TYPES: ContentType[] = [
-  {
-    id: 'twitter_threads',
-    name: 'Twitter Threads',
-    description: '4 engaging Twitter threads (6-8 tweets each)',
-    count: 4,
-    estimatedTokens: 800, // ~200 tokens per thread
-    costPerPiece: 0.05,
-    platform: 'twitter',
-    enabled: true
-  },
-  {
-    id: 'linkedin_posts',
-    name: 'LinkedIn Posts',
-    description: '3 professional LinkedIn posts with engagement hooks',
-    count: 3,
-    estimatedTokens: 450, // ~150 tokens per post
-    costPerPiece: 0.04,
-    platform: 'linkedin',
-    enabled: true
-  },
-  {
-    id: 'instagram_content',
-    name: 'Instagram Content',
-    description: '3 carousel posts with captions and hashtags',
-    count: 3,
-    estimatedTokens: 600, // ~200 tokens per carousel
-    costPerPiece: 0.06,
-    platform: 'instagram',
-    enabled: true
-  },
-  {
-    id: 'blog_post',
-    name: 'SEO Blog Post',
-    description: '1 comprehensive blog post (3000+ words)',
-    count: 1,
-    estimatedTokens: 4000, // Large blog post
-    costPerPiece: 0.25,
-    platform: 'general',
-    enabled: true
-  },
-  {
-    id: 'newsletter',
-    name: 'Newsletter Content',
-    description: '1 email newsletter with key insights',
-    count: 1,
-    estimatedTokens: 800,
-    costPerPiece: 0.08,
-    platform: 'general',
-    enabled: true
-  },
-  {
-    id: 'show_notes',
-    name: 'Episode Show Notes',
-    description: '1 detailed show notes with timestamps',
-    count: 1,
-    estimatedTokens: 600,
-    costPerPiece: 0.06,
-    platform: 'general',
-    enabled: true
-  },
-  {
-    id: 'quote_graphics',
-    name: 'Quote Graphics',
-    description: '2 social media quote graphics',
-    count: 2,
-    estimatedTokens: 100, // Simple quotes
-    costPerPiece: 0.02,
-    platform: 'instagram',
-    enabled: true
-  }
-];
+const DEFAULT_MODEL_ID = 'gpt-4-turbo';
+
+const getDefaultModel = (): ModelSpec => {
+  const fallback = getModelById(DEFAULT_MODEL_ID);
+  return fallback || MODEL_SPECS[0];
+};
+
+const formatBreakdownEntry = (
+  entry: TokenEstimate['breakdown'][number],
+  model: ModelSpec
+): CostBreakdownEntry => {
+  const cost =
+    ((entry.inputTokens / 1000) * model.pricing.inputCostPer1kTokens) +
+    ((entry.outputTokens / 1000) * model.pricing.outputCostPer1kTokens);
+
+  return {
+    type: entry.phase,
+    contentTypeId: entry.contentTypeId,
+    pieces: entry.pieces || 1,
+    tokens: Math.round(entry.inputTokens + entry.outputTokens),
+    inputTokens: entry.inputTokens,
+    outputTokens: entry.outputTokens,
+    cost: Math.round(cost * 100) / 100
+  };
+};
 
 /**
- * Calculate cost estimate based on selected content types
+ * Calculate cost estimate based on selected content types and model pricing
  */
 export function calculateCostEstimate(
   selectedTypes: string[],
-  transcriptionLength: number = 0
+  transcriptionText: string,
+  options: CostEstimateOptions = {}
 ): CostEstimate {
-  // Base analysis cost (always included)
-  const analysisTokens = Math.min(transcriptionLength * 0.1, 2000); // ~10% of transcription
-  const analysisCost = (analysisTokens / 1000) * GPT4_INPUT_COST_PER_1K;
+  const model = options.modelId ? (getModelById(options.modelId) || getDefaultModel()) : getDefaultModel();
 
-  let totalPieces = 0;
-  let totalTokens = analysisTokens;
-  let totalCost = analysisCost;
-  const breakdown: Array<{type: string; pieces: number; tokens: number; cost: number}> = [];
+  if (!selectedTypes.length || !transcriptionText) {
+    return {
+      modelId: model.id,
+      modelName: model.displayName,
+      totalPieces: 0,
+      totalTokens: 0,
+      totalCost: 0,
+      breakdown: [],
+      tokenEstimate: null
+    };
+  }
 
-  // Add analysis to breakdown
-  breakdown.push({
-    type: 'Content Analysis',
-    pieces: 1,
-    tokens: analysisTokens,
-    cost: analysisCost
-  });
+  const tokenEstimate =
+    options.tokenEstimate ||
+    calculateTokenRequirements(transcriptionText, selectedTypes);
 
-  // Calculate cost for each selected content type
-  CONTENT_TYPES.forEach(contentType => {
-    if (selectedTypes.includes(contentType.id)) {
-      const inputTokens = Math.min(transcriptionLength * 0.3, 3000); // Context for each generation
-      const outputTokens = contentType.estimatedTokens;
-      
-      const inputCost = (inputTokens / 1000) * GPT4_INPUT_COST_PER_1K * contentType.count;
-      const outputCost = (outputTokens / 1000) * GPT4_OUTPUT_COST_PER_1K;
-      
-      const typeCost = inputCost + outputCost;
-      const typeTokens = (inputTokens + outputTokens) * contentType.count;
+  const breakdown = tokenEstimate.breakdown.map(entry =>
+    formatBreakdownEntry(entry, model)
+  );
 
-      totalPieces += contentType.count;
-      totalTokens += typeTokens;
-      totalCost += typeCost;
+  const totalCost = breakdown.reduce((sum, entry) => sum + entry.cost, 0);
 
-      breakdown.push({
-        type: contentType.name,
-        pieces: contentType.count,
-        tokens: typeTokens,
-        cost: typeCost
-      });
-    }
-  });
+  const totalPieces = selectedTypes.reduce((sum, typeId) => {
+    const contentType = getContentType(typeId);
+    return sum + (contentType?.count || 0);
+  }, 0);
 
   return {
+    modelId: model.id,
+    modelName: model.displayName,
     totalPieces,
-    totalTokens: Math.round(totalTokens),
-    totalCost: Math.round(totalCost * 100) / 100, // Round to 2 decimal places
-    breakdown: breakdown.map(item => ({
-      ...item,
-      tokens: Math.round(item.tokens),
-      cost: Math.round(item.cost * 100) / 100
-    }))
+    totalTokens: Math.round(tokenEstimate.totalTokens),
+    totalCost: Math.round(totalCost * 100) / 100,
+    breakdown,
+    tokenEstimate
   };
 }
 
@@ -179,9 +123,12 @@ export function getContentTypesByPlatform(platform: string): ContentType[] {
 /**
  * Calculate total if all content types are selected
  */
-export function getMaxCostEstimate(transcriptionLength: number = 0): CostEstimate {
+export function getMaxCostEstimate(
+  transcriptionText: string = '',
+  options?: CostEstimateOptions
+): CostEstimate {
   const allTypeIds = CONTENT_TYPES.map(type => type.id);
-  return calculateCostEstimate(allTypeIds, transcriptionLength);
+  return calculateCostEstimate(allTypeIds, transcriptionText, options);
 }
 
 /**
@@ -197,5 +144,6 @@ export function formatCost(cost: number): string {
  */
 export function formatTokens(tokens: number): string {
   if (tokens < 1000) return `${tokens} tokens`;
-  return `${(tokens / 1000).toFixed(1)}K tokens`;
+  if (tokens < 1000000) return `${(tokens / 1000).toFixed(1)}K tokens`;
+  return `${(tokens / 1000000).toFixed(1)}M tokens`;
 }

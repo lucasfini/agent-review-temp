@@ -45,6 +45,13 @@ export async function GET(
     return NextResponse.json({
       status: project.status,
       progress: getProgressFromStatus(project.status),
+      // New detailed progress fields
+      processing_stage: project.processing_stage || 'pending',
+      processing_progress: project.processing_progress || 0,
+      processing_message: project.processing_message,
+      stage_started_at: project.stage_started_at,
+      performance_level: project.performance_level || 'basic',
+      // Existing fields
       transcription_text: project.transcription_text,
       processing_time: project.processing_time_seconds,
       outputs_generated: outputsCount,

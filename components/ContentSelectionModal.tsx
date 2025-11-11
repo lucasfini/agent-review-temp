@@ -1,69 +1,92 @@
 "use client";
 
-import { useState } from 'react';
-import { X, Loader2, Zap, DollarSign, Settings } from 'lucide-react';
-import { CONTENT_TYPES, calculateCostEstimate, formatCost } from '@/lib/cost-estimation';
-// Temporarily disable model selection to keep modal working
-// import { useModelSelection } from '@/lib/models/use-model-selection';
-// import ModelSelector from './ModelSelector';
+import { useEffect, useMemo, useState } from 'react';
+import { X, Loader2, Zap, DollarSign, Sparkles, ShieldCheck, ChevronDown } from 'lucide-react';
+import ContentSelection from './ContentSelection';
+import ModelSelector from './ModelSelector';
+import { calculateCostEstimate, CONTENT_TYPES, type CostEstimate, formatCost, formatTokens } from '@/lib/cost-estimation';
+import { useModelSelection } from '@/lib/models/use-model-selection';
+import type { ModelSpec } from '@/lib/models/config';
 
 interface ContentSelectionModalProps {
   isOpen: boolean;
   onClose: () => void;
-  onConfirm: (selectedTypes: string[], estimate: any, selectedModel?: any) => Promise<void>;
+  onConfirm: (
+    selectedTypes: string[],
+    estimate: CostEstimate,
+    selectedModel?: ModelSpec | null,
+    keywords?: Record<string, string>
+  ) => Promise<void>;
   projectId: string;
-  transcriptionLength: number;
   transcriptionText: string;
+  projectTitle?: string | null;
 }
+
+const DEFAULT_MODEL_ID = 'gpt-4-turbo';
+const DEFAULT_SELECTION = CONTENT_TYPES.filter(type => type.enabled).map(type => type.id);
 
 export default function ContentSelectionModal({
   isOpen,
   onClose,
   onConfirm,
   projectId,
-  transcriptionLength,
-  transcriptionText
+  transcriptionText,
+  projectTitle
 }: ContentSelectionModalProps) {
-  const [selectedTypes, setSelectedTypes] = useState<string[]>(
-    CONTENT_TYPES.map(type => type.id) // Default to all selected
-  );
+  const [selectedTypes, setSelectedTypes] = useState<string[]>(DEFAULT_SELECTION);
   const [isGenerating, setIsGenerating] = useState(false);
-  const [showAdvancedSettings, setShowAdvancedSettings] = useState(false);
+  const [showCostDetails, setShowCostDetails] = useState(false);
+  const [contentKeywords, setContentKeywords] = useState<Record<string, string>>({});
 
-  // Model selection hook - disabled
-  // const modelSelection = useModelSelection({
-  //   transcriptionText,
-  //   selectedContentTypes: selectedTypes,
-  //   defaultModelId: 'gpt-4-turbo' // Default to GPT-4 Turbo since it works
-  // });
+  useEffect(() => {
+    if (isOpen) {
+      setSelectedTypes(DEFAULT_SELECTION);
+      setShowCostDetails(false);
+      setContentKeywords({});
+    }
+  }, [isOpen, projectId]);
 
-  const estimate = calculateCostEstimate(selectedTypes, transcriptionLength);
+  const modelSelection = useModelSelection({
+    transcriptionText,
+    selectedContentTypes: selectedTypes,
+    defaultModelId: DEFAULT_MODEL_ID
+  });
 
-  const handleTypeToggle = (typeId: string) => {
-    setSelectedTypes(prev => 
-      prev.includes(typeId) 
-        ? prev.filter(id => id !== typeId)
-        : [...prev, typeId]
-    );
-  };
-
-  const handleSelectAll = () => {
-    setSelectedTypes(CONTENT_TYPES.map(type => type.id));
-  };
-
-  const handleDeselectAll = () => {
-    setSelectedTypes([]);
-  };
+  const estimate = useMemo(() => {
+    if (!selectedTypes.length || !transcriptionText) {
+      return null;
+    }
+    return calculateCostEstimate(selectedTypes, transcriptionText, {
+      modelId: modelSelection.selectedModel?.id,
+      tokenEstimate: modelSelection.tokenEstimate
+    });
+  }, [
+    selectedTypes,
+    transcriptionText,
+    modelSelection.selectedModel?.id,
+    modelSelection.tokenEstimate
+  ]);
 
   const handleGenerate = async () => {
-    if (selectedTypes.length === 0) {
+    if (!selectedTypes.length) {
       alert('Please select at least one content type.');
+      return;
+    }
+
+    if (!estimate) {
+      alert('Unable to estimate cost. Please try again.');
       return;
     }
 
     setIsGenerating(true);
     try {
-      await onConfirm(selectedTypes, estimate, null);
+      const keywordPayload = selectedTypes.reduce<Record<string, string>>((acc, typeId) => {
+        const value = contentKeywords[typeId]?.trim();
+        if (value) acc[typeId] = value;
+        return acc;
+      }, {});
+
+      await onConfirm(selectedTypes, estimate, modelSelection.selectedModel, keywordPayload);
       onClose();
     } catch (error) {
       console.error('Failed to start content generation:', error);
@@ -75,201 +98,145 @@ export default function ContentSelectionModal({
 
   if (!isOpen) return null;
 
-  console.log('ContentSelectionModal rendering:', { isOpen, projectId, transcriptionLength, selectedTypesCount: selectedTypes.length });
-
   return (
-    <div className="fixed inset-0 z-[9999] overflow-y-auto" style={{ zIndex: 9999 }}>
-      <div className="flex items-center justify-center min-h-screen pt-4 px-4 pb-20 text-center sm:block sm:p-0">
-        {/* Background overlay */}
-        <div 
-          className="fixed inset-0 bg-black bg-opacity-50 transition-opacity"
-          onClick={!isGenerating ? onClose : undefined}
-        ></div>
+    <div className="fixed inset-0 z-[60] bg-black/30 backdrop-blur-sm flex items-center justify-center px-4 py-6">
+      <div className="relative w-full max-w-3xl bg-white rounded-2xl shadow-xl border border-gray-100 max-h-[90vh] flex flex-col overflow-hidden">
+        <button
+          onClick={onClose}
+          disabled={isGenerating}
+          className="absolute top-4 right-4 text-gray-500 hover:text-gray-700"
+        >
+          <X className="w-5 h-5" />
+        </button>
 
-        {/* Modal panel */}
-        <div className="relative inline-block align-bottom bg-white rounded-lg text-left overflow-hidden shadow-xl transform transition-all sm:my-8 sm:align-middle sm:max-w-2xl sm:w-full z-[10000]" style={{ zIndex: 10000 }}>
-          {/* Debug indicator */}
-          <div className="absolute top-2 right-2 bg-red-500 text-white text-xs px-2 py-1 rounded z-[10001]">
-            MODAL OPEN
-          </div>
-          
+        <div className="flex-1 overflow-y-auto px-5 py-5 space-y-5">
           {/* Header */}
-          <div className="bg-white px-6 py-4 border-b border-gray-200">
-            <div className="flex items-center justify-between">
-              <div>
-                <h3 className="text-lg font-semibold text-gray-900">
-                  Content Generation
-                </h3>
-                <p className="text-sm text-gray-500">
-                  Select content types to generate
-                </p>
-              </div>
-              <button
-                onClick={onClose}
-                disabled={isGenerating}
-                className="text-gray-400 hover:text-gray-600 disabled:opacity-50"
-              >
-                <X className="w-6 h-6" />
-              </button>
+          <header className="space-y-1">
+            <div className="flex items-center space-x-2 text-blue-600">
+              <Sparkles className="w-4 h-4" />
+              <span className="text-xs font-semibold uppercase tracking-widest">Generate Content</span>
             </div>
-          </div>
+            <h2 className="text-xl font-semibold text-gray-900">
+              {projectTitle || 'Ready to create new assets?'}
+            </h2>
+            <p className="text-sm text-gray-600 leading-relaxed">
+              Pick the deliverables and AI model for project {projectId.slice(0, 8)}.
+            </p>
+          </header>
 
-          {/* Content Selection */}
-          <div className="bg-white px-6 py-6">
-            {/* Content Types Header */}
-            <div className="flex items-center justify-between mb-4">
-              <div className="text-sm font-medium text-gray-700">
-                Content Types & AI Model
-              </div>
-              <div className="flex items-center space-x-2">
-                <button
-                  onClick={() => setShowAdvancedSettings(!showAdvancedSettings)}
-                  className={`flex items-center space-x-1 px-2 py-1 text-xs rounded-md transition-colors ${
-                    showAdvancedSettings 
-                      ? 'bg-blue-100 text-blue-700' 
-                      : 'text-gray-600 hover:bg-gray-100'
-                  }`}
-                >
-                  <Settings className="w-3 h-3" />
-                  <span>Advanced</span>
-                </button>
-                <span className="text-gray-300">|</span>
-                <button
-                  onClick={handleSelectAll}
-                  className="text-xs text-blue-600 hover:text-blue-800 font-medium"
-                >
-                  Select All
-                </button>
-                <span className="text-gray-300">|</span>
-                <button
-                  onClick={handleDeselectAll}
-                  className="text-xs text-gray-600 hover:text-gray-800 font-medium"
-                >
-                  Clear All
-                </button>
-              </div>
+          <div className="grid gap-5 lg:grid-cols-[1.6fr,1fr]">
+            <div className="space-y-5">
+              <ContentSelection
+                selectedTypes={selectedTypes}
+                onSelectedTypesChange={setSelectedTypes}
+                estimate={estimate}
+                keywords={contentKeywords}
+                onKeywordChange={(typeId, value) =>
+                  setContentKeywords(prev => ({ ...prev, [typeId]: value }))
+                }
+              />
             </div>
 
-            {/* Model Selection - Disabled for stability */}
-            {showAdvancedSettings && (
-              <div className="mb-6 p-4 bg-gray-50 rounded-lg">
-                <div className="text-sm text-gray-600">
-                  Model selection feature temporarily disabled for stability. Currently using GPT-4 Turbo.
+            {/* Sidebar */}
+            <div className="space-y-4">
+              <div className="border border-gray-100 rounded-xl p-3 shadow-sm">
+                <div className="flex items-center space-x-2 mb-2">
+                  <ShieldCheck className="w-4 h-4 text-indigo-500" />
+                  <p className="text-xs font-semibold uppercase text-indigo-500">Step 2 · AI Model</p>
                 </div>
+                <ModelSelector
+                  selectedModel={modelSelection.selectedModel}
+                  availableModels={modelSelection.availableModels}
+                  compatibleModels={modelSelection.compatibleModels}
+                  recommendedModels={modelSelection.recommendedModels}
+                  onSelectModel={modelSelection.selectModel}
+                  getModelCompatibility={modelSelection.getModelCompatibility}
+                  getModelCost={modelSelection.getModelCost}
+                  isCalculating={modelSelection.isCalculating}
+                  tokenEstimate={modelSelection.tokenEstimate}
+                />
               </div>
-            )}
 
-            {/* Content Types Selection Header */}
-            <div className="text-sm font-medium text-gray-700 mb-3">
-              Select Content Types
-            </div>
-
-            {/* Content Type Grid */}
-            <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 mb-6">
-              {CONTENT_TYPES.map((contentType) => {
-                const isSelected = selectedTypes.includes(contentType.id);
-                
-                return (
-                  <label
-                    key={contentType.id}
-                    className={`relative flex items-center p-3 rounded-lg border cursor-pointer transition-all ${
-                      isSelected
-                        ? 'border-blue-500 bg-blue-50'
-                        : 'border-gray-200 bg-white hover:bg-gray-50'
-                    }`}
-                  >
-                    <input
-                      type="checkbox"
-                      checked={isSelected}
-                      onChange={() => handleTypeToggle(contentType.id)}
-                      className="h-4 w-4 text-blue-600 border-gray-300 rounded focus:ring-blue-500"
-                    />
-                    <div className="ml-3 flex-1">
-                      <div className={`text-sm font-medium ${
-                        isSelected ? 'text-blue-900' : 'text-gray-900'
-                      }`}>
-                        {contentType.name}
-                      </div>
-                      <div className="flex items-center justify-between mt-1">
-                        <span className={`text-xs ${
-                          isSelected ? 'text-blue-600' : 'text-gray-500'
-                        }`}>
-                          {contentType.count} piece{contentType.count !== 1 ? 's' : ''}
-                        </span>
-                        <span className={`text-xs font-medium ${
-                          isSelected ? 'text-blue-700' : 'text-gray-600'
-                        }`}>
-                          {formatCost(contentType.costPerPiece)}
-                        </span>
-                      </div>
-                    </div>
-                  </label>
-                );
-              })}
-            </div>
-
-            {/* Cost Summary */}
-            <div className="bg-gray-50 rounded-lg p-4 border">
-              <div className="flex items-center justify-between">
+              <div className="border border-gray-100 rounded-xl p-3 shadow-sm space-y-3">
                 <div className="flex items-center space-x-2">
-                  <DollarSign className="w-5 h-5 text-green-600" />
-                  <span className="font-medium text-gray-900">
-                    Estimated Cost (GPT-4 Turbo)
-                  </span>
+                  <DollarSign className="w-4 h-4 text-green-600" />
+                  <p className="text-xs font-semibold uppercase text-green-600">Cost Snapshot</p>
                 </div>
-                <div className="text-right">
-                  <div className="text-2xl font-bold text-green-600">
-                    {formatCost(estimate.totalCost)}
-                  </div>
-                  <div className="text-xs text-gray-500">
-                    {estimate.totalPieces} pieces selected
-                  </div>
-                </div>
-              </div>
-            </div>
-
-            {/* No selection warning */}
-            {selectedTypes.length === 0 && (
-              <div className="mt-4 p-3 bg-yellow-50 border border-yellow-200 rounded-md">
-                <p className="text-sm text-yellow-800">
-                  Please select at least one content type to generate.
-                </p>
-              </div>
-            )}
-          </div>
-
-          {/* Footer with Generate Button */}
-          <div className="bg-gray-50 px-6 py-4 border-t border-gray-200">
-            <div className="flex items-center justify-between">
-              <button
-                onClick={onClose}
-                disabled={isGenerating}
-                className="px-4 py-2 text-sm font-medium text-gray-700 bg-white border border-gray-300 rounded-md hover:bg-gray-50 disabled:opacity-50 disabled:cursor-not-allowed"
-              >
-                Cancel
-              </button>
-              
-              <button
-                onClick={handleGenerate}
-                disabled={selectedTypes.length === 0 || isGenerating}
-                className="inline-flex items-center px-6 py-3 bg-blue-600 text-white text-sm font-semibold rounded-md hover:bg-blue-700 disabled:opacity-50 disabled:cursor-not-allowed focus:outline-none focus:ring-2 focus:ring-blue-500 shadow-sm"
-              >
-                {isGenerating ? (
+                {estimate ? (
                   <>
-                    <Loader2 className="w-5 h-5 mr-2 animate-spin" />
-                    Generating Content...
+                    <div>
+                      <p className="text-2xl font-bold text-gray-900">{formatCost(estimate.totalCost)}</p>
+                      <p className="text-sm text-gray-500">
+                        {estimate.totalPieces} pieces · {formatTokens(estimate.totalTokens)}
+                      </p>
+                      <p className="text-xs text-gray-400 mt-1">Using {estimate.modelName}</p>
+                    </div>
+                    <button
+                      type="button"
+                      onClick={() => setShowCostDetails(!showCostDetails)}
+                      className="w-full flex items-center justify-between text-xs font-medium text-gray-600 border border-gray-200 rounded-lg px-3 py-2 hover:bg-gray-50"
+                    >
+                      <span>{showCostDetails ? 'Hide' : 'Show'} breakdown & tokens</span>
+                      <ChevronDown className={`w-4 h-4 transition-transform ${showCostDetails ? 'rotate-180' : ''}`} />
+                    </button>
+                    {showCostDetails && (
+                      <div className="space-y-2 text-sm text-gray-600">
+                        <div className="space-y-1">
+                          {estimate.breakdown.map(entry => (
+                            <div key={entry.type} className="flex items-center justify-between">
+                              <span>{entry.type}</span>
+                              <span className="font-medium text-gray-900">{formatCost(entry.cost)}</span>
+                            </div>
+                          ))}
+                        </div>
+                        {modelSelection.tokenEstimate && (
+                          <div className="pt-2 border-t border-gray-100 text-xs text-gray-500 space-y-1">
+                            <div>Total tokens: {formatTokens(modelSelection.tokenEstimate.totalTokens)}</div>
+                            <div>Input: {formatTokens(modelSelection.tokenEstimate.totalInputTokens)}</div>
+                            <div>Output: {formatTokens(modelSelection.tokenEstimate.totalOutputTokens)}</div>
+                          </div>
+                        )}
+                      </div>
+                    )}
                   </>
                 ) : (
-                  <>
-                    <Zap className="w-5 h-5 mr-2" />
-                    Generate {estimate.totalPieces} Pieces
-                    <span className="ml-2 text-blue-200">
-                      ({formatCost(estimate.totalCost)})
-                    </span>
-                  </>
+                  <p className="text-sm text-gray-500">Add at least one content type to estimate cost.</p>
                 )}
-              </button>
+              </div>
             </div>
+          </div>
+        </div>
+
+        {/* Footer */}
+        <div className="px-6 py-4 bg-gray-50 rounded-b-2xl flex flex-col sm:flex-row sm:items-center sm:justify-between space-y-3 sm:space-y-0">
+          <div className="text-sm text-gray-600">
+            {estimate ? `Ready to generate ${estimate.totalPieces} pieces?` : 'Select at least one deliverable to continue.'}
+          </div>
+          <div className="flex items-center space-x-3">
+            <button
+              onClick={onClose}
+              disabled={isGenerating}
+              className="px-4 py-2 text-sm font-medium text-gray-700 bg-white border border-gray-300 rounded-lg hover:bg-gray-100 disabled:opacity-50"
+            >
+              Cancel
+            </button>
+            <button
+              onClick={handleGenerate}
+              disabled={isGenerating || !selectedTypes.length}
+              className="inline-flex items-center px-5 py-2.5 bg-blue-600 text-white text-sm font-semibold rounded-lg hover:bg-blue-700 disabled:opacity-50 disabled:cursor-not-allowed shadow-sm"
+            >
+              {isGenerating ? (
+                <>
+                  <Loader2 className="w-4 h-4 mr-2 animate-spin" />
+                  Generating…
+                </>
+              ) : (
+                <>
+                  <Zap className="w-4 h-4 mr-2" />
+                  Generate {estimate ? `${estimate.totalPieces} pieces` : ''}
+                </>
+              )}
+            </button>
           </div>
         </div>
       </div>

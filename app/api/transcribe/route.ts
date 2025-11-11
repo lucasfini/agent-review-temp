@@ -1,10 +1,26 @@
 import { NextRequest, NextResponse } from 'next/server';
-import OpenAI from 'openai';
+import { Buffer } from 'buffer';
 import { supabaseAdmin } from '@/lib/supabase/server';
-import { chunkAudioFile, needsChunking, mergeChunkedTranscriptions, estimateProcessingCost } from '@/lib/audio-chunker';
-import { detectSpeakers, groupSegmentsBySpeaker, TranscriptionSegment } from '@/lib/speaker-detection';
+import { transcribeWithAssemblyAI, checkAssemblyAIAvailability } from '@/lib/assemblyai-integration';
+import { groupSegmentsBySpeaker } from '@/lib/speaker-utils';
 import { extractSpeakerNames } from '@/lib/name-extraction';
-import { enhancedSpeakerDetection, checkPyAnnoteAvailability, getPyAnnoteSetupInstructions } from '@/lib/pyannote-integration';
+import { classifySpeakerRoles } from '@/lib/speaker-role-classifier';
+import { generatePodcastSummary } from '@/lib/content-generators/summary';
+import { detectPodcastChapters } from '@/lib/content-generators/chapters';
+import { extractKeyTakeaways } from '@/lib/content-generators/takeaways';
+import { extractSocialQuotes } from '@/lib/content-generators/quotes';
+import { getTierFeatures, calculateTierCost, type TierLevel } from '@/lib/tier-config';
+import { updateProcessingProgress } from '@/lib/progress-tracker';
+import { ProcessingStage } from '@/lib/tier-progress-config';
+import { analyzeNarrativeCoverage } from '@/lib/narrative-coverage-analyzer';
+import type { NarrativeCoverageAnalysisResult } from '@/lib/narrative-coverage-analyzer';
+import {
+  saveNarrativeCoverageSnapshot,
+  getActiveNarrativeGoals
+} from '@/lib/narrative-coverage';
+import { promises as fs } from 'fs';
+import * as path from 'path';
+import * as os from 'os';
 
 // Global file storage for temporary solution
 declare global {
@@ -16,788 +32,693 @@ declare global {
   }>;
 }
 
-const openai = new OpenAI({
-  apiKey: process.env.OPENAI_API_KEY,
-});
+const sanitizeFileName = (name: string) => {
+  const normalized = name
+    .normalize('NFKD')
+    .replace(/[\u0300-\u036f]/g, '');
+  const sanitized = normalized
+    .replace(/[^a-zA-Z0-9.-]/g, '_')
+    .replace(/_{2,}/g, '_')
+    .replace(/^_+|_+$/g, '');
+  return sanitized || 'audio_upload';
+};
+
+const buildInMemoryKeys = (fileName: string) => {
+  const keys = new Set<string>();
+  if (!fileName) return [];
+  keys.add(fileName);
+  const pathParts = fileName.split('/');
+  const base = pathParts.pop() || fileName;
+  const dir = pathParts.join('/');
+  keys.add(base);
+  const sanitizedBase = sanitizeFileName(base);
+  keys.add(sanitizedBase);
+  if (dir) {
+    keys.add(`${dir}/${base}`);
+    keys.add(`${dir}/${sanitizedBase}`);
+  }
+  return Array.from(keys).filter(Boolean);
+};
+
+const purgeInMemoryAudio = (fileName: string | undefined) => {
+  if (!fileName || !global.uploadedFiles) return;
+  const keys = buildInMemoryKeys(fileName);
+  keys.forEach(key => global.uploadedFiles?.delete(key));
+};
 
 export async function POST(request: NextRequest) {
-  try {
-    const { projectId, fileName } = await request.json();
+  const startTime = Date.now();
+  let tempAudioFilePath: string | null = null;
 
-    if (!projectId || !fileName) {
+  try {
+    // Parse request
+    const payload = await request.json().catch(() => null);
+    if (!payload) {
       return NextResponse.json(
-        { error: 'Project ID and file name are required' },
+        { error: 'Invalid request payload' },
         { status: 400 }
       );
     }
 
-    // Try to get the audio file from local storage first (temporary solution)
-    let fileData, downloadError;
-    
-    console.log(`Looking for file: ${fileName}`);
-    
-    if (global.uploadedFiles && global.uploadedFiles.has(fileName)) {
-      console.log('Using local file storage...');
-      const localFile = global.uploadedFiles.get(fileName);
-      if (localFile) {
-        fileData = new Blob([localFile.buffer], { type: localFile.contentType });
-        downloadError = null;
-        console.log(`Local file found: ${fileData.size} bytes`);
-      } else {
-        downloadError = new Error('Local file not found');
-      }
-    } else {
-      console.log('Falling back to Supabase Storage...');
-      // Fallback to Supabase Storage
-      const storageResult = await supabaseAdmin.storage
-        .from('audio-files')
-        .download(fileName);
-      
-      fileData = storageResult.data;
-      downloadError = storageResult.error;
-    }
+    const { projectId, fileName, performanceLevel } = payload as {
+      projectId?: string;
+      fileName?: string;
+      performanceLevel?: TierLevel;
+    };
 
-    if (downloadError || !fileData) {
-      console.error('File download error:', downloadError);
-      
-      // Update project status to failed
-      await supabaseAdmin
-        .from('projects')
-        .update({ status: 'failed' })
-        .eq('id', projectId);
-
+    if (!projectId || !fileName) {
       return NextResponse.json(
-        { error: 'Failed to download audio file' },
-        { status: 500 }
+        { error: 'Missing projectId or fileName' },
+        { status: 400 }
       );
     }
 
-    // Convert blob to File object for OpenAI
-    const audioFile = new File([fileData], fileName.split('/').pop() || 'audio.mp3', {
-      type: 'audio/mpeg'
+    const tier: TierLevel = performanceLevel || 'basic';
+    const features = getTierFeatures(tier);
+
+    console.log(`\n========================================`);
+    console.log(`[TRANSCRIPTION] 🚀 Starting ${tier.toUpperCase()} tier processing`);
+    console.log(`[TRANSCRIPTION] Project ID: ${projectId}`);
+    console.log(`[TRANSCRIPTION] File: ${fileName}`);
+    console.log(`========================================\n`);
+
+    // Check if project already has cached transcription
+    const { data: existingProject, error: projectError } = await supabaseAdmin
+      .from('projects')
+      .select('transcription_text, transcription_segments, speaker_data, audio_duration, user_id, title')
+      .eq('id', projectId)
+      .single();
+
+    const hasCache = existingProject && existingProject.transcription_text;
+
+    if (hasCache) {
+      console.log('[TRANSCRIPTION] ♻️ Cache detected - skipping AssemblyAI, will apply tier features only');
+    }
+
+    // Check AssemblyAI availability (skip if cache exists)
+    if (!hasCache) {
+      const assemblyAIAvailable = await checkAssemblyAIAvailability();
+      if (!assemblyAIAvailable) {
+        console.error('[TRANSCRIPTION] ❌ AssemblyAI not available');
+        return NextResponse.json(
+          { error: 'AssemblyAI not configured. Please set ASSEMBLYAI_API_KEY in your .env file.' },
+          { status: 500 }
+        );
+      }
+    }
+
+    // Initialize transcription data variables
+    let finalTranscription = '';
+    let totalDuration = 0;
+    let transcriptionSegments: any[] = [];
+    let speakerSegments: any[] = [];
+    let baseCost = 0;
+    let assemblyMetadata: { processing_time?: number; audio_duration?: number; confidence?: number } | null = null;
+
+    // Step 1: Get base transcription (from AssemblyAI or cache)
+    if (hasCache) {
+      // Use cached data
+      console.log('[TRANSCRIPTION] ♻️ Using cached base transcription');
+      finalTranscription = existingProject.transcription_text || '';
+      totalDuration = existingProject.audio_duration || 0;
+      transcriptionSegments = existingProject.transcription_segments || [];
+
+      // Extract speaker segments from cached speaker_data
+      if (existingProject.speaker_data && typeof existingProject.speaker_data === 'object') {
+        const speakerData = existingProject.speaker_data as any;
+        speakerSegments = speakerData.segments || [];
+      }
+
+      baseCost = 0; // No cost for cached transcription
+      console.log(`[TRANSCRIPTION] ♻️ Loaded ${speakerSegments.length} speaker segments from cache`);
+
+      // Increment cache reference since we successfully used it
+      const { incrementReferenceCount } = await import('@/lib/transcription-cache');
+      const fingerprint = payload.fingerprint as string | undefined;
+      await incrementReferenceCount(fingerprint);
+    } else {
+      // Retrieve audio file from memory
+      if (!global.uploadedFiles) {
+        return NextResponse.json(
+          { error: 'No file found in memory. Please upload the file first.' },
+          { status: 400 }
+        );
+      }
+
+      const fileKeys = buildInMemoryKeys(fileName);
+      let fileData: {
+        buffer: ArrayBuffer;
+        contentType: string;
+        originalName: string;
+        size: number;
+      } | undefined;
+
+      for (const key of fileKeys) {
+        fileData = global.uploadedFiles.get(key);
+        if (fileData) {
+          console.log(`[TRANSCRIPTION] ✅ Found file in memory with key: "${key}"`);
+          break;
+        }
+      }
+
+      if (!fileData) {
+        return NextResponse.json(
+          { error: `Audio file not found in memory. Tried keys: ${fileKeys.join(', ')}` },
+          { status: 404 }
+        );
+      }
+
+      const fileBuffer = Buffer.from(fileData.buffer);
+      console.log(`[TRANSCRIPTION] 📊 File size: ${Math.round(fileData.size / 1024 / 1024 * 100) / 100}MB`);
+
+      // Save audio file to temp location for AssemblyAI
+      const tempDir = os.tmpdir();
+      const tempFileName = `assemblyai_${Date.now()}_${fileName.split('/').pop()}`;
+      tempAudioFilePath = path.join(tempDir, tempFileName);
+
+      await fs.writeFile(tempAudioFilePath, fileBuffer);
+      console.log(`[TRANSCRIPTION] 📁 Temp audio file created: ${tempAudioFilePath}`);
+
+      // Update progress: Starting transcription
+      await updateProcessingProgress(projectId, {
+        stage: 'transcribing' as ProcessingStage,
+        progress: 0,
+        message: 'Starting transcription with AssemblyAI...'
+      });
+
+      // Call AssemblyAI for transcription + diarization
+      console.log('[TRANSCRIPTION] 📡 Starting AssemblyAI transcription + diarization...');
+      const assemblyResult = await transcribeWithAssemblyAI(tempAudioFilePath);
+
+      if (!assemblyResult.success) {
+        throw new Error(assemblyResult.error || 'AssemblyAI transcription failed');
+      }
+
+      console.log(`[TRANSCRIPTION] ✅ AssemblyAI completed in ${assemblyResult.metadata?.processing_time.toFixed(1)}s`);
+      console.log(`[TRANSCRIPTION] 📊 Duration: ${assemblyResult.metadata?.audio_duration.toFixed(1)}s`);
+      console.log(`[TRANSCRIPTION] 📊 Detected ${assemblyResult.metadata?.total_speakers} speakers`);
+
+      finalTranscription = assemblyResult.text || '';
+      totalDuration = assemblyResult.metadata?.audio_duration || 0;
+      transcriptionSegments = assemblyResult.transcription_segments || [];
+      speakerSegments = assemblyResult.speaker_segments || [];
+      baseCost = assemblyResult.metadata?.cost_usd || 0;
+      assemblyMetadata = assemblyResult.metadata || null;
+
+      // Update progress: Transcription completed
+      await updateProcessingProgress(projectId, {
+        stage: 'transcribing' as ProcessingStage,
+        progress: 100,
+        message: 'Transcription completed successfully!'
+      });
+
+      // Cache the base transcription for future reuse
+      const { cacheTranscriptionResult } = await import('@/lib/transcription-cache');
+      const fingerprint = payload.fingerprint as string | undefined;
+
+      if (fingerprint) {
+        const detectedSpeakersForCache = groupSegmentsBySpeaker(speakerSegments);
+        await cacheTranscriptionResult(fingerprint, {
+          transcriptionText: finalTranscription,
+          transcriptionSegments,
+          speakerData: {
+            segments: speakerSegments,
+            speakers: detectedSpeakersForCache,
+            detectionMetadata: {
+              method: 'assemblyai',
+              processedAt: new Date().toISOString()
+            }
+          },
+          duration: totalDuration
+        });
+        console.log('[TRANSCRIPTION] 💾 Cached base transcription for future reuse');
+
+        // Increment reference count for the new cache entry
+        const { incrementReferenceCount } = await import('@/lib/transcription-cache');
+        await incrementReferenceCount(fingerprint);
+      }
+    }
+
+    // Calculate base transcription cost
+    let aiProcessingCost = 0;
+    const aiTokenUsage: Record<string, { input: number; output: number }> = {};
+
+    // Group segments by speaker
+    const detectedSpeakers = groupSegmentsBySpeaker(speakerSegments);
+    console.log(`[TRANSCRIPTION] 📊 Grouped into ${Object.keys(detectedSpeakers).length} unique speakers`);
+
+    // Assign numbered speaker names for Basic tier (before AI processing)
+    // Sort speaker IDs to ensure consistent numbering
+    const sortedSpeakerIds = Object.keys(detectedSpeakers).sort();
+    for (let i = 0; i < sortedSpeakerIds.length; i++) {
+      const speakerId = sortedSpeakerIds[i];
+      const speaker = detectedSpeakers[speakerId] as any;
+      // Set fallbackName to numbered speaker name
+      speaker.fallbackName = `Speaker ${i + 1}`;
+      // Set finalName for Basic tier (will be overwritten by name extraction in higher tiers)
+      speaker.finalName = `Speaker ${i + 1}`;
+    }
+
+    // Update progress: Diarization completed
+    await updateProcessingProgress(projectId, {
+      stage: 'diarization' as ProcessingStage,
+      progress: 100,
+      message: `Identified ${Object.keys(detectedSpeakers).length} speakers in the conversation`
     });
 
-    console.log(`Starting transcription for project ${projectId}...`);
-    console.log(`File size: ${fileData.size} bytes (${Math.round(fileData.size / 1024 / 1024 * 100) / 100}MB)`);
+    // Step 2: Apply tier-specific AI processing
+    let speakersWithNames = detectedSpeakers;
+    let summaryData: any = null;
+    let chaptersData: any = null;
+    let takeawaysData: any = null;
+    let quotesData: any = null;
+    let roleAssignments: Record<string, any> = {};
+    let coverageAnalysis: NarrativeCoverageAnalysisResult | null = null;
+    let coverageAnalysisCost = 0;
 
-    let finalTranscription: string;
-    let totalDuration: number = 0;
-    let totalSegments: number = 0;
-    let transcriptionSegments: TranscriptionSegment[] = [];
-    let speakerData: any = null;
-    
-    // First, try processing the full file even if it's over 25MB
-    // OpenAI sometimes accepts slightly larger files
-    console.log('Attempting single file transcription first...');
-    
-    try {
-      const singleFileResult = await Promise.race([
-        openai.audio.transcriptions.create({
-          file: audioFile,
-          model: 'whisper-1',
-          response_format: 'verbose_json',
-          timestamp_granularities: ['word', 'segment']
-        }),
-        new Promise((_, reject) => 
-          setTimeout(() => reject(new Error('Single file transcription timeout after 4 minutes')), 240000)
-        )
-      ]) as any;
+    // PRO tier: Name extraction + Summary
+    if (features.nameExtraction || features.aiSummary) {
+      console.log(`\n[${tier.toUpperCase()}] 🤖 AI Processing enabled...`);
 
-      finalTranscription = singleFileResult.text;
-      totalDuration = singleFileResult.duration || 0;
-      totalSegments = singleFileResult.segments?.length || 0;
-      transcriptionSegments = singleFileResult.segments || [];
-      
-      console.log('Single file transcription succeeded!');
-      console.log(`Duration: ${totalDuration}s, Segments: ${totalSegments}`);
+      // Extract speaker names
+      if (features.nameExtraction) {
+        try {
+          // Update progress: Starting name extraction
+          await updateProcessingProgress(projectId, {
+            stage: 'name_extraction' as ProcessingStage,
+            progress: 0,
+            message: 'Extracting speaker names from conversation...'
+          });
 
-    } catch (singleFileError) {
-      console.log('Single file transcription failed:', (singleFileError as any)?.message || 'Unknown error');
-      
-      // Check if file needs chunking
-      if (needsChunking(fileData.size)) {
-        console.log('File exceeds 25MB limit, using proper audio chunking...');
-      
+          console.log('[AI] 📝 Extracting speaker names...');
+          const namedSpeakers = await extractSpeakerNames(
+            finalTranscription,
+            detectedSpeakers,
+            speakerSegments  // Pass speaker segments for accurate mapping
+          );
+          speakersWithNames = namedSpeakers as any;
+          console.log(`[AI] ✅ Named ${Object.keys(namedSpeakers).length} speakers`);
+
+          // Update progress: Name extraction completed
+          await updateProcessingProgress(projectId, {
+            stage: 'name_extraction' as ProcessingStage,
+            progress: 100,
+            message: `Successfully identified ${Object.keys(namedSpeakers).length} speaker names`
+          });
+        } catch (error: any) {
+          console.error('[AI] ⚠️  Name extraction failed:', error.message);
+        }
+      }
+
+      // Generate summary
+      if (features.aiSummary) {
+        try {
+          // Update progress: Starting summary generation
+          await updateProcessingProgress(projectId, {
+            stage: 'summary' as ProcessingStage,
+            progress: 0,
+            message: 'Generating AI-powered podcast summary...'
+          });
+
+          console.log('[AI] 📄 Generating podcast summary...');
+          const speakerContext = Object.fromEntries(
+            Object.entries(speakersWithNames).map(([id, speaker]: [string, any]) => [
+              id,
+              { name: speaker.finalName || speaker.fallbackName || id }
+            ])
+          );
+
+          const summary = await generatePodcastSummary(finalTranscription, { speakerContext });
+          summaryData = summary;
+          aiTokenUsage.summary = summary.tokensUsed;
+          console.log(`[AI] ✅ Generated ${summary.wordCount} word summary`);
+
+          // Update progress: Summary generation completed
+          await updateProcessingProgress(projectId, {
+            stage: 'summary' as ProcessingStage,
+            progress: 100,
+            message: `Generated ${summary.wordCount}-word summary`
+          });
+        } catch (error: any) {
+          console.error('[AI] ⚠️  Summary generation failed:', error.message);
+        }
+      }
+    }
+
+    // PREMIUM tier: + Roles + Chapters + Takeaways + Quotes
+    if (tier === 'premium') {
+      console.log(`\n[PREMIUM] 💎 Premium AI Processing...`);
+
+      const speakerContext = Object.fromEntries(
+        Object.entries(speakersWithNames).map(([id, speaker]: [string, any]) => [
+          id,
+          { name: speaker.finalName || speaker.fallbackName || id }
+        ])
+      );
+
+      // Classify speaker roles
+      if (features.roleClassification) {
+        try {
+          // Update progress: Starting role classification
+          await updateProcessingProgress(projectId, {
+            stage: 'role_classification' as ProcessingStage,
+            progress: 0,
+            message: 'Classifying speaker roles (host, guest, etc.)...'
+          });
+
+          console.log('[PREMIUM] 👥 Classifying speaker roles...');
+          roleAssignments = await classifySpeakerRoles(
+            Object.fromEntries(
+              Object.entries(speakersWithNames).map(([id, speaker]: [string, any]) => [
+                id,
+                {
+                  id,
+                  fallbackName: speaker.finalName || speaker.fallbackName,
+                  totalDuration: speaker.totalDuration,
+                  segments: speaker.segments || speakerSegments.filter(s => s.speakerId === id)
+                }
+              ])
+            ),
+            { transcriptContext: finalTranscription }
+          );
+
+          // Apply role assignments to speakers
+          for (const [speakerId, assignment] of Object.entries(roleAssignments)) {
+            if (!speakersWithNames[speakerId]) continue;
+            (speakersWithNames[speakerId] as any).role = assignment.role;
+            (speakersWithNames[speakerId] as any).roleConfidence = assignment.confidence;
+            (speakersWithNames[speakerId] as any).roleSummary = assignment.summary;
+            (speakersWithNames[speakerId] as any).roleEvidence = assignment.evidence;
+            (speakersWithNames[speakerId] as any).autoRoleAssigned = true;
+            (speakersWithNames[speakerId] as any).finalName = assignment.displayName || (speakersWithNames[speakerId] as any).finalName;
+          }
+
+          console.log(`[PREMIUM] ✅ Classified ${Object.keys(roleAssignments).length} speaker roles`);
+
+          // Update progress: Role classification completed
+          await updateProcessingProgress(projectId, {
+            stage: 'role_classification' as ProcessingStage,
+            progress: 100,
+            message: `Assigned roles to ${Object.keys(roleAssignments).length} speakers`
+          });
+        } catch (error: any) {
+          console.error('[PREMIUM] ⚠️  Role classification failed:', error.message);
+        }
+      }
+
+      // Detect chapters
+      if (features.chapterDetection) {
+        try {
+          // Update progress: Starting chapter detection
+          await updateProcessingProgress(projectId, {
+            stage: 'chapters' as ProcessingStage,
+            progress: 0,
+            message: 'Detecting chapter markers and topics...'
+          });
+
+          console.log('[PREMIUM] 📚 Detecting chapter markers...');
+          const chapters = await detectPodcastChapters(finalTranscription, transcriptionSegments, { speakerContext });
+          chaptersData = chapters;
+          aiTokenUsage.chapters = chapters.tokensUsed;
+          console.log(`[PREMIUM] ✅ Detected ${chapters.chapters.length} chapters`);
+
+          // Update progress: Chapter detection completed
+          await updateProcessingProgress(projectId, {
+            stage: 'chapters' as ProcessingStage,
+            progress: 100,
+            message: `Identified ${chapters.chapters.length} chapters`
+          });
+        } catch (error: any) {
+          console.error('[PREMIUM] ⚠️  Chapter detection failed:', error.message);
+        }
+      }
+
+      // Extract takeaways
+      if (features.keyTakeaways) {
+        try {
+          // Update progress: Starting takeaways extraction
+          await updateProcessingProgress(projectId, {
+            stage: 'takeaways' as ProcessingStage,
+            progress: 0,
+            message: 'Extracting key insights and takeaways...'
+          });
+
+          console.log('[PREMIUM] 💎 Extracting key takeaways...');
+          const takeaways = await extractKeyTakeaways(finalTranscription, { speakerContext });
+          takeawaysData = takeaways;
+          aiTokenUsage.takeaways = takeaways.tokensUsed;
+          console.log(`[PREMIUM] ✅ Extracted ${takeaways.takeaways.length} takeaways`);
+
+          // Update progress: Takeaways extraction completed
+          await updateProcessingProgress(projectId, {
+            stage: 'takeaways' as ProcessingStage,
+            progress: 100,
+            message: `Extracted ${takeaways.takeaways.length} key takeaways`
+          });
+        } catch (error: any) {
+          console.error('[PREMIUM] ⚠️  Takeaway extraction failed:', error.message);
+        }
+      }
+
+      // Extract social quotes
+      if (features.quotesExtraction) {
+        try {
+          // Update progress: Starting quotes extraction
+          await updateProcessingProgress(projectId, {
+            stage: 'quotes' as ProcessingStage,
+            progress: 0,
+            message: 'Finding shareable quotes for social media...'
+          });
+
+          console.log('[PREMIUM] 💬 Extracting social quotes...');
+          const quotes = await extractSocialQuotes(finalTranscription, { speakerContext });
+          quotesData = quotes;
+          aiTokenUsage.quotes = quotes.tokensUsed;
+          console.log(`[PREMIUM] ✅ Extracted ${quotes.quotes.length} social quotes`);
+
+          // Update progress: Quotes extraction completed
+          await updateProcessingProgress(projectId, {
+            stage: 'quotes' as ProcessingStage,
+            progress: 100,
+            message: `Found ${quotes.quotes.length} shareable quotes`
+          });
+        } catch (error: any) {
+          console.error('[PREMIUM] ⚠️  Quote extraction failed:', error.message);
+        }
+      }
+    }
+
+    // Narrative coverage analysis (all tiers)
+    if (existingProject?.user_id) {
       try {
-        // Chunk the audio file with safer settings
-        const chunks = await chunkAudioFile(audioFile, {
-          maxSizeMB: 15, // Use 15MB to be well under limit and process faster
-          overlapSeconds: 15, // Reduce overlap for faster processing
-          estimatedBitrate: 128
+        console.log('\n[COVERAGE] 🔍 Running narrative coverage analysis...');
+        const goals = await getActiveNarrativeGoals(existingProject.user_id);
+        coverageAnalysis = await analyzeNarrativeCoverage(finalTranscription, {
+          projectTitle: existingProject.title,
+          summary: summaryData?.summary || null,
+          goals,
+          tier,
+          maxTopics: tier === 'premium' ? 10 : 6,
+          coverageWindow: 'full_episode'
         });
 
-        console.log(`Split into ${chunks.length} chunks`);
-        
-        // Estimate cost
-        const { totalMinutes, estimatedCost } = estimateProcessingCost(chunks);
-        console.log(`Estimated processing: ${totalMinutes} minutes, ~$${estimatedCost}`);
+        coverageAnalysisCost = coverageAnalysis?.aiUsage?.costUsd || 0;
 
-        // Process each chunk
-        const chunkTranscriptions = [];
-        
-        for (let i = 0; i < chunks.length; i++) {
-          const chunk = chunks[i];
-          console.log(`Processing chunk ${i + 1}/${chunks.length}...`);
-          
-          let retryCount = 0;
-          const maxRetries = 3;
-          let success = false;
-          
-          while (retryCount < maxRetries && !success) {
-            try {
-              // Ensure chunk.data is a proper Blob
-              const chunkBlob = chunk.data instanceof Blob ? chunk.data : new Blob([chunk.data], { type: audioFile.type });
-              
-              const chunkFile = new File([chunkBlob], chunk.filename, {
-                type: audioFile.type
-              });
+        await saveNarrativeCoverageSnapshot({
+          projectId,
+          userId: existingProject.user_id,
+          projectTitle: existingProject.title || fileName,
+          coverageWindow: coverageAnalysis.coverageWindow,
+          topics: coverageAnalysis.topics,
+          ctas: coverageAnalysis.ctas,
+          opportunities: coverageAnalysis.opportunities,
+          aiUsage: coverageAnalysis.aiUsage,
+          notes: coverageAnalysis.notes
+        });
 
-              console.log(`Chunk ${i + 1} attempt ${retryCount + 1}, size: ${chunkBlob.size} bytes`);
-
-              // Add timeout to OpenAI API call (4 minutes for chunks)
-              console.log(`Starting OpenAI transcription for chunk ${i + 1}...`);
-              const chunkResult = await Promise.race([
-                openai.audio.transcriptions.create({
-                  file: chunkFile,
-                  model: 'whisper-1',
-                  response_format: 'verbose_json',
-                  timestamp_granularities: ['word', 'segment']
-                }),
-                new Promise((_, reject) => 
-                  setTimeout(() => reject(new Error('Chunk transcription timeout after 4 minutes')), 240000)
-                )
-              ]) as any;
-              console.log(`Completed OpenAI transcription for chunk ${i + 1}`);
-
-              chunkTranscriptions.push({
-                text: chunkResult.text,
-                startTime: chunk.startTime,
-                endTime: chunk.endTime,
-                chunkIndex: chunk.chunkIndex,
-                duration: chunkResult.duration || (chunk.endTime - chunk.startTime),
-                segments: chunkResult.segments || []
-              });
-
-              totalDuration += chunkResult.duration || (chunk.endTime - chunk.startTime);
-              totalSegments += chunkResult.segments?.length || 0;
-              
-              // Collect segments for speaker analysis
-              if (chunkResult.segments && chunkResult.segments.length > 0) {
-                console.log(`📊 Chunk ${i + 1}: Collected ${chunkResult.segments.length} segments for speaker analysis`);
-                // Adjust segment timestamps for chunk offset
-                const adjustedSegments = chunkResult.segments.map((segment: any) => ({
-                  ...segment,
-                  start: segment.start + chunk.startTime,
-                  end: segment.end + chunk.startTime,
-                  words: segment.words ? segment.words.map((word: any) => ({
-                    ...word,
-                    start: word.start + chunk.startTime,
-                    end: word.end + chunk.startTime
-                  })) : undefined
-                }));
-                transcriptionSegments.push(...adjustedSegments);
-                console.log(`📊 Total segments collected so far: ${transcriptionSegments.length}`);
-              } else {
-                console.log(`⚠️ Chunk ${i + 1}: No segments available for speaker analysis`);
-              }
-              
-              success = true;
-              console.log(`Chunk ${i + 1} succeeded on attempt ${retryCount + 1}`);
-
-            } catch (chunkError) {
-              retryCount++;
-              console.error(`Chunk ${i + 1} attempt ${retryCount} failed:`, (chunkError as any)?.message || 'Unknown error');
-              console.error(`Chunk ${i + 1} details:`, {
-                filename: chunk.filename,
-                startTime: chunk.startTime,
-                endTime: chunk.endTime,
-                dataType: typeof chunk.data,
-                dataSize: chunk.data instanceof Blob ? chunk.data.size : 'unknown'
-              });
-              
-              if (retryCount < maxRetries) {
-                const delay = Math.pow(2, retryCount) * 1000; // Exponential backoff: 2s, 4s, 8s
-                console.log(`Retrying chunk ${i + 1} in ${delay}ms...`);
-                await new Promise(resolve => setTimeout(resolve, delay));
-              }
-            }
-          }
-          
-          if (!success) {
-            console.error(`Chunk ${i + 1} failed after ${maxRetries} attempts`);
-            chunkTranscriptions.push({
-              text: `[Error processing chunk ${i + 1}: Failed after ${maxRetries} attempts]`,
-              startTime: chunk.startTime,
-              endTime: chunk.endTime,
-              chunkIndex: chunk.chunkIndex,
-              duration: 0
-            });
-          }
-        }
-
-        // Merge chunked transcriptions
-        finalTranscription = mergeChunkedTranscriptions(chunkTranscriptions, 30);
-        
-        console.log(`Chunked transcription completed: ${chunkTranscriptions.length} chunks processed`);
-
-      } catch (chunkingError) {
-        console.error('Error in chunking process:', chunkingError);
-        
-        // Try single file transcription as fallback (this might fail due to size, but worth trying)
-        try {
-          console.log('Attempting single file transcription as fallback...');
-          const transcription = await openai.audio.transcriptions.create({
-            file: audioFile,
-            model: 'whisper-1',
-            response_format: 'verbose_json'
-          });
-
-          finalTranscription = transcription.text;
-          totalDuration = transcription.duration || 0;
-          totalSegments = transcription.segments?.length || 0;
-          
-          console.log('Fallback single file transcription succeeded');
-        } catch (fallbackError) {
-          console.error('Fallback transcription also failed:', fallbackError);
-          
-          // Final fallback to placeholder
-          finalTranscription = `[File size: ${Math.round(fileData.size / 1024 / 1024 * 100) / 100}MB - Transcription failed]\n\nThis file exceeded the 25MB limit and both chunked and fallback transcription failed. Error: ${fallbackError instanceof Error ? fallbackError.message : 'Unknown error'}`;
-          totalDuration = Math.round(fileData.size / (128000 / 8));
-        }
+        console.log(
+          `[COVERAGE] ✅ Snapshot saved with ${coverageAnalysis.topics.length} topics and ${coverageAnalysis.ctas.length} CTAs`
+        );
+        console.log(
+          `[COVERAGE] 📊 Tokens: ${coverageAnalysis.aiUsage.inputTokens} in, ${coverageAnalysis.aiUsage.outputTokens} out`
+        );
+      } catch (coverageError: any) {
+        coverageAnalysisCost = 0;
+        console.error('[COVERAGE] ⚠️  Narrative coverage analysis failed:', coverageError?.message || coverageError);
       }
-      
-      } else {
-        // File is small enough but single file failed, try chunking anyway
-        console.log('Single file failed but file is small, retrying with minimal chunking...');
-        
-        try {
-          // Force chunking even for smaller files
-          const chunks = await chunkAudioFile(audioFile, {
-            maxSizeMB: 15, // Use smaller chunks
-            overlapSeconds: 15, // Reduce overlap for faster processing
-            estimatedBitrate: 128
-          });
-
-          console.log(`Force chunking into ${chunks.length} pieces`);
-          
-          // Process chunks with retry logic
-          const chunkTranscriptions = [];
-          
-          for (let i = 0; i < chunks.length; i++) {
-            const chunk = chunks[i];
-            console.log(`Processing chunk ${i + 1}/${chunks.length}...`);
-            
-            let retryCount = 0;
-            const maxRetries = 3;
-            let success = false;
-            
-            while (retryCount < maxRetries && !success) {
-              try {
-                const chunkBlob = chunk.data instanceof Blob ? chunk.data : new Blob([chunk.data], { type: audioFile.type });
-                const chunkFile = new File([chunkBlob], chunk.filename, { type: audioFile.type });
-
-                console.log(`Chunk ${i + 1} attempt ${retryCount + 1}, size: ${chunkBlob.size} bytes`);
-
-                // Add timeout to OpenAI API call (4 minutes for chunks)
-                console.log(`Starting OpenAI transcription for chunk ${i + 1}...`);
-                const chunkResult = await Promise.race([
-                  openai.audio.transcriptions.create({
-                    file: chunkFile,
-                    model: 'whisper-1',
-                    response_format: 'verbose_json',
-                    timestamp_granularities: ['word', 'segment']
-                  }),
-                  new Promise((_, reject) => 
-                    setTimeout(() => reject(new Error('Chunk transcription timeout after 4 minutes')), 240000)
-                  )
-                ]) as any;
-                console.log(`Completed OpenAI transcription for chunk ${i + 1}`);
-
-                chunkTranscriptions.push({
-                  text: chunkResult.text,
-                  startTime: chunk.startTime,
-                  endTime: chunk.endTime,
-                  chunkIndex: chunk.chunkIndex,
-                  duration: chunkResult.duration || (chunk.endTime - chunk.startTime),
-                  segments: chunkResult.segments || []
-                });
-
-                totalDuration += chunkResult.duration || (chunk.endTime - chunk.startTime);
-                totalSegments += chunkResult.segments?.length || 0;
-                
-                // Collect segments for speaker analysis
-                if (chunkResult.segments && chunkResult.segments.length > 0) {
-                  console.log(`📊 Chunk ${i + 1}: Collected ${chunkResult.segments.length} segments for speaker analysis`);
-                  // Adjust segment timestamps for chunk offset
-                  const adjustedSegments = chunkResult.segments.map((segment: any) => ({
-                    ...segment,
-                    start: segment.start + chunk.startTime,
-                    end: segment.end + chunk.startTime,
-                    words: segment.words ? segment.words.map((word: any) => ({
-                      ...word,
-                      start: word.start + chunk.startTime,
-                      end: word.end + chunk.startTime
-                    })) : undefined
-                  }));
-                  transcriptionSegments.push(...adjustedSegments);
-                  console.log(`📊 Total segments collected so far: ${transcriptionSegments.length}`);
-                } else {
-                  console.log(`⚠️ Chunk ${i + 1}: No segments available for speaker analysis`);
-                }
-                
-                success = true;
-                console.log(`Chunk ${i + 1} succeeded on attempt ${retryCount + 1}`);
-
-              } catch (chunkError) {
-                retryCount++;
-                console.error(`Chunk ${i + 1} attempt ${retryCount} failed:`, (chunkError as any)?.message || 'Unknown error');
-                
-                if (retryCount < maxRetries) {
-                  const delay = Math.pow(2, retryCount) * 1000; // Exponential backoff
-                  console.log(`Retrying chunk ${i + 1} in ${delay}ms...`);
-                  await new Promise(resolve => setTimeout(resolve, delay));
-                }
-              }
-            }
-            
-            if (!success) {
-              console.error(`Chunk ${i + 1} failed after ${maxRetries} attempts`);
-              chunkTranscriptions.push({
-                text: `[Error processing chunk ${i + 1}: Failed after ${maxRetries} attempts]`,
-                startTime: chunk.startTime,
-                endTime: chunk.endTime,
-                chunkIndex: chunk.chunkIndex,
-                duration: 0
-              });
-            }
-          }
-
-          // Merge chunked transcriptions
-          finalTranscription = mergeChunkedTranscriptions(chunkTranscriptions, 30);
-          console.log(`Force chunked transcription completed: ${chunkTranscriptions.length} chunks processed`);
-
-        } catch (forceChunkError) {
-          console.error('Force chunking also failed:', forceChunkError);
-          throw new Error('Both single file and chunked transcription failed');
-        }
-      }
+    } else {
+      console.warn('[COVERAGE] ⚠️  Missing project user_id, skipping coverage snapshot.');
     }
 
-    // If we get here, we should have a transcription
-    if (!finalTranscription) {
-      throw new Error('No transcription was generated');
+    // Calculate AI processing costs from actual token usage
+    const CLAUDE_INPUT_COST = 3 / 1_000_000; // $3 per million tokens
+    const CLAUDE_OUTPUT_COST = 15 / 1_000_000; // $15 per million tokens
+    const GPT4O_MINI_INPUT_COST = 0.15 / 1_000_000; // $0.15 per million tokens
+    const GPT4O_MINI_OUTPUT_COST = 0.60 / 1_000_000; // $0.60 per million tokens
+
+    // Calculate actual AI costs
+    for (const [task, usage] of Object.entries(aiTokenUsage)) {
+      const inputCost = usage.input * CLAUDE_INPUT_COST;
+      const outputCost = usage.output * CLAUDE_OUTPUT_COST;
+      aiProcessingCost += inputCost + outputCost;
+      console.log(`[COST] ${task}: $${(inputCost + outputCost).toFixed(6)} (${usage.input} in, ${usage.output} out)`);
     }
 
-    // Save transcription first, then do speaker analysis asynchronously
-    console.log('Saving transcription first, then processing speakers in background...');
+    let totalCost = baseCost + aiProcessingCost;
+    totalCost += coverageAnalysisCost;
+    const tierPricing = calculateTierCost(tier, totalDuration, false);
 
-    // Save transcription to database immediately
-    const updateData: any = {
-      transcription_text: finalTranscription,
-      status: 'completed',
-      processing_completed_at: new Date().toISOString(),
-      processing_time_seconds: Math.round((Date.now() - new Date().getTime()) / 1000)
+    console.log(`\n[COST] 💰 Cost Summary:`);
+    console.log(`[COST]   Transcription: $${baseCost.toFixed(4)} (AssemblyAI)`);
+    console.log(`[COST]   AI Processing: $${aiProcessingCost.toFixed(4)} (Claude Sonnet 4.5)`);
+    if (coverageAnalysisCost > 0) {
+      console.log(
+        `[COST]   Coverage Radar: $${coverageAnalysisCost.toFixed(4)} (Claude Sonnet 4.5)`
+      );
+    }
+    console.log(`[COST]   Total Cost: $${totalCost.toFixed(4)}`);
+    console.log(`[COST]   Expected ${tier} cost: $${tierPricing.totalCost.toFixed(4)}`);
+
+    // Build speaker data
+    const speakerData = {
+      segments: speakerSegments,
+      speakers: speakersWithNames,
+      detectionMetadata: {
+        totalSpeakers: Object.keys(speakersWithNames).length,
+        totalSegments: speakerSegments.length,
+        processedAt: new Date().toISOString(),
+        processingTimeMs: (assemblyMetadata?.processing_time || 0) * 1000,
+        method: hasCache ? 'cache' : 'assemblyai',
+        confidence: assemblyMetadata?.confidence || 0,
+        tier,
+        aiProcessing: {
+          nameExtraction: features.nameExtraction,
+          summary: features.aiSummary,
+          roles: features.roleClassification,
+          chapters: features.chapterDetection,
+          takeaways: features.keyTakeaways,
+          quotes: features.quotesExtraction
+        }
+      }
     };
 
+    // Build cost breakdown
+    const costBreakdown = {
+      transcription: baseCost,
+      diarization: 0, // Included in AssemblyAI
+      aiProcessing: aiProcessingCost,
+      coverageAnalysis: coverageAnalysisCost,
+      generation: 0,
+      total: totalCost,
+      provider: 'assemblyai',
+      tier,
+      aiTokenUsage
+    };
+
+    // Prepare database update
+    const updateData: any = {
+      transcription_text: finalTranscription,
+      transcription_segments: JSON.stringify(transcriptionSegments),
+      speaker_data: speakerData,
+      status: 'completed',
+      processing_completed_at: new Date().toISOString(),
+      processing_time_seconds: Math.round((Date.now() - startTime) / 1000),
+      audio_duration_seconds: totalDuration,
+      actual_processing_cost: totalCost,
+      cost_breakdown: costBreakdown,
+      performance_level: tier
+    };
+
+    // Add AI-generated content fields
+    if (summaryData) {
+      updateData.ai_summary = summaryData.summary;
+    }
+    if (chaptersData) {
+      updateData.chapters = chaptersData.chapters;
+    }
+    if (takeawaysData) {
+      updateData.key_takeaways = takeawaysData.takeaways;
+    }
+    if (quotesData) {
+      updateData.social_quotes = quotesData.quotes;
+    }
+
+    // Update progress: Finalizing
+    await updateProcessingProgress(projectId, {
+      stage: 'finalizing' as ProcessingStage,
+      progress: 50,
+      message: 'Saving your results to the database...'
+    });
+
+    // Save to database
+    console.log(`\n[DATABASE] 💾 Saving results to project ${projectId}...`);
     const { error: updateError } = await supabaseAdmin
       .from('projects')
       .update(updateData)
       .eq('id', projectId);
 
     if (updateError) {
-      console.error('Failed to update project with transcription:', updateError);
-      return NextResponse.json(
-        { error: 'Failed to save transcription' },
-        { status: 500 }
-      );
+      console.error('[DATABASE] ❌ Failed to save results:', updateError);
+      throw new Error(`Database update failed: ${updateError.message}`);
     }
 
-    console.log(`Transcription completed for project ${projectId}`);
+    console.log('[DATABASE] ✅ Results saved successfully');
 
-    // Start speaker analysis in background (don't await)
-    if (transcriptionSegments.length > 0) {
-      console.log(`🎯 MAIN: Starting background speaker analysis for project ${projectId} with ${transcriptionSegments.length} segments`);
-      console.log(`🎯 MAIN: Transcription length: ${finalTranscription.length} characters`);
-      console.log(`🎯 MAIN: Sample segments:`, transcriptionSegments.slice(0, 2).map(s => ({
-        start: s.start,
-        end: s.end,
-        text: s.text.substring(0, 50) + '...'
-      })));
-      
-      // Check PyAnnote availability at startup
-      checkPyAnnoteAvailability().then(available => {
-        console.log(`🎯 MAIN: PyAnnote availability: ${available ? '✅ Available' : '❌ Not available'}`);
-        if (!available) {
-          console.log('🎯 MAIN: PyAnnote setup instructions:');
-          console.log(getPyAnnoteSetupInstructions());
-        }
-      });
-      
-      // Fire and forget background process with audio file info
-      processSpeakerAnalysisBackground(projectId, transcriptionSegments, finalTranscription, fileName).catch(error => {
-        console.error('🎯 MAIN: Background speaker analysis failed with unhandled error:', error);
-        console.error('🎯 MAIN: Error stack:', error.stack);
-      });
-      
-      console.log(`🎯 MAIN: Background speaker analysis initiated for project ${projectId}`);
-    } else {
-      console.log(`🎯 MAIN: No transcription segments available for speaker analysis (project ${projectId})`);
-      console.log(`🎯 MAIN: Available data:`, {
-        segmentsArray: Array.isArray(transcriptionSegments),
-        segmentsLength: transcriptionSegments?.length,
-        finalTranscriptionLength: finalTranscription?.length
-      });
+    // Update progress: Completed
+    await updateProcessingProgress(projectId, {
+      stage: 'completed' as ProcessingStage,
+      progress: 100,
+      message: 'Processing complete! Your content is ready.'
+    });
+
+    // Clean up temp file and memory
+    try {
+      if (tempAudioFilePath) {
+        await fs.unlink(tempAudioFilePath);
+        console.log(`[CLEANUP] 🧹 Removed temp file: ${tempAudioFilePath}`);
+      }
+      purgeInMemoryAudio(fileName);
+      console.log(`[CLEANUP] 🧹 Cleared file from memory`);
+    } catch (cleanupError) {
+      console.warn('[CLEANUP] ⚠️  Cleanup failed:', cleanupError);
     }
 
-    // Note: Content generation will be triggered separately after user selects content types
+    const totalTime = (Date.now() - startTime) / 1000;
+    console.log(`\n========================================`);
+    console.log(`[TRANSCRIPTION] ✅ ${tier.toUpperCase()} tier processing completed in ${totalTime.toFixed(1)}s`);
+    console.log(`========================================\n`);
 
     return NextResponse.json({
       success: true,
-      projectId,
+      tier,
       transcription: finalTranscription,
+      speakers: Object.keys(speakersWithNames).length,
       duration: totalDuration,
-      segments: totalSegments,
-      method: needsChunking(fileData.size) ? 'chunked' : 'single'
+      cost: totalCost,
+      costBreakdown,
+      features: {
+        summary: summaryData !== null,
+        chapters: chaptersData !== null,
+        takeaways: takeawaysData !== null,
+        quotes: quotesData !== null,
+        roles: Object.keys(roleAssignments).length > 0,
+        coverageRadar: coverageAnalysis !== null
+      }
     });
 
-  } catch (error) {
-    console.error('Transcription error:', error);
+  } catch (error: any) {
+    console.error('[TRANSCRIPTION] ❌ Error:', error);
 
-    // Try to update project status to failed if we have the projectId
-    const body = await request.json().catch(() => ({}));
-    if (body.projectId) {
-      await supabaseAdmin
-        .from('projects')
-        .update({ status: 'failed' })
-        .eq('id', body.projectId);
+    // Clean up temp file on error
+    if (tempAudioFilePath) {
+      try {
+        await fs.unlink(tempAudioFilePath);
+      } catch {}
     }
 
     return NextResponse.json(
-      { error: 'Transcription failed' },
+      { error: error.message || 'Transcription failed' },
       { status: 500 }
     );
-  }
-}
-
-/**
- * Process speaker analysis in the background after transcription is complete
- * This runs asynchronously so it doesn't delay the transcription response
- */
-async function processSpeakerAnalysisBackground(
-  projectId: string, 
-  transcriptionSegments: TranscriptionSegment[], 
-  finalTranscription: string,
-  audioFileName?: string
-) {
-  const startTime = Date.now();
-  let tempAudioFile: string | undefined; // Track temporary audio file for cleanup
-  
-  console.log(`[SPEAKER ANALYSIS] 🚀 Starting for project ${projectId} at ${new Date().toISOString()}`);
-  console.log(`[SPEAKER ANALYSIS] Input validation:`, {
-    projectId: projectId ? 'valid' : 'MISSING',
-    segmentsCount: transcriptionSegments?.length || 0,
-    transcriptionLength: finalTranscription?.length || 0,
-    segmentsValid: Array.isArray(transcriptionSegments)
-  });
-  
-  // Early validation
-  if (!projectId) {
-    console.error('[SPEAKER ANALYSIS] ❌ FATAL: No project ID provided');
-    return;
-  }
-  
-  if (!transcriptionSegments || transcriptionSegments.length === 0) {
-    console.error('[SPEAKER ANALYSIS] ❌ FATAL: No transcription segments available');
-    return;
-  }
-  
-  if (!finalTranscription || finalTranscription.length === 0) {
-    console.error('[SPEAKER ANALYSIS] ❌ FATAL: No transcription text available');
-    return;
-  }
-  
-  try {
-    // Step 1: Enhanced speaker detection with PyAnnote support
-    console.log(`[SPEAKER ANALYSIS] Step 1: Enhanced speaker detection from ${transcriptionSegments.length} segments...`);
-    console.log(`[SPEAKER ANALYSIS] Audio file: ${audioFileName || 'not available'}`);
-    
-    // Try to get audio file for PyAnnote processing
-    let audioFilePath: string | undefined;
-    
-    if (audioFileName) {
-      try {
-        audioFilePath = await prepareAudioFileForPyAnnote(audioFileName);
-        if (audioFilePath) {
-          console.log(`[SPEAKER ANALYSIS] 🎯 Audio file prepared for PyAnnote: ${audioFilePath}`);
-          tempAudioFile = audioFilePath; // Track for cleanup
-        }
-      } catch (error) {
-        console.log(`[SPEAKER ANALYSIS] ⚠️ Could not prepare audio file for PyAnnote: ${error}`);
-      }
-    }
-    
-    const speakerSegments = await enhancedSpeakerDetection(transcriptionSegments, audioFilePath);
-    console.log(`[SPEAKER ANALYSIS] ✅ Step 1 Complete: Detected ${speakerSegments.length} speaker segments`);
-    
-    if (speakerSegments.length === 0) {
-      console.error('[SPEAKER ANALYSIS] ❌ No speaker segments detected, cannot continue');
-      throw new Error('PyAnnote returned no speaker segments');
-    }
-    
-    // Step 2: Group segments by speaker
-    console.log(`[SPEAKER ANALYSIS] Step 2: Grouping ${speakerSegments.length} segments by speaker...`);
-    const detectedSpeakers = groupSegmentsBySpeaker(speakerSegments);
-    const speakerIds = Object.keys(detectedSpeakers);
-    console.log(`[SPEAKER ANALYSIS] ✅ Step 2 Complete: Found ${speakerIds.length} unique speakers:`, speakerIds);
-    
-    if (speakerIds.length === 0) {
-      console.error('[SPEAKER ANALYSIS] ❌ No unique speakers found, cannot continue');
-      return;
-    }
-    
-    // Log speaker details
-    speakerIds.forEach(id => {
-      const speaker = detectedSpeakers[id];
-      console.log(`[SPEAKER ANALYSIS] Speaker ${id}: ${speaker.segments.length} segments, total duration: ${speaker.totalDuration.toFixed(1)}s`);
-    });
-    
-    // Step 3: Extract speaker names using AI (with timeout)
-    console.log(`[SPEAKER ANALYSIS] Step 3: Extracting speaker names with AI...`);
-    console.log(`[SPEAKER ANALYSIS] AI Input: ${finalTranscription.length} chars, ${speakerIds.length} speakers`);
-    
-    let namedSpeakers: any;
-    try {
-      namedSpeakers = await Promise.race([
-        extractSpeakerNames(finalTranscription, detectedSpeakers),
-        new Promise((_, reject) => 
-          setTimeout(() => reject(new Error('Speaker name extraction timeout after 45 seconds')), 45000)
-        )
-      ]) as any;
-      
-      console.log(`[SPEAKER ANALYSIS] ✅ Step 3 Complete: AI name extraction successful`);
-      console.log('[SPEAKER ANALYSIS] Named speakers result:', Object.keys(namedSpeakers).map(id => 
-        `${id}: "${namedSpeakers[id].finalName}" (extracted: ${namedSpeakers[id].extractedName ? 'Yes' : 'No'})`
-      ));
-      
-    } catch (aiError) {
-      console.error('[SPEAKER ANALYSIS] ⚠️ AI name extraction failed, using fallback names:', aiError);
-      
-      // Create fallback named speakers
-      namedSpeakers = {};
-      speakerIds.forEach((id, index) => {
-        namedSpeakers[id] = {
-          ...detectedSpeakers[id],
-          extractedName: null,
-          finalName: `Speaker ${index + 1}`
-        };
-      });
-      
-      console.log('[SPEAKER ANALYSIS] Fallback speakers created:', Object.keys(namedSpeakers));
-    }
-    
-    // Step 4: Prepare speaker data for storage
-    console.log(`[SPEAKER ANALYSIS] Step 4: Preparing data for database storage...`);
-    const speakerData = {
-      segments: speakerSegments,
-      speakers: namedSpeakers,
-      detectionMetadata: {
-        totalSpeakers: Object.keys(namedSpeakers).length,
-        totalSegments: speakerSegments.length,
-        processedAt: new Date().toISOString(),
-        processingTimeMs: Date.now() - startTime
-      }
-    };
-    
-    const serializedData = JSON.stringify(speakerData);
-    console.log(`[SPEAKER ANALYSIS] Data prepared:`, {
-      totalSpeakers: speakerData.detectionMetadata.totalSpeakers,
-      totalSegments: speakerData.detectionMetadata.totalSegments,
-      dataSize: `${(serializedData.length / 1024).toFixed(1)} KB`,
-      processingTimeMs: speakerData.detectionMetadata.processingTimeMs
-    });
-    
-    // Step 5: Update database with speaker data
-    console.log(`[SPEAKER ANALYSIS] Step 5: Saving to database (project: ${projectId})...`);
-    
-    const updatePayload = {
-      transcription_segments: JSON.stringify(transcriptionSegments),
-      speaker_data: serializedData
-    };
-    
-    console.log('[SPEAKER ANALYSIS] Database update payload size:', {
-      transcriptionSegments: `${(JSON.stringify(transcriptionSegments).length / 1024).toFixed(1)} KB`,
-      speakerData: `${(serializedData.length / 1024).toFixed(1)} KB`
-    });
-    
-    const { error: speakerUpdateError } = await supabaseAdmin
-      .from('projects')
-      .update(updatePayload)
-      .eq('id', projectId);
-    
-    if (speakerUpdateError) {
-      console.error('[SPEAKER ANALYSIS] ❌ Database update FAILED:', speakerUpdateError);
-      console.error('[SPEAKER ANALYSIS] Error details:', {
-        message: speakerUpdateError.message,
-        code: speakerUpdateError.code,
-        details: speakerUpdateError.details,
-        hint: speakerUpdateError.hint
-      });
-      
-      // Try to check if project exists
-      const { data: projectCheck, error: checkError } = await supabaseAdmin
-        .from('projects')
-        .select('id, title')
-        .eq('id', projectId)
-        .single();
-        
-      if (checkError) {
-        console.error('[SPEAKER ANALYSIS] Project check failed:', checkError);
-      } else {
-        console.log('[SPEAKER ANALYSIS] Project exists:', projectCheck);
-      }
-      
-    } else {
-      const totalTime = Date.now() - startTime;
-      console.log(`[SPEAKER ANALYSIS] ✅ SUCCESS! Completed for project ${projectId}`);
-      console.log(`[SPEAKER ANALYSIS] Final stats:`, {
-        totalProcessingTime: `${(totalTime / 1000).toFixed(1)}s`,
-        speakersSaved: speakerData.detectionMetadata.totalSpeakers,
-        segmentsSaved: speakerData.detectionMetadata.totalSegments,
-        timestamp: new Date().toISOString()
-      });
-      
-      // Verify the save worked
-      const { data: verifyData, error: verifyError } = await supabaseAdmin
-        .from('projects')
-        .select('speaker_data')
-        .eq('id', projectId)
-        .single();
-        
-      if (verifyError) {
-        console.error('[SPEAKER ANALYSIS] ❌ Verification failed:', verifyError);
-      } else if (verifyData?.speaker_data) {
-        console.log('[SPEAKER ANALYSIS] ✅ Data verified saved in database');
-        try {
-          const savedData = JSON.parse(verifyData.speaker_data);
-          console.log('[SPEAKER ANALYSIS] Verified saved speakers:', Object.keys(savedData.speakers || {}));
-        } catch (parseError) {
-          console.error('[SPEAKER ANALYSIS] ❌ Saved data parsing failed:', parseError);
-        }
-      } else {
-        console.error('[SPEAKER ANALYSIS] ❌ No speaker data found after save!');
-      }
-    }
-    
-  } catch (speakerError: unknown) {
-    console.error('[SPEAKER ANALYSIS] ❌ CRITICAL ERROR in main process:', speakerError);
-    console.error('[SPEAKER ANALYSIS] Error stack:', speakerError instanceof Error ? speakerError.stack : 'No stack trace');
-    
-    // Enhanced fallback with error tracking
-    try {
-      console.log('[SPEAKER ANALYSIS] Attempting fallback save...');
-      const speakerSegments = detectSpeakers(transcriptionSegments);
-      const basicSpeakerData = {
-        segments: speakerSegments,
-        speakers: {},
-        detectionMetadata: {
-          totalSpeakers: 0,
-          totalSegments: speakerSegments.length,
-          processedAt: new Date().toISOString(),
-          processingTimeMs: Date.now() - startTime,
-          error: speakerError instanceof Error ? speakerError.message : 'Unknown error',
-          errorType: speakerError instanceof Error ? speakerError.name : 'Error'
-        }
-      };
-      
-      const { error: fallbackError } = await supabaseAdmin
-        .from('projects')
-        .update({
-          transcription_segments: JSON.stringify(transcriptionSegments),
-          speaker_data: JSON.stringify(basicSpeakerData)
-        })
-        .eq('id', projectId);
-        
-      if (fallbackError) {
-        console.error('[SPEAKER ANALYSIS] ❌ Fallback save also failed:', fallbackError);
-      } else {
-        console.log(`[SPEAKER ANALYSIS] ⚠️ Fallback save succeeded for project ${projectId} (${speakerSegments.length} segments, no names)`);
-      }
-      
-    } catch (fallbackError) {
-      console.error('[SPEAKER ANALYSIS] ❌ FATAL: Even fallback save failed:', fallbackError);
-    }
-  } finally {
-    // Cleanup temporary audio file if created
-    if (tempAudioFile) {
-      try {
-        const fs = await import('fs').then(m => m.promises);
-        await fs.unlink(tempAudioFile);
-        console.log(`[SPEAKER ANALYSIS] 🧹 Cleaned up temporary audio file: ${tempAudioFile}`);
-      } catch (cleanupError) {
-        console.warn(`[SPEAKER ANALYSIS] ⚠️ Could not cleanup temp file: ${cleanupError}`);
-      }
-    }
-  }
-}
-
-/**
- * Prepare audio file for PyAnnote processing by saving it temporarily
- */
-async function prepareAudioFileForPyAnnote(audioFileName: string): Promise<string | undefined> {
-  try {
-    const fs = await import('fs').then(m => m.promises);
-    const path = await import('path');
-    const os = await import('os');
-    
-    console.log(`[SPEAKER ANALYSIS] 📁 Preparing audio file: ${audioFileName}`);
-    
-    // Try global storage first
-    if (global.uploadedFiles && global.uploadedFiles.has(audioFileName)) {
-      const fileData = global.uploadedFiles.get(audioFileName);
-      if (fileData) {
-        console.log('[SPEAKER ANALYSIS] 📁 Found file in global storage');
-        
-        // Create temporary file
-        const tempDir = os.tmpdir();
-        const tempFileName = `pyannote_audio_${Date.now()}_${Math.random().toString(36).substring(7)}.mp3`;
-        const tempFilePath = path.join(tempDir, tempFileName);
-        
-        // Write buffer to temp file
-        await fs.writeFile(tempFilePath, Buffer.from(fileData.buffer));
-        console.log(`[SPEAKER ANALYSIS] 📁 Created temporary file: ${tempFilePath}`);
-        
-        return tempFilePath;
-      }
-    }
-    
-    // Fallback to Supabase storage
-    console.log('[SPEAKER ANALYSIS] 📁 Trying Supabase storage...');
-    const storageResult = await supabaseAdmin.storage
-      .from('audio-files')
-      .download(audioFileName);
-      
-    if (storageResult.error || !storageResult.data) {
-      console.log(`[SPEAKER ANALYSIS] 📁 Supabase storage failed: ${storageResult.error?.message}`);
-      return undefined;
-    }
-    
-    // Create temporary file from Supabase data
-    const fs_module = await import('fs').then(m => m.promises);
-    const path_module = await import('path');
-    const os_module = await import('os');
-    
-    const tempDir = os_module.tmpdir();
-    const tempFileName = `pyannote_audio_${Date.now()}_${Math.random().toString(36).substring(7)}.mp3`;
-    const tempFilePath = path_module.join(tempDir, tempFileName);
-    
-    const buffer = await storageResult.data.arrayBuffer();
-    await fs_module.writeFile(tempFilePath, Buffer.from(buffer));
-    
-    console.log(`[SPEAKER ANALYSIS] 📁 Created temporary file from Supabase: ${tempFilePath}`);
-    return tempFilePath;
-    
-  } catch (error) {
-    console.error(`[SPEAKER ANALYSIS] 📁 Failed to prepare audio file: ${error}`);
-    return undefined;
   }
 }

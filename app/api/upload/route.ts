@@ -1,5 +1,9 @@
 import { NextRequest, NextResponse } from 'next/server';
+import { Buffer } from 'buffer';
 import { supabaseAdmin } from '@/lib/supabase/server';
+import { updateProcessingProgress } from '@/lib/progress-tracker';
+import { computeAudioFingerprint } from '@/lib/audio-fingerprint';
+import { getCachedTranscription, applyCachedTranscriptionToProject } from '@/lib/transcription-cache';
 
 // Global file storage for temporary solution
 declare global {
@@ -24,6 +28,32 @@ const ALLOWED_TYPES = [
 
 const ALLOWED_EXTENSIONS = ['.mp3', '.wav', '.m4a', '.flac', '.ogg', '.webm'];
 
+type PerformanceLevel = 'basic' | 'pro' | 'premium';
+
+const sanitizeFileName = (name: string) => {
+  const normalized = name
+    .normalize('NFKD')
+    .replace(/[\u0300-\u036f]/g, '');
+  const sanitized = normalized
+    .replace(/[^a-zA-Z0-9.-]/g, '_')
+    .replace(/_{2,}/g, '_')
+    .replace(/^_+|_+$/g, '');
+  return sanitized || 'audio_upload';
+};
+
+const legacyToCurrentLevel = (value: string): PerformanceLevel | null => {
+  if (value === 'basic' || value === 'pro' || value === 'premium') return value as PerformanceLevel;
+  if (value === 'low') return 'basic';
+  if (value === 'medium') return 'pro';
+  if (value === 'high') return 'premium';
+  return null;
+};
+
+const normalizePerformanceLevel = (value: FormDataEntryValue | null): PerformanceLevel => {
+  if (!value || typeof value !== 'string') return 'premium';
+  return legacyToCurrentLevel(value) || 'premium';
+};
+
 export async function POST(request: NextRequest) {
   console.log('Upload API called');
   
@@ -40,6 +70,8 @@ export async function POST(request: NextRequest) {
     const formData = await request.formData();
     const file = formData.get('audio') as File;
     const title = formData.get('title') as string;
+    const performanceLevel = normalizePerformanceLevel(formData.get('performanceLevel'));
+    console.log(`[UPLOAD] Selected performance level: ${performanceLevel}`);
 
     console.log('File received:', file?.name, 'Size:', file?.size, 'Type:', file?.type);
     console.log('Title:', title);
@@ -79,8 +111,15 @@ export async function POST(request: NextRequest) {
       );
     }
 
+    // Normalize filename for storage once up-front
+    const sanitizedBaseName = sanitizeFileName(file.name);
+
     // Get file duration (we'll estimate it for now, can be improved later)
     const estimatedDuration = Math.round(file.size / (128000 / 8)); // Rough estimate based on 128kbps
+
+    const fileArrayBuffer = await file.arrayBuffer();
+    const fileBuffer = Buffer.from(fileArrayBuffer);
+    const audioFingerprint = computeAudioFingerprint(fileBuffer);
 
     console.log('Creating project record...');
 
@@ -112,18 +151,52 @@ export async function POST(request: NextRequest) {
 
     // Create project record with authenticated user
     try {
-      const { data: project, error: projectError } = await supabaseAdmin
+      // First attempt: try with new progress tracking fields
+      let insertData: any = {
+        user_id: user.id,
+        title,
+        audio_file_name: sanitizedBaseName,
+        audio_file_size: file.size,
+        audio_duration: estimatedDuration,
+        audio_fingerprint: audioFingerprint,
+        status: 'uploading',
+        processing_stage: 'uploading',
+        processing_progress: 0,
+        processing_message: 'Uploading audio file...',
+        stage_started_at: new Date().toISOString(),
+        performance_level: performanceLevel
+      };
+
+      let { data: project, error: projectError } = await supabaseAdmin
         .from('projects')
-        .insert({
-          user_id: user.id,
-          title,
-          audio_file_name: file.name,
-          audio_file_size: file.size,
-          audio_duration: estimatedDuration,
-          status: 'uploading'
-        })
+        .insert(insertData)
         .select()
         .single();
+
+      // If error is about missing columns, retry without progress fields
+      if (projectError && projectError.message?.includes('Could not find')) {
+        console.log('[UPLOAD] Progress tracking columns not available, retrying without them...');
+
+        insertData = {
+          user_id: user.id,
+          title,
+          audio_file_name: sanitizedBaseName,
+          audio_file_size: file.size,
+          audio_duration: estimatedDuration,
+          audio_fingerprint: audioFingerprint,
+          status: 'uploading',
+          performance_level: performanceLevel
+        };
+
+        const retry = await supabaseAdmin
+          .from('projects')
+          .insert(insertData)
+          .select()
+          .single();
+
+        project = retry.data;
+        projectError = retry.error;
+      }
 
       if (projectError) {
         console.error('Project creation error:', projectError);
@@ -155,11 +228,7 @@ export async function POST(request: NextRequest) {
       console.log('Project created:', project.id);
 
       // Upload file to Supabase Storage - sanitize filename
-      const sanitizedFileName = file.name
-        .replace(/[^a-zA-Z0-9.-]/g, '_')  // Replace special chars with underscore
-        .replace(/_{2,}/g, '_');          // Replace multiple underscores with single
-      
-      const fileName = `${project.id}/${sanitizedFileName}`;
+      const fileName = `${project.id}/${sanitizedBaseName}`;
       
       console.log('Uploading file to storage...');
       console.log(`File size: ${(file.size / 1024 / 1024).toFixed(2)}MB`);
@@ -198,38 +267,66 @@ export async function POST(request: NextRequest) {
         );
       }
       
-      // TEMPORARY: Use local file storage to bypass Supabase Storage issues
-      let uploadData, uploadError;
-      
-      console.log('Using local file storage (bypassing Supabase Storage)...');
+      // Upload directly to Supabase Storage
+      let uploadError: unknown = null;
+      let uploadData: { path: string } | null = null;
       
       try {
-        // Store file in memory for transcription (temporary solution)
-        const fileBuffer = await file.arrayBuffer();
-        console.log(`File loaded into memory: ${fileBuffer.byteLength} bytes`);
+        const { data, error } = await supabaseAdmin.storage
+          .from('audio-files')
+          .upload(fileName, fileBuffer, {
+            contentType: file.type || 'application/octet-stream',
+            upsert: true
+          });
         
-        // Store the file data in a global map for the transcription API to access
+        uploadData = data;
+        uploadError = error;
+        
+        if (error) {
+          throw error;
+        }
+        
+        console.log('Supabase Storage upload successful');
+
+        // Keep a local in-memory copy for immediate processing to avoid re-downloading
         if (!global.uploadedFiles) {
           global.uploadedFiles = new Map();
         }
-        
-        global.uploadedFiles.set(fileName, {
-          buffer: fileBuffer,
+        const inMemoryFile = {
+          buffer: fileArrayBuffer,
           contentType: file.type,
           originalName: file.name,
           size: file.size
-        });
-        
-        // Simulate successful upload
-        uploadData = { path: fileName };
-        uploadError = null;
-        
-        console.log('Local file storage successful');
-        console.log('NOTE: Using temporary local storage - file will be lost on server restart');
-        
-      } catch (localStorageError) {
-        console.error('Local file storage error:', localStorageError);
-        uploadError = localStorageError;
+        };
+        global.uploadedFiles.set(fileName, inMemoryFile);
+        if (sanitizedBaseName !== fileName) {
+          global.uploadedFiles.set(sanitizedBaseName, inMemoryFile);
+        }
+
+        // Check for cached transcription (base layer only)
+        const cachedTranscription = await getCachedTranscription(audioFingerprint);
+        if (cachedTranscription) {
+          const hydrated = await applyCachedTranscriptionToProject(
+            project.id,
+            cachedTranscription,
+            estimatedDuration
+          );
+
+          if (hydrated) {
+            console.log(`[UPLOAD] ♻️ Found cached transcription for fingerprint ${audioFingerprint}`);
+            console.log(`[UPLOAD] 🎯 Will apply tier-specific features based on performance level`);
+
+            // Increment reference count
+            const { incrementReferenceCount } = await import('@/lib/transcription-cache');
+            await incrementReferenceCount(audioFingerprint);
+
+            // Continue to transcription endpoint to apply tier-specific features
+            // Do NOT return early - let the tier processing happen
+          }
+        }
+      } catch (storageError) {
+        console.error('Supabase Storage upload error:', storageError);
+        uploadError = storageError;
       }
       
       /* Temporarily disable chunking logic
@@ -409,11 +506,17 @@ export async function POST(request: NextRequest) {
 
       console.log('File uploaded successfully to:', fileName);
 
-      // Update project with upload completion
+      // Update progress: upload complete, starting transcription
+      await updateProcessingProgress(project.id, {
+        stage: 'transcribing',
+        progress: 0,
+        message: 'Upload complete. Starting transcription...'
+      });
+
+      // Legacy status update for backwards compatibility
       const { error: updateError } = await supabaseAdmin
         .from('projects')
-        .update({ 
-          status: 'processing',
+        .update({
           processing_started_at: new Date().toISOString()
         })
         .eq('id', project.id);
@@ -431,7 +534,9 @@ export async function POST(request: NextRequest) {
           },
           body: JSON.stringify({
             projectId: project.id,
-            fileName: fileName
+            fileName: fileName,
+            fingerprint: audioFingerprint,
+            performanceLevel
           })
         }).catch(error => {
           console.error('Failed to start transcription:', error);

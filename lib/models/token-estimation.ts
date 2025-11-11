@@ -1,6 +1,6 @@
 // Token estimation and calculation utilities
 
-import { CONTENT_TYPES } from '@/lib/cost-estimation';
+import { CONTENT_TYPES } from '@/lib/content-types';
 import { ModelSpec } from './config';
 
 export interface TokenEstimate {
@@ -17,6 +17,8 @@ export interface TokenBreakdown {
   inputTokens: number;
   outputTokens: number;
   description: string;
+  contentTypeId?: string;
+  pieces?: number;
 }
 
 export interface CompatibilityCheck {
@@ -66,7 +68,8 @@ export function calculateTokenRequirements(
       phase: 'Content Analysis',
       inputTokens: analysisInputTokens,
       outputTokens: analysisOutputTokens,
-      description: 'Analyze transcription to extract key topics, quotes, and insights'
+      description: 'Analyze transcription to extract key topics, quotes, and insights',
+      pieces: 1
     }
   ];
   
@@ -92,7 +95,9 @@ export function calculateTokenRequirements(
       phase: `Generate ${contentType.name}`,
       inputTokens: totalInputForType,
       outputTokens: totalOutputForType,
-      description: `Generate ${contentType.count} ${contentType.name.toLowerCase()}`
+      description: `Generate ${contentType.count} ${contentType.name.toLowerCase()}`,
+      contentTypeId: contentType.id,
+      pieces: contentType.count
     });
   });
   

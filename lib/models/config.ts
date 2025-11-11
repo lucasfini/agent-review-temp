@@ -365,7 +365,12 @@ export function isProviderAvailable(providerId: string): boolean {
   const provider = MODEL_PROVIDERS[providerId];
   if (!provider) return false;
   
-  // Check if API key is available in environment
+  // On the client we can't check server secrets, so always show the models
+  if (typeof window !== 'undefined') {
+    return true;
+  }
+  
+  // On the server, fall back to checking for the provider API key
   return !!process.env[provider.apiKeyEnv];
 }
 

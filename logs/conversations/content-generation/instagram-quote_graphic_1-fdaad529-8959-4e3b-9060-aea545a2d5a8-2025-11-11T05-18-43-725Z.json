@@ -1,0 +1,27 @@
+{
+  "projectId": "fdaad529-8959-4e3b-9060-aea545a2d5a8",
+  "platform": "instagram",
+  "contentType": "quote_graphic_1",
+  "timestamp": "2025-11-11T05:18:43.725Z",
+  "prompt": {
+    "text": "Quote graphic generation",
+    "length": 24
+  },
+  "response": {
+    "text": "The company's liability and the public health implications could be enormous.",
+    "length": 77,
+    "wordCount": 11
+  },
+  "metadata": {
+    "quote_length": 77,
+    "speaker": "unknown",
+    "graphic_style": "minimal_modern"
+  },
+  "processingTime": 0,
+  "quality": {
+    "responseCompleteness": "incomplete",
+    "estimatedReadability": 0.9,
+    "hashtagCount": 0,
+    "mentionCount": 0
+  }
+}

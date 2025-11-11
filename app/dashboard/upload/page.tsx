@@ -1,9 +1,12 @@
 "use client";
 
-import { useState, useCallback, useEffect } from 'react';
-import { Upload, FileAudio, X, AlertCircle, CheckCircle, Clock, History, Trash2 } from 'lucide-react';
+import { useState, useCallback, useEffect, useRef } from 'react';
+import { Upload, FileAudio, X, AlertCircle, CheckCircle, Clock, History, Trash2, Eye } from 'lucide-react';
 import { supabase } from '@/lib/supabase/client';
 import { useAuth } from '@/lib/auth/context';
+import { calculateOverallProgress, getStageDisplayName, type ProcessingStage } from '@/lib/tier-progress-config';
+
+type PerformanceLevel = 'basic' | 'pro' | 'premium';
 
 interface UploadedFile {
   file: File;
@@ -11,6 +14,11 @@ interface UploadedFile {
   status: 'pending' | 'uploading' | 'processing' | 'completed' | 'error';
   progress: number;
   error?: string;
+  projectId?: string;
+  processingStage?: ProcessingStage;
+  stageProgress?: number;
+  processingMessage?: string;
+  performanceLevel: PerformanceLevel;
 }
 
 interface UploadHistory {
@@ -30,6 +38,13 @@ export default function UploadPage() {
   const [uploadHistory, setUploadHistory] = useState<UploadHistory[]>([]);
   const [showHistory, setShowHistory] = useState(true);
   const [historyLoading, setHistoryLoading] = useState(true);
+  const [performanceLevel, setPerformanceLevel] = useState<PerformanceLevel>('premium');
+  const performanceLevelRef = useRef<PerformanceLevel>('premium');
+
+  const handlePerformanceChange = (level: PerformanceLevel) => {
+    performanceLevelRef.current = level;
+    setPerformanceLevel(level);
+  };
   const { user } = useAuth();
 
   useEffect(() => {
@@ -67,6 +82,17 @@ export default function UploadPage() {
     }
 
     try {
+      // Cleanup cache reference before deleting project
+      try {
+        await fetch(`/api/projects/${projectId}/cleanup-cache`, {
+          method: 'POST'
+        });
+        console.log('[DELETE] Cache reference cleaned up');
+      } catch (cacheError) {
+        console.warn('[DELETE] Cache cleanup failed (non-fatal):', cacheError);
+        // Continue with deletion even if cache cleanup fails
+      }
+
       // Delete outputs first (due to foreign key constraints)
       await supabase
         .from('outputs')
@@ -102,16 +128,19 @@ export default function UploadPage() {
     return parseFloat((bytes / Math.pow(k, i)).toFixed(2)) + ' ' + sizes[i];
   };
 
-  const formatDuration = (seconds: number) => {
-    const hrs = Math.floor(seconds / 3600);
-    const mins = Math.floor((seconds % 3600) / 60);
-    const secs = Math.floor(seconds % 60);
+const formatDuration = (seconds: number) => {
+  const hrs = Math.floor(seconds / 3600);
+  const mins = Math.floor((seconds % 3600) / 60);
+  const secs = Math.floor(seconds % 60);
     
     if (hrs > 0) {
       return `${hrs}:${mins.toString().padStart(2, '0')}:${secs.toString().padStart(2, '0')}`;
     }
-    return `${mins}:${secs.toString().padStart(2, '0')}`;
-  };
+  return `${mins}:${secs.toString().padStart(2, '0')}`;
+};
+
+// Stage labels and progress calculation now handled by tier-progress-config
+// Use getStageDisplayName() for labels and calculateOverallProgress() for progress
 
   const getStatusIcon = (status: string) => {
     switch (status) {
@@ -158,6 +187,7 @@ export default function UploadPage() {
   }, []);
 
   const handleFiles = (files: File[]) => {
+    const selectedLevel = performanceLevelRef.current;
     const audioFiles = files.filter(file => 
       file.type.startsWith('audio/') || 
       ['.mp3', '.wav', '.m4a', '.flac', '.ogg'].some(ext => file.name.toLowerCase().endsWith(ext))
@@ -185,7 +215,11 @@ export default function UploadPage() {
         file,
         id: Math.random().toString(36).substr(2, 9),
         status,
-        progress: 0
+        progress: calculateOverallProgress(selectedLevel, 'pending', 0),
+        processingStage: 'pending',
+        stageProgress: 0,
+        processingMessage: 'Ready to upload',
+        performanceLevel: selectedLevel
       };
     });
 
@@ -199,13 +233,17 @@ export default function UploadPage() {
 
   const processFile = async (uploadedFile: UploadedFile) => {
     try {
+      const filePerformanceLevel = performanceLevelRef.current;
       // Update status to uploading with file size info
       const fileSizeMB = (uploadedFile.file.size / 1024 / 1024).toFixed(2);
-      setUploadedFiles(prev => 
-        prev.map(f => f.id === uploadedFile.id ? { 
-          ...f, 
+      setUploadedFiles(prev =>
+        prev.map(f => f.id === uploadedFile.id ? {
+          ...f,
           status: 'uploading',
-          progress: 0 
+          processingStage: 'uploading',
+          stageProgress: 0,
+          processingMessage: 'Uploading audio...',
+          progress: calculateOverallProgress(f.performanceLevel, 'uploading', 0)
         } : f)
       );
 
@@ -218,6 +256,7 @@ export default function UploadPage() {
       const formData = new FormData();
       formData.append('audio', uploadedFile.file);
       formData.append('title', uploadedFile.file.name.replace(/\.[^/.]+$/, ""));
+      formData.append('performanceLevel', filePerformanceLevel);
 
       // Get session token
       const { data: { session } } = await supabase.auth.getSession();
@@ -226,10 +265,22 @@ export default function UploadPage() {
       const progressInterval = setInterval(() => {
         setUploadedFiles(prev => 
           prev.map(f => {
-            if (f.id === uploadedFile.id && f.progress < 90) {
-              return { ...f, progress: Math.min(f.progress + 5, 90) };
+            if (f.id !== uploadedFile.id || f.status !== 'uploading') {
+              return f;
             }
-            return f;
+            const currentStageProgress = f.processingStage === 'uploading'
+              ? f.stageProgress ?? 0
+              : 0;
+            if (currentStageProgress >= 100) {
+              return f;
+            }
+            const nextStageProgress = Math.min(currentStageProgress + 5, 100);
+            return {
+              ...f,
+              processingStage: 'uploading',
+              stageProgress: nextStageProgress,
+              progress: calculateOverallProgress(f.performanceLevel, 'uploading', nextStageProgress)
+            };
           })
         );
       }, 2000);
@@ -259,13 +310,20 @@ export default function UploadPage() {
 
       const result = await response.json();
 
-      // Update status to processing
-      setUploadedFiles(prev => 
-        prev.map(f => f.id === uploadedFile.id ? { ...f, status: 'processing', progress: 100 } : f)
+      // Update status to processing and start polling for progress
+      setUploadedFiles(prev =>
+        prev.map(f => f.id === uploadedFile.id ? {
+          ...f,
+          status: 'processing',
+          projectId: result.projectId,
+          processingStage: 'transcribing',
+          stageProgress: 0,
+          processingMessage: 'Upload complete. Starting transcription...',
+          progress: calculateOverallProgress(f.performanceLevel, 'transcribing', 0)
+        } : f)
       );
 
-      // Poll for transcription completion
-      pollForCompletion(uploadedFile.id, result.projectId);
+      pollForProgress(uploadedFile.id, result.projectId);
 
     } catch (error) {
       console.error('Upload error:', error);
@@ -284,41 +342,82 @@ export default function UploadPage() {
           ...f, 
           status: 'error', 
           error: errorMessage,
+          processingStage: 'failed',
+          processingMessage: errorMessage,
+          stageProgress: 0,
           progress: 0
         } : f)
       );
     }
   };
 
-  const pollForCompletion = async (fileId: string, projectId: string) => {
+  const pollForProgress = (fileId: string, projectId: string) => {
     const poll = async () => {
       try {
         const response = await fetch(`/api/projects/${projectId}/status`);
-        const status = await response.json();
-
-        if (status.status === 'completed') {
-          setUploadedFiles(prev => 
-            prev.map(f => f.id === fileId ? { ...f, status: 'completed' } : f)
-          );
-        } else if (status.status === 'failed') {
-          setUploadedFiles(prev => 
-            prev.map(f => f.id === fileId ? { 
-              ...f, 
-              status: 'error', 
-              error: 'Processing failed' 
-            } : f)
-          );
-        } else {
-          setTimeout(poll, 2000); // Poll every 2 seconds
+        if (!response.ok) {
+          throw new Error('Failed to fetch project status');
         }
-      } catch (error) {
-        setUploadedFiles(prev => 
-          prev.map(f => f.id === fileId ? { 
-            ...f, 
-            status: 'error', 
-            error: 'Status check failed' 
-          } : f)
+        const status = await response.json();
+        const apiStage = (status.processing_stage || 'pending') as ProcessingStage;
+        const normalizedStage: ProcessingStage =
+          status.status === 'failed'
+            ? 'failed'
+            : status.status === 'completed'
+              ? 'completed'
+              : apiStage;
+        const stageProgress =
+          typeof status.processing_progress === 'number'
+            ? status.processing_progress
+            : 0;
+        const derivedStatus =
+          status.status === 'completed'
+            ? 'completed'
+            : status.status === 'failed'
+              ? 'error'
+              : 'processing';
+        // Get the tier from the API response (or fall back to local state)
+        const tier = (status.performance_level ||
+                     uploadedFiles.find(f => f.id === fileId)?.performanceLevel ||
+                     'basic') as 'basic' | 'pro' | 'premium';
+
+        const progressValue =
+          status.status === 'completed'
+            ? 100
+            : calculateOverallProgress(tier, normalizedStage, stageProgress);
+        const message =
+          status.processing_message ||
+          (derivedStatus === 'completed'
+            ? 'Processing complete!'
+            : undefined);
+
+        setUploadedFiles(prev =>
+          prev.map(f => {
+            if (f.id !== fileId) return f;
+            return {
+              ...f,
+              status: derivedStatus,
+              projectId,
+              processingStage: normalizedStage,
+              stageProgress,
+              processingMessage: message,
+              progress: progressValue,
+              error:
+                derivedStatus === 'error'
+                  ? (message || 'Processing failed')
+                  : f.error
+            };
+          })
         );
+
+        if (status.status === 'completed' || status.status === 'failed') {
+          return;
+        }
+
+        setTimeout(poll, 2000);
+      } catch (error) {
+        console.error('Status polling error:', error);
+        setTimeout(poll, 4000);
       }
     };
 
@@ -338,8 +437,57 @@ export default function UploadPage() {
             Upload Podcast
           </h1>
           <p className="mt-2 text-sm text-gray-600">
-            Upload your audio file and let AI transform it into 15+ social media posts
+            Drop in a full-length episode or clip, choose the quality tier, and we’ll handle transcription, diarization, and content creation in one pass.
           </p>
+        </div>
+
+        {/* Performance Gauge */}
+        <div className="mb-6">
+          <p className="text-sm font-semibold text-gray-800">Processing quality</p>
+          <p className="text-xs text-gray-500">
+            Higher tiers run more AI services for better accuracy and richer content.
+          </p>
+          <div className="mt-3 grid gap-3 sm:grid-cols-3">
+            {[
+              {
+                id: 'basic',
+                label: 'Basic',
+                accuracy: 'Standard',
+                cost: '$0.37/hr',
+                description: 'Transcription + Speaker Diarization'
+              },
+              {
+                id: 'pro',
+                label: 'Pro',
+                accuracy: 'Enhanced',
+                cost: '$0.44/hr',
+                description: 'Basic + AI Summary + Named Speakers'
+              },
+              {
+                id: 'premium',
+                label: 'Premium',
+                accuracy: 'Maximum',
+                cost: '$0.52/hr',
+                description: 'Pro + Roles + Chapters + Takeaways + Quotes'
+              }
+            ].map((option) => (
+              <button
+                key={option.id}
+                type="button"
+                onClick={() => handlePerformanceChange(option.id as PerformanceLevel)}
+                className={`border rounded-lg p-3 text-left transition-colors ${
+                  performanceLevel === option.id
+                    ? 'border-blue-500 bg-blue-50'
+                    : 'border-gray-200 hover:border-gray-300'
+                }`}
+              >
+                <p className="text-sm font-semibold text-gray-900">{option.label}</p>
+                <p className="text-xs text-gray-600">{option.accuracy}</p>
+                <p className="text-xs text-gray-600 font-semibold">{option.cost}</p>
+                <p className="text-[11px] text-gray-500 mt-1 leading-snug">{option.description}</p>
+              </button>
+            ))}
+          </div>
         </div>
 
         {/* Upload Area */}
@@ -410,31 +558,76 @@ export default function UploadPage() {
                   </div>
                   
                   <div className="flex items-center space-x-2 flex-shrink-0">
-                    {/* Status */}
+                    {/* Status - Colorful stage-specific labels */}
                     <div className="flex items-center space-x-2 whitespace-nowrap">
                       {uploadedFile.status === 'pending' && (
-                        <span className="text-xs text-gray-500">Pending</span>
+                        <span className="text-xs px-2 py-1 rounded-full bg-gray-100 text-gray-600 font-medium">Pending</span>
                       )}
                       {uploadedFile.status === 'uploading' && (
-                        <span className="text-xs text-blue-600">Uploading...</span>
+                        <span className="text-xs px-2 py-1 rounded-full bg-blue-100 text-blue-700 font-medium">Uploading</span>
                       )}
-                      {uploadedFile.status === 'processing' && (
-                        <span className="text-xs text-yellow-600">Processing...</span>
+                      {uploadedFile.status === 'processing' && uploadedFile.processingStage && (
+                        <>
+                          {uploadedFile.processingStage === 'transcribing' && (
+                            <span className="text-xs px-2 py-1 rounded-full bg-indigo-100 text-indigo-700 font-medium">Transcribing</span>
+                          )}
+                          {uploadedFile.processingStage === 'diarization' && (
+                            <span className="text-xs px-2 py-1 rounded-full bg-purple-100 text-purple-700 font-medium">Analyzing</span>
+                          )}
+                          {uploadedFile.processingStage === 'name_extraction' && (
+                            <span className="text-xs px-2 py-1 rounded-full bg-cyan-100 text-cyan-700 font-medium">Naming</span>
+                          )}
+                          {uploadedFile.processingStage === 'summary' && (
+                            <span className="text-xs px-2 py-1 rounded-full bg-teal-100 text-teal-700 font-medium">Summarizing</span>
+                          )}
+                          {uploadedFile.processingStage === 'role_classification' && (
+                            <span className="text-xs px-2 py-1 rounded-full bg-violet-100 text-violet-700 font-medium">Classifying</span>
+                          )}
+                          {uploadedFile.processingStage === 'chapters' && (
+                            <span className="text-xs px-2 py-1 rounded-full bg-fuchsia-100 text-fuchsia-700 font-medium">Chaptering</span>
+                          )}
+                          {uploadedFile.processingStage === 'takeaways' && (
+                            <span className="text-xs px-2 py-1 rounded-full bg-rose-100 text-rose-700 font-medium">Extracting</span>
+                          )}
+                          {uploadedFile.processingStage === 'quotes' && (
+                            <span className="text-xs px-2 py-1 rounded-full bg-pink-100 text-pink-700 font-medium">Quoting</span>
+                          )}
+                          {uploadedFile.processingStage === 'finalizing' && (
+                            <span className="text-xs px-2 py-1 rounded-full bg-sky-100 text-sky-700 font-medium">Finalizing</span>
+                          )}
+                          {!['transcribing', 'diarization', 'name_extraction', 'summary', 'role_classification', 'chapters', 'takeaways', 'quotes', 'finalizing'].includes(uploadedFile.processingStage) && (
+                            <span className="text-xs px-2 py-1 rounded-full bg-yellow-100 text-yellow-700 font-medium">Processing</span>
+                          )}
+                        </>
                       )}
                       {uploadedFile.status === 'completed' && (
                         <div className="flex items-center space-x-1">
                           <CheckCircle className="h-4 w-4 text-green-500" />
-                          <span className="text-xs text-green-600 hidden sm:inline">Completed</span>
+                          <span className="text-xs px-2 py-1 rounded-full bg-green-100 text-green-700 font-medium hidden sm:inline">Complete</span>
                         </div>
                       )}
                       {uploadedFile.status === 'error' && (
                         <div className="flex items-center space-x-1">
                           <AlertCircle className="h-4 w-4 text-red-500" />
-                          <span className="text-xs text-red-600 hidden sm:inline">Error</span>
+                          <span className="text-xs px-2 py-1 rounded-full bg-red-100 text-red-700 font-medium hidden sm:inline">Error</span>
                         </div>
                       )}
                     </div>
-                    
+                    <span className="text-[10px] uppercase tracking-wide text-gray-400 border border-gray-200 px-2 py-0.5 rounded">
+                      {uploadedFile.performanceLevel}
+                    </span>
+
+                    {/* View button - shown when completed */}
+                    {uploadedFile.status === 'completed' && uploadedFile.projectId && (
+                      <a
+                        href={`/dashboard/projects?id=${uploadedFile.projectId}`}
+                        className="p-1.5 text-blue-600 hover:text-blue-700 hover:bg-blue-50 rounded flex-shrink-0 transition-colors"
+                        title="View project"
+                      >
+                        <Eye className="h-4 w-4" />
+                      </a>
+                    )}
+
                     {/* Remove button */}
                     <button
                       onClick={() => removeFile(uploadedFile.id)}
@@ -448,14 +641,30 @@ export default function UploadPage() {
                 
                 {/* Progress bar */}
                 {(uploadedFile.status === 'uploading' || uploadedFile.status === 'processing') && (
-                  <div className="mt-3">
-                    <div className="w-full bg-gray-200 rounded-full h-2">
-                      <div
-                        className="bg-blue-600 h-2 rounded-full transition-all duration-300"
-                        style={{ width: `${uploadedFile.progress}%` }}
-                      />
+                  <>
+                    <div className="mt-3">
+                      <div className="w-full bg-gray-200 rounded-full h-2">
+                        <div
+                          className="bg-blue-600 h-2 rounded-full transition-all duration-300"
+                          style={{ width: `${uploadedFile.progress}%` }}
+                        />
+                      </div>
                     </div>
-                  </div>
+                    {(uploadedFile.processingStage || uploadedFile.processingMessage) && (
+                      <div className="mt-2 flex flex-col gap-1 text-xs text-gray-600 sm:flex-row sm:items-center sm:justify-between">
+                        {uploadedFile.processingStage && (
+                          <span className="font-medium">
+                            {getStageDisplayName(uploadedFile.performanceLevel, uploadedFile.processingStage)}
+                          </span>
+                        )}
+                        {uploadedFile.processingMessage && (
+                          <span className="text-gray-500 sm:text-right truncate">
+                            {uploadedFile.processingMessage}
+                          </span>
+                        )}
+                      </div>
+                    )}
+                  </>
                 )}
                 
                 {/* Error message */}
@@ -554,12 +763,20 @@ export default function UploadPage() {
                           }`}>
                             <span className="hidden sm:inline">{item.status.charAt(0).toUpperCase() + item.status.slice(1)}</span>
                             <span className="sm:hidden">
-                              {item.status === 'completed' ? '✓' : 
-                               item.status === 'processing' ? '...' : 
+                              {item.status === 'completed' ? '✓' :
+                               item.status === 'processing' ? '...' :
                                item.status === 'failed' ? '✗' : '?'}
                             </span>
                           </span>
-                          
+
+                          <a
+                            href={`/dashboard/projects?id=${item.id}`}
+                            className="p-1.5 text-blue-600 hover:text-blue-700 hover:bg-blue-50 rounded flex-shrink-0 transition-colors"
+                            title="View project"
+                          >
+                            <Eye className="h-4 w-4" />
+                          </a>
+
                           <button
                             onClick={() => deleteHistoryItem(item.id)}
                             className="p-1 text-gray-400 hover:text-red-600 transition-colors flex-shrink-0"

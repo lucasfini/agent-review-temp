@@ -1,5 +1,8 @@
 import { NextRequest, NextResponse } from 'next/server';
+import { Buffer } from 'buffer';
 import { supabaseAdmin } from '@/lib/supabase/server';
+import { computeAudioFingerprint } from '@/lib/audio-fingerprint';
+import { getCachedTranscription, applyCachedTranscriptionToProject } from '@/lib/transcription-cache';
 
 // Import the upload sessions map from the chunk route
 // In production, you'd want to use Redis or another persistent store
@@ -24,9 +27,36 @@ if (!global.uploadSessions) {
 
 const uploadSessions = global.uploadSessions;
 
+const sanitizeFileName = (name: string) => {
+  const normalized = name
+    .normalize('NFKD')
+    .replace(/[\u0300-\u036f]/g, '');
+  const sanitized = normalized
+    .replace(/[^a-zA-Z0-9.-]/g, '_')
+    .replace(/_{2,}/g, '_')
+    .replace(/^_+|_+$/g, '');
+  return sanitized || 'audio_upload';
+};
+
+type PerformanceLevel = 'basic' | 'pro' | 'premium';
+
+const legacyToCurrentLevel = (value?: string | null): PerformanceLevel | null => {
+  if (!value) return null;
+  if (value === 'basic' || value === 'pro' || value === 'premium') return value as PerformanceLevel;
+  if (value === 'low') return 'basic';
+  if (value === 'medium') return 'pro';
+  if (value === 'high') return 'premium';
+  return null;
+};
+
+const normalizePerformanceLevel = (value: PerformanceLevel | string | undefined): PerformanceLevel => {
+  return legacyToCurrentLevel(value) || 'premium';
+};
+
 export async function POST(request: NextRequest) {
   try {
-    const { uploadId, fileName, totalChunks, fileSize } = await request.json();
+    const { uploadId, fileName, totalChunks, fileSize, performanceLevel: requestedLevel } = await request.json();
+    const performanceLevel = normalizePerformanceLevel(requestedLevel);
 
     if (!uploadId || !fileName || !totalChunks) {
       return NextResponse.json(
@@ -36,6 +66,7 @@ export async function POST(request: NextRequest) {
     }
 
     console.log(`Finalizing upload ${uploadId} for ${fileName}`);
+    console.log(`[UPLOAD][CHUNKED] Selected performance level: ${performanceLevel}`);
 
     // Get upload session
     const session = uploadSessions.get(uploadId);
@@ -79,6 +110,8 @@ export async function POST(request: NextRequest) {
     }
 
     console.log(`Assembled file: ${totalSize} bytes`);
+    const finalNodeBuffer = Buffer.from(new Uint8Array(finalBuffer));
+    const audioFingerprint = computeAudioFingerprint(finalNodeBuffer);
 
     // Get the authenticated user
     const authHeader = request.headers.get('authorization');
@@ -97,15 +130,19 @@ export async function POST(request: NextRequest) {
     const projectTitle = fileName.replace(/\.[^/.]+$/, '').replace(/[_\-\+\[\]]/g, ' ').trim();
     const estimatedDuration = Math.round(totalSize / (128000 / 8)); // Rough estimate
 
+    const sanitizedBaseName = sanitizeFileName(fileName);
+
     const { data: project, error: projectError } = await supabaseAdmin
       .from('projects')
       .insert({
         user_id: user.id,
         title: projectTitle,
-        audio_file_name: fileName,
+        audio_file_name: sanitizedBaseName,
         audio_file_size: totalSize,
         audio_duration: estimatedDuration,
-        status: 'uploading'
+        audio_fingerprint: audioFingerprint,
+        status: 'uploading',
+        performance_level: performanceLevel
       })
       .select()
       .single();
@@ -121,15 +158,11 @@ export async function POST(request: NextRequest) {
     console.log('Project created:', project.id);
 
     // Upload assembled file to Supabase Storage
-    const sanitizedFileName = fileName
-      .replace(/[^a-zA-Z0-9.-]/g, '_')
-      .replace(/_{2,}/g, '_');
-    
-    const storageFileName = `${project.id}/${sanitizedFileName}`;
+    const storageFileName = `${project.id}/${sanitizedBaseName}`;
 
     const { data: uploadData, error: uploadError } = await supabaseAdmin.storage
       .from('audio-files')
-      .upload(storageFileName, finalBuffer, {
+      .upload(storageFileName, finalNodeBuffer, {
         contentType: 'audio/mpeg',
         upsert: false
       });
@@ -150,6 +183,42 @@ export async function POST(request: NextRequest) {
     }
 
     console.log('File uploaded to storage:', storageFileName);
+
+    if (!global.uploadedFiles) {
+      global.uploadedFiles = new Map();
+    }
+    const inMemoryFile = {
+      buffer: finalBuffer,
+      contentType: 'audio/mpeg',
+      originalName: fileName,
+      size: totalSize
+    };
+    global.uploadedFiles.set(storageFileName, inMemoryFile);
+    if (sanitizedBaseName !== storageFileName) {
+      global.uploadedFiles.set(sanitizedBaseName, inMemoryFile);
+    }
+
+    // Check for cached transcription (base layer only)
+    const cachedTranscription = await getCachedTranscription(audioFingerprint);
+    if (cachedTranscription) {
+      const hydrated = await applyCachedTranscriptionToProject(
+        project.id,
+        cachedTranscription,
+        estimatedDuration
+      );
+
+      if (hydrated) {
+        console.log(`[UPLOAD][CHUNKED] ♻️ Found cached transcription for fingerprint ${audioFingerprint}`);
+        console.log(`[UPLOAD][CHUNKED] 🎯 Will apply tier-specific features based on performance level`);
+
+        // Increment reference count
+        const { incrementReferenceCount } = await import('@/lib/transcription-cache');
+        await incrementReferenceCount(audioFingerprint);
+
+        // Continue to transcription endpoint to apply tier-specific features
+        // Do NOT return early - let the tier processing happen
+      }
+    }
 
     // Update project status
     const { error: updateError } = await supabaseAdmin
@@ -176,7 +245,9 @@ export async function POST(request: NextRequest) {
         },
         body: JSON.stringify({
           projectId: project.id,
-          fileName: storageFileName
+          fileName: storageFileName,
+          fingerprint: audioFingerprint,
+          performanceLevel
         })
       }).catch(error => {
         console.error('Failed to start transcription:', error);

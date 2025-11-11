@@ -12,8 +12,8 @@ accelerate>=0.20.0
 # PyAnnote dependencies (install after PyTorch)
 pyannote.audio>=3.1.0
 
-# NVIDIA NeMo dependencies for Sortformer models
+# NVIDIA NeMo dependencies for Sortformer models (DISABLED - for future use)
 # System deps: apt-get install libsndfile1 ffmpeg
-Cython>=0.29.0
-packaging>=21.0
-nemo_toolkit[asr]>=1.20.0
+# Cython>=0.29.0
+# packaging>=21.0
+# nemo_toolkit[asr]>=1.20.0

@@ -1,0 +1,76 @@
+{
+  "projectId": "fdaad529-8959-4e3b-9060-aea545a2d5a8",
+  "timestamp": "2025-11-11T05:18:43.713Z",
+  "transcriptionLength": 10669,
+  "analysis": {
+    "keyTopics": [
+      "acetaminophen",
+      "public health",
+      "neurotoxic risk"
+    ],
+    "quotes": [
+      {
+        "text": "The company's liability and the public health implications could be enormous.",
+        "speaker": "unknown"
+      },
+      {
+        "text": "Nobody even came close to autism. I mean, nobody. You didn't know anybody.",
+        "speaker": "unknown"
+      },
+      {
+        "text": "We're literally in the dark here as to what following a vaccine with Tylenol does compared to a study that just looks at the vaccine and then just looks at the acetaminophen.",
+        "speaker": "unknown"
+      }
+    ],
+    "facts": [
+      {
+        "text": "An estimated 60% of pregnant women use acetaminophen for headaches or other pains or fever.",
+        "context": "Usage statistics of acetaminophen among pregnant women"
+      },
+      {
+        "text": "Tylenol was launched in 1955 after receiving FDA approval.",
+        "context": "Historical product launch information"
+      },
+      {
+        "text": "By 1960, Tylenol became available over the counter.",
+        "context": "Regulatory changes for Tylenol"
+      }
+    ],
+    "opinions": [
+      {
+        "text": "These are diseases that are caused by toxins.",
+        "controversy_level": 7
+      },
+      {
+        "text": "The number one linked toxin that is associated with autism based on peer reviewed, published scientific studies is vaccines.",
+        "controversy_level": 9
+      }
+    ],
+    "humor": [
+      {
+        "text": "You know, the government doesn't do pairings, you know, like wine and cheese.",
+        "type": "joke"
+      }
+    ],
+    "hooks": [
+      {
+        "text": "So, Joel, if this actually happens, if the HHS under Kennedy does release this report, this will be a huge deal.",
+        "hook_strength": 8
+      }
+    ],
+    "actionable_insights": [
+      {
+        "text": "Increase awareness about the ingredients in medications to avoid unintended overuse of acetaminophen.",
+        "value": 7
+      }
+    ]
+  },
+  "processingTime": 9813,
+  "quality": {
+    "topicsCount": 3,
+    "quotesCount": 3,
+    "factsCount": 3,
+    "hooksCount": 1,
+    "insightsCount": 1
+  }
+}
