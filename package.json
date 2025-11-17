@@ -19,6 +19,7 @@
   },
   "dependencies": {
     "@anthropic-ai/sdk": "^0.68.0",
+    "@supabase/ssr": "^0.7.0",
     "@supabase/supabase-js": "^2.78.0",
     "assemblyai": "^4.19.0",
     "class-variance-authority": "^0.7.1",
@@ -28,6 +29,7 @@
     "openai": "^6.8.0",
     "react": "19.2.0",
     "react-dom": "19.2.0",
+    "recharts": "^3.4.1",
     "stripe": "^19.2.0",
     "tailwind-merge": "^3.3.1"
   },

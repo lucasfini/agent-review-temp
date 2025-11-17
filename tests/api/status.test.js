@@ -15,7 +15,7 @@ import {
 } from '../../utils/test-helpers';
 
 // Mock Supabase client
-jest.mock('../../../lib/supabase/client', () => ({
+jest.mock('../../lib/supabase/client', () => ({
   supabase: {
     from: jest.fn(() => ({
       select: jest.fn(() => ({
@@ -49,7 +49,7 @@ describe('/api/projects/[id]/status', () => {
     });
 
     it('should accept valid project ID', async () => {
-      const { supabase } = require('../../../lib/supabase/client');
+      const { supabase } = require('../../lib/supabase/client');
       
       supabase.from().select().eq().single.mockResolvedValue(
         mockSupabaseSuccess(mockProject)
@@ -68,7 +68,7 @@ describe('/api/projects/[id]/status', () => {
 
   describe('Project Status Retrieval', () => {
     it('should return 404 when project is not found', async () => {
-      const { supabase } = require('../../../lib/supabase/client');
+      const { supabase } = require('../../lib/supabase/client');
       
       supabase.from().select().eq().single.mockResolvedValue(
         mockSupabaseError('Project not found', 'PGRST116')
@@ -85,7 +85,7 @@ describe('/api/projects/[id]/status', () => {
     });
 
     it('should return project status for uploading project', async () => {
-      const { supabase } = require('../../../lib/supabase/client');
+      const { supabase } = require('../../lib/supabase/client');
       
       const uploadingProject = {
         ...mockProject,
@@ -115,7 +115,7 @@ describe('/api/projects/[id]/status', () => {
     });
 
     it('should return project status for processing project', async () => {
-      const { supabase } = require('../../../lib/supabase/client');
+      const { supabase } = require('../../lib/supabase/client');
       
       const processingProject = {
         ...mockProject,
@@ -145,7 +145,7 @@ describe('/api/projects/[id]/status', () => {
     });
 
     it('should return project status for completed project', async () => {
-      const { supabase } = require('../../../lib/supabase/client');
+      const { supabase } = require('../../lib/supabase/client');
       
       const completedProject = {
         ...mockProject,
@@ -198,7 +198,7 @@ describe('/api/projects/[id]/status', () => {
     });
 
     it('should return project status for failed project', async () => {
-      const { supabase } = require('../../../lib/supabase/client');
+      const { supabase } = require('../../lib/supabase/client');
       
       const failedProject = {
         ...mockProject,
@@ -236,7 +236,7 @@ describe('/api/projects/[id]/status', () => {
       ['failed', 0],
       ['unknown_status', 0],
     ])('should return correct progress for status: %s', async (status, expectedProgress) => {
-      const { supabase } = require('../../../lib/supabase/client');
+      const { supabase } = require('../../lib/supabase/client');
       
       const projectWithStatus = {
         ...mockProject,
@@ -260,7 +260,7 @@ describe('/api/projects/[id]/status', () => {
 
   describe('Outputs Count Handling', () => {
     it('should only fetch outputs count for completed projects', async () => {
-      const { supabase } = require('../../../lib/supabase/client');
+      const { supabase } = require('../../lib/supabase/client');
       
       const processingProject = {
         ...mockProject,
@@ -287,7 +287,7 @@ describe('/api/projects/[id]/status', () => {
     });
 
     it('should handle errors in outputs count gracefully', async () => {
-      const { supabase } = require('../../../lib/supabase/client');
+      const { supabase } = require('../../lib/supabase/client');
       
       const completedProject = {
         ...mockProject,
@@ -327,7 +327,7 @@ describe('/api/projects/[id]/status', () => {
 
   describe('Database Error Handling', () => {
     it('should handle database connection errors', async () => {
-      const { supabase } = require('../../../lib/supabase/client');
+      const { supabase } = require('../../lib/supabase/client');
       
       supabase.from().select().eq().single.mockResolvedValue(
         mockSupabaseError('Connection failed', 'CONNECTION_ERROR')
@@ -344,7 +344,7 @@ describe('/api/projects/[id]/status', () => {
     });
 
     it('should handle unexpected database errors', async () => {
-      const { supabase } = require('../../../lib/supabase/client');
+      const { supabase } = require('../../lib/supabase/client');
       
       supabase.from().select().eq().single.mockRejectedValue(
         new Error('Unexpected database error')
@@ -363,7 +363,7 @@ describe('/api/projects/[id]/status', () => {
 
   describe('Response Format', () => {
     it('should include all required fields in response', async () => {
-      const { supabase } = require('../../../lib/supabase/client');
+      const { supabase } = require('../../lib/supabase/client');
       
       const completeProject = {
         ...mockProject,

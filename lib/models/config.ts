@@ -77,11 +77,11 @@ export const MODEL_PROVIDERS: Record<string, ModelProvider> = {
       tokensPerMinute: 2000000
     }
   },
-  deepseek: {
-    id: 'deepseek',
-    name: 'DeepSeek',
-    baseUrl: 'https://api.deepseek.com',
-    apiKeyEnv: 'DEEPSEEK_API_KEY',
+  perplexity: {
+    id: 'perplexity',
+    name: 'Perplexity',
+    baseUrl: 'https://api.perplexity.ai',
+    apiKeyEnv: 'PERPLEXITY_API_KEY',
     supportsStreaming: true,
     rateLimits: {
       requestsPerMinute: 1000,
@@ -92,7 +92,7 @@ export const MODEL_PROVIDERS: Record<string, ModelProvider> = {
 
 // Model specifications database
 export const MODEL_SPECS: ModelSpec[] = [
-  // OpenAI Models
+  // OpenAI Models (Only models that work with current content generation)
   {
     id: 'gpt-4o',
     name: 'gpt-4o',
@@ -113,11 +113,89 @@ export const MODEL_SPECS: ModelSpec[] = [
       functionCalling: true,
       jsonMode: true
     },
-    description: 'Most advanced OpenAI model with vision and fast performance',
+    description: 'Best balance of quality, speed, and cost for content generation',
     releaseDate: '2024-05-13',
     deprecated: false,
     recommended: true,
     category: 'general'
+  },
+  {
+    id: 'gpt-4o-mini',
+    name: 'gpt-4o-mini',
+    displayName: 'GPT-4o Mini',
+    provider: 'openai',
+    contextLength: 128000,
+    maxOutputTokens: 16384,
+    pricing: {
+      inputCostPer1kTokens: 0.00015,
+      outputCostPer1kTokens: 0.0006,
+      currency: 'USD'
+    },
+    capabilities: {
+      reasoning: 8,
+      creativity: 7,
+      speed: 10,
+      multimodal: true,
+      functionCalling: true,
+      jsonMode: true
+    },
+    description: 'Most cost-effective option, 15x cheaper than GPT-4o with good quality',
+    releaseDate: '2024-07-18',
+    deprecated: false,
+    recommended: true,
+    category: 'fast'
+  },
+  {
+    id: 'o1-preview',
+    name: 'o1-preview',
+    displayName: 'o1-preview',
+    provider: 'openai',
+    contextLength: 128000,
+    maxOutputTokens: 32768,
+    pricing: {
+      inputCostPer1kTokens: 0.015,
+      outputCostPer1kTokens: 0.06,
+      currency: 'USD'
+    },
+    capabilities: {
+      reasoning: 10,
+      creativity: 7,
+      speed: 4,
+      multimodal: false,
+      functionCalling: false,
+      jsonMode: false
+    },
+    description: 'Advanced reasoning model, best for complex analysis and deep insights',
+    releaseDate: '2024-09-12',
+    deprecated: false,
+    recommended: false,
+    category: 'reasoning'
+  },
+  {
+    id: 'o1-mini',
+    name: 'o1-mini',
+    displayName: 'o1-mini',
+    provider: 'openai',
+    contextLength: 128000,
+    maxOutputTokens: 65536,
+    pricing: {
+      inputCostPer1kTokens: 0.003,
+      outputCostPer1kTokens: 0.012,
+      currency: 'USD'
+    },
+    capabilities: {
+      reasoning: 9,
+      creativity: 6,
+      speed: 6,
+      multimodal: false,
+      functionCalling: false,
+      jsonMode: false
+    },
+    description: 'Faster reasoning model, 80% cheaper than o1-preview',
+    releaseDate: '2024-09-12',
+    deprecated: false,
+    recommended: false,
+    category: 'reasoning'
   },
   {
     id: 'gpt-4-turbo',
@@ -139,10 +217,10 @@ export const MODEL_SPECS: ModelSpec[] = [
       functionCalling: true,
       jsonMode: true
     },
-    description: 'High-performance model with large context window',
+    description: 'Previous generation flagship, reliable but more expensive than GPT-4o',
     releaseDate: '2024-04-09',
     deprecated: false,
-    recommended: true,
+    recommended: false,
     category: 'general'
   },
   {
@@ -165,7 +243,7 @@ export const MODEL_SPECS: ModelSpec[] = [
       functionCalling: true,
       jsonMode: false
     },
-    description: 'Original GPT-4 with smaller context window',
+    description: 'Original GPT-4, slower and more expensive than newer models',
     releaseDate: '2023-03-14',
     deprecated: false,
     recommended: false,
@@ -191,14 +269,14 @@ export const MODEL_SPECS: ModelSpec[] = [
       functionCalling: true,
       jsonMode: true
     },
-    description: 'Fast and cost-effective for simpler tasks',
+    description: 'Legacy model, use GPT-4o Mini for better quality at similar cost',
     releaseDate: '2023-03-01',
     deprecated: false,
     recommended: false,
     category: 'fast'
   },
 
-  // Anthropic Models
+  // Anthropic Claude Models
   {
     id: 'claude-3-5-sonnet-20241022',
     name: 'claude-3-5-sonnet-20241022',
@@ -219,50 +297,102 @@ export const MODEL_SPECS: ModelSpec[] = [
       functionCalling: true,
       jsonMode: false
     },
-    description: 'Most capable Claude model with excellent reasoning',
+    description: 'Top-tier reasoning and creativity, excellent for nuanced content',
     releaseDate: '2024-10-22',
     deprecated: false,
     recommended: true,
     category: 'reasoning'
   },
   {
-    id: 'claude-3-haiku-20240307',
-    name: 'claude-3-haiku-20240307',
-    displayName: 'Claude 3 Haiku',
+    id: 'claude-3-5-haiku-20241022',
+    name: 'claude-3-5-haiku-20241022',
+    displayName: 'Claude 3.5 Haiku',
+    provider: 'anthropic',
+    contextLength: 200000,
+    maxOutputTokens: 8192,
+    pricing: {
+      inputCostPer1kTokens: 0.001,
+      outputCostPer1kTokens: 0.005,
+      currency: 'USD'
+    },
+    capabilities: {
+      reasoning: 8,
+      creativity: 7,
+      speed: 10,
+      multimodal: false,
+      functionCalling: true,
+      jsonMode: false
+    },
+    description: 'Fast and cost-effective Claude model, great for bulk content',
+    releaseDate: '2024-10-22',
+    deprecated: false,
+    recommended: true,
+    category: 'fast'
+  },
+  {
+    id: 'claude-3-opus-20240229',
+    name: 'claude-3-opus-20240229',
+    displayName: 'Claude 3 Opus',
     provider: 'anthropic',
     contextLength: 200000,
     maxOutputTokens: 4096,
     pricing: {
-      inputCostPer1kTokens: 0.00025,
-      outputCostPer1kTokens: 0.00125,
+      inputCostPer1kTokens: 0.015,
+      outputCostPer1kTokens: 0.075,
       currency: 'USD'
     },
     capabilities: {
-      reasoning: 7,
-      creativity: 6,
-      speed: 10,
-      multimodal: false,
-      functionCalling: false,
+      reasoning: 10,
+      creativity: 10,
+      speed: 4,
+      multimodal: true,
+      functionCalling: true,
       jsonMode: false
     },
-    description: 'Fastest Claude model, great for simple tasks',
-    releaseDate: '2024-03-07',
+    description: 'Most powerful Claude model, best for complex creative work',
+    releaseDate: '2024-02-29',
     deprecated: false,
     recommended: false,
-    category: 'fast'
+    category: 'creative'
   },
 
-  // Google Models
+  // Google Gemini Models
+  {
+    id: 'gemini-2.0-flash-exp',
+    name: 'gemini-2.0-flash-exp',
+    displayName: 'Gemini 2.0 Flash',
+    provider: 'google',
+    contextLength: 1000000,
+    maxOutputTokens: 8192,
+    pricing: {
+      inputCostPer1kTokens: 0,
+      outputCostPer1kTokens: 0,
+      currency: 'USD'
+    },
+    capabilities: {
+      reasoning: 9,
+      creativity: 8,
+      speed: 10,
+      multimodal: true,
+      functionCalling: true,
+      jsonMode: true
+    },
+    description: 'Latest Gemini, free during preview with massive context window',
+    releaseDate: '2024-12-11',
+    deprecated: false,
+    recommended: true,
+    category: 'fast'
+  },
   {
     id: 'gemini-1.5-pro',
     name: 'gemini-1.5-pro',
     displayName: 'Gemini 1.5 Pro',
     provider: 'google',
-    contextLength: 1000000,
+    contextLength: 2000000,
     maxOutputTokens: 8192,
     pricing: {
-      inputCostPer1kTokens: 0.0035,
-      outputCostPer1kTokens: 0.0105,
+      inputCostPer1kTokens: 0.00125,
+      outputCostPer1kTokens: 0.005,
       currency: 'USD'
     },
     capabilities: {
@@ -273,8 +403,8 @@ export const MODEL_SPECS: ModelSpec[] = [
       functionCalling: true,
       jsonMode: true
     },
-    description: 'Massive context window, excellent for long documents',
-    releaseDate: '2024-02-15',
+    description: 'Massive 2M token context, best for very long transcripts',
+    releaseDate: '2024-05-14',
     deprecated: false,
     recommended: true,
     category: 'general'
@@ -299,38 +429,64 @@ export const MODEL_SPECS: ModelSpec[] = [
       functionCalling: true,
       jsonMode: true
     },
-    description: 'Ultra-fast with huge context, very cost-effective',
+    description: 'Ultra-cheap and fast, 1M token context window',
     releaseDate: '2024-05-14',
     deprecated: false,
-    recommended: true,
+    recommended: false,
     category: 'fast'
   },
 
-  // DeepSeek Models
+  // Perplexity Models
   {
-    id: 'deepseek-chat',
-    name: 'deepseek-chat',
-    displayName: 'DeepSeek Chat',
-    provider: 'deepseek',
-    contextLength: 32000,
+    id: 'llama-3.1-sonar-huge-128k-online',
+    name: 'llama-3.1-sonar-huge-128k-online',
+    displayName: 'Sonar Huge (Online)',
+    provider: 'perplexity',
+    contextLength: 128000,
     maxOutputTokens: 4096,
     pricing: {
-      inputCostPer1kTokens: 0.0001,
-      outputCostPer1kTokens: 0.0002,
+      inputCostPer1kTokens: 0.005,
+      outputCostPer1kTokens: 0.005,
+      currency: 'USD'
+    },
+    capabilities: {
+      reasoning: 8,
+      creativity: 7,
+      speed: 6,
+      multimodal: false,
+      functionCalling: true,
+      jsonMode: true
+    },
+    description: 'Web-connected model with real-time search capabilities',
+    releaseDate: '2024-08-01',
+    deprecated: false,
+    recommended: true,
+    category: 'general'
+  },
+  {
+    id: 'llama-3.1-sonar-large-128k-online',
+    name: 'llama-3.1-sonar-large-128k-online',
+    displayName: 'Sonar Large (Online)',
+    provider: 'perplexity',
+    contextLength: 128000,
+    maxOutputTokens: 4096,
+    pricing: {
+      inputCostPer1kTokens: 0.001,
+      outputCostPer1kTokens: 0.001,
       currency: 'USD'
     },
     capabilities: {
       reasoning: 7,
-      creativity: 6,
+      creativity: 7,
       speed: 8,
       multimodal: false,
       functionCalling: true,
       jsonMode: true
     },
-    description: 'Extremely cost-effective open model',
-    releaseDate: '2024-01-15',
+    description: 'Faster web-connected model, good balance of speed and quality',
+    releaseDate: '2024-08-01',
     deprecated: false,
-    recommended: false,
+    recommended: true,
     category: 'fast'
   }
 ];

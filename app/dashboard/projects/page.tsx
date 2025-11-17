@@ -1024,6 +1024,7 @@ export default function ProjectsPage() {
                                 transcriptionText={selectedProject.transcription_text}
                                 className="bg-gray-50 rounded-md"
                                 projectId={selectedProject.id}
+                                userTier={selectedProject.performance_level || 'basic'}
                                 onSpeakerUpdate={(updatedSpeakerData) => {
                                   setSelectedProject(prev => prev ? {
                                     ...prev,

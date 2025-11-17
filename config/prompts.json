@@ -1,0 +1,112 @@
+{
+  "audioRepurpose": {
+    "insightExtraction": {
+      "id": "insight_extraction",
+      "model": "claude-3-5-haiku-20241022",
+      "temperature": 0.3,
+      "max_tokens": 4096,
+      "params": {
+        "maxTranscriptChars": 50000,
+        "targetInsightCountRange": [8, 15]
+      },
+      "prompt": "${titleContext}${speakerContext}\n\nExtract 8–15 key educational insights from this podcast transcript. Include only clear, well-defined concepts or notable people that provide learning value.\n\nDo NOT include:\n- Podcast hosts or repeated known speaker names\n- Vague themes without clear labels\n- Unclear references without enough context to define\n\nFor each insight, return this structure exactly (key names and shape must match):\n\nentity_id: lowercase-hyphenated-id\nlabel: Human readable name\ncategory: person | concept\nmatch_text: Primary detected matching text\nmatch_variants: [alternative names or abbreviations]\ntranscript_excerpts: [{ text: short quote, timestamp: 123 }]\nsimple_definition: 1–2 sentence accessible definition\nfull_explanation: 3–5 sentence deeper explanation\nrelated_concepts: [other concepts mentioned in similar context]\nwhy_it_matters: Why this insight is relevant to the episode\nrelationships: [{ type: string, entityId: string, description: string }]\nconfidence: number between 0 and 1\n\nGuidelines:\n- Prioritize relevance, clarity, and frequency of mention\n- If context is too vague to confidently define something, skip it\n- Insights should be ordered from most important to least important\n\nReturn ONLY a JSON array. No prose.\n\nTRANSCRIPT (truncated to first 50,000 characters):\n${transcript.substring(0, 50000)}"
+    },
+    "researchLinks": {
+      "person": {
+        "id": "research_links_person",
+        "model": "sonar-pro",
+        "temperature": 0.2,
+        "max_tokens": 500,
+        "params": {
+          "recency": "month",
+          "return_citations": true
+        },
+        "system": "You are a research assistant helping to find authoritative sources for educational content. Return only valid JSON.",
+        "prompt": "Find 2-3 authoritative sources about ${label}, a person mentioned in this context:\n\n\"${context}\"\n\nProvide official websites, Wikipedia articles, or credible biographical sources.\n\nOnly return links if the source exists and the URL is valid.\n\nReturn ONLY a JSON array with this exact structure:\n[\n  {\n    title: Source title,\n    url: https://...,\n    description: Brief description of what this source covers,\n    type: wikipedia | official | article\n  }\n]\n\nFocus on the most authoritative and relevant sources."
+      },
+      "concept": {
+        "id": "research_links_concept",
+        "model": "sonar-pro",
+        "temperature": 0.2,
+        "max_tokens": 500,
+        "params": {
+          "recency": "month",
+          "return_citations": true
+        },
+        "system": "You are a research assistant helping to find authoritative sources for educational content. Return only valid JSON.",
+        "prompt": "Find 2-3 authoritative sources to explain ${label}, a concept or term mentioned in this context:\n\n\"${context}\"\n\nProvide official documentation, Wikipedia articles, or reputable explainers.\n\nOnly return links if the source exists and the URL is valid.\n\nReturn ONLY a JSON array with this exact structure:\n[\n  {\n    title: Source title,\n    url: https://...,\n    description: Brief description of what this source covers,\n    type: wikipedia | documentation | article | academic\n  }\n]\n\nFocus on educational sources that help readers understand the concept."
+      }
+    },
+    "contentGeneration": {
+      "baseContext": {
+        "id": "content_base_context",
+        "model": "claude-3-5-sonnet-20241022",
+        "temperature": 0.7,
+        "max_tokens": 4000,
+        "prompt": "You are a content marketing expert specializing in repurposing podcast content for social media and digital platforms.\n\nPODCAST TITLE: ${projectTitle}\nSPEAKERS: ${speakerNames}\n\nTRANSCRIPT:\n${transcriptionText.slice(0, 15000)} ${transcriptionText.length > 15000 ? '...(truncated)' : ''}"
+      },
+      "twitterThreads": {
+        "id": "content_twitter_threads",
+        "instructions": "CREATE ${count} ENGAGING TWITTER THREADS\n\nInstructions:\n- Each thread should be 6-8 tweets maximum\n- Start with a strong hook that stops scrolling\n- Use short sentences and clear language\n- Include 1-2 relevant hashtags per thread\n- End with a call-to-action or thought-provoking question\n- Make threads self-contained (do not assume people read all ${count})\n\nFormat each thread like this:\n---\nTHREAD 1:\n\nTweet 1: [Hook]\nTweet 2: [Point 1]\n...\nTweet N: [CTA]\n---\n\nGenerate ${count} distinct threads now:"
+      },
+      "linkedInPosts": {
+        "id": "content_linkedin_posts",
+        "instructions": "CREATE ${count} PROFESSIONAL LINKEDIN POSTS\n\nInstructions:\n- Each post should be 200-400 words\n- Start with a compelling opening line\n- Use professional but conversational tone\n- Include 2-3 key insights or takeaways\n- Add relevant emojis sparingly for visual breaks\n- End with an engaging question to drive comments\n- No hashtags\n\nFormat:\n---\nPOST 1:\n\n[Opening hook]\n\n[Body with insights]\n\n[Closing question]\n---\n\nGenerate ${count} distinct posts now:"
+      },
+      "instagramCaptions": {
+        "id": "content_instagram_captions",
+        "instructions": "CREATE ${count} ENGAGING INSTAGRAM CAPTION${count > 1 ? 'S' : ''}\n\nInstructions:\n- Each caption should be 150-300 words\n- Start with an attention-grabbing first line that shows before the more fold\n- Use line breaks for readability\n- Include emojis to add personality\n- Add 10-15 relevant hashtags at the end\n- Mix popular and niche hashtags\n- End with a call-to-action\n\nFormat:\n---\nCAPTION 1:\n\n[First line hook]\n\n[Body content with line breaks]\n\n[CTA]\n\n#hashtag1 #hashtag2 ... #hashtag15\n---\n\nGenerate ${count} distinct caption${count > 1 ? 's' : ''} now:"
+      },
+      "blogPost": {
+        "id": "content_blog_post",
+        "instructions": "CREATE 1 SEO-OPTIMIZED BLOG POST\n\nInstructions:\n- 2500-3000 words\n- SEO-optimized structure with H2 and H3 headings\n- Include an engaging introduction\n- Break content into scannable sections\n- Add specific examples and quotes from the podcast\n- Include actionable takeaways\n- Write a strong conclusion with CTA\n- Suggest 5 keywords to target\n\nFormat:\n---\nTITLE: [Catchy, SEO-friendly title]\n\nMETA DESCRIPTION: [150-160 characters]\n\n[Introduction - 2-3 paragraphs]\n\n## [H2 Heading]\n[Content]\n\n### [H3 Subheading]\n[Content]\n\n[Continue with multiple sections]\n\n## Conclusion\n[Wrap-up and CTA]\n\nSUGGESTED KEYWORDS: keyword1, keyword2, keyword3, keyword4, keyword5\n---\n\nGenerate the blog post now:"
+      },
+      "emailNewsletter": {
+        "id": "content_email_newsletter",
+        "instructions": "CREATE 1 EMAIL NEWSLETTER\n\nInstructions:\n- Subject line that drives opens (under 50 characters)\n- Preheader text (under 100 characters)\n- Engaging introduction (2-3 paragraphs)\n- 3-5 key insights from the podcast\n- Visual breaks with emojis or bullets\n- Clear CTA at the end\n- 400-600 words total\n- Conversational, friendly tone\n\nFormat:\n---\nSUBJECT: [Subject line]\nPREHEADER: [Preheader text]\n\n[Opening paragraph]\n\n🎯 Key Insights:\n\n• [Insight 1]\n• [Insight 2]\n• [Insight 3]\n\n[Body content]\n\n[CTA section]\n---\n\nGenerate the newsletter now:"
+      },
+      "showNotes": {
+        "id": "content_show_notes",
+        "instructions": "CREATE DETAILED EPISODE SHOW NOTES\n\nInstructions:\n- Episode summary (2-3 paragraphs)\n- Key topics discussed with timestamps (if identifiable from context)\n- Main takeaways (5-7 bullet points)\n- Guest bio (if mentioned)\n- Relevant links or resources mentioned\n- Memorable quotes (3-5)\n- Well-organized and scannable format\n\nFormat:\n---\nEPISODE SUMMARY:\n[2-3 paragraph summary]\n\nKEY TOPICS:\n• [Topic 1] - [Approximate time or context]\n• [Topic 2] - [Approximate time or context]\n...\n\nMAIN TAKEAWAYS:\n1. [Takeaway 1]\n2. [Takeaway 2]\n...\n\nMEMORABLE QUOTES:\n\"[Quote 1]\" - [Speaker]\n\"[Quote 2]\" - [Speaker]\n...\n\nRESOURCES MENTIONED:\n• [Resource 1]\n• [Resource 2]\n...\n---\n\nGenerate the show notes now:"
+      },
+      "quoteGraphics": {
+        "id": "content_quote_graphics",
+        "instructions": "CREATE ${count} PULL QUOTE${count > 1 ? 'S' : ''} FOR GRAPHICS\n\nInstructions:\n- Each quote should be 20-40 words maximum\n- Must be actual quotes from the transcript\n- Powerful, memorable, and shareable\n- Include speaker attribution\n- Stand alone without context\n- Avoid jargon or complex terms\n- Format for visual design (square graphic)\n\nFormat:\n---\nQUOTE 1:\n\"[The actual quote from transcript]\"\n- [Speaker Name]\n\nQUOTE 2:\n\"[The actual quote from transcript]\"\n- [Speaker Name]\n---\n\nGenerate ${count} distinct quote${count > 1 ? 's' : ''} now:"
+      }
+    },
+    "narrativeCoverage": {
+      "id": "narrative_coverage_analysis",
+      "model": "claude-sonnet-4-5-20250929",
+      "temperature": 0.2,
+      "max_tokens": 1800,
+      "prompt": "You are an editorial analyst. Given a podcast transcript (and a short summary if available), produce a structured JSON object describing narrative coverage.\n\nRequirements:\n- Return ONLY valid JSON (no markdown fences).\n- If the transcript does not provide enough context to determine a numeric field, set it to null instead of guessing.\n- JSON structure:\n\ncoverage_window: ${coverageWindow}\ntopics: [\n  {\n    id: kebab_case_id,\n    label: Human readable topic,\n    keywords: [keyword, secondary],\n    mentionCount: number,\n    sentimentScore: number between -1 and 1,\n    shareOfVoice: 0-1,\n    relatedCtas: [cta_id],\n    assetsCovered: [summary, quotes]\n  }\n]\nctas: [\n  {\n    id: cta_id,\n    label: CTA label,\n    mentionCount: number,\n    cadenceDays: number,\n    sentimentScore: number between -1 and 1\n  }\n]\nopportunities: [\n  {\n    type: underrepresented | overindexed | debt | cta-gap | balanced,\n    label: Opportunity title,\n    topicId: optional topic id,\n    severity: low | medium | high,\n    summary: Short explanation,\n    recommendedAction: Specific follow-up,\n    supportingTopics: [topic ids]\n  }\n]\nnotes: Optional analyst notes\n\n- Limit topics to ${maxTopics} entries focusing on the clearest themes.\n- Mention counts should be relative estimates; set to 0 if unsure.\n- Share of voice values should sum to roughly 1.\n- Always include at least one opportunity entry even if it is balanced feedback.\n\nContext:\n- Project: ${projectTitle || 'Untitled Project'}\n- Tier: ${tier || 'unknown'}\n- Goals and guardrails: ${goalsText || 'None provided'}\n- Transcript slice (<= ${MAX_TRANSCRIPT_CHARS} chars):\n${transcriptSlice}\n\n${summarySnippet ? `Existing summary:\\n${summarySnippet}\\n` : ''}"
+    },
+    "speakerNameExtraction": {
+      "id": "speaker_name_extraction",
+      "model": "gpt-4o-mini",
+      "temperature": 0.1,
+      "max_tokens": 1000,
+      "strategies": {
+        "general": {
+          "system": "You are a name extraction specialist. Return only valid JSON arrays, no explanations.",
+          "prompt": "Task:\nExtract the names of people who are active speakers in the conversation from the first roughly 2500 characters of a podcast transcript.\n\nA speaker is someone who is explicitly introduced as being present.\n\nRules for extraction:\n1. Self-introductions:\n- Hi everyone, I am Name\n- My name is Name\n- This is Name\n- I am your host Name\n\n2. Host introducing guest or co-host:\n- Today I am joined by Name\n- Our guest today is Name\n- With me today is Name\n- Welcome Name\n- We have Name on the show\n\nDo NOT extract:\n- Non-present people\n- Third-party references\n- Titles without names\n- Nicknames without real names\n\nImportant:\n- Do NOT infer missing last names. Only extract exactly what is spoken.\n- Do NOT fabricate names.\n\nOutput format:\nReturn a unique JSON list of names, for example:\n[\n  \"First Last\",\n  \"Another Name\"\n]\n\nIf no names, return an empty JSON array: []\n\nAnalyze the transcript and return only the names of speakers who are explicitly introduced as being present.\n\nTranscription:\n${transcriptionText.substring(0, 2500)}..."
+        },
+        "introductionFocused": {
+          "system": "You are a name extraction specialist. Return only valid JSON arrays, no explanations.",
+          "prompt": "Analyze this podcast or interview transcription and extract speaker names ONLY from self-introductions.\n\nFocus on:\n1. Self-introductions ONLY: patterns like I am Name, I am First Last, My name is Name\n2. Host self-introductions: patterns like This is Name from..., I am your host Name\n\nIgnore:\n- Names mentioned about other people\n- Guest introductions spoken by the host\n- References to other people\n- Titles and roles alone\n\nCritical:\n- Extract ONLY proper names, not titles.\n- Do NOT infer last names that are not spoken.\n\nReturn ONLY a valid JSON array in this shape:\n[\n  {\n    \"name\": \"Primary name used\",\n    \"fullName\": \"Full name if mentioned (optional)\",\n    \"nicknames\": [\"alternative names\"],\n    \"context\": \"Self-introduction phrase used\",\n    \"confidence\": 0.1\n  }\n]\n\nReturn [] if no clear self-introductions are found.\n\nTranscription:\n${transcriptionText.substring(0, 2000)}..."
+        },
+        "qaPattern": {
+          "system": "You are a name extraction specialist. Return only valid JSON arrays, no explanations.",
+          "prompt": "Analyze this conversation transcript for direct address patterns where someone speaks to another person.\n\nLook for:\n1. Direct address responses: Well Name, I believe...\n2. Response acknowledgments: Thanks for that question, Name...\n3. Conversational responses: You are right about that, Name...\n\nIgnore:\n- Questions to others: Name, what do you think...\n- References about others: As Name mentioned earlier...\n- Third-person mentions: Name told me...\n\nReturn ONLY a valid JSON array in this shape:\n[\n  {\n    \"name\": \"Primary name used\",\n    \"fullName\": \"Full name if mentioned (optional)\",\n    \"nicknames\": [\"alternative names\"],\n    \"context\": \"How the speaker addressed the other person\",\n    \"confidence\": 0.1\n  }\n]\n\nReturn [] if no clear patterns are found.\n\nTranscription:\n${transcriptionText.substring(1000, 2500)}..."
+        }
+      }
+    },
+    "speakerRoleClassification": {
+      "id": "speaker_role_classification",
+      "model": "gpt-4o-mini",
+      "temperature": 0.2,
+      "max_tokens": 900,
+      "prompt": "You are analyzing a podcast or interview conversation.\nClassify each speaker into the most likely conversational role and summarize why.\nYou MUST respond with a JSON array. Each object must include:\n{ \"speakerId\": \"...\", \"role\": \"one of roles\", \"displayName\": \"human friendly name\", \"confidence\": 0-1, \"summary\": \"...\", \"evidence\": [\"short quotes\"] }\n\nAllowed roles: host, co_host, guest, interviewer, moderator, panelist, narrator, storyteller, ad_reader, sponsor_voice, promo_voice, call_to_action, expert_commentator, audience_question, unknown. If none apply, use unknown.\n\nIf multiple roles seem possible, choose the one with the most evidence and lower confidence accordingly. Do NOT invent roles outside the allowed list.\n\nDisplay names should be concise, for example Primary Host, Ad Read Voice, Guest Expert.\nUse evidence snippets actually spoken by that speaker.\n\nSpeakers:\nSpeaker 1 (id: ${summary.id}, duration: ${summary.duration}s, segments: ${summary.segmentCount})\n${summary.sample}\n---\nSpeaker 2 (id: ${summary.id}, duration: ${summary.duration}s, segments: ${summary.segmentCount})\n${summary.sample}\n---\n\nConversation context snippet:\n${transcriptSnippet}"
+    }
+  }
+}

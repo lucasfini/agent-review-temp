@@ -1,19 +1,23 @@
 "use client";
 
-import { useState } from 'react';
+import { useState, useEffect } from 'react';
 import Link from 'next/link';
 import { usePathname, useRouter } from 'next/navigation';
 import { useAuth } from '@/lib/auth/context';
-import { 
-  Home, 
-  Upload, 
-  FileText, 
-  BarChart3, 
-  Settings, 
-  LogOut, 
-  Menu, 
+import {
+  Home,
+  Upload,
+  FileText,
+  BarChart3,
+  DollarSign,
+  Activity,
+  Receipt,
+  Settings,
+  LogOut,
+  Menu,
   X,
-  Mic
+  Mic,
+  AlertCircle
 } from 'lucide-react';
 
 const navigation = [
@@ -21,19 +25,56 @@ const navigation = [
   { name: 'Projects', href: '/dashboard/projects', icon: FileText },
   { name: 'Upload', href: '/dashboard/upload', icon: Upload },
   { name: 'Analytics', href: '/dashboard/analytics', icon: BarChart3 },
+  { name: 'Costs', href: '/dashboard/costs', icon: DollarSign },
+  { name: 'Usage', href: '/dashboard/usage', icon: Activity },
+  { name: 'Transactions', href: '/dashboard/transactions', icon: Receipt },
   { name: 'Settings', href: '/dashboard/settings', icon: Settings },
 ];
 
 export default function DashboardNav() {
   const [isMobileMenuOpen, setIsMobileMenuOpen] = useState(false);
+  const [balance, setBalance] = useState<number | null>(null);
+  const [isLoadingBalance, setIsLoadingBalance] = useState(true);
   const pathname = usePathname();
   const router = useRouter();
-  const { user, signOut } = useAuth();
+  const { user, session, signOut } = useAuth();
+
+  // Fetch user's credit balance
+  useEffect(() => {
+    const fetchBalance = async () => {
+      if (!user || !session?.access_token) return;
+
+      try {
+        const response = await fetch('/api/billing/balance', {
+          headers: {
+            'Authorization': `Bearer ${session.access_token}`,
+          },
+        });
+        if (response.ok) {
+          const data = await response.json();
+          setBalance(data.balance);
+        }
+      } catch (error) {
+        console.error('Error fetching balance:', error);
+      } finally {
+        setIsLoadingBalance(false);
+      }
+    };
+
+    fetchBalance();
+  }, [user, session]);
 
   const handleSignOut = async () => {
     await signOut();
     router.push('/');
   };
+
+  const isLowBalance = balance !== null && balance < 5;
+  const balanceDisplay = isLoadingBalance
+    ? 'Loading...'
+    : balance !== null
+    ? `$${balance.toFixed(2)}`
+    : 'Free Plan';
 
   return (
     <>
@@ -77,22 +118,29 @@ export default function DashboardNav() {
           <div className="flex-shrink-0 flex border-t border-gray-200 p-4">
             <div className="flex-shrink-0 w-full group block">
               <div className="flex items-center justify-between">
-                <div className="flex items-center">
-                  <div className="inline-block h-9 w-9 rounded-full bg-blue-500">
+                <Link href="/dashboard/settings" className="flex items-center flex-1 min-w-0">
+                  <div className="inline-block h-9 w-9 rounded-full bg-blue-500 flex-shrink-0">
                     <div className="h-9 w-9 rounded-full bg-blue-500 flex items-center justify-center text-white text-sm font-medium">
                       {user?.email?.[0]?.toUpperCase() || 'U'}
                     </div>
                   </div>
-                  <div className="ml-3">
+                  <div className="ml-3 min-w-0 flex-1">
                     <p className="text-sm font-medium text-gray-700 truncate">
                       {user?.email}
                     </p>
-                    <p className="text-xs text-gray-500">Free Plan</p>
+                    <div className="flex items-center gap-1">
+                      <p className={`text-xs font-medium ${isLowBalance ? 'text-red-600' : 'text-gray-500'}`}>
+                        {balanceDisplay}
+                      </p>
+                      {isLowBalance && (
+                        <AlertCircle className="h-3 w-3 text-red-600" />
+                      )}
+                    </div>
                   </div>
-                </div>
+                </Link>
                 <button
                   onClick={handleSignOut}
-                  className="ml-3 flex items-center justify-center p-1.5 rounded-md text-gray-400 hover:text-gray-600 hover:bg-gray-100"
+                  className="ml-3 flex items-center justify-center p-1.5 rounded-md text-gray-400 hover:text-gray-600 hover:bg-gray-100 flex-shrink-0"
                   title="Sign out"
                 >
                   <LogOut className="h-4 w-4" />
@@ -166,20 +214,31 @@ export default function DashboardNav() {
             
             <div className="flex-shrink-0 flex border-t border-gray-200 p-4">
               <div className="flex items-center justify-between w-full">
-                <div className="flex items-center">
-                  <div className="inline-block h-10 w-10 rounded-full bg-blue-500">
+                <Link
+                  href="/dashboard/settings"
+                  onClick={() => setIsMobileMenuOpen(false)}
+                  className="flex items-center flex-1 min-w-0"
+                >
+                  <div className="inline-block h-10 w-10 rounded-full bg-blue-500 flex-shrink-0">
                     <div className="h-10 w-10 rounded-full bg-blue-500 flex items-center justify-center text-white font-medium">
                       {user?.email?.[0]?.toUpperCase() || 'U'}
                     </div>
                   </div>
-                  <div className="ml-3">
-                    <p className="text-base font-medium text-gray-700">{user?.email}</p>
-                    <p className="text-sm text-gray-500">Free Plan</p>
+                  <div className="ml-3 min-w-0 flex-1">
+                    <p className="text-base font-medium text-gray-700 truncate">{user?.email}</p>
+                    <div className="flex items-center gap-1">
+                      <p className={`text-sm font-medium ${isLowBalance ? 'text-red-600' : 'text-gray-500'}`}>
+                        {balanceDisplay}
+                      </p>
+                      {isLowBalance && (
+                        <AlertCircle className="h-3 w-3 text-red-600" />
+                      )}
+                    </div>
                   </div>
-                </div>
+                </Link>
                 <button
                   onClick={handleSignOut}
-                  className="ml-3 p-2 rounded-md text-gray-400 hover:text-gray-600 hover:bg-gray-100"
+                  className="ml-3 p-2 rounded-md text-gray-400 hover:text-gray-600 hover:bg-gray-100 flex-shrink-0"
                 >
                   <LogOut className="h-5 w-5" />
                 </button>

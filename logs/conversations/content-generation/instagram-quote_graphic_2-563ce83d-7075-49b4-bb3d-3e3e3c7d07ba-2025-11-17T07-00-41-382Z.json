@@ -1,0 +1,27 @@
+{
+  "projectId": "563ce83d-7075-49b4-bb3d-3e3e3c7d07ba",
+  "platform": "instagram",
+  "contentType": "quote_graphic_2",
+  "timestamp": "2025-11-17T07:00:41.382Z",
+  "prompt": {
+    "text": "Quote graphic generation",
+    "length": 24
+  },
+  "response": {
+    "text": "I think every candidate in each state and each race ran a perfect campaign.",
+    "length": 75,
+    "wordCount": 14
+  },
+  "metadata": {
+    "quote_length": 75,
+    "speaker": "Aaron Parness",
+    "graphic_style": "minimal_modern"
+  },
+  "processingTime": 0,
+  "quality": {
+    "responseCompleteness": "incomplete",
+    "estimatedReadability": 0.9,
+    "hashtagCount": 0,
+    "mentionCount": 0
+  }
+}

@@ -32,7 +32,7 @@ export interface CostEstimateOptions {
   tokenEstimate?: TokenEstimate | null;
 }
 
-const DEFAULT_MODEL_ID = 'gpt-4-turbo';
+const DEFAULT_MODEL_ID = 'gpt-4o';
 
 const getDefaultModel = (): ModelSpec => {
   const fallback = getModelById(DEFAULT_MODEL_ID);

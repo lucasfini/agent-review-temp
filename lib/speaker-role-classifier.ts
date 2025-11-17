@@ -1,5 +1,7 @@
 import OpenAI from 'openai';
 import { SpeakerSegment } from './types';
+import { prompts } from '@/lib/prompts/loader';
+import { trackOpenAIUsage } from '@/lib/billing/track-usage';
 
 export interface SpeakerRoleClassification {
   speakerId: string;
@@ -39,7 +41,11 @@ const ROLE_HINT = ROLE_OPTIONS.join(', ');
 
 export async function classifySpeakerRoles(
   speakers: Record<string, SpeakerProfile>,
-  options: { transcriptContext?: string } = {}
+  options: {
+    transcriptContext?: string;
+    userId?: string;
+    projectId?: string;
+  } = {}
 ): Promise<Record<string, SpeakerRoleClassification>> {
   if (!speakers || Object.keys(speakers).length === 0) {
     return {};
@@ -91,11 +97,14 @@ export async function classifySpeakerRoles(
     userContent.push('\nConversation context snippet:\n', transcriptSnippet);
   }
 
+  // Get config for speaker role classification
+  const config = prompts.audioRepurpose.speakerRoleClassification;
+
   try {
     const response = await openai.chat.completions.create({
-      model: 'gpt-4o-mini',
-      temperature: 0.2,
-      max_tokens: 900,
+      model: config.model,
+      temperature: config.temperature,
+      max_tokens: config.max_tokens,
       messages: [
         {
           role: 'system',
@@ -107,6 +116,26 @@ export async function classifySpeakerRoles(
         }
       ]
     });
+
+    // Track usage and billing (don't throw on billing errors)
+    if (options.userId) {
+      try {
+        await trackOpenAIUsage({
+          userId: options.userId,
+          projectId: options.projectId,
+          response,
+          modelName: config.model,
+          purpose: 'Speaker Role Classification',
+          metadata: {
+            speakerCount: speakerEntries.length,
+          },
+          shouldDebit: false, // Don't debit yet - will batch later
+        });
+      } catch (billingError) {
+        console.error('[SPEAKER ROLES] Billing tracking failed:', billingError);
+        // Continue processing even if billing fails
+      }
+    }
 
     const raw = response.choices[0]?.message?.content || '{}';
     const parsed = safeParseResponse(raw);

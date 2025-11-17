@@ -47,3 +47,7 @@ next-env.d.ts
 
 # Large media samples
 *.mp3
+
+# Runtime logs and conversation data
+/logs/conversations/*.json
+logs/conversations/*.json

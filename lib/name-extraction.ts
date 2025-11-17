@@ -2,6 +2,9 @@
 // Uses segment-based mapping for accurate speaker attribution
 import OpenAI from 'openai';
 import { SpeakerSegment, DetectedSpeaker } from './types';
+import { getPrompt, getSystemMessage, prompts } from '@/lib/prompts/loader';
+import type { SpeakerNameExtractionVars } from '@/lib/prompts/types';
+import { trackOpenAIUsage } from '@/lib/billing/track-usage';
 
 export interface ExtractedName {
   name: string;
@@ -32,14 +35,18 @@ export interface NamedSpeaker extends DetectedSpeaker {
 export async function extractSpeakerNames(
   transcriptionText: string,
   speakers: Record<string, DetectedSpeaker>,
-  speakerSegments: SpeakerSegment[]
+  speakerSegments: SpeakerSegment[],
+  options?: {
+    userId?: string;
+    projectId?: string;
+  }
 ): Promise<Record<string, NamedSpeaker>> {
   console.log(`[NAME EXTRACTION] Starting segment-based name extraction for ${Object.keys(speakers).length} speakers`);
   console.log(`[NAME EXTRACTION] Analyzing ${speakerSegments.length} speaker segments`);
 
   try {
     // NEW: Extract names directly from segments (no text position estimation!)
-    const segmentNames = await extractNamesFromSegments(speakerSegments, transcriptionText);
+    const segmentNames = await extractNamesFromSegments(speakerSegments, transcriptionText, options);
 
     // Map segment names to speakers
     const namedSpeakers: Record<string, NamedSpeaker> = {};
@@ -90,183 +97,80 @@ export async function extractSpeakerNames(
 /**
  * Use OpenAI to identify names mentioned in the transcription
  */
-async function identifyNamesWithAI(transcriptionText: string, strategy: string = 'general'): Promise<ExtractedName[]> {
+async function identifyNamesWithAI(
+  transcriptionText: string,
+  strategy: string = 'general',
+  options?: {
+    userId?: string;
+    projectId?: string;
+  }
+): Promise<ExtractedName[]> {
   // Create OpenAI client only when needed
   const openai = new OpenAI({
     apiKey: process.env.OPENAI_API_KEY,
   });
-  let prompt: string;
-  
-  switch (strategy) {
-    case 'introduction':
-      prompt = `
-Analyze this podcast/interview transcription and extract speaker names ONLY from self-introductions. Focus on:
 
-1. SELF-introductions ONLY: "I'm [Name]", "My name is [Name]", "I am [Name]"
-2. Host self-introductions: "This is [Name] from...", "I'm your host [Name]"
+  // Get config for speaker name extraction
+  const config = prompts.audioRepurpose.speakerNameExtraction;
 
-IGNORE these patterns:
-- Names mentioned about other people: "John told me...", "I spoke with Sarah..."
-- Guest introductions by host: "Today we have [Name]" (this is the host speaking, not the guest)
-- References to other people: "Thanks [Name]" (person thanking is the speaker)
-- TITLES and ROLES: "commentator", "analyst", "lawyer", "host", etc. are NOT names
+  // Map strategy names to config keys
+  const strategyMap: Record<string, keyof typeof config.strategies> = {
+    'general': 'general',
+    'introduction': 'introductionFocused',
+    'qa_pattern': 'qaPattern'
+  };
 
-CRITICAL: Extract ONLY proper names, NOT titles:
-- "lawyer and political commentator Aaron Parness" → Extract "Aaron Parness" only
-- "journalist Sarah Johnson" → Extract "Sarah Johnson" only
-- Always prioritize person names over job titles
+  const configKey = strategyMap[strategy] || 'general';
+  const strategyConfig = config.strategies[configKey];
 
-Return ONLY a valid JSON array:
+  // Build template variables
+  const vars: SpeakerNameExtractionVars = {
+    transcriptionText
+  };
 
-[
-  {
-    "name": "Primary name used",
-    "fullName": "Full name if mentioned (optional)",
-    "nicknames": ["alternative names"],
-    "context": "Self-introduction phrase used",
-    "confidence": 0.95
-  }
-]
-
-Rules:
-- Only extract proper names (first + last name), NOT titles or roles
-- If both title and name mentioned, extract name only
-- Rate confidence 0.1-1.0 based on clarity of self-identification
-- Return empty array [] if no clear self-introductions found
-- Return ONLY the JSON array, no other text
-
-Transcription:
-${transcriptionText.substring(0, 2000)}...`;
-      break;
-      
-    case 'qa_pattern':
-      prompt = `
-Analyze this conversation transcript for direct address patterns where someone speaks TO another person. Look for:
-
-1. Direct address responses: "Well [Interviewer name], I believe..." (person being addressed is speaking)
-2. Response acknowledgments: "Thanks for that question, [Host name]..." (person being addressed is speaking)
-3. Conversational responses: "You're right about that, [Name]..." (person being addressed is speaking)
-
-IGNORE these patterns:
-- Questions TO others: "[Name], what do you think..." (questioner is speaking, not [Name])
-- References ABOUT others: "As [Name] mentioned earlier..." (speaker is mentioning someone else)
-- Third-person mentions: "[Name] told me..." (speaker is talking about someone else)
-
-Return ONLY a valid JSON array:
-
-[
-  {
-    "name": "Primary name used",
-    "fullName": "Full name if mentioned (optional)", 
-    "nicknames": ["alternative names"],
-    "context": "How the speaker addressed the other person",
-    "confidence": 0.85
-  }
-]
-
-Rules:
-- Only extract names when the speaker is responding TO or addressing that person
-- Ignore names mentioned when speaking ABOUT other people
-- Rate confidence based on clarity of direct address
-- Return empty array [] if no clear patterns found
-- Return ONLY the JSON array, no other text
-
-Transcription:
-${transcriptionText.substring(1000, 2500)}...`;
-      break;
-      
-    default: // general
-      prompt = `
-Task:
-Extract the names of people who are active speakers in the conversation from the first ~2500 characters of a podcast transcript.
-
-A speaker is someone who is explicitly introduced as being present.
-
-✅ RULES FOR EXTRACTION
-
-1. Self-Introductions
-
-Extract the name when someone introduces themselves:
-- "I'm <Name>"
-- "I am <Name>"
-- "My name is <Name>"
-- "This is <Name>"
-- "I'm your host <Name>"
-
-Correct Examples:
-- "Hi everyone, I'm Julia Rivera" → Julia Rivera
-- "My name is Tom Lee" → Tom Lee
-- "This is your host Maria Torres" → Maria Torres
-
-2. Host Introducing Guest or Co-Host
-
-Extract the name when the host identifies someone as being present:
-- "Today I'm joined by <Name>"
-- "Our guest today is <Name>"
-- "With me today is <Name>"
-- "Welcome <Name>"
-- "We have <Name> on the show"
-
-If descriptors appear, discard descriptors and extract only the proper name.
-
-Correct Examples (Extract the name at the end of the phrase):
-- "Today I'm joined by political commentator Sarah Johnson" → Sarah Johnson
-- "Our guest today is best-selling author Dr. Michael Carter" → Michael Carter (ignore Dr.)
-- "With me today is journalist and historian Rachel Ahmed" → Rachel Ahmed
-- "Welcome my friend, entrepreneur and CEO Jacob Miles" → Jacob Miles
-- "Here with us is lawyer and political commentator Aaron Parness" → Aaron Parness
-
-❌ DO NOT EXTRACT (These are the most common false positives):
-
-Type | Example | Do Not Extract Because
------|---------|----------------------
-Mention of non-present person | "I was talking to John yesterday" | John is not a speaker
-Addressing someone | "So John, what do you think?" | Name is used, not introduced
-Reference to public figure | "Like Obama said one time" | Not present
-Title with no name | "The analyst said" | No name
-Nicknames only | "We call him Big Mike" | Not a full name
-Group references | "The Johnson family was there" | Not an individual speaker
-
-📦 OUTPUT FORMAT
-
-Return a unique JSON list of names:
-
-[
-  "First Last",
-  "First Last"
-]
-
-If no names, return:
-
-[]
-
-Do not include commentary, explanation, or any extra text.
-
-🧠 FINAL INSTRUCTION TO MODEL
-
-Analyze the transcript and return only the names of speakers who are explicitly introduced as being present in the conversation, according to the rules and examples above.
-Return only the deduplicated JSON list of names.
-Do not include titles, descriptors, nicknames, or third-party mentions.
-
-Transcription:
-${transcriptionText.substring(0, 2500)}...`;
-  }
+  // Get prompt using config loader (note: system message is separate in config)
+  const systemMessage = strategyConfig.system;
+  const { prompt } = getPrompt(
+    ['audioRepurpose', 'speakerNameExtraction', 'strategies', configKey],
+    vars
+  );
 
   const response = await openai.chat.completions.create({
-    model: 'gpt-4o-mini',
+    model: config.model,
     messages: [
       {
         role: 'system',
-        content: 'You are a name extraction specialist. Return only valid JSON arrays, no explanations.'
+        content: systemMessage
       },
       {
         role: 'user',
         content: prompt
       }
     ],
-    temperature: 0.1,
-    max_tokens: 1000,
+    temperature: config.temperature,
+    max_tokens: config.max_tokens,
   });
+
+  // Track usage and billing (don't throw on billing errors)
+  if (options?.userId) {
+    try {
+      await trackOpenAIUsage({
+        userId: options.userId,
+        projectId: options.projectId,
+        response,
+        modelName: config.model,
+        purpose: `Name Extraction (${strategy})`,
+        metadata: {
+          strategy,
+          transcriptLength: transcriptionText.length,
+        },
+        shouldDebit: false, // Don't debit yet - will batch later
+      });
+    } catch (billingError) {
+      console.error('[NAME EXTRACTION] Billing tracking failed:', billingError);
+      // Continue processing even if billing fails
+    }
+  }
 
   try {
     let content = response?.choices[0]?.message?.content || '[]';
@@ -587,7 +491,11 @@ export function getSpeakerColor(speakerId: string): string {
  */
 async function extractNamesFromSegments(
   speakerSegments: SpeakerSegment[],
-  transcriptionText: string
+  transcriptionText: string,
+  options?: {
+    userId?: string;
+    projectId?: string;
+  }
 ): Promise<Map<string, ExtractedName>> {
   const speakerNames = new Map<string, ExtractedName>();
 
@@ -791,7 +699,7 @@ async function extractNamesFromSegments(
     console.log('[NAME EXTRACTION] Pattern matching found insufficient names, using AI fallback...');
 
     try {
-      const aiNames = await multiPassNameExtraction(transcriptionText);
+      const aiNames = await multiPassNameExtraction(transcriptionText, options);
 
       // Map AI-extracted names to segments (but still use segment data, not text position!)
       for (const aiName of aiNames) {
@@ -846,15 +754,21 @@ function findSegmentContainingName(
 /**
  * Multi-pass name extraction for better accuracy
  */
-async function multiPassNameExtraction(transcriptionText: string): Promise<ExtractedName[]> {
+async function multiPassNameExtraction(
+  transcriptionText: string,
+  options?: {
+    userId?: string;
+    projectId?: string;
+  }
+): Promise<ExtractedName[]> {
   const allNames: ExtractedName[] = [];
-  
+
   // Pass 1: General name extraction
   const MIN_UNIQUE_NAMES = 2;
   const pushNamesFromPass = async (label: string, strategy: string) => {
     try {
       console.log(`[NAME EXTRACTION] ${label}`);
-      const names = await identifyNamesWithAI(transcriptionText, strategy);
+      const names = await identifyNamesWithAI(transcriptionText, strategy, options);
       allNames.push(...names);
     } catch (error) {
       console.warn(`[NAME EXTRACTION] ${label} failed:`, error);

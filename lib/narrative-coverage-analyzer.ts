@@ -5,6 +5,8 @@ import type {
   CoverageOpportunity,
   AiUsageDetail
 } from '@/lib/narrative-coverage';
+import { getPrompt, prompts } from '@/lib/prompts/loader';
+import type { NarrativeCoverageVars } from '@/lib/prompts/types';
 
 interface NarrativeGoal {
   id: string;
@@ -33,7 +35,9 @@ export interface NarrativeCoverageAnalyzerOptions {
   coverageWindow?: string;
 }
 
-const MODEL_ID = 'claude-sonnet-4-5-20250929';
+// Get configuration from centralized config
+const config = prompts.audioRepurpose.narrativeCoverage;
+const MODEL_ID = config.model;
 const INPUT_RATE_PER_TOKEN = 3 / 1_000_000; // $3 per million input tokens
 const OUTPUT_RATE_PER_TOKEN = 15 / 1_000_000; // $15 per million output tokens
 
@@ -73,21 +77,29 @@ export async function analyzeNarrativeCoverage(
   const summarySnippet = options.summary ? options.summary.slice(0, 4000) : '';
   const coverageWindow = options.coverageWindow || 'full_episode';
   const goalsText = formatGoals(options.goals || []);
+  const maxTopics = options.maxTopics || 8;
 
-  const instructions = buildPrompt({
+  // Build prompt using config loader
+  const vars: NarrativeCoverageVars = {
+    coverageWindow,
+    maxTopics,
+    projectTitle: options.projectTitle || 'Untitled Project',
+    tier: options.tier || 'unknown',
+    goalsText: goalsText || 'None provided',
     transcriptSlice,
     summarySnippet,
-    goalsText,
-    projectTitle: options.projectTitle,
-    tier: options.tier,
-    maxTopics: options.maxTopics || 8,
-    coverageWindow
-  });
+    MAX_TRANSCRIPT_CHARS
+  };
+
+  const { prompt: instructions } = getPrompt(
+    ['audioRepurpose', 'narrativeCoverage'],
+    vars
+  );
 
   const response = await anthropic.messages.create({
-    model: MODEL_ID,
-    max_tokens: 1800,
-    temperature: 0.2,
+    model: config.model,
+    max_tokens: config.max_tokens,
+    temperature: config.temperature,
     messages: [
       {
         role: 'user',
@@ -134,74 +146,6 @@ export async function analyzeNarrativeCoverage(
   };
 }
 
-function buildPrompt(params: {
-  transcriptSlice: string;
-  summarySnippet?: string;
-  goalsText?: string;
-  projectTitle?: string | null;
-  tier?: string;
-  maxTopics: number;
-  coverageWindow: string;
-}) {
-  const { transcriptSlice, summarySnippet, goalsText, projectTitle, tier, maxTopics, coverageWindow } =
-    params;
-
-  return `You are an editorial analyst. Given a podcast transcript (and a short summary if available), produce a structured JSON object describing narrative coverage.
-
-Requirements:
-- Return ONLY valid JSON (no markdown fences).
-- JSON structure:
-{
-  "coverage_window": "${coverageWindow}",
-  "topics": [
-    {
-      "id": "kebab_case_id",
-      "label": "Human readable topic",
-      "keywords": ["keyword", "secondary"],
-      "mentionCount": number,
-      "sentimentScore": number between -1 and 1,
-      "shareOfVoice": 0-1,
-      "relatedCtas": ["cta_id"],
-      "assetsCovered": ["summary","quotes"]
-    }
-  ],
-  "ctas": [
-    {
-      "id": "cta_id",
-      "label": "CTA label",
-      "mentionCount": number,
-      "cadenceDays": number,
-      "sentimentScore": number between -1 and 1
-    }
-  ],
-  "opportunities": [
-    {
-      "type": "underrepresented|overindexed|debt|cta-gap|balanced",
-      "label": "Opportunity title",
-      "topicId": "optional topic id",
-      "severity": "low|medium|high",
-      "summary": "Short explanation",
-      "recommendedAction": "Specific follow-up",
-      "supportingTopics": ["topic ids"]
-    }
-  ],
-  "notes": "Optional analyst notes"
-}
-- Limit topics to ${maxTopics} entries focusing on the clearest themes.
-- Mention counts should be relative estimates; set to 0 if unsure.
-- Share of voice values should sum to roughly 1.
-- Always include at least one opportunity entry even if it is "balanced" feedback.
-
-Context:
-- Project: ${projectTitle || 'Untitled Project'}
-- Tier: ${tier || 'unknown'}
-- Goals & guardrails: ${goalsText || 'None provided'}
-- Transcript slice (<=${MAX_TRANSCRIPT_CHARS} chars):
-"""${transcriptSlice}"""
-
-${summarySnippet ? `Existing summary:\n"""${summarySnippet}"""\n` : ''}`.trim();
-}
-
 function formatGoals(goals: NarrativeGoal[]) {
   if (!goals.length) return '';
   return goals
@@ -223,13 +167,29 @@ function safeJsonParse(raw: string | null | undefined) {
     return null;
   }
 
-  const jsonString = trimmed.slice(jsonStart, jsonEnd + 1);
+  let jsonString = trimmed.slice(jsonStart, jsonEnd + 1);
 
+  // Attempt to fix common JSON errors
   try {
+    // First attempt: parse as-is
     return JSON.parse(jsonString);
   } catch (error) {
-    console.warn('[NARRATIVE COVERAGE] Failed to parse JSON response', error);
-    return null;
+    console.warn('[NARRATIVE COVERAGE] Initial JSON parse failed, attempting to fix...', error);
+
+    try {
+      // Remove trailing commas before ] or }
+      jsonString = jsonString.replace(/,(\s*[}\]])/g, '$1');
+
+      // Fix unescaped quotes in strings (basic attempt)
+      // This is imperfect but catches some cases
+
+      return JSON.parse(jsonString);
+    } catch (secondError) {
+      console.error('[NARRATIVE COVERAGE] Failed to parse JSON after cleanup attempt');
+      console.error('[NARRATIVE COVERAGE] Raw response excerpt:', raw.slice(0, 1000));
+      console.error('[NARRATIVE COVERAGE] Extracted JSON:', jsonString.slice(0, 500));
+      return null;
+    }
   }
 }
 

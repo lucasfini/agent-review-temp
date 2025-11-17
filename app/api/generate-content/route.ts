@@ -1,13 +1,14 @@
 import { NextRequest, NextResponse } from 'next/server';
 import OpenAI from 'openai';
 import { supabaseAdmin } from '@/lib/supabase/server';
-import { 
-  logConversationGeneration, 
-  logAnalysisResults, 
+import {
+  logConversationGeneration,
+  logAnalysisResults,
   logContentGeneration,
-  ConversationLogEntry 
+  ConversationLogEntry
 } from '@/lib/conversation-logger';
 import { buildContentCacheKey, cacheGeneratedContent, getCachedGeneratedContent, hashTranscription } from '@/lib/content-cache';
+import { trackOpenAIUsage } from '@/lib/billing/track-usage';
 
 const openai = new OpenAI({
   apiKey: process.env.OPENAI_API_KEY,
@@ -40,16 +41,29 @@ export async function POST(request: NextRequest) {
         { status: 400 }
       );
     }
+
+    // Get user_id for billing tracking
+    const { data: project } = await supabaseAdmin
+      .from('projects')
+      .select('user_id')
+      .eq('id', projectId)
+      .single();
+
+    const userId = project?.user_id;
+    if (!userId) {
+      console.warn('[BILLING] Could not find user_id for project:', projectId);
+    }
     
     const supportedOpenAIModels = new Set([
       'gpt-4o',
       'gpt-4o-mini',
-      'gpt-4.1',
-      'gpt-4.1-mini',
+      'o1-preview',
+      'o1-mini',
       'gpt-4-turbo',
-      'gpt-4'
+      'gpt-4',
+      'gpt-3.5-turbo'
     ]);
-    const fallbackModel = 'gpt-4-turbo';
+    const fallbackModel = 'gpt-4o'; // Updated to more modern default
     const modelToUse = modelId && supportedOpenAIModels.has(modelId) ? modelId : fallbackModel;
     
     if (modelId && modelToUse !== modelId) {
@@ -115,20 +129,21 @@ export async function POST(request: NextRequest) {
     if (!fromCache) {
       // Step 1: Analyze content for different categories
       const analysisStartTime = Date.now();
-      analysis = await analyzeContent(transcription, modelToUse);
+      analysis = await analyzeContent(transcription, modelToUse, userId, projectId);
       analysisTime = Date.now() - analysisStartTime;
-      
+
       // Log analysis results
       await logAnalysisResults(projectId, transcription, analysis, analysisTime);
 
       // Step 2: Generate platform-specific content based on selection
       const contentStartTime = Date.now();
       generatedContent = await generatePlatformContentWithLogging(
-        transcription, 
-        analysis, 
-        contentTypes, 
+        transcription,
+        analysis,
+        contentTypes,
         projectId,
         modelToUse,
+        userId,
         Object.keys(normalizedKeywordMap).length ? normalizedKeywordMap : undefined
       );
       contentGenerationTime = Date.now() - contentStartTime;
@@ -228,7 +243,12 @@ export async function POST(request: NextRequest) {
   }
 }
 
-async function analyzeContent(transcription: string, model: string): Promise<ContentAnalysis> {
+async function analyzeContent(
+  transcription: string,
+  model: string,
+  userId?: string,
+  projectId?: string
+): Promise<ContentAnalysis> {
   const analysisPrompt = `
 You are a content analysis expert. Analyze this podcast transcription and return ONLY a valid JSON object with this exact structure:
 
@@ -242,7 +262,7 @@ You are a content analysis expert. Analyze this podcast transcription and return
   "actionable_insights": [{"text": "practical advice", "value": 7}]
 }
 
-IMPORTANT: 
+IMPORTANT:
 - Return ONLY the JSON object, no other text
 - If transcription is placeholder/demo content, create realistic sample data
 - Rate controversy_level, hook_strength, and value from 1-10
@@ -253,16 +273,35 @@ ${transcription}
 
   const response = await openai.chat.completions.create({
     model,
-    messages: [{ 
-      role: 'system', 
-      content: 'You are a JSON-only response generator. Return only valid JSON, no explanations or other text.' 
-    }, { 
-      role: 'user', 
-      content: analysisPrompt 
+    messages: [{
+      role: 'system',
+      content: 'You are a JSON-only response generator. Return only valid JSON, no explanations or other text.'
+    }, {
+      role: 'user',
+      content: analysisPrompt
     }],
     temperature: 0.3,
     max_tokens: 4000, // Increase token limit to prevent truncation
   });
+
+  // Track usage and billing
+  if (userId) {
+    try {
+      await trackOpenAIUsage({
+        userId,
+        projectId,
+        response,
+        modelName: model,
+        purpose: 'Content Analysis',
+        metadata: {
+          transcriptLength: transcription.length,
+        },
+        shouldDebit: false, // Don't debit yet - will batch later
+      });
+    } catch (billingError) {
+      console.error('[CONTENT GEN] Billing tracking failed for analysis:', billingError);
+    }
+  }
 
   let jsonContent = '';
   
@@ -355,11 +394,12 @@ ${transcription}
 }
 
 async function generatePlatformContentWithLogging(
-  transcription: string, 
-  analysis: ContentAnalysis, 
-  selectedTypes: string[], 
+  transcription: string,
+  analysis: ContentAnalysis,
+  selectedTypes: string[],
   projectId: string,
   model: string,
+  userId?: string,
   contentKeywords?: Record<string, string>
 ) {
   const contentPromises = [];
@@ -368,10 +408,11 @@ async function generatePlatformContentWithLogging(
   if (selectedTypes.includes('twitter_threads')) {
     contentPromises.push(
       generateTwitterThreadsWithLogging(
-        transcription, 
-        analysis, 
-        projectId, 
-        model, 
+        transcription,
+        analysis,
+        projectId,
+        model,
+        userId,
         contentKeywords?.twitter_threads
       )
     );
@@ -380,68 +421,73 @@ async function generatePlatformContentWithLogging(
   if (selectedTypes.includes('linkedin_posts')) {
     contentPromises.push(
       generateLinkedInPostsWithLogging(
-        transcription, 
-        analysis, 
-        projectId, 
-        model, 
+        transcription,
+        analysis,
+        projectId,
+        model,
+        userId,
         contentKeywords?.linkedin_posts
       )
     );
   }
-  
+
   if (selectedTypes.includes('instagram_content')) {
     contentPromises.push(
       generateInstagramContentWithLogging(
-        transcription, 
-        analysis, 
-        projectId, 
-        model, 
+        transcription,
+        analysis,
+        projectId,
+        model,
+        userId,
         contentKeywords?.instagram_content
       )
     );
   }
-  
+
   if (selectedTypes.includes('blog_post')) {
     contentPromises.push(
       generateBlogPostWithLogging(
-        transcription, 
-        analysis, 
-        projectId, 
-        model, 
+        transcription,
+        analysis,
+        projectId,
+        model,
+        userId,
         contentKeywords?.blog_post
       )
     );
   }
-  
+
   if (selectedTypes.includes('newsletter')) {
     contentPromises.push(
       generateNewsletterContentWithLogging(
-        transcription, 
-        analysis, 
-        projectId, 
-        model, 
+        transcription,
+        analysis,
+        projectId,
+        model,
+        userId,
         contentKeywords?.newsletter
       )
     );
   }
-  
+
   if (selectedTypes.includes('show_notes')) {
     contentPromises.push(
       generateShowNotesWithLogging(
-        transcription, 
-        analysis, 
-        projectId, 
-        model, 
+        transcription,
+        analysis,
+        projectId,
+        model,
+        userId,
         contentKeywords?.show_notes
       )
     );
   }
-  
+
   if (selectedTypes.includes('quote_graphics')) {
     contentPromises.push(
       generateQuoteGraphicsWithLogging(
-        analysis, 
-        projectId, 
+        analysis,
+        projectId,
         contentKeywords?.quote_graphics
       )
     );
@@ -471,9 +517,11 @@ async function generatePlatformContentWithLogging(
 }
 
 async function generateTwitterThreads(
-  transcription: string, 
-  analysis: ContentAnalysis, 
+  transcription: string,
+  analysis: ContentAnalysis,
   model: string,
+  userId?: string,
+  projectId?: string,
   keywords?: string
 ) {
   const hooks = analysis.hooks.sort((a, b) => b.hook_strength - a.hook_strength).slice(0, 4);
@@ -524,6 +572,27 @@ Context from podcast: ${transcription.substring(0, 2000)}...
           temperature: 0.7,
           max_tokens: 1000,
         });
+
+        // Track usage and billing
+        if (userId && response) {
+          try {
+            await trackOpenAIUsage({
+              userId,
+              projectId,
+              response,
+              modelName: model,
+              purpose: `Twitter Thread ${i + 1}`,
+              metadata: {
+                threadNumber: i + 1,
+                hookStrength: hook.hook_strength,
+              },
+              shouldDebit: false, // Don't debit yet - will batch later
+            });
+          } catch (billingError) {
+            console.error('[CONTENT GEN] Billing tracking failed for Twitter thread:', billingError);
+          }
+        }
+
         break; // Success, exit retry loop
       } catch (error) {
         retryCount++;
@@ -560,9 +629,11 @@ Context from podcast: ${transcription.substring(0, 2000)}...
 }
 
 async function generateLinkedInPosts(
-  transcription: string, 
-  analysis: ContentAnalysis, 
+  transcription: string,
+  analysis: ContentAnalysis,
   model: string,
+  userId?: string,
+  projectId?: string,
   keywords?: string
 ) {
   const insights = analysis.actionable_insights.sort((a, b) => b.value - a.value).slice(0, 3);
@@ -605,6 +676,26 @@ Context: ${transcription.substring(0, 2000)}...
       messages: [{ role: 'user', content: prompt }],
       temperature: 0.6,
     });
+
+    // Track usage and billing
+    if (userId) {
+      try {
+        await trackOpenAIUsage({
+          userId,
+          projectId,
+          response,
+          modelName: model,
+          purpose: `LinkedIn Post ${i + 1}`,
+          metadata: {
+            postNumber: i + 1,
+            insightValue: insight.value,
+          },
+          shouldDebit: false,
+        });
+      } catch (billingError) {
+        console.error('[CONTENT GEN] Billing tracking failed for LinkedIn post:', billingError);
+      }
+    }
 
     posts.push({
       type: 'social_post',
@@ -827,14 +918,28 @@ async function generateQuoteGraphics(analysis: ContentAnalysis, keywords?: strin
 }
 
 async function saveGeneratedContent(projectId: string, contentPieces: any[]) {
+  // First, fetch the project to get user_id
+  const { data: project } = await supabaseAdmin
+    .from('projects')
+    .select('user_id')
+    .eq('id', projectId)
+    .single();
+
+  if (!project) {
+    throw new Error('Project not found');
+  }
+
   const inserts = contentPieces.map(piece => ({
     project_id: projectId,
+    user_id: project.user_id,
     type: piece.type,
     platform: piece.platform,
     title: piece.title,
     content: piece.content,
     metadata: piece.metadata,
-    status: 'generated'
+    status: 'generated',
+    word_count: piece.content ? piece.content.split(/\s+/).length : 0,
+    character_count: piece.content ? piece.content.length : 0
   }));
 
   const { error } = await supabaseAdmin
@@ -850,15 +955,16 @@ async function saveGeneratedContent(projectId: string, contentPieces: any[]) {
 // Logging wrapper functions for content generation
 
 async function generateTwitterThreadsWithLogging(
-  transcription: string, 
-  analysis: ContentAnalysis, 
-  projectId: string, 
+  transcription: string,
+  analysis: ContentAnalysis,
+  projectId: string,
   model: string,
+  userId?: string,
   keywords?: string
 ) {
   const startTime = Date.now();
   try {
-    const result = await generateTwitterThreads(transcription, analysis, model, keywords);
+    const result = await generateTwitterThreads(transcription, analysis, model, userId, projectId, keywords);
     const processingTime = Date.now() - startTime;
     
     // Log each thread separately
@@ -883,15 +989,16 @@ async function generateTwitterThreadsWithLogging(
 }
 
 async function generateLinkedInPostsWithLogging(
-  transcription: string, 
-  analysis: ContentAnalysis, 
-  projectId: string, 
+  transcription: string,
+  analysis: ContentAnalysis,
+  projectId: string,
   model: string,
+  userId?: string,
   keywords?: string
 ) {
   const startTime = Date.now();
   try {
-    const result = await generateLinkedInPosts(transcription, analysis, model, keywords);
+    const result = await generateLinkedInPosts(transcription, analysis, model, userId, projectId, keywords);
     const processingTime = Date.now() - startTime;
     
     for (let i = 0; i < result.length; i++) {

@@ -7,20 +7,18 @@ import { extractSpeakerNames } from '@/lib/name-extraction';
 import { classifySpeakerRoles } from '@/lib/speaker-role-classifier';
 import { generatePodcastSummary } from '@/lib/content-generators/summary';
 import { detectPodcastChapters } from '@/lib/content-generators/chapters';
-import { extractKeyTakeaways } from '@/lib/content-generators/takeaways';
+import { extractKeyTakeaways, type KeyTakeaway } from '@/lib/content-generators/takeaways';
 import { extractSocialQuotes } from '@/lib/content-generators/quotes';
 import { getTierFeatures, calculateTierCost, type TierLevel } from '@/lib/tier-config';
 import { updateProcessingProgress } from '@/lib/progress-tracker';
 import { ProcessingStage } from '@/lib/tier-progress-config';
-import { analyzeNarrativeCoverage } from '@/lib/narrative-coverage-analyzer';
-import type { NarrativeCoverageAnalysisResult } from '@/lib/narrative-coverage-analyzer';
-import {
-  saveNarrativeCoverageSnapshot,
-  getActiveNarrativeGoals
-} from '@/lib/narrative-coverage';
 import { promises as fs } from 'fs';
 import * as path from 'path';
 import * as os from 'os';
+import type { SpeakerSegment, TranscriptionSegment } from '@/lib/types';
+import { estimateTranscriptionCost } from '@/lib/billing/cost-map';
+import { trackAssemblyAIUsage, requireSufficientCredit } from '@/lib/billing/track-usage';
+import { InsufficientCreditError } from '@/lib/billing/credit';
 
 // Global file storage for temporary solution
 declare global {
@@ -65,6 +63,417 @@ const purgeInMemoryAudio = (fileName: string | undefined) => {
   const keys = buildInMemoryKeys(fileName);
   keys.forEach(key => global.uploadedFiles?.delete(key));
 };
+
+type InlineInsightCardPayload = {
+  entityId: string;
+  label: string;
+  category: 'person' | 'org' | 'concept' | 'product' | 'social';
+  matchText: string;
+  matchVariants?: string[];
+  transcriptExcerpt: string;
+  summary: string;
+  confidence: number;
+  sources?: Array<{ title: string; url?: string; type?: string }>;
+  updatedAt: string;
+  status?: 'auto_detected' | 'user_highlight' | 'refreshing';
+  origin: 'takeaway';
+};
+
+const INLINE_STOPWORDS = new Set([
+  'the',
+  'and',
+  'with',
+  'that',
+  'this',
+  'from',
+  'have',
+  'about',
+  'there',
+  'their',
+  'would',
+  'could',
+  'should',
+  'because',
+  'while',
+  'where',
+  'which',
+  'into',
+  'after',
+  'before',
+  'thing',
+  'things',
+  'people',
+  'really'
+]);
+
+function buildInlineInsightsFromSources({
+  takeaways,
+  speakerSegments,
+  transcriptionSegments,
+  speakersWithNames,
+  transcriptionText
+}: {
+  takeaways?: KeyTakeaway[];
+  speakerSegments: SpeakerSegment[];
+  transcriptionSegments: TranscriptionSegment[];
+  speakersWithNames: Record<string, any>;
+  transcriptionText: string;
+}): InlineInsightCardPayload[] {
+  if (!takeaways || !takeaways.length) {
+    return [];
+  }
+
+  const safeSpeakerSegments = Array.isArray(speakerSegments) ? speakerSegments : [];
+  const safeTranscriptionSegments = Array.isArray(transcriptionSegments) ? transcriptionSegments : [];
+  const usedSegmentIndexes = new Set<number>();
+  const generatedAt = new Date().toISOString();
+
+  const insights: InlineInsightCardPayload[] = [];
+
+  takeaways.forEach((takeaway, index) => {
+    const keywords = extractInsightKeywords(`${takeaway.takeaway} ${takeaway.context || ''}`);
+    const segmentMatch = findBestSegmentForTakeaway({
+      takeaway,
+      keywords,
+      speakerSegments: safeSpeakerSegments,
+      transcriptionSegments: safeTranscriptionSegments,
+      speakersWithNames,
+      transcriptionText,
+      usedSegmentIndexes
+    });
+
+    if (!segmentMatch || !segmentMatch.text) {
+      return;
+    }
+
+    const excerpt = trimInlineExcerpt(segmentMatch.text);
+
+    if (!excerpt) {
+      return;
+    }
+
+    const matchVariants = Array.from(
+      new Set([
+        ...(segmentMatch.matchVariants || []),
+        speakersWithNames?.[segmentMatch.speakerId || '']?.finalName,
+        speakersWithNames?.[segmentMatch.speakerId || '']?.fallbackName
+      ].filter(Boolean) as string[])
+    );
+
+    insights.push({
+      entityId: `takeaway-${index}`,
+      label: truncateInlineLabel(takeaway.takeaway),
+      category: mapTakeawayCategory(takeaway.category),
+      matchText: excerpt,
+      matchVariants,
+      transcriptExcerpt: excerpt,
+      summary: takeaway.takeaway,
+      confidence: 0.75,
+      sources: takeaway.context ? [{ title: takeaway.context, type: 'context' }] : undefined,
+      updatedAt: generatedAt,
+      status: 'auto_detected',
+      origin: 'takeaway'
+    });
+  });
+
+  return insights;
+}
+
+function findBestSegmentForTakeaway({
+  takeaway,
+  keywords,
+  speakerSegments,
+  transcriptionSegments,
+  speakersWithNames,
+  transcriptionText,
+  usedSegmentIndexes
+}: {
+  takeaway: KeyTakeaway;
+  keywords: string[];
+  speakerSegments: SpeakerSegment[];
+  transcriptionSegments: TranscriptionSegment[];
+  speakersWithNames: Record<string, any>;
+  transcriptionText: string;
+  usedSegmentIndexes: Set<number>;
+}): { text: string; matchVariants?: string[]; speakerId?: string } | null {
+  const timestampMatch = locateSegmentByTimestamp(speakerSegments, takeaway.timestamp, usedSegmentIndexes);
+  if (timestampMatch) {
+    return timestampMatch;
+  }
+
+  const overlapMatch = locateSegmentByOverlap(speakerSegments, keywords, usedSegmentIndexes);
+  if (overlapMatch) {
+    return overlapMatch;
+  }
+
+  const transcriptMatch = locateTranscriptionSentence(transcriptionSegments, transcriptionText, keywords);
+  if (transcriptMatch) {
+    return transcriptMatch;
+  }
+
+  const speakerId = findSpeakerIdFromContext(takeaway.context, speakersWithNames);
+  if (speakerId) {
+    const speakerMatch = locateSegmentBySpeaker(
+      speakerSegments,
+      speakerId,
+      speakersWithNames,
+      keywords,
+      usedSegmentIndexes
+    );
+    if (speakerMatch) {
+      return speakerMatch;
+    }
+  }
+
+  return null;
+}
+
+function locateSegmentByTimestamp(
+  segments: SpeakerSegment[],
+  timestamp: number | undefined,
+  usedSegmentIndexes: Set<number>
+): { text: string; matchVariants?: string[]; speakerId?: string } | null {
+  if (typeof timestamp !== 'number' || !segments.length) {
+    return null;
+  }
+
+  let candidateIndex = -1;
+  let candidateDistance = Number.POSITIVE_INFINITY;
+
+  segments.forEach((segment, index) => {
+    if (usedSegmentIndexes.has(index) || typeof segment.startTime !== 'number' || typeof segment.endTime !== 'number') {
+      return;
+    }
+
+    const withinRange = timestamp >= segment.startTime && timestamp <= segment.endTime;
+    const distance = withinRange
+      ? 0
+      : Math.min(Math.abs(segment.startTime - timestamp), Math.abs(segment.endTime - timestamp));
+
+    if (distance < candidateDistance) {
+      candidateDistance = distance;
+      candidateIndex = index;
+    }
+  });
+
+  if (candidateIndex === -1 || candidateDistance > 60) {
+    return null;
+  }
+
+  usedSegmentIndexes.add(candidateIndex);
+  return {
+    text: segments[candidateIndex].text || '',
+    speakerId: segments[candidateIndex].speakerId
+  };
+}
+
+function locateSegmentBySpeaker(
+  segments: SpeakerSegment[],
+  speakerId: string,
+  speakersWithNames: Record<string, any>,
+  keywords: string[],
+  usedSegmentIndexes: Set<number>
+): { text: string; matchVariants?: string[]; speakerId?: string } | null {
+  if (!speakerId) {
+    return null;
+  }
+
+  const displayName = speakersWithNames?.[speakerId]?.finalName || speakersWithNames?.[speakerId]?.fallbackName;
+  const candidates = segments
+    .map((segment, index) => ({ segment, index }))
+    .filter(({ segment, index }) => !usedSegmentIndexes.has(index) && segment.speakerId === speakerId && segment.text?.trim());
+
+  if (!candidates.length) {
+    return null;
+  }
+
+  if (keywords.length) {
+    let best = candidates[0];
+    let bestScore = 0;
+    candidates.forEach(candidate => {
+      const lower = candidate.segment.text.toLowerCase();
+      const score = keywords.reduce((acc, keyword) => (lower.includes(keyword) ? acc + 1 : acc), 0);
+      if (score > bestScore) {
+        bestScore = score;
+        best = candidate;
+      }
+    });
+    if (bestScore > 0) {
+      usedSegmentIndexes.add(best.index);
+      return {
+        text: best.segment.text,
+        matchVariants: displayName ? [displayName] : undefined,
+        speakerId
+      };
+    }
+  }
+
+  const fallback =
+    candidates
+      .filter(candidate => (candidate.segment.text || '').length > 60)
+      .sort((a, b) => (b.segment.text.length || 0) - (a.segment.text.length || 0))[0] || candidates[0];
+
+  usedSegmentIndexes.add(fallback.index);
+  return {
+    text: fallback.segment.text,
+    matchVariants: displayName ? [displayName] : undefined,
+    speakerId
+  };
+}
+
+function locateSegmentByOverlap(
+  segments: SpeakerSegment[],
+  keywords: string[],
+  usedSegmentIndexes: Set<number>
+): { text: string; speakerId?: string } | null {
+  if (!keywords.length) {
+    return null;
+  }
+
+  let bestIndex = -1;
+  let bestScore = 0;
+
+  segments.forEach((segment, index) => {
+    if (usedSegmentIndexes.has(index) || !segment.text) return;
+    const lower = segment.text.toLowerCase();
+    const score = keywords.reduce((acc, keyword) => (lower.includes(keyword) ? acc + 1 : acc), 0);
+    if (score > bestScore) {
+      bestScore = score;
+      bestIndex = index;
+    }
+  });
+
+  if (bestIndex === -1 || bestScore === 0) {
+    return null;
+  }
+
+  usedSegmentIndexes.add(bestIndex);
+  return { text: segments[bestIndex].text || '', speakerId: segments[bestIndex].speakerId };
+}
+
+function locateTranscriptionSentence(
+  segments: TranscriptionSegment[],
+  transcriptionText: string,
+  keywords: string[]
+): { text: string } | null {
+  if (Array.isArray(segments) && segments.length) {
+    let bestIndex = -1;
+    let bestScore = 0;
+    segments.forEach((segment, index) => {
+      if (!segment.text) return;
+      const lower = segment.text.toLowerCase();
+      const score = keywords.reduce((acc, keyword) => (lower.includes(keyword) ? acc + 1 : acc), 0);
+      if (score > bestScore) {
+        bestScore = score;
+        bestIndex = index;
+      }
+    });
+    if (bestIndex !== -1 && bestScore > 0) {
+      return { text: segments[bestIndex].text || '' };
+    }
+  }
+
+  if (!transcriptionText || !keywords.length) {
+    return null;
+  }
+
+  const lowerTranscript = transcriptionText.toLowerCase();
+  for (const keyword of keywords) {
+    const position = lowerTranscript.indexOf(keyword);
+    if (position !== -1) {
+      return { text: extractSentenceAt(transcriptionText, position) };
+    }
+  }
+
+  return null;
+}
+
+function findSpeakerIdFromContext(context: string | undefined, speakersWithNames: Record<string, any>): string | null {
+  if (!context) return null;
+  const normalized = context.toLowerCase();
+  for (const [speakerId, info] of Object.entries(speakersWithNames || {})) {
+    const possibleNames = [
+      info?.finalName,
+      info?.fallbackName,
+      info?.customName,
+      info?.extractedName?.name
+    ]
+      .filter(Boolean)
+      .map((value: string) => value.toLowerCase());
+
+    if (possibleNames.some(name => name && normalized.includes(name))) {
+      return speakerId;
+    }
+  }
+  return null;
+}
+
+function extractInsightKeywords(text: string): string[] {
+  if (!text) return [];
+  return text
+    .toLowerCase()
+    .split(/[^a-z0-9]+/)
+    .filter(word => word.length > 4 && !INLINE_STOPWORDS.has(word));
+}
+
+function trimInlineExcerpt(text: string, maxLength = 320): string {
+  if (!text) return '';
+  const normalized = text.replace(/\s+/g, ' ').trim();
+  if (normalized.length <= maxLength) {
+    return normalized;
+  }
+  const truncated = normalized.slice(0, maxLength);
+  const sentenceBreak = Math.max(
+    truncated.lastIndexOf('. '),
+    truncated.lastIndexOf('! '),
+    truncated.lastIndexOf('? ')
+  );
+  if (sentenceBreak > maxLength * 0.5) {
+    return truncated.slice(0, sentenceBreak + 1).trim();
+  }
+  const spaceBreak = truncated.lastIndexOf(' ');
+  if (spaceBreak > maxLength * 0.5) {
+    return `${truncated.slice(0, spaceBreak).trim()}…`;
+  }
+  return `${truncated.trim()}…`;
+}
+
+function truncateInlineLabel(text: string, maxLength = 80): string {
+  if (!text) return 'Key Insight';
+  if (text.length <= maxLength) return text;
+  return `${text.slice(0, maxLength - 1).trim()}…`;
+}
+
+function mapTakeawayCategory(category?: string): InlineInsightCardPayload['category'] {
+  if (!category) return 'concept';
+  const normalized = category.toLowerCase();
+  if (normalized.includes('person') || normalized.includes('host') || normalized.includes('guest')) {
+    return 'person';
+  }
+  if (normalized.includes('brand') || normalized.includes('company') || normalized.includes('org')) {
+    return 'org';
+  }
+  if (normalized.includes('product')) {
+    return 'product';
+  }
+  if (normalized.includes('social')) {
+    return 'social';
+  }
+  return 'concept';
+}
+
+function extractSentenceAt(text: string, index: number): string {
+  if (!text) return '';
+  let start = index;
+  while (start > 0 && !'.!?'.includes(text[start - 1])) {
+    start -= 1;
+  }
+  let end = index;
+  while (end < text.length && !'.!?'.includes(text[end])) {
+    end += 1;
+  }
+  return text.slice(start, Math.min(end + 1, text.length)).trim();
+}
 
 export async function POST(request: NextRequest) {
   const startTime = Date.now();
@@ -199,6 +608,42 @@ export async function POST(request: NextRequest) {
       await fs.writeFile(tempAudioFilePath, fileBuffer);
       console.log(`[TRANSCRIPTION] 📁 Temp audio file created: ${tempAudioFilePath}`);
 
+      // Pre-flight credit balance check
+      const userId = existingProject?.user_id;
+      if (userId) {
+        try {
+          // Estimate transcription cost based on file size (rough estimate: 1MB ≈ 60 seconds)
+          const estimatedDurationSeconds = Math.ceil((fileData.size / 1024 / 1024) * 60);
+          const estimatedCost = estimateTranscriptionCost({
+            durationSeconds: estimatedDurationSeconds,
+            tier,
+          });
+
+          console.log(`[BILLING] 💰 Estimated cost: $${estimatedCost.total.toFixed(4)} for ~${(estimatedDurationSeconds / 60).toFixed(1)} minutes`);
+
+          // Check if user has sufficient credits
+          await requireSufficientCredit(userId, estimatedCost.total);
+          console.log(`[BILLING] ✅ User has sufficient credits`);
+        } catch (error) {
+          if (error instanceof InsufficientCreditError) {
+            console.error(`[BILLING] ❌ Insufficient credits: need $${error.required.toFixed(4)}, have $${error.available.toFixed(4)}`);
+            return NextResponse.json(
+              {
+                error: 'Insufficient credits',
+                required: error.required,
+                available: error.available,
+                shortfall: error.required - error.available,
+              },
+              { status: 402 } // Payment Required
+            );
+          }
+          // For other errors, log but continue (don't block on billing system failures)
+          console.error('[BILLING] ⚠️ Credit check failed, continuing anyway:', error);
+        }
+      } else {
+        console.warn('[BILLING] ⚠️ No user_id found, skipping credit check');
+      }
+
       // Update progress: Starting transcription
       await updateProcessingProgress(projectId, {
         stage: 'transcribing' as ProcessingStage,
@@ -224,6 +669,28 @@ export async function POST(request: NextRequest) {
       speakerSegments = assemblyResult.speaker_segments || [];
       baseCost = assemblyResult.metadata?.cost_usd || 0;
       assemblyMetadata = assemblyResult.metadata || null;
+
+      // Track usage and debit credits
+      if (userId && totalDuration > 0) {
+        try {
+          const billingResult = await trackAssemblyAIUsage({
+            userId,
+            projectId,
+            durationSeconds: totalDuration,
+            metadata: {
+              processingTime: assemblyResult.metadata?.processing_time,
+              speakerCount: assemblyResult.metadata?.total_speakers,
+              confidence: assemblyResult.metadata?.confidence,
+            },
+            shouldDebit: true, // Debit credits immediately
+          });
+
+          console.log(`[BILLING] ✅ Tracked AssemblyAI usage: $${billingResult.billedCost.toFixed(4)} (${(totalDuration / 60).toFixed(1)} minutes)`);
+        } catch (error) {
+          // Log billing errors but don't fail the transcription
+          console.error('[BILLING] ⚠️ Failed to track AssemblyAI usage:', error);
+        }
+      }
 
       // Update progress: Transcription completed
       await updateProcessingProgress(projectId, {
@@ -293,8 +760,6 @@ export async function POST(request: NextRequest) {
     let takeawaysData: any = null;
     let quotesData: any = null;
     let roleAssignments: Record<string, any> = {};
-    let coverageAnalysis: NarrativeCoverageAnalysisResult | null = null;
-    let coverageAnalysisCost = 0;
 
     // PRO tier: Name extraction + Summary
     if (features.nameExtraction || features.aiSummary) {
@@ -314,7 +779,11 @@ export async function POST(request: NextRequest) {
           const namedSpeakers = await extractSpeakerNames(
             finalTranscription,
             detectedSpeakers,
-            speakerSegments  // Pass speaker segments for accurate mapping
+            speakerSegments,  // Pass speaker segments for accurate mapping
+            {
+              userId: existingProject?.user_id,
+              projectId,
+            }
           );
           speakersWithNames = namedSpeakers as any;
           console.log(`[AI] ✅ Named ${Object.keys(namedSpeakers).length} speakers`);
@@ -399,7 +868,11 @@ export async function POST(request: NextRequest) {
                 }
               ])
             ),
-            { transcriptContext: finalTranscription }
+            {
+              transcriptContext: finalTranscription,
+              userId: existingProject?.user_id,
+              projectId,
+            }
           );
 
           // Apply role assignments to speakers
@@ -508,47 +981,14 @@ export async function POST(request: NextRequest) {
       }
     }
 
-    // Narrative coverage analysis (all tiers)
-    if (existingProject?.user_id) {
-      try {
-        console.log('\n[COVERAGE] 🔍 Running narrative coverage analysis...');
-        const goals = await getActiveNarrativeGoals(existingProject.user_id);
-        coverageAnalysis = await analyzeNarrativeCoverage(finalTranscription, {
-          projectTitle: existingProject.title,
-          summary: summaryData?.summary || null,
-          goals,
-          tier,
-          maxTopics: tier === 'premium' ? 10 : 6,
-          coverageWindow: 'full_episode'
-        });
-
-        coverageAnalysisCost = coverageAnalysis?.aiUsage?.costUsd || 0;
-
-        await saveNarrativeCoverageSnapshot({
-          projectId,
-          userId: existingProject.user_id,
-          projectTitle: existingProject.title || fileName,
-          coverageWindow: coverageAnalysis.coverageWindow,
-          topics: coverageAnalysis.topics,
-          ctas: coverageAnalysis.ctas,
-          opportunities: coverageAnalysis.opportunities,
-          aiUsage: coverageAnalysis.aiUsage,
-          notes: coverageAnalysis.notes
-        });
-
-        console.log(
-          `[COVERAGE] ✅ Snapshot saved with ${coverageAnalysis.topics.length} topics and ${coverageAnalysis.ctas.length} CTAs`
-        );
-        console.log(
-          `[COVERAGE] 📊 Tokens: ${coverageAnalysis.aiUsage.inputTokens} in, ${coverageAnalysis.aiUsage.outputTokens} out`
-        );
-      } catch (coverageError: any) {
-        coverageAnalysisCost = 0;
-        console.error('[COVERAGE] ⚠️  Narrative coverage analysis failed:', coverageError?.message || coverageError);
-      }
-    } else {
-      console.warn('[COVERAGE] ⚠️  Missing project user_id, skipping coverage snapshot.');
-    }
+    // Inline insights are now generated client-side for better entity detection
+    // const inlineInsights = buildInlineInsightsFromSources({
+    //   takeaways: takeawaysData?.takeaways,
+    //   speakerSegments,
+    //   transcriptionSegments,
+    //   speakersWithNames,
+    //   transcriptionText: finalTranscription
+    // });
 
     // Calculate AI processing costs from actual token usage
     const CLAUDE_INPUT_COST = 3 / 1_000_000; // $3 per million tokens
@@ -565,22 +1005,16 @@ export async function POST(request: NextRequest) {
     }
 
     let totalCost = baseCost + aiProcessingCost;
-    totalCost += coverageAnalysisCost;
     const tierPricing = calculateTierCost(tier, totalDuration, false);
 
     console.log(`\n[COST] 💰 Cost Summary:`);
     console.log(`[COST]   Transcription: $${baseCost.toFixed(4)} (AssemblyAI)`);
     console.log(`[COST]   AI Processing: $${aiProcessingCost.toFixed(4)} (Claude Sonnet 4.5)`);
-    if (coverageAnalysisCost > 0) {
-      console.log(
-        `[COST]   Coverage Radar: $${coverageAnalysisCost.toFixed(4)} (Claude Sonnet 4.5)`
-      );
-    }
     console.log(`[COST]   Total Cost: $${totalCost.toFixed(4)}`);
     console.log(`[COST]   Expected ${tier} cost: $${tierPricing.totalCost.toFixed(4)}`);
 
     // Build speaker data
-    const speakerData = {
+    const speakerData: any = {
       segments: speakerSegments,
       speakers: speakersWithNames,
       detectionMetadata: {
@@ -601,13 +1035,16 @@ export async function POST(request: NextRequest) {
         }
       }
     };
+    // Inline insights now generated client-side
+    // if (inlineInsights.length) {
+    //   speakerData.inlineInsights = inlineInsights;
+    // }
 
     // Build cost breakdown
     const costBreakdown = {
       transcription: baseCost,
       diarization: 0, // Included in AssemblyAI
       aiProcessing: aiProcessingCost,
-      coverageAnalysis: coverageAnalysisCost,
       generation: 0,
       total: totalCost,
       provider: 'assemblyai',
@@ -671,6 +1108,27 @@ export async function POST(request: NextRequest) {
       message: 'Processing complete! Your content is ready.'
     });
 
+    // Step: Process insights asynchronously (don't block response)
+    if (finalTranscription && speakerData) {
+      console.log('[INSIGHTS] 🔍 Starting insight extraction in background...');
+      const { processInsightsForProject } = await import('@/lib/insight-extraction');
+
+      // Run asynchronously - don't await
+      processInsightsForProject(projectId)
+        .then((result) => {
+          if (result.success) {
+            console.log(
+              `[INSIGHTS] ✅ Extracted ${result.insightCount} insights. Cost: $${result.totalCost.toFixed(4)}`
+            );
+          } else {
+            console.warn(`[INSIGHTS] ⚠️ Failed:`, result.error);
+          }
+        })
+        .catch((error) => {
+          console.error('[INSIGHTS] ❌ Background processing error:', error);
+        });
+    }
+
     // Clean up temp file and memory
     try {
       if (tempAudioFilePath) {
@@ -701,8 +1159,7 @@ export async function POST(request: NextRequest) {
         chapters: chaptersData !== null,
         takeaways: takeawaysData !== null,
         quotes: quotesData !== null,
-        roles: Object.keys(roleAssignments).length > 0,
-        coverageRadar: coverageAnalysis !== null
+        roles: Object.keys(roleAssignments).length > 0
       }
     });
 

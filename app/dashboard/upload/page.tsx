@@ -437,7 +437,7 @@ const formatDuration = (seconds: number) => {
             Upload Podcast
           </h1>
           <p className="mt-2 text-sm text-gray-600">
-            Drop in a full-length episode or clip, choose the quality tier, and we’ll handle transcription, diarization, and content creation in one pass.
+            Drop in a full-length episode or clip, choose the quality tier, and we'll handle transcription, speaker identification, educational insights, and content creation in one pass.
           </p>
         </div>
 
@@ -454,21 +454,21 @@ const formatDuration = (seconds: number) => {
                 label: 'Basic',
                 accuracy: 'Standard',
                 cost: '$0.37/hr',
-                description: 'Transcription + Speaker Diarization'
+                description: 'Transcription + Speakers + Educational insights with research links'
               },
               {
                 id: 'pro',
                 label: 'Pro',
                 accuracy: 'Enhanced',
                 cost: '$0.44/hr',
-                description: 'Basic + AI Summary + Named Speakers'
+                description: 'Basic + AI Summary + Named Speakers + Insight definitions'
               },
               {
                 id: 'premium',
                 label: 'Premium',
                 accuracy: 'Maximum',
                 cost: '$0.52/hr',
-                description: 'Pro + Roles + Chapters + Takeaways + Quotes'
+                description: 'Pro + Roles + Chapters + Takeaways + Quotes + Deep insights with context'
               }
             ].map((option) => (
               <button

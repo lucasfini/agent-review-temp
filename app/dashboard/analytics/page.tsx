@@ -2,12 +2,11 @@
 
 import { useState, useEffect, useMemo } from 'react';
 import type { FormEvent } from 'react';
-import { 
-  BarChart3, 
-  TrendingUp, 
-  FileText, 
-  Clock, 
-  DollarSign, 
+import {
+  BarChart3,
+  TrendingUp,
+  FileText,
+  Clock,
   Zap,
   Calendar,
   Download,
@@ -71,6 +70,27 @@ interface ProjectSummary {
   transcription_text?: string | null;
 }
 
+interface InsightRecord {
+  id: string;
+  project_id: string;
+  entity_id: string;
+  label: string;
+  category: 'person' | 'concept';
+  confidence: number;
+  cost_usd: number;
+  created_at: string;
+}
+
+interface InsightsSummary {
+  totalInsights: number;
+  insightsByCategory: {
+    person: number;
+    concept: number;
+  };
+  totalCost: number;
+  avgConfidence: number;
+}
+
 interface AnalyticsData {
   totalProjects: number;
   totalOutputs: number;
@@ -96,6 +116,10 @@ interface AnalyticsData {
     summary: CoverageSummary;
   };
   projectsSummary: ProjectSummary[];
+  insights: {
+    records: InsightRecord[];
+    summary: InsightsSummary;
+  };
 }
 
 const EMPTY_COVERAGE_SUMMARY: CoverageSummary = {
@@ -106,7 +130,7 @@ const EMPTY_COVERAGE_SUMMARY: CoverageSummary = {
   latestOpportunities: []
 };
 
-const COVERAGE_FEATURE_ENABLED = false;
+const COVERAGE_FEATURE_ENABLED = true;
 
 const GOAL_TYPE_OPTIONS = [
   { value: 'include', label: 'Recurring Topic', helper: 'Ensure this theme shows up regularly.' },
@@ -129,6 +153,32 @@ interface TopicHeatEntry {
   goalAligned: boolean;
   lastMention: string | null;
   status: 'Under' | 'Balanced' | 'Over';
+}
+
+function summarizeInsights(insightRecords: InsightRecord[]): InsightsSummary {
+  if (!insightRecords || insightRecords.length === 0) {
+    return {
+      totalInsights: 0,
+      insightsByCategory: { person: 0, concept: 0 },
+      totalCost: 0,
+      avgConfidence: 0
+    };
+  }
+
+  const categoryBreakdown = insightRecords.reduce((acc, insight) => {
+    acc[insight.category] = (acc[insight.category] || 0) + 1;
+    return acc;
+  }, { person: 0, concept: 0 } as { person: number; concept: number });
+
+  const totalCost = insightRecords.reduce((sum, insight) => sum + Number(insight.cost_usd || 0), 0);
+  const avgConfidence = insightRecords.reduce((sum, insight) => sum + Number(insight.confidence || 0), 0) / insightRecords.length;
+
+  return {
+    totalInsights: insightRecords.length,
+    insightsByCategory: categoryBreakdown,
+    totalCost: Number(totalCost.toFixed(4)),
+    avgConfidence: Number(avgConfidence.toFixed(2))
+  };
 }
 
 function summarizeCoverage(
@@ -317,8 +367,8 @@ export default function AnalyticsPage() {
       // Fetch outputs
       let outputsQuery = supabase
         .from('outputs')
-        .select('*, projects!inner(user_id)')
-        .eq('projects.user_id', user?.id)
+        .select('*')
+        .eq('user_id', user?.id)
         .order('created_at', { ascending: false });
 
       if (startDate) {
@@ -353,6 +403,17 @@ export default function AnalyticsPage() {
 
       if (goalsError) {
         console.error('Error fetching coverage goals:', goalsError);
+      }
+
+      // Fetch insights
+      const { data: insights, error: insightsError } = await supabase
+        .from('insights')
+        .select('id, project_id, entity_id, label, category, confidence, cost_usd, created_at')
+        .in('project_id', (projects || []).map(p => p.id))
+        .order('created_at', { ascending: false });
+
+      if (insightsError) {
+        console.error('Error fetching insights:', insightsError);
       }
 
       // Process analytics data
@@ -408,6 +469,9 @@ export default function AnalyticsPage() {
         transcription_text: project.transcription_text
       }));
 
+      const insightRecords = insights || [];
+      const insightsSummary = summarizeInsights(insightRecords);
+
       setAnalytics({
         totalProjects,
         totalOutputs,
@@ -422,7 +486,11 @@ export default function AnalyticsPage() {
           goals: coverageGoalData,
           summary: coverageSummary
         },
-        projectsSummary: projectSummaries
+        projectsSummary: projectSummaries,
+        insights: {
+          records: insightRecords,
+          summary: insightsSummary
+        }
       });
 
     } catch (error) {
@@ -703,25 +771,6 @@ export default function AnalyticsPage() {
             </div>
           </div>
 
-          <div className="bg-white overflow-hidden shadow rounded-lg">
-            <div className="p-5">
-              <div className="flex items-center">
-                <div className="flex-shrink-0">
-                  <DollarSign className="h-6 w-6 text-yellow-400" />
-                </div>
-                <div className="ml-5 w-0 flex-1">
-                  <dl>
-                    <dt className="text-sm font-medium text-gray-500 truncate">
-                      Estimated Costs
-                    </dt>
-                    <dd className="text-lg font-medium text-gray-900">
-                      {formatCurrency(analytics?.estimatedCosts || 0)}
-                    </dd>
-                  </dl>
-                </div>
-              </div>
-            </div>
-          </div>
         </div>
 
         <div className="grid grid-cols-1 lg:grid-cols-2 gap-6 mb-8">
@@ -833,6 +882,98 @@ export default function AnalyticsPage() {
           </div>
         </div>
 
+        {/* Educational Insights */}
+        <div className="mt-8">
+          <div className="flex items-center justify-between mb-4">
+            <div>
+              <h2 className="text-lg font-medium text-gray-900">Educational Insights</h2>
+              <p className="text-sm text-gray-500">
+                AI-powered insights about people and concepts in your podcasts
+              </p>
+            </div>
+          </div>
+
+          <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4 mb-6">
+            <div className="bg-white shadow rounded-lg p-4">
+              <p className="text-xs uppercase text-gray-500">Total Insights</p>
+              <p className="mt-2 text-2xl font-semibold text-gray-900">
+                {analytics?.insights?.summary?.totalInsights || 0}
+              </p>
+              <p className="text-xs text-gray-500 mt-1">Entities extracted across all projects</p>
+            </div>
+            <div className="bg-white shadow rounded-lg p-4">
+              <p className="text-xs uppercase text-gray-500">People</p>
+              <p className="mt-2 text-2xl font-semibold text-gray-900">
+                {analytics?.insights?.summary?.insightsByCategory?.person || 0}
+              </p>
+              <p className="text-xs text-gray-500 mt-1">Individuals mentioned in podcasts</p>
+            </div>
+            <div className="bg-white shadow rounded-lg p-4">
+              <p className="text-xs uppercase text-gray-500">Concepts</p>
+              <p className="mt-2 text-2xl font-semibold text-gray-900">
+                {analytics?.insights?.summary?.insightsByCategory?.concept || 0}
+              </p>
+              <p className="text-xs text-gray-500 mt-1">Technical terms and ideas explained</p>
+            </div>
+            <div className="bg-white shadow rounded-lg p-4">
+              <p className="text-xs uppercase text-gray-500">Avg Confidence</p>
+              <p className="mt-2 text-2xl font-semibold text-gray-900">
+                {Math.round((analytics?.insights?.summary?.avgConfidence || 0) * 100)}%
+              </p>
+              <p className="text-xs text-gray-500 mt-1">AI extraction accuracy score</p>
+            </div>
+          </div>
+
+          {analytics?.insights?.records && analytics.insights.records.length > 0 && (
+            <div className="bg-white shadow rounded-lg">
+              <div className="px-4 py-5 sm:p-6">
+                <h3 className="text-lg font-medium text-gray-900 mb-4">Recent Insights</h3>
+                <div className="overflow-x-auto">
+                  <table className="min-w-full divide-y divide-gray-200 text-sm">
+                    <thead className="bg-gray-50">
+                      <tr>
+                        <th className="px-4 py-2 text-left font-medium text-gray-500">Label</th>
+                        <th className="px-4 py-2 text-left font-medium text-gray-500">Category</th>
+                        <th className="px-4 py-2 text-left font-medium text-gray-500">Confidence</th>
+                        <th className="px-4 py-2 text-left font-medium text-gray-500">AI Cost</th>
+                        <th className="px-4 py-2 text-left font-medium text-gray-500">Created</th>
+                      </tr>
+                    </thead>
+                    <tbody className="divide-y divide-gray-100 bg-white">
+                      {analytics.insights.records.slice(0, 10).map(insight => (
+                        <tr key={insight.id}>
+                          <td className="px-4 py-3">
+                            <div className="text-gray-900 font-medium">{insight.label}</div>
+                            <div className="text-xs text-gray-500">{insight.entity_id}</div>
+                          </td>
+                          <td className="px-4 py-3">
+                            <span className={`inline-flex items-center px-2 py-1 rounded-full text-xs font-medium ${
+                              insight.category === 'person'
+                                ? 'bg-blue-50 text-blue-700'
+                                : 'bg-purple-50 text-purple-700'
+                            }`}>
+                              {insight.category}
+                            </span>
+                          </td>
+                          <td className="px-4 py-3 text-gray-700">
+                            {Math.round(insight.confidence * 100)}%
+                          </td>
+                          <td className="px-4 py-3 text-gray-900 font-medium">
+                            {formatCurrency(Number(insight.cost_usd || 0))}
+                          </td>
+                          <td className="px-4 py-3 text-gray-500">
+                            {new Date(insight.created_at).toLocaleDateString()}
+                          </td>
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
+                </div>
+              </div>
+            </div>
+          )}
+        </div>
+
         {/* Narrative Coverage Radar */}
         <div className="mt-8">
           <div className="flex items-center justify-between mb-4">
@@ -841,9 +982,6 @@ export default function AnalyticsPage() {
               <p className="text-sm text-gray-500">
                 AI-driven visibility into topic mix, CTA cadence, and editorial gaps
               </p>
-            </div>
-            <div className="text-sm text-gray-500">
-              AI spend (30d): {formatCurrency(analytics.coverage.summary.spendLast30 || 0)}
             </div>
           </div>
 
