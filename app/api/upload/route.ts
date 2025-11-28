@@ -5,6 +5,10 @@ import { updateProcessingProgress } from '@/lib/progress-tracker';
 import { computeAudioFingerprint } from '@/lib/audio-fingerprint';
 import { getCachedTranscription, applyCachedTranscriptionToProject } from '@/lib/transcription-cache';
 
+// Configure route to accept large file uploads
+export const maxDuration = 300; // 5 minutes timeout for upload
+export const dynamic = 'force-dynamic'; // Ensure this route is not cached
+
 // Global file storage for temporary solution
 declare global {
   var uploadedFiles: Map<string, {
@@ -56,7 +60,7 @@ const normalizePerformanceLevel = (value: FormDataEntryValue | null): Performanc
 
 export async function POST(request: NextRequest) {
   console.log('Upload API called');
-  
+
   try {
     // Check environment variables
     if (!process.env.NEXT_PUBLIC_SUPABASE_URL || !process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY) {
@@ -100,7 +104,7 @@ export async function POST(request: NextRequest) {
     }
 
     // File type validation
-    const isValidType = ALLOWED_TYPES.includes(file.type) || 
+    const isValidType = ALLOWED_TYPES.includes(file.type) ||
       ALLOWED_EXTENSIONS.some(ext => file.name.toLowerCase().endsWith(ext));
 
     if (!isValidType) {
@@ -229,7 +233,7 @@ export async function POST(request: NextRequest) {
 
       // Upload file to Supabase Storage - sanitize filename
       const fileName = `${project.id}/${sanitizedBaseName}`;
-      
+
       console.log('Uploading file to storage...');
       console.log(`File size: ${(file.size / 1024 / 1024).toFixed(2)}MB`);
       
@@ -267,26 +271,51 @@ export async function POST(request: NextRequest) {
         );
       }
       
-      // Upload directly to Supabase Storage
+      // Upload directly to Supabase Storage with retry logic
       let uploadError: unknown = null;
       let uploadData: { path: string } | null = null;
-      
-      try {
-        const { data, error } = await supabaseAdmin.storage
-          .from('audio-files')
-          .upload(fileName, fileBuffer, {
-            contentType: file.type || 'application/octet-stream',
-            upsert: true
-          });
-        
-        uploadData = data;
-        uploadError = error;
-        
-        if (error) {
-          throw error;
+
+      const maxRetries = 3;
+      let retryCount = 0;
+
+      while (retryCount <= maxRetries) {
+        try {
+          console.log(`Upload attempt ${retryCount + 1}/${maxRetries + 1}`);
+
+          const { data, error } = await supabaseAdmin.storage
+            .from('audio-files')
+            .upload(fileName, fileBuffer, {
+              contentType: file.type || 'application/octet-stream',
+              upsert: true
+            });
+
+          uploadData = data;
+          uploadError = error;
+
+          if (error) {
+            throw error;
+          }
+
+          console.log('Supabase Storage upload successful');
+          break; // Success - exit retry loop
+
+        } catch (error) {
+          uploadError = error;
+          console.error(`Upload attempt ${retryCount + 1} failed:`, error);
+
+          if (retryCount < maxRetries) {
+            const delay = Math.pow(2, retryCount) * 1000; // Exponential backoff: 1s, 2s, 4s
+            console.log(`Retrying in ${delay}ms...`);
+            await new Promise(resolve => setTimeout(resolve, delay));
+            retryCount++;
+          } else {
+            console.error('All upload attempts failed');
+            break;
+          }
         }
-        
-        console.log('Supabase Storage upload successful');
+      }
+
+      if (!uploadError) {
 
         // Keep a local in-memory copy for immediate processing to avoid re-downloading
         if (!global.uploadedFiles) {
@@ -324,9 +353,6 @@ export async function POST(request: NextRequest) {
             // Do NOT return early - let the tier processing happen
           }
         }
-      } catch (storageError) {
-        console.error('Supabase Storage upload error:', storageError);
-        uploadError = storageError;
       }
       
       /* Temporarily disable chunking logic
@@ -466,8 +492,8 @@ export async function POST(request: NextRequest) {
       */
 
       if (uploadError) {
-        console.error(`File upload failed:`, uploadError);
-        
+        console.error(`File upload failed after ${retryCount + 1} attempts:`, uploadError);
+
         // Clean up project record
         await supabaseAdmin
           .from('projects')
@@ -476,21 +502,25 @@ export async function POST(request: NextRequest) {
 
         // Provide specific error messages
         const errorMessage = (uploadError as any)?.message || 'Unknown storage error';
-        
+        const errorCause = (uploadError as any)?.originalError?.cause?.code;
+
         if (errorMessage.includes('bucket') || errorMessage.includes('not found')) {
           return NextResponse.json(
             { error: 'Storage bucket not found. Please check Supabase Storage configuration.' },
             { status: 500 }
           );
         }
-        
-        if (errorMessage.includes('EPIPE') || errorMessage.includes('fetch failed')) {
+
+        if (errorCause === 'EPIPE' || errorMessage.includes('EPIPE') || errorMessage.includes('fetch failed')) {
           return NextResponse.json(
-            { error: 'Upload interrupted due to network issues. Please check your connection and try again.' },
+            {
+              error: 'Upload connection interrupted. This can happen with large files. Please try again or use a smaller file.',
+              details: 'Network connection to storage was lost during upload'
+            },
             { status: 500 }
           );
         }
-        
+
         if (errorMessage.includes('timeout')) {
           return NextResponse.json(
             { error: 'Upload timed out. The file may be too large. Please try with a smaller file.' },
@@ -499,7 +529,10 @@ export async function POST(request: NextRequest) {
         }
 
         return NextResponse.json(
-          { error: `Upload failed: ${errorMessage}` },
+          {
+            error: `Upload failed: ${errorMessage}`,
+            retries: retryCount + 1
+          },
           { status: 500 }
         );
       }
@@ -527,6 +560,7 @@ export async function POST(request: NextRequest) {
 
       // Start transcription process (async) - only if OpenAI key is available
       if (process.env.OPENAI_API_KEY) {
+        // Fire-and-forget background transcription job
         fetch(`${process.env.VERCEL_URL || 'http://localhost:3000'}/api/transcribe`, {
           method: 'POST',
           headers: {
@@ -538,9 +572,19 @@ export async function POST(request: NextRequest) {
             fingerprint: audioFingerprint,
             performanceLevel
           })
-        }).catch(error => {
-          console.error('Failed to start transcription:', error);
-        });
+        })
+          .then(response => {
+            // Consume the response body to prevent "disturbed" errors
+            if (!response.ok) {
+              return response.text().then(text => {
+                console.error('Transcription start failed:', response.status, text);
+              });
+            }
+            return response.json().catch(() => null);
+          })
+          .catch(error => {
+            console.error('Failed to start transcription:', error);
+          });
       } else {
         console.warn('OpenAI API key not found, transcription skipped');
       }

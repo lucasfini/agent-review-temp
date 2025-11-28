@@ -1,0 +1,26 @@
+{
+  "projectId": "20ad494e-821b-43a2-9ea5-d9a6d5bb8800",
+  "platform": "twitter",
+  "contentType": "thread_1",
+  "timestamp": "2025-11-19T04:46:01.506Z",
+  "prompt": {
+    "text": "X thread hook: Seven companies controlled 50% of America's meat supply, and within six months of a book's publication, they lost half of their sales.",
+    "length": 149
+  },
+  "response": {
+    "text": "Seven companies controlled 50% of America's meat supply, and within six months of a book's publication, they lost half of their sales. 📉 What happened, and why did it change the industry forever? Let's dive in! (1/8)\n\nBack in 1906, Upton Sinclair published \"The Jungle,\" exposing shocking conditions in Chicago's slaughterhouses. The public was horrified, and the book flew off the shelves. 📚 (2/8)\n\nAt that time, just seven companies dominated 50% of the U.S. meat market. Sinclair's revelations were enough to send these giants into a tailspin, losing half their sales in just six months. 🏭 (3/8)\n\nFaced with bankruptcy, the CEOs of these companies turned to President Teddy Roosevelt, pleading for government intervention to regain consumer trust. It was a pivotal moment in food regulation history. 🇺🇸 (4/8)\n\nRoosevelt's response? The creation of the Food Safety Inspection Service (FSIS) in 1908, initially excluding private sales. This move marked the start of federal food safety regulations. 🛡️ (5/8)\n\nThis was a turning point in American consumer advocacy, echoing the spirit of Ralph Nader's later work. The public's mistrust of big business was growing, and so was the demand for transparency. 🔍 (6/8)\n\nThe legacy of \"The Jungle\"? A reminder of the power of literature to spark change and the enduring need for vigilance in our food systems. Want to learn more about this transformative era? (7/8)\n\nDig deeper into this fascinating history and the impact of consumer advocacy. Share your thoughts! #FoodHistory #ConsumerAdvocacy #TheJungle (8/8)",
+    "length": 1563,
+    "wordCount": 239
+  },
+  "metadata": {
+    "hook_strength": 9,
+    "thread_number": 1
+  },
+  "processingTime": 7377.25,
+  "quality": {
+    "responseCompleteness": "complete",
+    "estimatedReadability": 0.9,
+    "hashtagCount": 3,
+    "mentionCount": 0
+  }
+}

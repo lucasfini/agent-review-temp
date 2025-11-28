@@ -7,10 +7,10 @@ import { getProjectFingerprint, decrementReferenceCount } from '@/lib/transcript
  */
 export async function POST(
   request: NextRequest,
-  { params }: { params: { id: string } }
+  { params }: { params: Promise<{ id: string }> }
 ) {
   try {
-    const projectId = params.id;
+    const { id: projectId } = await params;
 
     if (!projectId) {
       return NextResponse.json(

@@ -1,0 +1,26 @@
+{
+  "projectId": "20ad494e-821b-43a2-9ea5-d9a6d5bb8800",
+  "platform": "twitter",
+  "contentType": "thread_4",
+  "timestamp": "2025-11-19T04:46:01.511Z",
+  "prompt": {
+    "text": "X thread hook: Generated hook",
+    "length": 29
+  },
+  "response": {
+    "text": "1/8 🧵 \"Food Safety Inspection Service\" - a name that marks a turning point in American food history! But have you ever wondered why it even began? Let's dive into the roots of consumer trust and the origins of food regulation. 🍽️🔍\n\n2/8 Did you know Upton Sinclair's 1906 book \"The Jungle\" shook the nation? It unveiled the horrors of Chicago's slaughterhouses, leading to public outrage and a demand for change. This book was a catalyst for food safety reform! 📚😱\n\n3/8 Before \"The Jungle,\" seven companies held 50% of America's meat supply. Sinclair's revelations caused these giants to lose half their market in just six months! The public's trust was shattered. 📉🤯\n\n4/8 Facing bankruptcy, these companies turned to President Teddy Roosevelt, pleading for a government program to restore consumer confidence. This led to the creation of the Food Safety Inspection Service in 1908. 🏛️🤝\n\n5/8 Initially, the FSIS was meant to regulate large-scale operations, leaving private food sales untouched. But over time, regulations expanded, affecting even the smallest sellers. How did this mistrust evolve? 🤔🔍\n\n6/8 The roots of consumer advocacy and skepticism towards big business grew, fueled by figures like Ralph Nader. It's a story of evolving trust dynamics in America's food industry. 🌱💡\n\n7/8 So, why do we often mistrust the farmer or food industry today? It's a history of consumer rights advocacy, regulation, and a quest for transparency. The FSIS was just the beginning! 🛡️🍏\n\n8/8 Curious to learn more about food safety and consumer trust? Join the conversation and share your thoughts! #FoodSafety #ConsumerTrust #HistoryOfRegulation",
+    "length": 1653,
+    "wordCount": 254
+  },
+  "metadata": {
+    "hook_strength": 6,
+    "thread_number": 4
+  },
+  "processingTime": 7377.25,
+  "quality": {
+    "responseCompleteness": "complete",
+    "estimatedReadability": 0.9,
+    "hashtagCount": 3,
+    "mentionCount": 0
+  }
+}

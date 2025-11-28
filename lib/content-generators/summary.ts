@@ -47,12 +47,15 @@ ${speakerInfo}
 
 Guidelines:
 - Write in clear, engaging prose (approximately ${maxWords} words)
+- Structure the summary into 3-5 concise, focused paragraphs
+- Each paragraph should cover a distinct topic or theme from the discussion
+- Use clear paragraph breaks (double newlines) between sections
 - Focus on the main topics and key insights discussed
 - Include specific examples or anecdotes mentioned
 - Highlight any actionable advice or key takeaways
-- Use proper paragraph structure
 - Write in third person (avoid "I" or "we")
 - Do not include a title or heading, just the summary text
+- Style: Write like Perplexity - clear, direct, well-structured paragraphs that are easy to scan
 
 Transcription:
 ${transcriptionText.slice(0, 80000)}`;

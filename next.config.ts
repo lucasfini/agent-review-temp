@@ -1,12 +1,28 @@
 import type { NextConfig } from "next";
 
-const nextConfig: NextConfig = {
+type ExtendedNextConfig = NextConfig & {
+  middlewareClientMaxBodySize?: number;
+};
+
+const nextConfig: ExtendedNextConfig = {
   // Temporarily disable the React Compiler in dev to reduce overhead
   // Re-enable once dev compiles reliably
   reactCompiler: false,
+  // Allow big uploads through middleware and route handlers (e.g., 500MB audio files)
+  middlewareClientMaxBodySize: 500 * 1024 * 1024,
+  api: {
+    bodyParser: {
+      sizeLimit: '500mb',
+    },
+    responseLimit: false,
+  },
   experimental: {
     // Large file upload support
     largePageDataBytes: 128 * 1024, // 128KB
+    // Body size limit for server actions (500MB for audio uploads)
+    serverActions: {
+      bodySizeLimit: '500mb',
+    },
   },
   // Help webpack-based dev ignore massive non-app folders if Turbopack is disabled
   webpack: (config, { dev }) => {

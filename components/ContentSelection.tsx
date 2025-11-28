@@ -9,18 +9,18 @@ import {
   Quote,
   ChevronDown,
   Linkedin,
-  Instagram
+  Instagram,
+  Minus
 } from 'lucide-react';
-import { CONTENT_TYPES, type CostEstimate, formatCost, formatTokens } from '@/lib/cost-estimation';
-import type { ContentType } from '@/lib/content-types';
+import { CONTENT_TYPES } from '@/lib/content-types';
+import type { ContentType, ContentBlock } from '@/lib/content-types';
+import { CONTENT_THEMES, getThemeCategories, getThemesByCategory, DEFAULT_THEME_ID } from '@/lib/content-themes';
 
 interface ContentSelectionProps {
-  selectedTypes: string[];
-  onSelectedTypesChange: (selected: string[]) => void;
-  estimate: CostEstimate | null;
+  blocks: ContentBlock[];
+  onBlocksChange: (blocks: ContentBlock[]) => void;
+  estimatedCost: number;
   showEstimate?: boolean;
-  keywords: Record<string, string>;
-  onKeywordChange: (typeId: string, value: string) => void;
 }
 
 const XIcon = ({ className }: { className?: string }) => (
@@ -38,8 +38,6 @@ const CONTENT_ICONS = {
   show_notes: FileText,
   quote_graphics: Quote
 } as const;
-
-const ENABLED_TYPE_IDS = CONTENT_TYPES.filter(type => type.enabled).map(type => type.id);
 
 const CATEGORY_SECTIONS: Array<{
   id: ContentType['category'];
@@ -63,57 +61,86 @@ const CATEGORY_SECTIONS: Array<{
   }
 ];
 
-const getPerPieceCost = (typeId: string, estimate: CostEstimate | null): string => {
-  if (!estimate) return '—';
-  const entry = estimate.breakdown.find(item => item.contentTypeId === typeId);
-  if (!entry) return '—';
-  const perPiece = entry.pieces > 0 ? entry.cost / entry.pieces : entry.cost;
-  return formatCost(perPiece);
-};
-
 export default function ContentSelection({
-  selectedTypes,
-  onSelectedTypesChange,
-  estimate,
-  showEstimate = true,
-  keywords,
-  onKeywordChange
+  blocks,
+  onBlocksChange,
+  estimatedCost,
+  showEstimate = true
 }: ContentSelectionProps) {
-  const [showBreakdown, setShowBreakdown] = useState(false);
+  const [expandedTypes, setExpandedTypes] = useState<Set<string>>(new Set(CONTENT_TYPES.map(ct => ct.id)));
 
-  const handleTypeToggle = (typeId: string) => {
-    onSelectedTypesChange(
-      selectedTypes.includes(typeId)
-        ? selectedTypes.filter(id => id !== typeId)
-        : [...selectedTypes, typeId]
+  const toggleExpanded = (typeId: string) => {
+    const newExpanded = new Set(expandedTypes);
+    if (newExpanded.has(typeId)) {
+      newExpanded.delete(typeId);
+    } else {
+      newExpanded.add(typeId);
+    }
+    setExpandedTypes(newExpanded);
+  };
+
+  const handleBlockToggle = (blockId: string) => {
+    onBlocksChange(
+      blocks.map(block =>
+        block.id === blockId
+          ? { ...block, enabled: !block.enabled }
+          : block
+      )
     );
   };
 
-  const handleSelectAll = () => onSelectedTypesChange(ENABLED_TYPE_IDS);
-  const handleDeselectAll = () => onSelectedTypesChange([]);
-
-  const isAllSelected = ENABLED_TYPE_IDS.every(id => selectedTypes.includes(id));
-  const isNoneSelected = selectedTypes.length === 0;
-
-  const handleKeywordInput = (typeId: string, value: string) => {
-    const normalized = value.replace(/\s+/g, ' ').trimStart();
-    if (!normalized.trim()) {
-      onKeywordChange(typeId, '');
-      return;
-    }
-    const words = normalized.trim().split(' ');
-    const limitedValue = words.length > 10 ? words.slice(0, 10).join(' ') : normalized;
-    onKeywordChange(typeId, limitedValue);
+  const handleThemeChange = (blockId: string, themeId: string) => {
+    onBlocksChange(
+      blocks.map(block =>
+        block.id === blockId
+          ? { ...block, theme: themeId }
+          : block
+      )
+    );
   };
+
+  const handleSelectAllType = (contentTypeId: string) => {
+    const typeBlocks = blocks.filter(b => b.contentTypeId === contentTypeId);
+    const allEnabled = typeBlocks.every(b => b.enabled);
+
+    onBlocksChange(
+      blocks.map(block =>
+        block.contentTypeId === contentTypeId
+          ? { ...block, enabled: !allEnabled }
+          : block
+      )
+    );
+  };
+
+  const getTypeSelectionState = (contentTypeId: string): 'all' | 'some' | 'none' => {
+    const typeBlocks = blocks.filter(b => b.contentTypeId === contentTypeId);
+    const enabledCount = typeBlocks.filter(b => b.enabled).length;
+
+    if (enabledCount === 0) return 'none';
+    if (enabledCount === typeBlocks.length) return 'all';
+    return 'some';
+  };
+
+  const handleSelectAll = () => {
+    onBlocksChange(blocks.map(block => ({ ...block, enabled: true })));
+  };
+
+  const handleDeselectAll = () => {
+    onBlocksChange(blocks.map(block => ({ ...block, enabled: false })));
+  };
+
+  const enabledCount = blocks.filter(b => b.enabled).length;
+  const isAllSelected = enabledCount === blocks.length;
+  const isNoneSelected = enabledCount === 0;
 
   return (
     <div className="space-y-3">
       {/* Header */}
       <div className="flex flex-wrap items-start justify-between gap-2">
         <div>
-          <h3 className="text-sm font-semibold text-gray-900">Content Types</h3>
+          <h3 className="text-sm font-semibold text-gray-900">Content Blocks</h3>
           <p className="text-xs text-gray-500">
-            {selectedTypes.length} of {ENABLED_TYPE_IDS.length} selected
+            {enabledCount} of {blocks.length} blocks selected
           </p>
         </div>
         <div className="flex gap-1.5">
@@ -142,7 +169,10 @@ export default function ContentSelection({
           );
           if (!types.length) return null;
 
-          const selectedInSection = types.filter(type => selectedTypes.includes(type.id)).length;
+          const sectionBlocks = blocks.filter(b =>
+            types.some(t => t.id === b.contentTypeId)
+          );
+          const selectedInSection = sectionBlocks.filter(b => b.enabled).length;
 
           return (
             <section
@@ -155,106 +185,133 @@ export default function ContentSelection({
                   <p className="text-[11px] text-gray-500">{section.description}</p>
                 </div>
                 <span className="text-[11px] font-medium text-gray-500">
-                  {selectedInSection}/{types.length} selected
+                  {selectedInSection}/{sectionBlocks.length} selected
                 </span>
               </div>
               <div className="divide-y divide-gray-100">
                 {types.map((contentType) => {
-                  const isSelected = selectedTypes.includes(contentType.id);
                   const IconComponent =
                     CONTENT_ICONS[contentType.id as keyof typeof CONTENT_ICONS] || FileText;
-                  const currentKeywords = keywords[contentType.id] || '';
-                  const keywordCount = currentKeywords
-                    ? currentKeywords
-                        .trim()
-                        .split(' ')
-                        .filter(Boolean).length
-                    : 0;
-                  const keywordInputId = `keywords-${contentType.id}`;
+                  const typeBlocks = blocks.filter(b => b.contentTypeId === contentType.id);
+                  const selectionState = getTypeSelectionState(contentType.id);
+                  const isExpanded = expandedTypes.has(contentType.id);
 
                   return (
-                    <div
-                      key={contentType.id}
-                      role="button"
-                      tabIndex={0}
-                      onClick={() => handleTypeToggle(contentType.id)}
-                      onKeyDown={(event) => {
-                        if (event.key === 'Enter' || event.key === ' ') {
-                          event.preventDefault();
-                          handleTypeToggle(contentType.id);
-                        }
-                      }}
-                      className={`px-3 py-3 outline-none transition-colors cursor-pointer ${
-                        isSelected
-                          ? 'bg-blue-50/70'
-                          : 'hover:bg-gray-50 focus-visible:bg-gray-50'
-                      }`}
-                    >
-                      <div className="flex items-start gap-3">
-                        <div
-                          className={`mt-1 h-4 w-4 rounded-full border flex items-center justify-center flex-shrink-0 transition-colors ${
-                            isSelected
-                              ? 'border-blue-600 bg-blue-600 text-white'
-                              : 'border-gray-300 text-transparent'
-                          }`}
-                        >
-                          <Check className="h-3 w-3" />
-                        </div>
-                        <div className="flex h-10 w-10 items-center justify-center rounded-md bg-gray-100 text-gray-500 flex-shrink-0">
-                          <IconComponent className="h-4 w-4" />
-                        </div>
-                        <div className="flex-1 min-w-0 space-y-1">
-                          <div className="flex flex-wrap items-center gap-2">
-                            <p className="text-sm font-medium text-gray-900">{contentType.name}</p>
-                            {contentType.badge && (
-                              <span className="text-[10px] uppercase tracking-wide px-1.5 py-0.5 bg-gray-100 text-gray-600 rounded border border-gray-200">
-                                {contentType.badge}
-                              </span>
-                            )}
-                            {contentType.tier && (
-                              <span className="text-[10px] uppercase tracking-wide px-1.5 py-0.5 bg-blue-50 text-blue-700 rounded border border-blue-100">
-                                {contentType.tier}
-                              </span>
-                            )}
+                    <div key={contentType.id} className="bg-white">
+                      {/* Content Type Header */}
+                      <div className="px-3 py-3">
+                        <div className="flex items-start gap-3">
+                          {/* Select All Checkbox for this type */}
+                          <button
+                            onClick={() => handleSelectAllType(contentType.id)}
+                            className={`mt-1 h-4 w-4 rounded border flex items-center justify-center flex-shrink-0 transition-colors ${
+                              selectionState === 'all'
+                                ? 'border-blue-600 bg-blue-600 text-white'
+                                : selectionState === 'some'
+                                ? 'border-blue-600 bg-blue-600 text-white'
+                                : 'border-gray-300 text-transparent hover:border-gray-400'
+                            }`}
+                          >
+                            {selectionState === 'all' && <Check className="h-3 w-3" />}
+                            {selectionState === 'some' && <Minus className="h-3 w-3" />}
+                          </button>
+
+                          <div className="flex h-10 w-10 items-center justify-center rounded-md bg-gray-100 text-gray-500 flex-shrink-0">
+                            <IconComponent className="h-4 w-4" />
                           </div>
-                          <p className="text-xs text-gray-600 line-clamp-2">
-                            {contentType.description}
-                          </p>
-                          <div className="flex flex-wrap items-center gap-2 text-[11px] text-gray-500">
-                            <span>{contentType.count} pieces</span>
-                            <span className="inline-block h-1 w-1 rounded-full bg-gray-300" />
-                            <span>{getPerPieceCost(contentType.id, estimate)} each</span>
-                            <span className="inline-block h-1 w-1 rounded-full bg-gray-300" />
-                            <span>{formatTokens(contentType.estimatedTokens ?? 0)}</span>
+
+                          <div className="flex-1 min-w-0">
+                            <div className="flex flex-wrap items-center gap-2 mb-1">
+                              <p className="text-sm font-medium text-gray-900">{contentType.name}</p>
+                              {contentType.badge && (
+                                <span className="text-[10px] uppercase tracking-wide px-1.5 py-0.5 bg-gray-100 text-gray-600 rounded border border-gray-200">
+                                  {contentType.badge}
+                                </span>
+                              )}
+                              <span className="text-[11px] text-gray-500">
+                                ({typeBlocks.length} {typeBlocks.length === 1 ? 'piece' : 'pieces'})
+                              </span>
+                            </div>
+                            <p className="text-xs text-gray-600">
+                              {contentType.description}
+                            </p>
                           </div>
-                        </div>
-                        <div className="text-right text-xs text-gray-600">
-                          <p className="font-semibold text-gray-900">{getPerPieceCost(contentType.id, estimate)}</p>
-                          <p className="text-[11px] text-gray-500">{contentType.count} outputs</p>
+
+                          {/* Expand/Collapse Button */}
+                          <button
+                            onClick={() => toggleExpanded(contentType.id)}
+                            className="text-gray-400 hover:text-gray-600 transition-colors p-1"
+                          >
+                            <ChevronDown
+                              className={`w-4 h-4 transition-transform ${
+                                isExpanded ? 'rotate-180' : ''
+                              }`}
+                            />
+                          </button>
                         </div>
                       </div>
-                      {isSelected && (
-                        <div
-                          className="mt-3 pl-14 space-y-1 text-xs text-gray-600"
-                          onClick={(event) => event.stopPropagation()}
-                          onKeyDown={(event) => event.stopPropagation()}
-                        >
-                          <label htmlFor={keywordInputId} className="text-[11px] font-medium text-gray-500">
-                            Focus keywords (optional)
-                          </label>
-                          <div className="flex items-center gap-2">
-                            <input
-                              id={keywordInputId}
-                              type="text"
-                              value={currentKeywords}
-                              onChange={(e) => handleKeywordInput(contentType.id, e.target.value)}
-                              placeholder="Add up to 10 short terms"
-                              className="w-full rounded border border-gray-300 px-2 py-1 text-xs focus:border-blue-500 focus:ring-1 focus:ring-blue-500 bg-white"
-                            />
-                            <span className="text-[11px] text-gray-400 whitespace-nowrap">
-                              {keywordCount}/10
-                            </span>
-                          </div>
+
+                      {/* Individual Blocks */}
+                      {isExpanded && (
+                        <div className="px-3 pb-2 space-y-2">
+                          {typeBlocks.map((block) => {
+                            const theme = CONTENT_THEMES.find(t => t.id === block.theme);
+
+                            return (
+                              <div
+                                key={block.id}
+                                className={`flex items-center gap-3 p-2 rounded border transition-all ${
+                                  block.enabled
+                                    ? 'bg-blue-50/50 border-blue-200'
+                                    : 'bg-gray-50 border-gray-200'
+                                }`}
+                              >
+                                {/* Block Checkbox */}
+                                <button
+                                  onClick={() => handleBlockToggle(block.id)}
+                                  className={`h-4 w-4 rounded border flex items-center justify-center flex-shrink-0 transition-colors ${
+                                    block.enabled
+                                      ? 'border-blue-600 bg-blue-600 text-white'
+                                      : 'border-gray-300 text-transparent hover:border-gray-400'
+                                  }`}
+                                >
+                                  <Check className="h-3 w-3" />
+                                </button>
+
+                                {/* Block Name */}
+                                <div className="flex-1 min-w-0">
+                                  <p className="text-xs font-medium text-gray-900">
+                                    {block.name}
+                                  </p>
+                                </div>
+
+                                {/* Theme Selector */}
+                                <div className="w-48 flex-shrink-0">
+                                  <select
+                                    value={block.theme}
+                                    onChange={(e) => handleThemeChange(block.id, e.target.value)}
+                                    disabled={!block.enabled}
+                                    className="w-full text-xs border border-gray-300 rounded px-2 py-1.5 bg-white disabled:opacity-50 disabled:cursor-not-allowed focus:border-blue-500 focus:ring-1 focus:ring-blue-500"
+                                  >
+                                    {getThemeCategories().map(category => (
+                                      <optgroup key={category} label={category}>
+                                        {getThemesByCategory(category).map(theme => (
+                                          <option key={theme.id} value={theme.id}>
+                                            {theme.name}
+                                          </option>
+                                        ))}
+                                      </optgroup>
+                                    ))}
+                                  </select>
+                                  {block.enabled && theme && (
+                                    <p className="text-[10px] text-gray-500 mt-0.5 line-clamp-1">
+                                      {theme.description}
+                                    </p>
+                                  )}
+                                </div>
+                              </div>
+                            );
+                          })}
                         </div>
                       )}
                     </div>
@@ -266,32 +323,18 @@ export default function ContentSelection({
         })}
       </div>
 
-      {/* Cost Breakdown */}
-      {showEstimate && estimate && estimate.breakdown.filter(entry => entry.contentTypeId).length > 0 && (
-        <div className="border border-gray-300 rounded p-2 bg-white">
-          <button
-            type="button"
-            onClick={() => setShowBreakdown(!showBreakdown)}
-            className="w-full flex items-center justify-between text-xs font-medium text-gray-700"
-          >
-            <span>Cost Breakdown</span>
-            <ChevronDown className={`w-3.5 h-3.5 transition-transform ${showBreakdown ? 'rotate-180' : ''}`} />
-          </button>
-
-          {showBreakdown && (
-            <div className="mt-2 pt-2 border-t border-gray-200 space-y-1">
-              {estimate.breakdown
-                .filter(entry => entry.contentTypeId)
-                .map(entry => (
-                  <div key={entry.type} className="flex items-center justify-between text-xs">
-                    <span className="text-gray-600">{entry.type}</span>
-                    <span className="font-medium text-gray-900">
-                      {formatCost(entry.cost)}
-                    </span>
-                  </div>
-                ))}
-            </div>
-          )}
+      {/* Cost Display */}
+      {showEstimate && (
+        <div className="border border-gray-300 rounded p-3 bg-white">
+          <div className="flex items-center justify-between text-sm">
+            <span className="text-gray-600">Estimated Cost</span>
+            <span className="font-semibold text-gray-900">
+              ${estimatedCost.toFixed(4)}
+            </span>
+          </div>
+          <p className="text-xs text-gray-500 mt-1">
+            {enabledCount} {enabledCount === 1 ? 'block' : 'blocks'} selected
+          </p>
         </div>
       )}
 
@@ -299,7 +342,7 @@ export default function ContentSelection({
       {isNoneSelected && (
         <div className="bg-red-50 border border-red-300 rounded p-2">
           <p className="text-xs text-red-900">
-            Select at least one content type
+            Select at least one content block to generate
           </p>
         </div>
       )}

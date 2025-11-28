@@ -155,10 +155,9 @@ export default function ProjectsPage() {
   };
 
   const handleConfirmGeneration = async (
-    selectedTypes: string[],
+    blocks: any[],
     estimate: CostEstimate,
-    selectedModel?: { id: string; displayName?: string } | null,
-    keywords?: Record<string, string>
+    selectedModel?: { id: string; displayName?: string } | null
   ) => {
     if (!selectedProjectForGeneration) return;
 
@@ -168,10 +167,9 @@ export default function ProjectsPage() {
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
           projectId: selectedProjectForGeneration.id,
-          selectedContentTypes: selectedTypes,
+          blocks,
           estimatedCost: estimate.totalCost,
-          selectedModelId: selectedModel?.id,
-          contentKeywords: keywords && Object.keys(keywords).length > 0 ? keywords : null
+          selectedModelId: selectedModel?.id
         })
       });
 
@@ -181,14 +179,15 @@ export default function ProjectsPage() {
 
       // Refresh projects to show updated status
       await fetchProjects();
-      
+
       // Show success message
       const modelLabel = selectedModel?.displayName || selectedModel?.id || 'selected model';
-      const keywordNote = keywords && Object.keys(keywords).length > 0
-        ? ` Keyword focus applied to ${Object.keys(keywords).length} selection(s).`
+      const themesUsed = new Set(blocks.map((b: any) => b.theme)).size;
+      const themeNote = themesUsed > 1
+        ? ` Using ${themesUsed} different themes for variety.`
         : '';
-      alert(`Content generation started! ${estimate.totalPieces} pieces will be generated for approximately $${estimate.totalCost.toFixed(2)} using ${modelLabel}.${keywordNote}`);
-      
+      alert(`Content generation started! ${blocks.length} ${blocks.length === 1 ? 'piece' : 'pieces'} will be generated for approximately $${estimate.totalCost.toFixed(2)} using ${modelLabel}.${themeNote}`);
+
     } catch (error) {
       console.error('Error starting content generation:', error);
       throw error;
@@ -1049,13 +1048,56 @@ export default function ProjectsPage() {
                     {/* SUMMARY TAB */}
                     {activeTab === 'summary' && selectedProject.ai_summary && (
                       <div>
-                        <div className="flex items-center mb-4">
-                          <Sparkles className="w-5 h-5 text-blue-600 mr-2" />
-                          <h3 className="text-lg font-medium text-gray-900">AI Summary</h3>
-                          <span className="ml-2 text-xs text-blue-600 font-medium">Pro Feature</span>
+                        <div className="mb-6">
+                          <h3 className="text-xl font-semibold text-gray-900 mb-1">Summary</h3>
+                          <p className="text-sm text-gray-500">Key insights and takeaways from the conversation</p>
                         </div>
-                        <div className="text-sm text-gray-700 leading-relaxed">
-                          {selectedProject.ai_summary}
+
+                        {/* Main Summary Content with Interspersed Chapters */}
+                        <div className="prose prose-sm max-w-none">
+                          {(() => {
+                            const paragraphs = selectedProject.ai_summary.split('\n\n');
+                            const chapters = selectedProject.performance_level === 'premium' && selectedProject.chapters
+                              ? selectedProject.chapters
+                              : [];
+
+                            // Calculate which paragraph each chapter should appear before
+                            const chapterPositions = chapters.map((chapter, idx) => {
+                              // Distribute chapters evenly across paragraphs
+                              const position = Math.floor((idx / chapters.length) * paragraphs.length);
+                              return position;
+                            });
+
+                            return paragraphs.map((paragraph, pIdx) => {
+                              // Check if a chapter should appear before this paragraph
+                              const chapterIndex = chapterPositions.indexOf(pIdx);
+
+                              return (
+                                <div key={pIdx}>
+                                  {chapterIndex !== -1 && (
+                                    <div className="mb-5 mt-8 first:mt-0">
+                                      <div className="flex items-center gap-3 pb-3 border-b-2 border-indigo-200">
+                                        <span className="flex-shrink-0 inline-flex items-center justify-center w-6 h-6 rounded-full bg-gradient-to-br from-indigo-100 to-blue-100 text-indigo-700 text-xs font-semibold">
+                                          {chapterIndex + 1}
+                                        </span>
+                                        <div className="flex-1">
+                                          <h4 className="text-base font-semibold text-indigo-900">
+                                            {chapters[chapterIndex].title}
+                                          </h4>
+                                        </div>
+                                        <span className="text-xs font-medium text-indigo-600 bg-indigo-50 px-2 py-1 rounded">
+                                          {formatDuration(chapters[chapterIndex].start_time)}
+                                        </span>
+                                      </div>
+                                    </div>
+                                  )}
+                                  <p className="text-[15px] leading-relaxed text-gray-700 mb-4">
+                                    {paragraph}
+                                  </p>
+                                </div>
+                              );
+                            });
+                          })()}
                         </div>
                       </div>
                     )}
@@ -1063,23 +1105,33 @@ export default function ProjectsPage() {
                     {/* CHAPTERS TAB */}
                     {activeTab === 'chapters' && selectedProject.chapters && selectedProject.chapters.length > 0 && (
                       <div>
-                        <div className="flex items-center mb-4">
-                          <BookOpen className="w-5 h-5 text-purple-600 mr-2" />
-                          <h3 className="text-lg font-medium text-gray-900">Chapters</h3>
-                          <span className="ml-2 text-xs text-purple-600 font-medium">Premium Feature</span>
+                        <div className="mb-6">
+                          <h3 className="text-xl font-semibold text-gray-900 mb-1">Chapters</h3>
+                          <p className="text-sm text-gray-500">Topic breakdowns and timestamps</p>
                         </div>
-                        <div className="space-y-4">
+                        <div className="space-y-3">
                           {selectedProject.chapters.map((chapter, idx) => (
-                            <div key={idx} className="border-l-4 border-purple-300 pl-4 py-2 bg-purple-50 rounded-r-md">
-                              <div className="flex items-center justify-between mb-2">
-                                <span className="text-base font-medium text-gray-900">{chapter.title}</span>
-                                <span className="text-sm text-gray-600">
-                                  {formatDuration(chapter.start_time)} - {formatDuration(chapter.end_time)}
-                                </span>
+                            <div key={idx} className="group relative bg-white border border-gray-200 rounded-lg p-4 hover:border-indigo-300 hover:shadow-md transition-all">
+                              <div className="flex items-start justify-between gap-4 mb-2">
+                                <div className="flex items-start gap-3 flex-1">
+                                  <div className="flex-shrink-0 mt-0.5">
+                                    <span className="inline-flex items-center justify-center w-6 h-6 rounded-full bg-gradient-to-br from-indigo-100 to-blue-100 text-indigo-700 text-xs font-semibold">
+                                      {idx + 1}
+                                    </span>
+                                  </div>
+                                  <div className="flex-1 min-w-0">
+                                    <h4 className="text-[15px] font-semibold text-gray-900 mb-1 group-hover:text-indigo-700 transition-colors">{chapter.title}</h4>
+                                    {chapter.description && (
+                                      <p className="text-sm text-gray-600 leading-relaxed">{chapter.description}</p>
+                                    )}
+                                  </div>
+                                </div>
+                                <div className="flex-shrink-0">
+                                  <span className="text-xs font-medium text-indigo-700 bg-indigo-50 px-2 py-1 rounded">
+                                    {formatDuration(chapter.start_time)}
+                                  </span>
+                                </div>
                               </div>
-                              {chapter.description && (
-                                <p className="text-sm text-gray-700">{chapter.description}</p>
-                              )}
                             </div>
                           ))}
                         </div>
@@ -1089,20 +1141,27 @@ export default function ProjectsPage() {
                     {/* TAKEAWAYS TAB */}
                     {activeTab === 'takeaways' && selectedProject.key_takeaways && selectedProject.key_takeaways.length > 0 && (
                       <div>
-                        <div className="flex items-center mb-4">
-                          <Lightbulb className="w-5 h-5 text-purple-600 mr-2" />
-                          <h3 className="text-lg font-medium text-gray-900">Key Takeaways</h3>
-                          <span className="ml-2 text-xs text-purple-600 font-medium">Premium Feature</span>
+                        <div className="mb-6">
+                          <h3 className="text-xl font-semibold text-gray-900 mb-1">Key Takeaways</h3>
+                          <p className="text-sm text-gray-500">Main insights and actionable advice</p>
                         </div>
                         <div className="space-y-3">
                           {selectedProject.key_takeaways.map((takeaway, idx) => (
-                            <div key={idx} className="flex items-start space-x-3 p-3 bg-purple-50 rounded-md">
-                              <CheckCircle className="w-5 h-5 text-purple-600 mt-0.5 flex-shrink-0" />
-                              <div className="flex-1">
-                                <p className="text-sm text-gray-900">{takeaway.takeaway}</p>
-                                {takeaway.timestamp !== undefined && (
-                                  <span className="text-xs text-gray-500 mt-1">@ {formatDuration(takeaway.timestamp)}</span>
-                                )}
+                            <div key={idx} className="group bg-white border border-gray-200 rounded-lg p-4 hover:border-emerald-300 hover:shadow-md transition-all">
+                              <div className="flex items-start gap-3">
+                                <div className="flex-shrink-0 mt-0.5">
+                                  <div className="w-5 h-5 rounded-full bg-gradient-to-br from-emerald-100 to-teal-100 flex items-center justify-center">
+                                    <CheckCircle className="w-3.5 h-3.5 text-emerald-600" />
+                                  </div>
+                                </div>
+                                <div className="flex-1 min-w-0">
+                                  <p className="text-[15px] leading-relaxed text-gray-900">{takeaway.takeaway}</p>
+                                  {takeaway.timestamp !== undefined && (
+                                    <span className="inline-block mt-2 text-xs font-medium text-emerald-700 bg-emerald-50 px-2 py-1 rounded">
+                                      {formatDuration(takeaway.timestamp)}
+                                    </span>
+                                  )}
+                                </div>
                               </div>
                             </div>
                           ))}
@@ -1113,27 +1172,30 @@ export default function ProjectsPage() {
                     {/* QUOTES TAB */}
                     {activeTab === 'quotes' && selectedProject.social_quotes && selectedProject.social_quotes.length > 0 && (
                       <div>
-                        <div className="flex items-center mb-4">
-                          <MessageSquare className="w-5 h-5 text-purple-600 mr-2" />
-                          <h3 className="text-lg font-medium text-gray-900">Social Quotes</h3>
-                          <span className="ml-2 text-xs text-purple-600 font-medium">Premium Feature</span>
+                        <div className="mb-6">
+                          <h3 className="text-xl font-semibold text-gray-900 mb-1">Quotes</h3>
+                          <p className="text-sm text-gray-500">Shareable moments and memorable insights</p>
                         </div>
                         <div className="space-y-4">
                           {selectedProject.social_quotes.map((quote, idx) => (
-                            <div key={idx} className="bg-purple-50 p-4 rounded-lg border border-purple-200">
-                              <p className="text-base text-gray-900 italic mb-3">"{quote.quote}"</p>
-                              <div className="flex items-center justify-between text-sm text-gray-600">
-                                <span>{quote.speaker && `- ${quote.speaker}`}</span>
-                                <div className="flex items-center space-x-2">
-                                  {quote.platform && (
-                                    <span className={`px-2 py-1 rounded-full text-xs font-medium ${getPlatformColor(quote.platform)}`}>
-                                      {quote.platform}
-                                    </span>
-                                  )}
-                                  {quote.timestamp !== undefined && (
-                                    <span className="text-xs">@ {formatDuration(quote.timestamp)}</span>
-                                  )}
-                                </div>
+                            <div key={idx} className="group bg-gradient-to-br from-amber-50/50 to-orange-50/50 border border-amber-200 rounded-lg p-5 hover:border-amber-300 hover:shadow-md transition-all">
+                              <div className="flex gap-3 mb-3">
+                                <div className="text-amber-400 text-2xl leading-none font-serif">"</div>
+                                <blockquote className="flex-1">
+                                  <p className="text-[15px] leading-relaxed text-gray-900 italic">
+                                    {quote.quote}
+                                  </p>
+                                </blockquote>
+                              </div>
+                              <div className="flex items-center justify-between text-sm pl-7">
+                                {quote.speaker && (
+                                  <span className="text-amber-900 font-medium">— {quote.speaker}</span>
+                                )}
+                                {quote.timestamp !== undefined && (
+                                  <span className="text-xs font-medium text-amber-700 bg-amber-100 px-2 py-1 rounded ml-auto">
+                                    {formatDuration(quote.timestamp)}
+                                  </span>
+                                )}
                               </div>
                             </div>
                           ))}

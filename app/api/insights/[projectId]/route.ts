@@ -13,9 +13,9 @@ import { createClient } from '@supabase/supabase-js';
 type Tier = 'basic' | 'pro' | 'premium';
 
 interface RouteContext {
-  params: {
+  params: Promise<{
     projectId: string;
-  };
+  }>;
 }
 
 export async function GET(request: NextRequest, context: RouteContext) {

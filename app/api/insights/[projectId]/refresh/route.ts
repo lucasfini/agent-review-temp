@@ -8,9 +8,9 @@ import { NextRequest, NextResponse } from 'next/server';
 import { processInsightsForProject } from '@/lib/insight-extraction';
 
 interface RouteContext {
-  params: {
+  params: Promise<{
     projectId: string;
-  };
+  }>;
 }
 
 export async function POST(request: NextRequest, context: RouteContext) {

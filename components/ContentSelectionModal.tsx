@@ -7,15 +7,16 @@ import ModelSelector from './ModelSelector';
 import { calculateCostEstimate, CONTENT_TYPES, type CostEstimate, formatCost, formatTokens } from '@/lib/cost-estimation';
 import { useModelSelection } from '@/lib/models/use-model-selection';
 import type { ModelSpec } from '@/lib/models/config';
+import { generateContentBlocks, calculateBlocksCost, type ContentBlock } from '@/lib/content-types';
+import { DEFAULT_THEME_ID } from '@/lib/content-themes';
 
 interface ContentSelectionModalProps {
   isOpen: boolean;
   onClose: () => void;
   onConfirm: (
-    selectedTypes: string[],
+    blocks: ContentBlock[],
     estimate: CostEstimate,
-    selectedModel?: ModelSpec | null,
-    keywords?: Record<string, string>
+    selectedModel?: ModelSpec | null
   ) => Promise<void>;
   projectId: string;
   transcriptionText: string;
@@ -23,7 +24,6 @@ interface ContentSelectionModalProps {
 }
 
 const DEFAULT_MODEL_ID = 'gpt-4o';
-const DEFAULT_SELECTION = CONTENT_TYPES.filter(type => type.enabled).map(type => type.id);
 
 export default function ContentSelectionModal({
   isOpen,
@@ -33,43 +33,67 @@ export default function ContentSelectionModal({
   transcriptionText,
   projectTitle
 }: ContentSelectionModalProps) {
-  const [selectedTypes, setSelectedTypes] = useState<string[]>(DEFAULT_SELECTION);
+  const [blocks, setBlocks] = useState<ContentBlock[]>([]);
   const [isGenerating, setIsGenerating] = useState(false);
   const [showCostDetails, setShowCostDetails] = useState(false);
-  const [contentKeywords, setContentKeywords] = useState<Record<string, string>>({});
 
+  // Initialize blocks when modal opens
   useEffect(() => {
     if (isOpen) {
-      setSelectedTypes(DEFAULT_SELECTION);
+      setBlocks(generateContentBlocks(DEFAULT_THEME_ID));
       setShowCostDetails(false);
-      setContentKeywords({});
     }
   }, [isOpen, projectId]);
 
+  // Get enabled content type IDs for model selection
+  const enabledContentTypeIds = useMemo(() => {
+    const typeIds = new Set(
+      blocks.filter(b => b.enabled).map(b => b.contentTypeId)
+    );
+    return Array.from(typeIds);
+  }, [blocks]);
+
   const modelSelection = useModelSelection({
     transcriptionText,
-    selectedContentTypes: selectedTypes,
+    selectedContentTypes: enabledContentTypeIds,
     defaultModelId: DEFAULT_MODEL_ID
   });
 
+  // Calculate cost estimate based on enabled blocks
   const estimate = useMemo(() => {
-    if (!selectedTypes.length || !transcriptionText) {
+    if (!blocks.some(b => b.enabled) || !transcriptionText) {
       return null;
     }
-    return calculateCostEstimate(selectedTypes, transcriptionText, {
+
+    // Use existing cost estimation but adjust for individual blocks
+    const estimate = calculateCostEstimate(enabledContentTypeIds, transcriptionText, {
       modelId: modelSelection.selectedModel?.id,
       tokenEstimate: modelSelection.tokenEstimate
     });
+
+    // Adjust total cost based on actual enabled blocks
+    if (estimate) {
+      const blockCost = calculateBlocksCost(blocks);
+      return {
+        ...estimate,
+        totalCost: blockCost
+      };
+    }
+
+    return estimate;
   }, [
-    selectedTypes,
+    blocks,
+    enabledContentTypeIds,
     transcriptionText,
     modelSelection.selectedModel?.id,
     modelSelection.tokenEstimate
   ]);
 
   const handleGenerate = async () => {
-    if (!selectedTypes.length) {
-      alert('Please select at least one content type.');
+    const enabledBlocks = blocks.filter(b => b.enabled);
+
+    if (!enabledBlocks.length) {
+      alert('Please select at least one content block.');
       return;
     }
 
@@ -80,13 +104,7 @@ export default function ContentSelectionModal({
 
     setIsGenerating(true);
     try {
-      const keywordPayload = selectedTypes.reduce<Record<string, string>>((acc, typeId) => {
-        const value = contentKeywords[typeId]?.trim();
-        if (value) acc[typeId] = value;
-        return acc;
-      }, {});
-
-      await onConfirm(selectedTypes, estimate, modelSelection.selectedModel, keywordPayload);
+      await onConfirm(enabledBlocks, estimate, modelSelection.selectedModel);
       onClose();
     } catch (error) {
       console.error('Failed to start content generation:', error);
@@ -98,13 +116,15 @@ export default function ContentSelectionModal({
 
   if (!isOpen) return null;
 
+  const enabledCount = blocks.filter(b => b.enabled).length;
+
   return (
     <div className="fixed inset-0 z-[60] bg-black/20 flex items-center justify-center px-4 py-6">
-      <div className="relative w-full max-w-4xl bg-white rounded-lg border border-gray-200 max-h-[90vh] flex flex-col overflow-hidden">
+      <div className="relative w-full max-w-6xl bg-white rounded-lg border border-gray-200 max-h-[90vh] flex flex-col overflow-hidden">
         <button
           onClick={onClose}
           disabled={isGenerating}
-          className="absolute top-4 right-4 text-gray-400 hover:text-gray-600"
+          className="absolute top-4 right-4 text-gray-400 hover:text-gray-600 z-10"
         >
           <X className="w-5 h-5" />
         </button>
@@ -123,13 +143,9 @@ export default function ContentSelectionModal({
           <div className="grid gap-4 lg:grid-cols-[1.5fr,1fr]">
             <div className="space-y-3">
               <ContentSelection
-                selectedTypes={selectedTypes}
-                onSelectedTypesChange={setSelectedTypes}
-                estimate={estimate}
-                keywords={contentKeywords}
-                onKeywordChange={(typeId, value) =>
-                  setContentKeywords(prev => ({ ...prev, [typeId]: value }))
-                }
+                blocks={blocks}
+                onBlocksChange={setBlocks}
+                estimatedCost={estimate?.totalCost || 0}
               />
             </div>
 
@@ -157,7 +173,7 @@ export default function ContentSelectionModal({
                     <div className="mb-2">
                       <div className="text-xl font-semibold text-gray-900">{formatCost(estimate.totalCost)}</div>
                       <div className="text-xs text-gray-600 mt-0.5">
-                        {estimate.totalPieces} pieces · {formatTokens(estimate.totalTokens)}
+                        {enabledCount} {enabledCount === 1 ? 'block' : 'blocks'} · {formatTokens(estimate.totalTokens)}
                       </div>
                       <div className="text-xs text-gray-500 mt-0.5">{estimate.modelName}</div>
                     </div>
@@ -190,7 +206,7 @@ export default function ContentSelectionModal({
                     )}
                   </>
                 ) : (
-                  <p className="text-xs text-gray-600">Select content types</p>
+                  <p className="text-xs text-gray-600">Select content blocks</p>
                 )}
               </div>
             </div>
@@ -200,7 +216,7 @@ export default function ContentSelectionModal({
         {/* Footer */}
         <div className="px-5 py-3 border-t border-gray-200 bg-gray-50 flex items-center justify-between">
           <div className="text-xs text-gray-600">
-            {estimate ? `${estimate.totalPieces} pieces • ${formatCost(estimate.totalCost)}` : 'Select content types'}
+            {estimate ? `${enabledCount} ${enabledCount === 1 ? 'block' : 'blocks'} • ${formatCost(estimate.totalCost)}` : 'Select content blocks'}
           </div>
           <div className="flex items-center gap-2">
             <button
@@ -212,7 +228,7 @@ export default function ContentSelectionModal({
             </button>
             <button
               onClick={handleGenerate}
-              disabled={isGenerating || !selectedTypes.length}
+              disabled={isGenerating || !enabledCount}
               className="inline-flex items-center px-3 py-1.5 bg-blue-600 text-white text-sm font-medium rounded hover:bg-blue-700 disabled:opacity-50 disabled:cursor-not-allowed"
             >
               {isGenerating ? (
@@ -222,7 +238,7 @@ export default function ContentSelectionModal({
                 </>
               ) : (
                 <>
-                  Generate
+                  Generate Content
                 </>
               )}
             </button>

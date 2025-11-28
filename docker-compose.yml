@@ -1,0 +1,72 @@
+version: '3.8'
+
+services:
+  audiorepurpose:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: audiorepurpose-app
+    restart: unless-stopped
+    ports:
+      - "3000:3000"
+    environment:
+      # Next.js
+      - NODE_ENV=production
+      - PORT=3000
+
+      # Supabase (required)
+      - NEXT_PUBLIC_SUPABASE_URL=${NEXT_PUBLIC_SUPABASE_URL}
+      - NEXT_PUBLIC_SUPABASE_ANON_KEY=${NEXT_PUBLIC_SUPABASE_ANON_KEY}
+      - SUPABASE_SERVICE_ROLE_KEY=${SUPABASE_SERVICE_ROLE_KEY}
+
+      # AI Services (required)
+      - OPENAI_API_KEY=${OPENAI_API_KEY}
+      - ANTHROPIC_API_KEY=${ANTHROPIC_API_KEY}
+
+      # Hugging Face (required for PyAnnote)
+      - HUGGING_FACE_ACCESS_TOKEN=${HUGGING_FACE_ACCESS_TOKEN}
+
+      # AssemblyAI (optional - alternative transcription)
+      - ASSEMBLYAI_API_KEY=${ASSEMBLYAI_API_KEY}
+
+      # Stripe (required for payments)
+      - STRIPE_SECRET_KEY=${STRIPE_SECRET_KEY}
+      - NEXT_PUBLIC_STRIPE_PUBLISHABLE_KEY=${NEXT_PUBLIC_STRIPE_PUBLISHABLE_KEY}
+      - STRIPE_WEBHOOK_SECRET=${STRIPE_WEBHOOK_SECRET}
+
+      # App Configuration
+      - NEXT_PUBLIC_APP_URL=${NEXT_PUBLIC_APP_URL:-http://localhost:3000}
+
+    volumes:
+      # Mount logs directory for persistent storage
+      - ./logs:/app/logs
+      # Optional: Mount uploads directory if storing files locally
+      - ./uploads:/app/uploads
+
+    networks:
+      - audiorepurpose-network
+
+    # Resource limits (adjust based on your server)
+    deploy:
+      resources:
+        limits:
+          cpus: '2.0'
+          memory: 4G
+        reservations:
+          cpus: '1.0'
+          memory: 2G
+
+    # Logging configuration
+    logging:
+      driver: "json-file"
+      options:
+        max-size: "10m"
+        max-file: "3"
+
+networks:
+  audiorepurpose-network:
+    driver: bridge
+
+volumes:
+  logs:
+  uploads:

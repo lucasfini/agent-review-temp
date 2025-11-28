@@ -1,19 +1,19 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { supabaseAdmin } from '@/lib/supabase/server';
+import type { ContentBlock } from '@/lib/content-types';
 
 export async function POST(request: NextRequest) {
   try {
-    const { projectId, selectedContentTypes, estimatedCost, selectedModelId, contentKeywords } = await request.json();
+    const { projectId, blocks, estimatedCost, selectedModelId } = await request.json();
 
-    if (!projectId || !selectedContentTypes || selectedContentTypes.length === 0) {
+    if (!projectId || !blocks || !Array.isArray(blocks) || blocks.length === 0) {
       return NextResponse.json(
-        { error: 'Project ID and selected content types are required' },
+        { error: 'Project ID and content blocks are required' },
         { status: 400 }
       );
     }
 
-    console.log(`Starting selected content generation for project ${projectId}`);
-    console.log(`Selected types:`, selectedContentTypes);
+    console.log(`[GENERATE-SELECTED] Starting for project ${projectId} with ${blocks.length} blocks`);
 
     // Get the project with transcription
     const { data: project, error: projectError } = await supabaseAdmin
@@ -36,22 +36,29 @@ export async function POST(request: NextRequest) {
       );
     }
 
-    // Update project with selected content types and start generation
-    // Note: content_generation_started_at column may not exist yet
+    // Extract unique content type IDs for database tracking
+    const selectedContentTypes = Array.from(
+      new Set(blocks.map((b: ContentBlock) => b.contentTypeId))
+    );
+
+    // Update project with selected content types
     const { error: updateError } = await supabaseAdmin
       .from('projects')
       .update({
         selected_content_types: selectedContentTypes
-        // Note: estimated_cost column removed to prevent database errors
       })
       .eq('id', projectId);
 
     if (updateError) {
-      console.error('Failed to update project:', updateError);
+      console.error('[GENERATE-SELECTED] Failed to update project:', updateError);
     }
 
     // Start content generation process (async)
-    fetch(`${process.env.VERCEL_URL || 'http://localhost:3000'}/api/generate-content`, {
+    const baseUrl = process.env.VERCEL_URL
+      ? `https://${process.env.VERCEL_URL}`
+      : 'http://localhost:3000';
+
+    fetch(`${baseUrl}/api/generate-content`, {
       method: 'POST',
       headers: {
         'Content-Type': 'application/json',
@@ -59,25 +66,25 @@ export async function POST(request: NextRequest) {
       body: JSON.stringify({
         projectId,
         transcription: project.transcription_text,
-        selectedContentTypes,
+        blocks, // Send blocks instead of selectedContentTypes
         segments: [],
-        modelId: selectedModelId,
-        contentKeywords
+        modelId: selectedModelId
       })
     }).catch(error => {
-      console.error('Failed to start content generation:', error);
+      console.error('[GENERATE-SELECTED] Failed to start content generation:', error);
     });
 
     return NextResponse.json({
       success: true,
       projectId,
-      selectedTypes: selectedContentTypes,
+      blocksCount: blocks.length,
+      contentTypes: selectedContentTypes,
       estimatedCost,
-      message: 'Content generation started with selected types'
+      message: 'Content generation started'
     });
 
   } catch (error) {
-    console.error('Selected content generation error:', error);
+    console.error('[GENERATE-SELECTED] Error:', error);
     return NextResponse.json(
       { error: 'Failed to start content generation' },
       { status: 500 }
