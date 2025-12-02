@@ -145,6 +145,56 @@ const GOAL_STATUS_CLASSES: Record<string, string> = {
   archived: 'bg-gray-100 text-gray-600'
 };
 
+const EXAMPLE_NARRATIVE_GOALS = [
+  {
+    category: 'Product CTAs',
+    description: 'Promote your offerings and drive conversions',
+    examples: [
+      { label: 'Mention coaching program', type: 'cta', target: 2, cadence: 14, description: 'Promote coaching twice per bi-weekly episode' },
+      { label: 'Book launch announcement', type: 'cta', target: 3, cadence: 7, description: 'Weekly mentions during launch period' },
+      { label: 'Newsletter signup reminder', type: 'cta', target: 1, cadence: 30, description: 'Monthly reminder to join newsletter' },
+      { label: 'Course early-bird discount', type: 'cta', target: 2, cadence: 7, description: 'Push time-sensitive offers during launch' },
+    ]
+  },
+  {
+    category: 'Recurring Topics',
+    description: 'Core themes you want to cover regularly',
+    examples: [
+      { label: 'AI and automation', type: 'include', target: 3, cadence: 30, description: 'Core theme - discuss monthly' },
+      { label: 'Productivity tips', type: 'include', target: 2, cadence: 14, description: 'Regular tactical advice for listeners' },
+      { label: 'Guest success stories', type: 'include', target: 1, cadence: 21, description: 'Case studies every 3 weeks' },
+      { label: 'Leadership principles', type: 'include', target: 2, cadence: 30, description: 'Management and leadership insights' },
+    ]
+  },
+  {
+    category: 'Content Guardrails',
+    description: 'Topics to avoid or limit for brand safety',
+    examples: [
+      { label: 'Political discussions', type: 'avoid', target: 0, cadence: null, description: 'Keep podcast non-political' },
+      { label: 'Controversial opinions', type: 'avoid', target: 0, cadence: null, description: 'Maintain brand safety and inclusivity' },
+      { label: 'Competitor mentions', type: 'avoid', target: 1, cadence: 90, description: 'Limit competitive references to once per quarter' },
+    ]
+  },
+  {
+    category: 'Awareness Tracking',
+    description: 'Monitor emerging themes without strict targets',
+    examples: [
+      { label: 'Industry trends', type: 'mention', target: 1, cadence: 30, description: 'Stay current with trends and news' },
+      { label: 'Community shoutouts', type: 'mention', target: 2, cadence: 30, description: 'Engage with audience monthly' },
+      { label: 'Behind-the-scenes', type: 'mention', target: 1, cadence: 60, description: 'Share podcast creation process' },
+    ]
+  },
+  {
+    category: 'Brand Consistency',
+    description: 'Reinforce your brand values and messaging',
+    examples: [
+      { label: 'Company values', type: 'include', target: 1, cadence: 14, description: 'Reinforce mission and values regularly' },
+      { label: 'Customer testimonials', type: 'include', target: 2, cadence: 21, description: 'Social proof every 3 weeks' },
+      { label: 'Product roadmap updates', type: 'mention', target: 1, cadence: 45, description: 'Keep audience informed of developments' },
+    ]
+  }
+];
+
 interface TopicHeatEntry {
   id: string;
   label: string;
@@ -313,6 +363,7 @@ export default function AnalyticsPage() {
   });
   const [goalSaving, setGoalSaving] = useState(false);
   const [goalError, setGoalError] = useState('');
+  const [archivingGoal, setArchivingGoal] = useState<string | null>(null);
   const [coverageRunner, setCoverageRunner] = useState<string | null>(null);
   const [coverageRunError, setCoverageRunError] = useState('');
   const { user } = useAuth();
@@ -394,11 +445,12 @@ export default function AnalyticsPage() {
         console.error('Error fetching coverage snapshots:', coverageError);
       }
 
-      // Fetch narrative goals
+      // Fetch narrative goals (exclude archived)
       const { data: coverageGoals, error: goalsError } = await supabase
         .from('narrative_goals')
         .select('*')
         .eq('user_id', user?.id)
+        .neq('status', 'archived')
         .order('created_at', { ascending: true });
 
       if (goalsError) {
@@ -609,6 +661,32 @@ export default function AnalyticsPage() {
       await fetchAnalytics();
     } catch (err) {
       console.error('Failed to update goal status:', err);
+    }
+  };
+
+  const handleArchiveGoal = async (goalId: string, goalLabel: string) => {
+    if (!confirm(`Archive goal "${goalLabel}"? This will hide it from active tracking but keep historical data.`)) {
+      return;
+    }
+
+    setArchivingGoal(goalId);
+    try {
+      const { error } = await supabase
+        .from('narrative_goals')
+        .update({ status: 'archived' })
+        .eq('id', goalId)
+        .eq('user_id', user?.id);
+
+      if (error) {
+        throw new Error(error.message);
+      }
+
+      await fetchAnalytics();
+    } catch (error: any) {
+      console.error('Failed to archive goal:', error);
+      alert(`Failed to archive goal: ${error.message}`);
+    } finally {
+      setArchivingGoal(null);
     }
   };
 
@@ -1248,13 +1326,25 @@ export default function AnalyticsPage() {
                                 >
                                   {goal.status}
                                 </span>
-                                <button
-                                  type="button"
-                                  className="text-xs text-blue-600 hover:text-blue-800 font-medium"
-                                  onClick={() => handleToggleGoalStatus(goal.id, goal.status)}
-                                >
-                                  {goal.status === 'active' ? 'Pause' : 'Activate'}
-                                </button>
+                                {goal.status !== 'archived' && (
+                                  <>
+                                    <button
+                                      type="button"
+                                      className="text-xs text-blue-600 hover:text-blue-800 font-medium"
+                                      onClick={() => handleToggleGoalStatus(goal.id, goal.status)}
+                                    >
+                                      {goal.status === 'active' ? 'Pause' : 'Activate'}
+                                    </button>
+                                    <button
+                                      type="button"
+                                      className="text-xs text-red-600 hover:text-red-800 font-medium disabled:opacity-50"
+                                      onClick={() => handleArchiveGoal(goal.id, goal.topic_label)}
+                                      disabled={archivingGoal === goal.id}
+                                    >
+                                      {archivingGoal === goal.id ? 'Archiving...' : 'Archive'}
+                                    </button>
+                                  </>
+                                )}
                               </div>
                             </div>
                           ))}
@@ -1263,6 +1353,45 @@ export default function AnalyticsPage() {
                     </div>
 
                     <div className="mt-6 lg:mt-0 lg:w-80">
+                      {/* Example Goals Section */}
+                      <div className="mb-6">
+                        <details className="bg-gradient-to-br from-indigo-50 to-blue-50 border border-indigo-200 rounded-lg p-4">
+                          <summary className="cursor-pointer font-semibold text-sm text-indigo-900 mb-2 flex items-center gap-2">
+                            <span>📚 Example Goals Library</span>
+                            <span className="text-xs font-normal text-indigo-600">(Click to expand)</span>
+                          </summary>
+                          <div className="mt-4 space-y-5 text-xs">
+                            {EXAMPLE_NARRATIVE_GOALS.map((category, idx) => (
+                              <div key={idx} className="bg-white rounded-lg border border-indigo-100 p-4">
+                                <div className="mb-3">
+                                  <h4 className="font-bold text-gray-900 text-sm">{category.category}</h4>
+                                  <p className="text-gray-600 text-xs mt-1">{category.description}</p>
+                                </div>
+                                <div className="space-y-2">
+                                  {category.examples.map((example, exIdx) => (
+                                    <div key={exIdx} className="bg-gray-50 rounded border border-gray-200 p-3 hover:border-indigo-300 transition-colors">
+                                      <div className="font-medium text-gray-900">{example.label}</div>
+                                      <div className="text-gray-600 mt-1">{example.description}</div>
+                                      <div className="mt-2 flex items-center gap-2 text-gray-500">
+                                        <span className="uppercase font-semibold text-indigo-600">{example.type}</span>
+                                        <span>•</span>
+                                        <span>{example.target} mention{example.target !== 1 ? 's' : ''}</span>
+                                        {example.cadence && (
+                                          <>
+                                            <span>•</span>
+                                            <span>every {example.cadence} days</span>
+                                          </>
+                                        )}
+                                      </div>
+                                    </div>
+                                  ))}
+                                </div>
+                              </div>
+                            ))}
+                          </div>
+                        </details>
+                      </div>
+
                       <form onSubmit={handleCreateGoal} className="bg-gray-50 rounded-lg p-4 space-y-4">
                         <div>
                           <label className="block text-sm font-medium text-gray-700">
