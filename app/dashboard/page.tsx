@@ -42,12 +42,18 @@ export default function DashboardPage() {
     try {
       setLoading(true);
 
+      if (!user?.id) {
+        console.error('No user ID available');
+        setLoading(false);
+        return;
+      }
+
       // Fetch projects
       const { data: projects, error: projectsError } = await supabase
         .from('projects')
         .select('*')
-        .eq('user_id', user?.id)
-        .order('created_at', { ascending: false });
+        .eq('user_id', user.id)
+        .order('created_at', { ascending: false }) as { data: any[] | null; error: any };
 
       if (projectsError) {
         console.error('Error fetching projects:', projectsError);
@@ -58,7 +64,7 @@ export default function DashboardPage() {
       const { data: outputs, error: outputsError } = await supabase
         .from('outputs')
         .select('*, projects!inner(user_id)')
-        .eq('projects.user_id', user?.id);
+        .eq('projects.user_id', user.id) as { data: any[] | null; error: any };
 
       if (outputsError) {
         console.error('Error fetching outputs:', outputsError);

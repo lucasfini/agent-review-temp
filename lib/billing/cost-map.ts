@@ -173,22 +173,6 @@ export const COST_MAP: Record<string, ServiceCost> = {
     billedRate: (15.00 / 1_000_000) * 1.35,
     billedRateDisplay: '$20.25/1M tokens',
   },
-
-  // ============================================================================
-  // Local Processing (Free - $0 cost)
-  // ============================================================================
-  pyannote_diarization: {
-    serviceKey: 'pyannote_diarization',
-    serviceName: 'PyAnnote Speaker Diarization (Local)',
-    provider: 'local',
-    unitType: 'seconds',
-    providerRate: 0,
-    providerRateDisplay: 'Free',
-    marginPercent: 0,
-    billedRate: 0,
-    billedRateDisplay: 'Free',
-    notes: 'Local GPU/CPU processing - no API cost',
-  },
 } as const;
 
 /**

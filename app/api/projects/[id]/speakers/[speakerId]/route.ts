@@ -54,7 +54,7 @@ export async function DELETE(
       .from('projects')
       .select('speaker_data')
       .eq('id', projectId)
-      .single();
+      .single() as { data: { speaker_data: any } | null; error: any };
 
     if (fetchError || !project) {
       return NextResponse.json(
@@ -144,6 +144,7 @@ export async function DELETE(
     // Save to database
     const { error: updateError } = await supabaseAdmin
       .from('projects')
+      // @ts-expect-error - Supabase types issue with update
       .update({
         speaker_data: updatedSpeakerData
       })

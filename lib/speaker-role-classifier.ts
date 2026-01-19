@@ -77,44 +77,40 @@ export async function classifySpeakerRoles(
     ? options.transcriptContext.slice(0, 1200)
     : null;
 
-  const userContent = [
-    'You are analyzing a podcast or interview conversation.',
-    'Classify each speaker into the most likely conversational role and summarize why.',
-    'You MUST respond with a JSON array. Each object must include:',
-    '{ "speakerId": "...", "role": "one of roles", "displayName": "human friendly name", "confidence": 0-1, "summary": "...", "evidence": ["short quotes"] }',
-    `Allowed roles: ${ROLE_HINT}. If none apply, use "unknown".`,
-    'Display names should be concise (e.g., "Primary Host", "Ad Read Voice", "Guest Expert").',
-    'Use evidence snippets actually spoken by that speaker.',
-    '',
-    'Speakers:',
-    speakerSummaries.map((summary, index) => [
-      `Speaker ${index + 1} (id: ${summary.id}, duration: ${summary.duration.toFixed(1)}s, segments: ${summary.segmentCount})`,
-      summary.sample
-    ].join('\n')).join('\n---\n')
-  ];
-
-  if (transcriptSnippet) {
-    userContent.push('\nConversation context snippet:\n', transcriptSnippet);
-  }
+  // Build structured utterances for GPT
+  const structuredUtterances = speakerSummaries.map((summary) => ({
+    speaker_id: summary.id,
+    duration_seconds: summary.duration,
+    segment_count: summary.segmentCount,
+    sample_utterances: summary.sample
+  }));
 
   // Get config for speaker role classification
-  const config = prompts.audioRepurpose.speakerRoleClassification;
+  const config = prompts.audioRepurpose.speakerRoleClassification as any;
+
+  // Build user prompt with structured format
+  const userPrompt = (config.userPrompt as string).replace(
+    '${utterances}',
+    JSON.stringify(structuredUtterances, null, 2)
+  );
 
   try {
     const response = await openai.chat.completions.create({
       model: config.model,
       temperature: config.temperature,
       max_tokens: config.max_tokens,
+      top_p: config.top_p || 1,
       messages: [
         {
           role: 'system',
-          content: 'You are a precise analyst that strictly returns valid JSON objects describing speaker roles.'
+          content: config.system || ''
         },
         {
           role: 'user',
-          content: userContent.join('\n')
+          content: userPrompt
         }
-      ]
+      ],
+      response_format: { type: 'json_object' }
     });
 
     // Track usage and billing (don't throw on billing errors)
@@ -141,27 +137,57 @@ export async function classifySpeakerRoles(
     const parsed = safeParseResponse(raw);
     const classifications: Record<string, SpeakerRoleClassification> = {};
 
-    if (Array.isArray(parsed.speakers)) {
-      parsed.speakers.forEach((item) => {
+    // Handle new GPT format: { speakers: { "Speaker_A": {...}, "Speaker_B": {...} } }
+    if (parsed.speakers && typeof parsed.speakers === 'object' && !Array.isArray(parsed.speakers)) {
+      Object.entries(parsed.speakers).forEach(([speakerId, item]: [string, any]) => {
         if (!item || typeof item !== 'object') return;
-        const speakerId = item.speakerId || item.id;
         if (!speakerId || !speakers[speakerId]) return;
 
         const role = normalizeRole(item.role);
-        const displayName = typeof item.displayName === 'string' && item.displayName.trim().length > 0
-          ? item.displayName.trim()
-          : buildFallbackDisplayName(role, speakers[speakerId]);
+        const displayName = buildFallbackDisplayName(role, speakers[speakerId]);
         const confidence = typeof item.confidence === 'number'
           ? clamp(item.confidence, 0, 1)
-          : (typeof item.confidence === 'string' ? Number.parseFloat(item.confidence) : 0) || 0.4;
+          : 0.5;
         const summary = typeof item.summary === 'string'
           ? item.summary.trim().slice(0, 500)
           : '';
         const evidence = Array.isArray(item.evidence)
           ? item.evidence
               .slice(0, 4)
-              .map((str) => String(str).trim())
-              .filter((snippet) => snippet.length > 0)
+              .map((str: any) => String(str).trim())
+              .filter((snippet: string) => snippet.length > 0)
+          : [];
+
+        classifications[speakerId] = {
+          speakerId,
+          role,
+          displayName,
+          confidence,
+          summary,
+          evidence
+        };
+      });
+    }
+    // Fallback: Handle old array format for backwards compatibility
+    else if (Array.isArray(parsed.speakers)) {
+      parsed.speakers.forEach((item) => {
+        if (!item || typeof item !== 'object') return;
+        const speakerId = item.speakerId || item.id;
+        if (!speakerId || !speakers[speakerId]) return;
+
+        const role = normalizeRole(item.role);
+        const displayName = buildFallbackDisplayName(role, speakers[speakerId]);
+        const confidence = typeof item.confidence === 'number'
+          ? clamp(item.confidence, 0, 1)
+          : 0.5;
+        const summary = typeof item.summary === 'string'
+          ? item.summary.trim().slice(0, 500)
+          : '';
+        const evidence = Array.isArray(item.evidence)
+          ? item.evidence
+              .slice(0, 4)
+              .map((str: any) => String(str).trim())
+              .filter((snippet: string) => snippet.length > 0)
           : [];
 
         classifications[speakerId] = {

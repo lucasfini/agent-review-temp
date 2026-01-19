@@ -55,24 +55,24 @@ export const CONTENT_TYPES: ContentType[] = [
   {
     id: 'twitter_threads',
     name: 'X Threads',
-    description: 'Thread-format posts (6-8 tweets each)',
+    description: 'Thread-format posts (6-8 posts each)',
     count: 4,
     estimatedTokens: 900,
     platform: 'twitter',
     enabled: true,
     category: 'social',
-    badge: 'Twitter/X',
+    badge: '𝕏',
     outputType: 'twitter_thread',
     platformType: 'twitter',
     tier: 'basic',
     estimatedCostUSD: 0.02,
     limits: {
       min: 100,
-      max: 280, // Per tweet
+      max: 280, // Per post
       unit: 'characters',
       hardLimit: true
     },
-    attentionSpan: '8 seconds per tweet'
+    attentionSpan: '8 seconds per post'
   },
   {
     id: 'linkedin_posts',
@@ -171,7 +171,7 @@ export const CONTENT_TYPES: ContentType[] = [
     platform: 'general',
     enabled: true,
     category: 'support',
-    badge: 'Documentation',
+    badge: 'Show Notes',  // Specific badge, not generic "Documentation"
     outputType: 'show_notes',
     platformType: 'general',
     tier: 'premium',
@@ -193,7 +193,7 @@ export const CONTENT_TYPES: ContentType[] = [
     platform: 'instagram',
     enabled: true,
     category: 'support',
-    badge: 'Graphics',
+    badge: 'Quote Graphic',  // Specific badge, not generic "Graphics"
     outputType: 'quote_graphic',
     platformType: 'general',
     tier: 'pro',

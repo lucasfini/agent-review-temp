@@ -1,13 +1,17 @@
 "use client";
 
-import { useState, useEffect, useMemo } from 'react';
+import { useState, useEffect, useMemo, useRef, useCallback } from 'react';
 import Link from 'next/link';
-import { FileText, Clock, CheckCircle, AlertCircle, Eye, Download, Share2, RefreshCw, Trash2, Zap, Play, MessageCircle, Crown, Star, Sparkles, BookOpen, Lightbulb, MessageSquare, PanelLeftClose, PanelLeftOpen, Search, Filter } from 'lucide-react';
+import { FileText, Clock, CheckCircle, AlertCircle, Eye, Download, Share2, RefreshCw, Trash2, Zap, Play, MessageCircle, Crown, Star, Sparkles, BookOpen, Lightbulb, MessageSquare, PanelLeftClose, PanelLeftOpen, Search, Filter, Loader2, CheckSquare, Square, ListChecks, X } from 'lucide-react';
 import { useAuth } from '@/lib/auth/context';
 import { supabase } from '@/lib/supabase/client';
 import ContentSelectionModal from '@/components/ContentSelectionModal';
+import ExportModal, { type ExportPayload } from '@/components/ExportModal';
+import { exportContent } from '@/lib/export-utils';
 import ConversationView from '@/components/ConversationView';
+import TeamsStyleTranscript from '@/components/TeamsStyleTranscript';
 import type { CostEstimate } from '@/lib/cost-estimation';
+import type { ContentBlock } from '@/lib/content-types';
 
 interface Project {
   id: string;
@@ -59,17 +63,20 @@ interface Output {
   content: string;
   status: string;
   created_at: string;
+  metadata?: any;
 }
 
 export default function ProjectsPage() {
   const [projects, setProjects] = useState<Project[]>([]);
   const [selectedProject, setSelectedProject] = useState<Project | null>(null);
+  const selectedProjectRef = useRef<string | null>(null);
   const [outputs, setOutputs] = useState<Output[]>([]);
   const [loading, setLoading] = useState(true);
   const [refreshing, setRefreshing] = useState(false);
   const [deletingProject, setDeletingProject] = useState<string | null>(null);
   const [showContentSelection, setShowContentSelection] = useState(false);
   const [selectedProjectForGeneration, setSelectedProjectForGeneration] = useState<Project | null>(null);
+  const [generatingProjects, setGeneratingProjects] = useState<Set<string>>(new Set());
   const [showFullTranscription, setShowFullTranscription] = useState(false);
   const [showConversationFormat, setShowConversationFormat] = useState(false);
   const [expandedOutputs, setExpandedOutputs] = useState<Set<string>>(new Set());
@@ -79,7 +86,19 @@ export default function ProjectsPage() {
   const [tierFilter, setTierFilter] = useState<'all' | 'basic' | 'pro' | 'premium'>('all');
   const [sortBy, setSortBy] = useState<'recent' | 'oldest' | 'name-asc' | 'name-desc'>('recent');
   const [expandedFeatures, setExpandedFeatures] = useState<Set<string>>(new Set());
+
+  // Export selection state
+  const [selectionMode, setSelectionMode] = useState(false);
+  const [selectedProjectIds, setSelectedProjectIds] = useState<Set<string>>(new Set());
+  const [showExportModal, setShowExportModal] = useState(false);
+  const [exportProjects, setExportProjects] = useState<Array<Project & { outputs: Output[] }>>([]);
+
   const { user } = useAuth();
+
+  // Keep ref in sync with selectedProject for use in realtime callbacks
+  useEffect(() => {
+    selectedProjectRef.current = selectedProject?.id || null;
+  }, [selectedProject?.id]);
 
   const parseSpeakerData = (data: any) => {
     if (!data) return null;
@@ -138,10 +157,16 @@ export default function ProjectsPage() {
 
   const handleRefresh = async () => {
     setRefreshing(true);
+
+    // Fetch fresh generation progress state
+    await fetchGenerationProgress();
+
+    // Fetch projects and outputs
     await fetchProjects();
     if (selectedProject) {
       await fetchProjectOutputs(selectedProject.id);
     }
+
     setRefreshing(false);
   };
 
@@ -177,16 +202,12 @@ export default function ProjectsPage() {
         throw new Error('Failed to start content generation');
       }
 
-      // Refresh projects to show updated status
-      await fetchProjects();
+      // Add project to generating set immediately
+      setGeneratingProjects((prev) => new Set(prev).add(selectedProjectForGeneration.id));
 
-      // Show success message
-      const modelLabel = selectedModel?.displayName || selectedModel?.id || 'selected model';
-      const themesUsed = new Set(blocks.map((b: any) => b.theme)).size;
-      const themeNote = themesUsed > 1
-        ? ` Using ${themesUsed} different themes for variety.`
-        : '';
-      alert(`Content generation started! ${blocks.length} ${blocks.length === 1 ? 'piece' : 'pieces'} will be generated for approximately $${estimate.totalCost.toFixed(2)} using ${modelLabel}.${themeNote}`);
+      // Close content selection modal
+      setShowContentSelection(false);
+      setSelectedProjectForGeneration(null);
 
     } catch (error) {
       console.error('Error starting content generation:', error);
@@ -194,8 +215,118 @@ export default function ProjectsPage() {
     }
   };
 
+  // Export functionality helpers
+  const toggleProjectSelection = (projectId: string) => {
+    setSelectedProjectIds(prev => {
+      const newSet = new Set(prev);
+      if (newSet.has(projectId)) {
+        newSet.delete(projectId);
+      } else {
+        newSet.add(projectId);
+      }
+      return newSet;
+    });
+  };
+
+  const toggleAllProjectSelection = () => {
+    if (selectedProjectIds.size === filteredAndSortedProjects.length) {
+      setSelectedProjectIds(new Set());
+    } else {
+      setSelectedProjectIds(new Set(filteredAndSortedProjects.map(p => p.id)));
+    }
+  };
+
+  const exitSelectionMode = () => {
+    setSelectionMode(false);
+    setSelectedProjectIds(new Set());
+  };
+
+  const prepareExportForProjects = async (projectIds: string[]) => {
+    // Fetch outputs for each selected project
+    const projectsWithOutputs = await Promise.all(
+      projectIds.map(async (projectId) => {
+        const project = projects.find(p => p.id === projectId);
+        if (!project) return null;
+
+        const { data: outputsData } = await supabase
+          .from('outputs')
+          .select('*')
+          .eq('project_id', projectId)
+          .order('created_at', { ascending: false });
+
+        return {
+          ...project,
+          outputs: outputsData || [],
+          // Include core content fields for export
+          transcription_text: project.transcription_text,
+          ai_summary: project.ai_summary,
+          chapters: project.chapters,
+          key_takeaways: project.key_takeaways,
+          social_quotes: project.social_quotes,
+          speaker_data: project.speaker_data,
+        };
+      })
+    );
+
+    const validProjects = projectsWithOutputs.filter(p => p !== null) as Array<Project & { outputs: Output[] }>;
+    setExportProjects(validProjects);
+    setShowExportModal(true);
+  };
+
+  const handleBulkExport = async () => {
+    if (selectedProjectIds.size === 0) return;
+    await prepareExportForProjects(Array.from(selectedProjectIds));
+  };
+
+  const handleSingleExport = async (project: Project) => {
+    await prepareExportForProjects([project.id]);
+  };
+
+  const handleExport = async (payload: ExportPayload) => {
+    console.log('[EXPORT] Handling export with payload:', JSON.stringify(payload, null, 2));
+
+    // Prepare projects data for export (including core content)
+    const projectsForExport = exportProjects.map(p => ({
+      id: p.id,
+      title: p.title,
+      outputs: p.outputs.map(o => ({
+        id: o.id,
+        title: o.title,
+        content: o.content,
+        platform: o.platform,
+        type: o.type,
+        created_at: o.created_at,
+        metadata: o.metadata,
+      })),
+      // Include core content fields
+      transcription_text: (p as any).transcription_text,
+      ai_summary: (p as any).ai_summary,
+      chapters: (p as any).chapters,
+      key_takeaways: (p as any).key_takeaways,
+      social_quotes: (p as any).social_quotes,
+      speaker_data: (p as any).speaker_data,
+    }));
+
+    // Call the export utility
+    const result = await exportContent(
+      projectsForExport,
+      payload.export_manifest,
+      payload.format
+    );
+
+    if (result.success) {
+      console.log('[EXPORT] Success:', result.message);
+    } else {
+      console.error('[EXPORT] Failed:', result.message);
+      alert(`Export failed: ${result.message}`);
+    }
+
+    // Exit selection mode after export
+    exitSelectionMode();
+  };
 
   const handleDeleteProject = async (projectId: string) => {
+    if (!user?.id) return;
     if (!confirm('Are you sure you want to delete this project? This will also delete all generated content and cannot be undone.')) {
       return;
     }
@@ -231,7 +362,7 @@ export default function ProjectsPage() {
         .from('projects')
         .delete()
         .eq('id', projectId)
-        .eq('user_id', user?.id); // Ensure user can only delete their own projects
+        .eq('user_id', user.id); // Ensure user can only delete their own projects
 
       if (projectError) {
         console.error('Error deleting project:', projectError);
@@ -285,7 +416,8 @@ export default function ProjectsPage() {
   useEffect(() => {
     if (user) {
       fetchProjects();
-      
+      fetchGenerationProgress(); // Restore loading state on page load
+
       // Set up real-time updates for projects
       const projectsSubscription = supabase
         .channel('projects_changes')
@@ -325,8 +457,84 @@ export default function ProjectsPage() {
           .subscribe();
       }
 
+      // Set up real-time updates for generation progress
+      const generationProgressSubscription = supabase
+        .channel('generation_progress_changes')
+        .on(
+          'postgres_changes',
+          {
+            event: '*',
+            schema: 'public',
+            table: 'generation_progress',
+          },
+          (payload) => {
+            console.log('[REALTIME] Generation progress event:', payload.eventType, payload);
+
+            // Handle INSERT and UPDATE events
+            if (payload.eventType === 'INSERT' || payload.eventType === 'UPDATE') {
+              const data = payload.new as any;
+
+              if (data && data.project_id) {
+                console.log('[REALTIME] Project:', data.project_id, 'Status:', data.status);
+
+                // Add to generating set if status is preparing or generating
+                if (data.status === 'preparing' || data.status === 'generating') {
+                  console.log('[REALTIME] Adding to generating set:', data.project_id);
+                  setGeneratingProjects((prev) => new Set(prev).add(data.project_id));
+                }
+
+                // Remove from generating set if completed or failed
+                if (data.status === 'completed' || data.status === 'failed') {
+                  console.log('[REALTIME] Removing from generating set:', data.project_id);
+                  setGeneratingProjects((prev) => {
+                    const next = new Set(prev);
+                    next.delete(data.project_id);
+                    return next;
+                  });
+
+                  // Refresh data AFTER updating state (not inside setState)
+                  console.log('[REALTIME] Refreshing projects...');
+                  fetchProjects();
+
+                  // Use ref to check selected project (avoids stale closure)
+                  if (selectedProjectRef.current === data.project_id) {
+                    console.log('[REALTIME] Refreshing outputs for selected project...');
+                    fetchProjectOutputs(data.project_id);
+
+                    // Switch to outputs tab on successful completion
+                    if (data.status === 'completed') {
+                      setActiveTab('outputs');
+                    }
+                  }
+                }
+              }
+            }
+
+            // Handle DELETE events (cleanup after status update)
+            if (payload.eventType === 'DELETE') {
+              const data = payload.old as any;
+
+              if (data && data.project_id) {
+                console.log('[REALTIME] Progress entry deleted for project:', data.project_id);
+
+                // Remove from generating set (in case it wasn't already removed)
+                setGeneratingProjects((prev) => {
+                  const next = new Set(prev);
+                  next.delete(data.project_id);
+                  return next;
+                });
+              }
+            }
+          }
+        )
+        .subscribe((status) => {
+          console.log('[REALTIME] Generation progress subscription status:', status);
+        });
+
       return () => {
+        console.log('[REALTIME] Unsubscribing from channels...');
         projectsSubscription.unsubscribe();
+        generationProgressSubscription.unsubscribe();
         if (outputsSubscription) {
           outputsSubscription.unsubscribe();
         }
@@ -334,15 +542,109 @@ export default function ProjectsPage() {
     }
   }, [user, selectedProject?.id]);
 
+  // Fetch current generation progress on page load
+  const fetchGenerationProgress = async () => {
+    try {
+      if (!user?.id) return;
+
+      // Get all projects for this user that are currently generating
+      const { data: progressData, error } = await supabase
+        .from('generation_progress')
+        .select('project_id, status')
+        .in('status', ['preparing', 'generating']);
+
+      if (error) {
+        console.error('Error fetching generation progress:', error);
+        return;
+      }
+
+      if (progressData && progressData.length > 0) {
+        const generatingIds = progressData.map((p: any) => p.project_id);
+        setGeneratingProjects(new Set(generatingIds));
+        console.log('Restored generation state for projects:', generatingIds);
+      }
+    } catch (error) {
+      console.error('Exception fetching generation progress:', error);
+    }
+  };
+
+  // Poll for generation completion as a reliable fallback (realtime can be flaky)
+  useEffect(() => {
+    if (generatingProjects.size === 0) return;
+
+    console.log('[POLL] Starting poll for', generatingProjects.size, 'generating projects');
+
+    const pollInterval = setInterval(async () => {
+      const projectIds = Array.from(generatingProjects);
+      console.log('[POLL] Checking status for projects:', projectIds);
+
+      try {
+        // Check if any of the generating projects have completed (no progress entry = completed)
+        const { data: progressData, error } = await supabase
+          .from('generation_progress')
+          .select('project_id, status')
+          .in('project_id', projectIds);
+
+        if (error) {
+          console.error('[POLL] Error checking progress:', error);
+          return;
+        }
+
+        // Find projects that are no longer in progress (completed or failed)
+        const stillGenerating = new Set(
+          (progressData || [])
+            .filter((p: any) => p.status === 'preparing' || p.status === 'generating')
+            .map((p: any) => p.project_id)
+        );
+
+        const completedProjects = projectIds.filter(id => !stillGenerating.has(id));
+
+        if (completedProjects.length > 0) {
+          console.log('[POLL] Detected completed projects:', completedProjects);
+
+          // Remove completed projects from generating set
+          setGeneratingProjects(prev => {
+            const next = new Set(prev);
+            completedProjects.forEach(id => next.delete(id));
+            return next;
+          });
+
+          // Refresh data
+          fetchProjects();
+
+          // Refresh outputs if selected project completed
+          const selectedId = selectedProjectRef.current;
+          if (selectedId && completedProjects.includes(selectedId)) {
+            console.log('[POLL] Refreshing outputs for completed project:', selectedId);
+            fetchProjectOutputs(selectedId);
+            setActiveTab('outputs');
+          }
+        }
+      } catch (error) {
+        console.error('[POLL] Exception checking progress:', error);
+      }
+    }, 3000); // Poll every 3 seconds
+
+    return () => {
+      console.log('[POLL] Stopping poll');
+      clearInterval(pollInterval);
+    };
+  }, [generatingProjects.size]);
+
   const fetchProjects = async () => {
     try {
-      console.log('Fetching projects for user:', user?.id);
+      if (!user?.id) {
+        console.log('No user ID available');
+        return;
+      }
+
+      console.log('Fetching projects for user:', user.id);
 
       const { data: projectsData, error } = await supabase
         .from('projects')
         .select('*, transcription_segments, speaker_data, performance_level, ai_summary, chapters, key_takeaways, social_quotes')
-        .eq('user_id', user?.id)
-        .order('created_at', { ascending: false });
+        .eq('user_id', user.id)
+        .order('created_at', { ascending: false }) as { data: any[] | null; error: any };
 
       if (error) {
         console.error('Error fetching projects:', error);
@@ -437,7 +739,17 @@ export default function ProjectsPage() {
     });
   };
 
-  const getPlatformColor = (platform: string) => {
+  const getPlatformColor = (output: Output) => {
+    const platform = output.platform;
+    
+    // Check metadata for specific platform types
+    if (output.metadata?.platform) {
+       if (output.metadata.platform === 'Show Notes') return 'bg-indigo-100 text-indigo-800';
+       if (output.metadata.platform === 'Quote Graphic') return 'bg-amber-100 text-amber-800';
+       if (output.metadata.platform === 'Blog Post') return 'bg-emerald-100 text-emerald-800';
+       if (output.metadata.platform === 'Email Newsletter') return 'bg-orange-100 text-orange-800';
+    }
+
     switch (platform) {
       case 'twitter':
         return 'bg-blue-100 text-blue-800';
@@ -449,6 +761,36 @@ export default function ProjectsPage() {
         return 'bg-gray-100 text-gray-800';
       default:
         return 'bg-gray-100 text-gray-800';
+    }
+  };
+
+  const getPlatformDisplayName = (output: Output) => {
+    // Prioritize metadata platform label
+    if (output.metadata?.platform && output.metadata.platform !== 'General') {
+      return output.metadata.platform;
+    }
+    
+    // Fallback if metadata.platform_label exists
+    if (output.metadata?.platform_label) {
+      return output.metadata.platform_label;
+    }
+
+    const platform = output.platform;
+    switch (platform) {
+      case 'twitter':
+        return 'X';
+      case 'linkedin':
+        return 'LinkedIn';
+      case 'instagram':
+        return 'Instagram';
+      case 'email':
+        return 'Email';
+      case 'blog':
+        return 'Blog';
+      case 'general':
+        return 'General';
+      default:
+        return platform;
     }
   };
 
@@ -626,7 +968,79 @@ export default function ProjectsPage() {
               }`}
             >
               <div className="flex-shrink-0 space-y-4 mb-4">
-                <h2 className="text-lg font-medium text-gray-900">Projects</h2>
+                {/* Header with Select Toggle */}
+                <div className="flex items-center justify-between">
+                  <h2 className="text-lg font-medium text-gray-900">Projects</h2>
+                  <button
+                    onClick={() => {
+                      if (selectionMode) {
+                        exitSelectionMode();
+                      } else {
+                        setSelectionMode(true);
+                      }
+                    }}
+                    className={`inline-flex items-center px-3 py-1.5 text-sm font-medium rounded-md transition-colors ${
+                      selectionMode
+                        ? 'bg-blue-100 text-blue-700 hover:bg-blue-200'
+                        : 'text-gray-600 hover:bg-gray-100'
+                    }`}
+                  >
+                    {selectionMode ? (
+                      <>
+                        <X className="w-4 h-4 mr-1.5" />
+                        Cancel
+                      </>
+                    ) : (
+                      <>
+                        <ListChecks className="w-4 h-4 mr-1.5" />
+                        Select
+                      </>
+                    )}
+                  </button>
+                </div>
+
+                {/* Selection Mode Header */}
+                {selectionMode && (
+                  <div className="space-y-2">
+                    <div className="flex items-center justify-between bg-blue-50 px-3 py-2 rounded-lg border border-blue-200">
+                      <div className="flex items-center gap-2">
+                        <button
+                          onClick={toggleAllProjectSelection}
+                          className="p-1 hover:bg-blue-100 rounded transition-colors"
+                        >
+                          {selectedProjectIds.size === filteredAndSortedProjects.length && filteredAndSortedProjects.length > 0 ? (
+                            <CheckSquare className="w-4 h-4 text-blue-600" />
+                          ) : selectedProjectIds.size > 0 ? (
+                            <div className="w-4 h-4 border-2 border-blue-600 rounded bg-blue-600/20" />
+                          ) : (
+                            <Square className="w-4 h-4 text-blue-600" />
+                          )}
+                        </button>
+                        <span className="text-sm text-blue-700 font-medium">
+                          {selectedProjectIds.size} selected
+                        </span>
+                      </div>
+                      {selectedProjectIds.size > 0 && (
+                        <button
+                          onClick={() => setSelectedProjectIds(new Set())}
+                          className="text-xs text-blue-600 hover:text-blue-800"
+                        >
+                          Clear
+                        </button>
+                      )}
+                    </div>
+                    {/* Export Button - shown when projects are selected */}
+                    {selectedProjectIds.size > 0 && (
+                      <button
+                        onClick={handleBulkExport}
+                        className="w-full inline-flex items-center justify-center px-4 py-2.5 bg-gradient-to-r from-blue-600 to-blue-700 text-white text-sm font-medium rounded-lg hover:from-blue-700 hover:to-blue-800 transition-all shadow-sm"
+                      >
+                        <Download className="w-4 h-4 mr-2" />
+                        Export {selectedProjectIds.size} Project{selectedProjectIds.size !== 1 ? 's' : ''}
+                      </button>
+                    )}
+                  </div>
+                )}
 
                 {/* Search Bar */}
                 <div className="relative">
@@ -679,7 +1093,7 @@ export default function ProjectsPage() {
               </div>
 
               {/* Scrollable Projects List */}
-              <div className="flex-1 overflow-y-auto space-y-4 pr-2" style={{ maxHeight: 'calc(100vh - 20rem)' }}>
+              <div className="flex-1 overflow-y-auto space-y-2 pr-2" style={{ maxHeight: 'calc(100vh - 20rem)' }}>
                 {filteredAndSortedProjects.length === 0 ? (
                   <div className="text-center py-8 text-gray-500">
                     <FileText className="mx-auto h-8 w-8 text-gray-400 mb-2" />
@@ -697,148 +1111,126 @@ export default function ProjectsPage() {
                     )}
                   </div>
                 ) : (
-                  filteredAndSortedProjects.map((project) => (
-                <div
-                  key={project.id}
-                  className={`p-4 rounded-lg border transition-colors cursor-pointer ${
-                    selectedProject?.id === project.id
-                      ? 'border-blue-500 bg-blue-50'
-                      : 'border-gray-200 bg-white hover:bg-gray-50'
-                  }`}
-                  onClick={() => {
-                    setSelectedProject(project);
-                    setShowFullTranscription(false);
-                    setShowConversationFormat(false);
-                    setActiveTab('transcript'); // Reset to transcript tab
-                    fetchProjectOutputs(project.id);
-                  }}
-                >
-                  <div className="flex items-start justify-between gap-3">
-                    {/* LEFT SIDE: Title, Tier, Features */}
-                    <div className="flex-1 min-w-0">
-                      <div className="flex items-start gap-2 mb-2">
-                        <h3 className="text-sm font-medium text-gray-900 truncate flex-1">
-                          {project.title}
-                        </h3>
-                        {getStatusIcon(project.status)}
+                  filteredAndSortedProjects.map((project) => {
+                    const isProjectSelected = selectedProjectIds.has(project.id);
+                    return (
+                    <div
+                      key={project.id}
+                      className={`group p-3 rounded-lg transition-all cursor-pointer border ${
+                        selectionMode && isProjectSelected
+                          ? 'bg-blue-50 border-blue-300'
+                          : selectedProject?.id === project.id
+                          ? 'bg-blue-50/60 border-blue-200'
+                          : 'bg-white border-transparent hover:bg-gray-50 hover:border-gray-200'
+                      }`}
+                      onClick={() => {
+                        if (selectionMode) {
+                          toggleProjectSelection(project.id);
+                          return;
+                        }
+                        setSelectedProject(project);
+                        setShowFullTranscription(false);
+                        setShowConversationFormat(false);
+                        setActiveTab('transcript');
+                        fetchProjectOutputs(project.id);
+                      }}
+                    >
+                      {/* Top Row: Checkbox (selection mode), Title & Status */}
+                      <div className="flex justify-between items-start mb-1.5 gap-2">
+                        <div className="flex items-start gap-2 min-w-0 flex-1">
+                          {selectionMode && (
+                            <div className="flex-shrink-0 mt-0.5">
+                              {isProjectSelected ? (
+                                <CheckSquare className="w-4 h-4 text-blue-600" />
+                              ) : (
+                                <Square className="w-4 h-4 text-gray-400" />
+                              )}
+                            </div>
+                          )}
+                          <h3 className={`text-sm leading-snug text-gray-900 ${
+                            selectedProject?.id === project.id ? 'font-semibold' : 'font-medium'
+                          }`}>
+                            {project.title}
+                          </h3>
+                        </div>
+                        <div className="flex-shrink-0 mt-0.5">
+                          {getStatusIcon(project.status)}
+                        </div>
                       </div>
 
-                      <div className="flex items-center gap-2 mb-2">
+                      {/* Middle Row: Tier & Features */}
+                      <div className="flex flex-wrap items-center gap-2 mb-3">
                         {getTierBadge(project.performance_level)}
-                      </div>
-
-                      {/* Content Availability Indicators */}
-                      {project.status === 'completed' && (() => {
-                        const features = getContentAvailability(project);
-                        const isExpanded = expandedFeatures.has(project.id);
-                        const displayFeatures = isExpanded ? features : features.slice(0, 1);
-                        const hasMore = features.length > 1;
-
-                        return (
-                          <div className="flex flex-wrap gap-1.5 relative">
-                            {displayFeatures.map((feature, idx) => {
-                              const Icon = feature.icon;
-                              return (
-                                <div
-                                  key={idx}
-                                  className={`inline-flex items-center px-2 py-0.5 rounded text-xs ${
-                                    feature.available
-                                      ? 'bg-green-50 text-green-700'
-                                      : 'bg-gray-50 text-gray-400'
-                                  }`}
-                                  title={feature.available ? `${feature.name} available` : `${feature.name} not available`}
-                                >
-                                  <Icon className={`w-3 h-3 mr-1 ${feature.available ? feature.color : 'text-gray-400'}`} />
-                                  <span className="font-medium">
-                                    {feature.label || feature.name}
-                                  </span>
-                                  {feature.available && feature.count !== undefined && (
-                                    <span className="ml-1 text-xs">({feature.count})</span>
-                                  )}
-                                  {feature.available && <CheckCircle className="w-3 h-3 ml-1" />}
-                                </div>
-                              );
-                            })}
-                            {hasMore && (
-                              <button
-                                onClick={(e) => {
-                                  e.stopPropagation();
-                                  setExpandedFeatures(prev => {
-                                    const newSet = new Set(prev);
-                                    if (newSet.has(project.id)) {
-                                      newSet.delete(project.id);
-                                    } else {
-                                      newSet.add(project.id);
-                                    }
-                                    return newSet;
-                                  });
-                                }}
-                                className="inline-flex items-center px-2 py-0.5 rounded text-xs bg-gray-100 text-gray-600 hover:bg-gray-200 transition-colors font-medium"
-                                title={isExpanded ? 'Show less' : `Show ${features.length - 1} more features`}
-                              >
-                                {isExpanded ? 'Less' : `+${features.length - 1}`}
-                              </button>
+                        
+                        {/* Compact Content Indicators */}
+                        {project.status === 'completed' && (
+                          <div className="flex items-center gap-1.5 text-xs text-gray-500">
+                            {getContentAvailability(project).filter(f => f.available).length > 0 && (
+                              <span className="flex items-center px-1.5 py-0.5 bg-green-50 text-green-700 rounded text-[10px] font-medium">
+                                {getContentAvailability(project).filter(f => f.available).length} Assets
+                              </span>
                             )}
                           </div>
-                        );
-                      })()}
-                    </div>
+                        )}
+                      </div>
 
-                    {/* RIGHT SIDE: Metadata & Actions */}
-                    <div className="flex flex-col items-end gap-2 flex-shrink-0">
-                      {/* Action Buttons */}
-                      <div className="flex items-center space-x-2">
-                        {project.status === 'completed' && project.transcription_text && (
+                      {/* Bottom Row: Metadata & Actions */}
+                      <div className="flex items-end justify-between pt-2 border-t border-gray-100">
+                        {/* Metadata */}
+                        <div className="flex flex-wrap gap-x-3 gap-y-1 text-[11px] text-gray-500">
+                          <span>{new Date(project.created_at).toLocaleDateString()}</span>
+                          {project.audio_duration && (
+                            <span>{formatDuration(project.audio_duration)}</span>
+                          )}
+                          {project.actual_processing_cost !== undefined && project.actual_processing_cost > 0 && (
+                            <span className="font-medium text-gray-600">
+                              ${project.actual_processing_cost.toFixed(2)}
+                            </span>
+                          )}
+                        </div>
+
+                        {/* Hover Actions */}
+                        <div className="flex items-center gap-1 opacity-0 group-hover:opacity-100 transition-opacity">
+                          {project.status === 'completed' && project.transcription_text && (
+                            <button
+                              onClick={(e) => {
+                                e.stopPropagation();
+                                handleGenerateContent(project);
+                              }}
+                              disabled={generatingProjects.has(project.id)}
+                              className="p-1 text-gray-400 hover:text-blue-600 transition-colors rounded hover:bg-blue-50"
+                              title={generatingProjects.has(project.id) ? "Generating..." : "Generate content"}
+                            >
+                              {generatingProjects.has(project.id) ? (
+                                <Loader2 className="h-3.5 w-3.5 animate-spin text-blue-600" />
+                              ) : (
+                                <Zap className="h-3.5 w-3.5" />
+                              )}
+                            </button>
+                          )}
                           <button
                             onClick={(e) => {
                               e.stopPropagation();
-                              handleGenerateContent(project);
+                              handleDeleteProject(project.id);
                             }}
-                            className="p-1 text-gray-400 hover:text-blue-600 transition-colors"
-                            title="Generate content"
+                            disabled={deletingProject === project.id}
+                            className="p-1 text-gray-400 hover:text-red-600 transition-colors rounded hover:bg-red-50"
+                            title="Delete project"
                           >
-                            <Zap className="h-4 w-4" />
+                            {deletingProject === project.id ? (
+                              <Loader2 className="h-3.5 w-3.5 animate-spin" />
+                            ) : (
+                              <Trash2 className="h-3.5 w-3.5" />
+                            )}
                           </button>
-                        )}
-
-                        <button
-                          onClick={(e) => {
-                            e.stopPropagation();
-                            handleDeleteProject(project.id);
-                          }}
-                          disabled={deletingProject === project.id}
-                          className="p-1 text-gray-400 hover:text-red-600 transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
-                          title="Delete project"
-                        >
-                          {deletingProject === project.id ? (
-                            <div className="h-4 w-4 animate-spin rounded-full border-2 border-red-600 border-t-transparent" />
-                          ) : (
-                            <Trash2 className="h-4 w-4" />
-                          )}
-                        </button>
-                      </div>
-
-                      {/* Metadata */}
-                      <div className="text-xs text-gray-500 text-right space-y-1">
-                        <div>{new Date(project.created_at).toLocaleDateString()}</div>
-                        {project.audio_duration && (
-                          <div>{formatDuration(project.audio_duration)}</div>
-                        )}
-                        {project.audio_file_size && (
-                          <div>{formatFileSize(project.audio_file_size)}</div>
-                        )}
-                        {project.actual_processing_cost !== undefined && project.actual_processing_cost > 0 && (
-                          <div className="text-blue-600 font-medium" title={`Provider: ${project.cost_breakdown?.provider || 'Unknown'}`}>
-                            ${project.actual_processing_cost.toFixed(4)}
-                          </div>
-                        )}
+                        </div>
                       </div>
                     </div>
-                  </div>
-                </div>
-                  ))
+                  );
+                  })
                 )}
               </div>
+
             </div>
 
             {/* RIGHT: Tabbed Content (67% on desktop, or full width when sidebar closed) */}
@@ -871,13 +1263,36 @@ export default function ProjectsPage() {
                           {getTierBadge(selectedProject.performance_level)}
                         </div>
                       </div>
-                      <button
-                        onClick={() => handleGenerateContent(selectedProject)}
-                        className="inline-flex items-center px-3 py-1.5 border border-blue-600 text-sm font-medium rounded-md text-blue-600 hover:bg-blue-50 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-blue-500 flex-shrink-0 whitespace-nowrap"
-                      >
-                        <Zap className="w-4 h-4 mr-1.5" />
-                        Generate Content
-                      </button>
+                      <div className="flex items-center gap-2">
+                        <button
+                          onClick={() => handleSingleExport(selectedProject)}
+                          className="inline-flex items-center px-3 py-2 text-sm font-medium text-gray-700 bg-white border border-gray-300 rounded-md shadow-sm hover:bg-gray-50 transition-colors"
+                        >
+                          <Download className="w-4 h-4 mr-2" />
+                          Export
+                        </button>
+                        <button
+                          onClick={() => handleGenerateContent(selectedProject)}
+                          disabled={generatingProjects.has(selectedProject.id)}
+                          className={`inline-flex items-center px-4 py-2 text-sm font-medium rounded-md shadow-sm transition-colors disabled:opacity-75 disabled:cursor-not-allowed ${
+                            generatingProjects.has(selectedProject.id)
+                              ? 'bg-blue-50 text-blue-700 border border-blue-200'
+                              : 'bg-blue-600 text-white hover:bg-blue-700 border border-transparent'
+                          }`}
+                        >
+                          {generatingProjects.has(selectedProject.id) ? (
+                            <>
+                              <Loader2 className="w-4 h-4 mr-2 animate-spin" />
+                              Generating...
+                            </>
+                          ) : (
+                            <>
+                              <Zap className="w-4 h-4 mr-2" />
+                              Generate Content
+                            </>
+                          )}
+                        </button>
+                      </div>
                     </div>
                   </div>
 
@@ -979,14 +1394,14 @@ export default function ProjectsPage() {
                   </div>
 
                   {/* Tab Content - Scrollable */}
-                  <div className="flex-1 overflow-y-auto p-6">
+                  <div className="flex-1 overflow-hidden flex flex-col">
                     {/* TRANSCRIPT TAB */}
                     {activeTab === 'transcript' && (
-                      <div>
+                      <div className="h-full flex flex-col p-6">
                         {selectedProject.transcription_text ? (
-                          <div>
+                          <div className="h-full flex flex-col">
                             {/* Format Toggle */}
-                            <div className="flex items-center space-x-2 mb-4">
+                            <div className="flex items-center space-x-2 mb-4 flex-shrink-0">
                               <button
                                 onClick={() => setShowConversationFormat(false)}
                                 className={`inline-flex items-center px-3 py-1.5 text-sm font-medium rounded-md transition-colors ${
@@ -1017,25 +1432,34 @@ export default function ProjectsPage() {
                             </div>
 
                             {/* Transcription Content */}
-                            {showConversationFormat && parsedSpeakerData ? (
-                              <ConversationView
-                                speakerData={parsedSpeakerData}
-                                transcriptionText={selectedProject.transcription_text}
-                                className="bg-gray-50 rounded-md"
-                                projectId={selectedProject.id}
-                                userTier={selectedProject.performance_level || 'basic'}
-                                onSpeakerUpdate={(updatedSpeakerData) => {
-                                  setSelectedProject(prev => prev ? {
-                                    ...prev,
-                                    speaker_data: updatedSpeakerData
-                                  } : null);
-                                }}
-                              />
-                            ) : (
-                              <div className="text-sm text-gray-700 leading-relaxed whitespace-pre-wrap bg-gray-50 p-4 rounded-md">
-                                {selectedProject.transcription_text}
-                              </div>
-                            )}
+                            <div className="flex-1 overflow-hidden">
+                              {showConversationFormat && parsedSpeakerData ? (
+                                <ConversationView
+                                  speakerData={parsedSpeakerData}
+                                  transcriptionText={selectedProject.transcription_text}
+                                  className="bg-gray-50 rounded-md"
+                                  projectId={selectedProject.id}
+                                  userTier={selectedProject.performance_level || 'basic'}
+                                  onSpeakerUpdate={(updatedSpeakerData) => {
+                                    setSelectedProject(prev => prev ? {
+                                      ...prev,
+                                      speaker_data: updatedSpeakerData
+                                    } : null);
+                                  }}
+                                />
+                              ) : (
+                                <div className="text-sm text-gray-700 leading-relaxed whitespace-pre-wrap bg-gray-50 p-4 rounded-md overflow-y-auto h-full">
+                                  {parsedSpeakerData ? (
+                                    // Extract raw text from segments
+                                    parsedSpeakerData.segments
+                                      .map((segment: any) => segment.text)
+                                      .join(' ')
+                                  ) : (
+                                    selectedProject.transcription_text
+                                  )}
+                                </div>
+                              )}
+                            </div>
                           </div>
                         ) : (
                           <div className="text-center py-12 text-gray-500">
@@ -1047,7 +1471,7 @@ export default function ProjectsPage() {
 
                     {/* SUMMARY TAB */}
                     {activeTab === 'summary' && selectedProject.ai_summary && (
-                      <div>
+                      <div className="p-6 overflow-y-auto">
                         <div className="mb-6">
                           <h3 className="text-xl font-semibold text-gray-900 mb-1">Summary</h3>
                           <p className="text-sm text-gray-500">Key insights and takeaways from the conversation</p>
@@ -1104,7 +1528,7 @@ export default function ProjectsPage() {
 
                     {/* CHAPTERS TAB */}
                     {activeTab === 'chapters' && selectedProject.chapters && selectedProject.chapters.length > 0 && (
-                      <div>
+                      <div className="p-6 overflow-y-auto">
                         <div className="mb-6">
                           <h3 className="text-xl font-semibold text-gray-900 mb-1">Chapters</h3>
                           <p className="text-sm text-gray-500">Topic breakdowns and timestamps</p>
@@ -1140,7 +1564,7 @@ export default function ProjectsPage() {
 
                     {/* TAKEAWAYS TAB */}
                     {activeTab === 'takeaways' && selectedProject.key_takeaways && selectedProject.key_takeaways.length > 0 && (
-                      <div>
+                      <div className="p-6 overflow-y-auto">
                         <div className="mb-6">
                           <h3 className="text-xl font-semibold text-gray-900 mb-1">Key Takeaways</h3>
                           <p className="text-sm text-gray-500">Main insights and actionable advice</p>
@@ -1171,7 +1595,7 @@ export default function ProjectsPage() {
 
                     {/* QUOTES TAB */}
                     {activeTab === 'quotes' && selectedProject.social_quotes && selectedProject.social_quotes.length > 0 && (
-                      <div>
+                      <div className="p-6 overflow-y-auto">
                         <div className="mb-6">
                           <h3 className="text-xl font-semibold text-gray-900 mb-1">Quotes</h3>
                           <p className="text-sm text-gray-500">Shareable moments and memorable insights</p>
@@ -1205,9 +1629,9 @@ export default function ProjectsPage() {
 
                     {/* OUTPUTS TAB */}
                     {activeTab === 'outputs' && (
-                      <div>
+                      <div className="p-6 overflow-y-auto bg-gray-50/50 h-full">
                         {outputs.length === 0 ? (
-                          <div className="text-center py-12 bg-gray-50 rounded-lg">
+                          <div className="text-center py-12 bg-white rounded-lg shadow-sm border border-gray-100">
                             <Clock className="mx-auto h-8 w-8 text-gray-400" />
                             <p className="mt-2 text-sm text-gray-500">
                               {selectedProject.status === 'processing'
@@ -1219,54 +1643,70 @@ export default function ProjectsPage() {
                             </p>
                           </div>
                         ) : (
-                          <div className="space-y-4">
+                          <div className="space-y-6">
                             {outputs.map((output) => (
                               <div
                                 key={output.id}
-                                className="bg-white p-6 rounded-lg border border-gray-200 shadow-sm"
+                                className="bg-white p-6 rounded-xl shadow-sm hover:shadow-md transition-shadow duration-200"
                               >
-                                <div className="flex items-center justify-between mb-3">
-                                  <div className="flex items-center space-x-3">
-                                    <h3 className="text-sm font-medium text-gray-900">
-                                      {output.title}
-                                    </h3>
-                                    <span className={`inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-medium ${getPlatformColor(output.platform)}`}>
-                                      {output.platform}
+                                {/* Header: Badges & Title */}
+                                <div className="mb-4">
+                                  <div className="flex flex-wrap gap-2 mb-2">
+                                    <span className={`inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-medium ${getPlatformColor(output)}`}>
+                                      {getPlatformDisplayName(output)}
                                     </span>
+                                    {output.metadata?.theme && (
+                                      <span className="inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-medium bg-purple-50 text-purple-700 border border-purple-100">
+                                        {output.metadata.theme}
+                                      </span>
+                                    )}
                                   </div>
-
-                                  <div className="flex items-center space-x-2">
-                                    <button className="p-1 text-gray-400 hover:text-gray-600">
-                                      <Eye className="h-4 w-4" />
-                                    </button>
-                                    <button className="p-1 text-gray-400 hover:text-gray-600">
-                                      <Download className="h-4 w-4" />
-                                    </button>
-                                    <button className="p-1 text-gray-400 hover:text-gray-600">
-                                      <Share2 className="h-4 w-4" />
-                                    </button>
-                                  </div>
+                                  <h3 className="text-base font-semibold text-gray-900 leading-tight">
+                                    {output.title}
+                                  </h3>
                                 </div>
 
-                                <div className="text-sm text-gray-600 bg-gray-50 p-3 rounded-md">
-                                  <div className={expandedOutputs.has(output.id) ? '' : 'line-clamp-4'}>
+                                {/* Content: Quote Style */}
+                                <div className="pl-4 border-l-4 border-gray-200 py-1 mb-5">
+                                  <div className={`text-sm text-gray-700 whitespace-pre-wrap leading-relaxed ${expandedOutputs.has(output.id) ? '' : 'line-clamp-4'}`}>
                                     {output.content}
                                   </div>
                                   {output.content.length > 200 && (
                                     <button
                                       onClick={() => toggleOutputExpansion(output.id)}
-                                      className="mt-2 text-xs text-blue-600 hover:text-blue-800 font-medium"
+                                      className="mt-2 text-xs font-medium text-blue-600 hover:text-blue-800"
                                     >
                                       {expandedOutputs.has(output.id) ? 'Show Less' : 'Show More'}
                                     </button>
                                   )}
                                 </div>
 
-                                <div className="mt-3 flex items-center justify-between text-xs text-gray-500">
-                                  <span>Type: {output.type.replace('_', ' ')}</span>
-                                  <span>
-                                    Generated: {new Date(output.created_at).toLocaleString()}
+                                {/* Footer: Date & Actions */}
+                                <div className="flex items-center justify-between pt-4 border-t border-gray-100">
+                                  <span className="text-xs text-gray-400">
+                                    Generated {new Date(output.created_at).toLocaleDateString()}
                                   </span>
+
+                                  <div className="flex items-center gap-1">
+                                    <button 
+                                      className="p-1.5 text-gray-400 hover:text-blue-600 hover:bg-blue-50 rounded transition-colors"
+                                      title="View"
+                                    >
+                                      <Eye className="h-4 w-4" />
+                                    </button>
+                                    <button 
+                                      className="p-1.5 text-gray-400 hover:text-green-600 hover:bg-green-50 rounded transition-colors"
+                                      title="Download"
+                                    >
+                                      <Download className="h-4 w-4" />
+                                    </button>
+                                    <button 
+                                      className="p-1.5 text-gray-400 hover:text-indigo-600 hover:bg-indigo-50 rounded transition-colors"
+                                      title="Share"
+                                    >
+                                      <Share2 className="h-4 w-4" />
+                                    </button>
+                                  </div>
                                 </div>
                               </div>
                             ))}
@@ -1326,6 +1766,17 @@ export default function ProjectsPage() {
           projectId={selectedProjectForGeneration?.id || ''}
           transcriptionText={selectedProjectForGeneration?.transcription_text || ''}
           projectTitle={selectedProjectForGeneration?.title || selectedProjectForGeneration?.audio_file_name || ''}
+        />
+
+        {/* Export Modal */}
+        <ExportModal
+          isOpen={showExportModal}
+          onClose={() => {
+            setShowExportModal(false);
+            setExportProjects([]);
+          }}
+          projects={exportProjects}
+          onExport={handleExport}
         />
       </div>
     </div>

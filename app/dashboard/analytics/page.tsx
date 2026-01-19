@@ -139,6 +139,16 @@ const GOAL_TYPE_OPTIONS = [
   { value: 'mention', label: 'Awareness', helper: 'Lightweight monitoring of new ideas.' }
 ] as const;
 
+const CURATED_GOAL_PRESETS = [
+  { label: 'Promote newsletter CTA', type: 'cta', target: 2, cadence: 7 },
+  { label: 'Mention sponsor name', type: 'cta', target: 1, cadence: 7 },
+  { label: 'AI safety', type: 'include', target: 1, cadence: 30 },
+  { label: 'Future of work', type: 'include', target: 1, cadence: 30 },
+  { label: 'Avoid off-topic politics', type: 'avoid', target: 0, cadence: null },
+  { label: 'Avoid price mentions', type: 'avoid', target: 0, cadence: null },
+  { label: 'Highlight guest brand', type: 'mention', target: 1, cadence: null }
+] as const;
+
 const GOAL_STATUS_CLASSES: Record<string, string> = {
   active: 'bg-green-50 text-green-700',
   paused: 'bg-yellow-50 text-yellow-700',
@@ -233,9 +243,15 @@ function summarizeInsights(insightRecords: InsightRecord[]): InsightsSummary {
 
 function summarizeCoverage(
   snapshots: CoverageSnapshotRecord[],
-  goals: NarrativeGoalRecord[]
+  goals: NarrativeGoalRecord[],
+  projectIds?: string[]
 ): CoverageSummary {
-  if (!snapshots.length) {
+  let filteredSnapshots = snapshots;
+  if (projectIds && projectIds.length > 0) {
+    filteredSnapshots = snapshots.filter(s => projectIds.includes(s.project_id));
+  }
+
+  if (!filteredSnapshots.length) {
     return {
       ...EMPTY_COVERAGE_SUMMARY,
       goalsTracked: goals.length
@@ -245,7 +261,7 @@ function summarizeCoverage(
   const last30Cutoff = new Date();
   last30Cutoff.setDate(last30Cutoff.getDate() - 30);
 
-  const spendLast30 = snapshots.reduce((sum, snapshot) => {
+  const spendLast30 = filteredSnapshots.reduce((sum, snapshot) => {
     const created = new Date(snapshot.created_at);
     if (created >= last30Cutoff) {
       return sum + Number(snapshot.ai_cost_usd || snapshot.ai_usage?.costUsd || 0);
@@ -253,12 +269,12 @@ function summarizeCoverage(
     return sum;
   }, 0);
 
-  const totalTopics = snapshots.reduce(
+  const totalTopics = filteredSnapshots.reduce(
     (sum, snapshot) => sum + ((snapshot.topics || []).length || 0),
     0
   );
 
-  const latestOpportunities = snapshots
+  const latestOpportunities = filteredSnapshots
     .flatMap(snapshot => (snapshot.opportunities || []).map((op: any, index: number) => ({
       id: `${snapshot.id}-${index}`,
       label: op.label || 'Opportunity',
@@ -273,9 +289,9 @@ function summarizeCoverage(
     .slice(0, 5);
 
   return {
-    totalAnalyses: snapshots.length,
+    totalAnalyses: filteredSnapshots.length,
     spendLast30: Number(spendLast30.toFixed(4)),
-    avgTopics: Number(((totalTopics / snapshots.length) || 0).toFixed(1)),
+    avgTopics: Number(((totalTopics / filteredSnapshots.length) || 0).toFixed(1)),
     goalsTracked: goals.length,
     latestOpportunities
   };
@@ -283,9 +299,15 @@ function summarizeCoverage(
 
 function buildTopicHeat(
   snapshots: CoverageSnapshotRecord[],
-  goals: NarrativeGoalRecord[]
+  goals: NarrativeGoalRecord[],
+  projectIds?: string[]
 ): TopicHeatEntry[] {
-  if (!snapshots.length) return [];
+  let filteredSnapshots = snapshots;
+  if (projectIds && projectIds.length > 0) {
+    filteredSnapshots = snapshots.filter(s => projectIds.includes(s.project_id));
+  }
+
+  if (!filteredSnapshots.length) return [];
 
   const goalMatchers = new Set(
     goals.map(goal => (goal.topic_id || goal.topic_label || '').toLowerCase())
@@ -301,7 +323,7 @@ function buildTopicHeat(
     lastMention: string | null;
   }>();
 
-  snapshots.forEach(snapshot => {
+  filteredSnapshots.forEach(snapshot => {
     const topics = Array.isArray(snapshot.topics) ? snapshot.topics : [];
     topics.forEach((topic: any) => {
       const key = String(topic.id || topic.label || 'topic');
@@ -352,9 +374,29 @@ function buildTopicHeat(
 }
 
 export default function AnalyticsPage() {
+  const getPlatformDisplayName = (platform: string) => {
+    switch (platform) {
+      case 'twitter':
+        return 'X';
+      case 'linkedin':
+        return 'LinkedIn';
+      case 'instagram':
+        return 'Instagram';
+      case 'email':
+        return 'Email';
+      case 'blog':
+        return 'Blog';
+      case 'general':
+        return 'General';
+      default:
+        return platform;
+    }
+  };
+
   const [analytics, setAnalytics] = useState<AnalyticsData | null>(null);
   const [loading, setLoading] = useState(true);
   const [timeRange, setTimeRange] = useState<'7d' | '30d' | '90d' | 'all'>('30d');
+  const [activeTab, setActiveTab] = useState<'insights' | 'coverage'>('insights');
   const [goalForm, setGoalForm] = useState({
     label: '',
     type: 'include',
@@ -364,8 +406,13 @@ export default function AnalyticsPage() {
   const [goalSaving, setGoalSaving] = useState(false);
   const [goalError, setGoalError] = useState('');
   const [archivingGoal, setArchivingGoal] = useState<string | null>(null);
+  const [goalFormOpen, setGoalFormOpen] = useState(true);
   const [coverageRunner, setCoverageRunner] = useState<string | null>(null);
   const [coverageRunError, setCoverageRunError] = useState('');
+  const [selectedSnapshots, setSelectedSnapshots] = useState<Set<string>>(new Set());
+  const [deleting, setDeleting] = useState(false);
+  const [selectedProjects, setSelectedProjects] = useState<Set<string>>(new Set());
+  const [projectFilterOpen, setProjectFilterOpen] = useState(false);
   const { user } = useAuth();
   const coverageFeatureEnabled = COVERAGE_FEATURE_ENABLED;
 
@@ -375,14 +422,31 @@ export default function AnalyticsPage() {
     }
   }, [user, timeRange]);
 
+  useEffect(() => {
+    const handleClickOutside = (event: MouseEvent) => {
+      const target = event.target as HTMLElement;
+      if (projectFilterOpen && !target.closest('.project-filter-container')) {
+        setProjectFilterOpen(false);
+      }
+    };
+    document.addEventListener('mousedown', handleClickOutside);
+    return () => document.removeEventListener('mousedown', handleClickOutside);
+  }, [projectFilterOpen]);
+
   const fetchAnalytics = async () => {
     try {
       setLoading(true);
 
+      if (!user?.id) {
+        console.error('No user ID available');
+        setLoading(false);
+        return;
+      }
+
       // Calculate date range
       const now = new Date();
       let startDate: Date | null = null;
-      
+
       switch (timeRange) {
         case '7d':
           startDate = new Date(now.getTime() - 7 * 24 * 60 * 60 * 1000);
@@ -401,14 +465,14 @@ export default function AnalyticsPage() {
       let projectsQuery = supabase
         .from('projects')
         .select('*')
-        .eq('user_id', user?.id)
+        .eq('user_id', user.id)
         .order('created_at', { ascending: false });
 
       if (startDate) {
         projectsQuery = projectsQuery.gte('created_at', startDate.toISOString());
       }
 
-      const { data: projects, error: projectsError } = await projectsQuery;
+      const { data: projects, error: projectsError } = await projectsQuery as { data: any[] | null; error: any };
 
       if (projectsError) {
         console.error('Error fetching projects:', projectsError);
@@ -419,14 +483,14 @@ export default function AnalyticsPage() {
       let outputsQuery = supabase
         .from('outputs')
         .select('*')
-        .eq('user_id', user?.id)
+        .eq('user_id', user.id)
         .order('created_at', { ascending: false });
 
       if (startDate) {
         outputsQuery = outputsQuery.gte('created_at', startDate.toISOString());
       }
 
-      const { data: outputs, error: outputsError } = await outputsQuery;
+      const { data: outputs, error: outputsError } = await outputsQuery as { data: any[] | null; error: any };
 
       if (outputsError) {
         console.error('Error fetching outputs:', outputsError);
@@ -437,9 +501,9 @@ export default function AnalyticsPage() {
       const { data: coverageSnapshots, error: coverageError } = await supabase
         .from('narrative_coverage_snapshots')
         .select('*')
-        .eq('user_id', user?.id)
+        .eq('user_id', user.id)
         .order('created_at', { ascending: false })
-        .limit(30);
+        .limit(30) as { data: any[] | null; error: any };
 
       if (coverageError) {
         console.error('Error fetching coverage snapshots:', coverageError);
@@ -449,30 +513,36 @@ export default function AnalyticsPage() {
       const { data: coverageGoals, error: goalsError } = await supabase
         .from('narrative_goals')
         .select('*')
-        .eq('user_id', user?.id)
+        .eq('user_id', user.id)
         .neq('status', 'archived')
-        .order('created_at', { ascending: true });
+        .order('created_at', { ascending: true }) as { data: any[] | null; error: any };
 
       if (goalsError) {
         console.error('Error fetching coverage goals:', goalsError);
       }
 
-      // Fetch insights
-      const { data: insights, error: insightsError } = await supabase
-        .from('insights')
-        .select('id, project_id, entity_id, label, category, confidence, cost_usd, created_at')
-        .in('project_id', (projects || []).map(p => p.id))
-        .order('created_at', { ascending: false });
+      // Fetch insights (only if we have projects)
+      let insights: any[] | null = null;
+      if (projects && projects.length > 0) {
+        const projectIds = projects.map(p => p.id);
+        const { data: insightsData, error: insightsError } = await supabase
+          .from('insights')
+          .select('id, project_id, entity_id, label, category, confidence, cost_usd, created_at')
+          .in('project_id', projectIds)
+          .order('created_at', { ascending: false }) as { data: any[] | null; error: any };
 
-      if (insightsError) {
-        console.error('Error fetching insights:', insightsError);
+        if (insightsError) {
+          console.error('Error fetching insights:', insightsError);
+        } else {
+          insights = insightsData;
+        }
       }
 
       // Process analytics data
       const totalProjects = projects?.length || 0;
       const totalOutputs = outputs?.length || 0;
       const totalProcessingTime = projects?.reduce((sum, p) => sum + (p.processing_time_seconds || 0), 0) || 0;
-      const estimatedCosts = outputs?.length * 0.05 || 0; // Rough estimate
+      const estimatedCosts = (outputs?.length || 0) * 0.05; // Rough estimate
 
       // Content breakdown
       const contentBreakdown: Record<string, number> = {};
@@ -586,8 +656,9 @@ export default function AnalyticsPage() {
 
   const topicHeat = useMemo(() => {
     if (!analytics?.coverage) return [];
-    return buildTopicHeat(analytics.coverage.snapshots, analytics.coverage.goals).slice(0, 6);
-  }, [analytics]);
+    const projectIds = selectedProjects.size > 0 ? Array.from(selectedProjects) : undefined;
+    return buildTopicHeat(analytics.coverage.snapshots, analytics.coverage.goals, projectIds).slice(0, 6);
+  }, [analytics, selectedProjects]);
 
   const projectsNeedingCoverage = useMemo(() => {
     if (!analytics || !coverageFeatureEnabled) return [];
@@ -605,12 +676,12 @@ export default function AnalyticsPage() {
       .slice(0, 6);
   }, [analytics, coverageFeatureEnabled]);
 
-  const handleCreateGoal = async (e: FormEvent<HTMLFormElement>) => {
-    e.preventDefault();
+  const saveGoal = async (params: { label: string; type: string; target: number; cadence: number | null }) => {
     if (!user) return;
-    const trimmedLabel = goalForm.label.trim();
+    const trimmedLabel = (params.label || '').trim();
     if (!trimmedLabel) {
       setGoalError('Enter a topic or CTA label.');
+      setGoalFormOpen(true);
       return;
     }
 
@@ -620,29 +691,45 @@ export default function AnalyticsPage() {
       const { error } = await supabase.from('narrative_goals').insert({
         user_id: user.id,
         topic_label: trimmedLabel,
-        goal_type: goalForm.type,
-        target_mentions: Math.max(1, Number(goalForm.target) || 1),
-        cadence_days: goalForm.cadence ? Math.max(1, Number(goalForm.cadence)) : null,
+        goal_type: params.type,
+        target_mentions: Math.max(0, Number(params.target) || 0),
+        cadence_days: params.cadence ? Math.max(1, Number(params.cadence)) : null,
         status: 'active'
-      });
+      } as any);
 
       if (error) {
         throw new Error(error.message);
       }
 
-      setGoalForm({
+      setGoalForm(current => ({
+        ...current,
         label: '',
-        type: goalForm.type,
-        target: goalForm.target,
-        cadence: goalForm.cadence
-      });
+        type: params.type as any,
+        target: params.target,
+        cadence: params.cadence || 0
+      }));
 
       await fetchAnalytics();
     } catch (err: any) {
       setGoalError(err.message || 'Failed to create goal.');
+      setGoalFormOpen(true);
     } finally {
       setGoalSaving(false);
     }
+  };
+
+  const handleCreateGoal = async (e: FormEvent<HTMLFormElement>) => {
+    e.preventDefault();
+    await saveGoal({
+      label: goalForm.label,
+      type: goalForm.type,
+      target: goalForm.target,
+      cadence: goalForm.cadence || null
+    });
+  };
+
+  const handleQuickAddGoal = async (suggestion: { label: string; type: string; target: number; cadence: number | null }) => {
+    await saveGoal(suggestion);
   };
 
   const handleToggleGoalStatus = async (goalId: string, currentStatus: string) => {
@@ -651,6 +738,7 @@ export default function AnalyticsPage() {
     try {
       const { error } = await supabase
         .from('narrative_goals')
+        // @ts-expect-error - Supabase types issue with update
         .update({ status: nextStatus })
         .eq('id', goalId);
 
@@ -665,6 +753,7 @@ export default function AnalyticsPage() {
   };
 
   const handleArchiveGoal = async (goalId: string, goalLabel: string) => {
+    if (!user?.id) return;
     if (!confirm(`Archive goal "${goalLabel}"? This will hide it from active tracking but keep historical data.`)) {
       return;
     }
@@ -673,9 +762,10 @@ export default function AnalyticsPage() {
     try {
       const { error } = await supabase
         .from('narrative_goals')
+        // @ts-expect-error - Supabase types issue with update
         .update({ status: 'archived' })
         .eq('id', goalId)
-        .eq('user_id', user?.id);
+        .eq('user_id', user.id);
 
       if (error) {
         throw new Error(error.message);
@@ -691,8 +781,94 @@ export default function AnalyticsPage() {
   };
 
   const coverageGoals = analytics?.coverage?.goals || [];
+  const coverageTimeline = useMemo(() => {
+    const snapshots = analytics?.coverage?.snapshots || [];
+    if (selectedProjects.size === 0) return snapshots.slice(0, 6);
+    return snapshots.filter(s => selectedProjects.has(s.project_id)).slice(0, 6);
+  }, [analytics, selectedProjects]);
+  const filteredCoverageSummary = useMemo(() => {
+    if (!analytics?.coverage) return analytics?.coverage?.summary;
+    const projectIds = selectedProjects.size > 0 ? Array.from(selectedProjects) : undefined;
+    return summarizeCoverage(analytics.coverage.snapshots, analytics.coverage.goals, projectIds);
+  }, [analytics, selectedProjects]);
+  const coverageLabelSet = useMemo(() => {
+    const set = new Set<string>();
+    const snapshots = analytics?.coverage?.snapshots || [];
+    const normalize = (val: any) => String(val || '').trim().toLowerCase();
+    const collect = (items: any[]) => {
+      items.forEach(item => {
+        const label = normalize(item?.label || item?.name || item?.title || item?.id);
+        if (label) set.add(label);
+      });
+    };
 
-  const handleRunCoverage = async (projectId: string) => {
+    snapshots.forEach(snapshot => {
+      collect(snapshot.topics || []);
+      collect(snapshot.ctas || []);
+      if (snapshot.analytics) {
+        collect((snapshot.analytics as any).topics || []);
+        collect((snapshot.analytics as any).ctas || []);
+      }
+    });
+    return set;
+  }, [analytics]);
+
+  const suggestedGoals = useMemo(() => {
+    const suggestions: { label: string; type: string; target: number; cadence: number | null }[] = [];
+    const seen = new Set<string>();
+    const snapshots = (analytics?.coverage?.snapshots || []).slice(0, 5);
+    const normalize = (val: any) => String(val || '').trim();
+
+    snapshots.forEach(snapshot => {
+      (snapshot.topics || []).forEach((topic: any) => {
+        const label = normalize(topic.label || topic.name || topic.title || topic.id);
+        if (!label) return;
+        const key = `include-${label.toLowerCase()}`;
+        if (seen.has(key)) return;
+        seen.add(key);
+        suggestions.push({ label, type: 'include', target: 1, cadence: 30 });
+      });
+      (snapshot.ctas || []).forEach((cta: any) => {
+        const label = normalize(cta.label || cta.name || cta.title || cta.id);
+        if (!label) return;
+        const key = `cta-${label.toLowerCase()}`;
+        if (seen.has(key)) return;
+        seen.add(key);
+        suggestions.push({ label, type: 'cta', target: 1, cadence: 7 });
+      });
+
+      if (snapshot.analytics) {
+        ((snapshot.analytics as any).topics || []).forEach((topic: any) => {
+          const label = normalize(topic.label || topic.name || topic.title || topic.id);
+          if (!label) return;
+          const key = `include-${label.toLowerCase()}`;
+          if (seen.has(key)) return;
+          seen.add(key);
+          suggestions.push({ label, type: 'include', target: 1, cadence: 30 });
+        });
+        ((snapshot.analytics as any).ctas || []).forEach((cta: any) => {
+          const label = normalize(cta.label || cta.name || cta.title || cta.id);
+          if (!label) return;
+          const key = `cta-${label.toLowerCase()}`;
+          if (seen.has(key)) return;
+          seen.add(key);
+          suggestions.push({ label, type: 'cta', target: 1, cadence: 7 });
+        });
+      }
+    });
+
+    if (suggestions.length > 0) return suggestions.slice(0, 6);
+    return CURATED_GOAL_PRESETS.slice(0, 6);
+  }, [analytics]);
+
+  const goalsNeedingMentions = useMemo(() => {
+    return coverageGoals.filter(goal => {
+      const label = (goal.topic_label || '').toLowerCase();
+      return goal.status === 'active' && label && !coverageLabelSet.has(label);
+    });
+  }, [coverageGoals, coverageLabelSet]);
+
+  const handleRunCoverage = async (projectId: string, force = false) => {
     if (!coverageFeatureEnabled) {
       setCoverageRunError('Narrative coverage radar is currently under construction.');
       return;
@@ -705,7 +881,7 @@ export default function AnalyticsPage() {
       const response = await fetch(`/api/projects/${projectId}/run-coverage`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ userId: user.id })
+        body: JSON.stringify({ userId: user.id, force })
       });
 
       const result = await response.json();
@@ -720,6 +896,68 @@ export default function AnalyticsPage() {
     } finally {
       setCoverageRunner(null);
     }
+  };
+
+  const handleSelectSnapshot = (snapshotId: string) => {
+    const newSelected = new Set(selectedSnapshots);
+    if (newSelected.has(snapshotId)) {
+      newSelected.delete(snapshotId);
+    } else {
+      newSelected.add(snapshotId);
+    }
+    setSelectedSnapshots(newSelected);
+  };
+
+  const handleSelectAll = () => {
+    if (selectedSnapshots.size === coverageTimeline.length) {
+      setSelectedSnapshots(new Set());
+    } else {
+      setSelectedSnapshots(new Set(coverageTimeline.map(s => s.id)));
+    }
+  };
+
+  const handleDeleteSelected = async () => {
+    if (!user?.id) return;
+    if (selectedSnapshots.size === 0) return;
+
+    const count = selectedSnapshots.size;
+    if (!confirm(`Delete ${count} selected snapshot(s)? This cannot be undone.`)) {
+      return;
+    }
+
+    setDeleting(true);
+    try {
+      const response = await fetch('/api/narrative-coverage/delete', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          userId: user.id,
+          snapshotIds: Array.from(selectedSnapshots)
+        })
+      });
+
+      const result = await response.json();
+      if (!response.ok) throw new Error(result.error);
+
+      setSelectedSnapshots(new Set());
+      await fetchAnalytics();
+    } catch (error: any) {
+      alert(`Failed to delete: ${error.message}`);
+    } finally {
+      setDeleting(false);
+    }
+  };
+
+  const toggleProjectSelection = (projectId: string) => {
+    setSelectedProjects(current => {
+      const next = new Set(current);
+      if (next.has(projectId)) {
+        next.delete(projectId);
+      } else {
+        next.add(projectId);
+      }
+      return next;
+    });
   };
 
   if (loading) {
@@ -787,690 +1025,976 @@ export default function AnalyticsPage() {
           </div>
         </div>
 
-        {/* Key Metrics */}
-        <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-6 mb-8">
-          <div className="bg-white overflow-hidden shadow rounded-lg">
-            <div className="p-5">
-              <div className="flex items-center">
-                <div className="flex-shrink-0">
-                  <FileText className="h-6 w-6 text-gray-400" />
-                </div>
-                <div className="ml-5 w-0 flex-1">
-                  <dl>
-                    <dt className="text-sm font-medium text-gray-500 truncate">
-                      Total Projects
-                    </dt>
-                    <dd className="text-lg font-medium text-gray-900">
-                      {analytics?.totalProjects || 0}
-                    </dd>
-                  </dl>
-                </div>
-              </div>
-            </div>
+        {/* Overview Section - Always Visible */}
+        <section className="space-y-4 mb-8">
+          <div className="flex items-center justify-between">
+            <h2 className="text-lg font-semibold text-gray-900">Overview</h2>
+            <span className="text-xs text-gray-500">All metrics respect the selected time range</span>
           </div>
-
-          <div className="bg-white overflow-hidden shadow rounded-lg">
-            <div className="p-5">
-              <div className="flex items-center">
-                <div className="flex-shrink-0">
-                  <Zap className="h-6 w-6 text-blue-400" />
-                </div>
-                <div className="ml-5 w-0 flex-1">
-                  <dl>
-                    <dt className="text-sm font-medium text-gray-500 truncate">
-                      Content Pieces
-                    </dt>
-                    <dd className="text-lg font-medium text-gray-900">
-                      {analytics?.totalOutputs || 0}
-                    </dd>
-                  </dl>
-                </div>
-              </div>
-            </div>
-          </div>
-
-          <div className="bg-white overflow-hidden shadow rounded-lg">
-            <div className="p-5">
-              <div className="flex items-center">
-                <div className="flex-shrink-0">
-                  <Clock className="h-6 w-6 text-green-400" />
-                </div>
-                <div className="ml-5 w-0 flex-1">
-                  <dl>
-                    <dt className="text-sm font-medium text-gray-500 truncate">
-                      Processing Time
-                    </dt>
-                    <dd className="text-lg font-medium text-gray-900">
-                      {formatDuration(analytics?.totalProcessingTime || 0)}
-                    </dd>
-                  </dl>
-                </div>
-              </div>
-            </div>
-          </div>
-
-        </div>
-
-        <div className="grid grid-cols-1 lg:grid-cols-2 gap-6 mb-8">
-          {/* Content Breakdown */}
-          <div className="bg-white shadow rounded-lg">
-            <div className="px-4 py-5 sm:p-6">
-              <h3 className="text-lg leading-6 font-medium text-gray-900 mb-4">
-                Content Type Breakdown
-              </h3>
-              <div className="space-y-3">
-                {Object.entries(analytics?.contentBreakdown || {}).map(([type, count]) => (
-                  <div key={type} className="flex items-center justify-between">
-                    <span className="text-sm text-gray-600 capitalize">
-                      {type.replace('_', ' ')}
-                    </span>
-                    <div className="flex items-center space-x-2">
-                      <div className="bg-blue-200 rounded-full h-2 w-20">
-                        <div 
-                          className="bg-blue-600 h-2 rounded-full"
-                          style={{ 
-                            width: `${Math.min(100, (count / (analytics?.totalOutputs || 1)) * 100)}%` 
-                          }}
-                        ></div>
-                      </div>
-                      <span className="text-sm font-medium text-gray-900">{count}</span>
+            <div className="grid grid-cols-1 sm:grid-cols-2 xl:grid-cols-4 gap-4">
+              <div className="bg-white overflow-hidden shadow rounded-lg">
+                <div className="p-5">
+                  <div className="flex items-center">
+                    <div className="flex-shrink-0">
+                      <FileText className="h-6 w-6 text-gray-400" />
+                    </div>
+                    <div className="ml-5 w-0 flex-1">
+                      <dl>
+                        <dt className="text-sm font-medium text-gray-500 truncate">
+                          Total Projects
+                        </dt>
+                        <dd className="text-lg font-semibold text-gray-900">
+                          {analytics?.totalProjects || 0}
+                        </dd>
+                      </dl>
                     </div>
                   </div>
-                ))}
+                </div>
               </div>
-            </div>
-          </div>
 
-          {/* Platform Distribution */}
-          <div className="bg-white shadow rounded-lg">
-            <div className="px-4 py-5 sm:p-6">
-              <h3 className="text-lg leading-6 font-medium text-gray-900 mb-4">
-                Platform Distribution
-              </h3>
-              <div className="space-y-3">
-                {Object.entries(analytics?.platformStats || {}).map(([platform, count]) => (
-                  <div key={platform} className="flex items-center justify-between">
-                    <span className="text-sm text-gray-600 capitalize">
-                      {platform}
-                    </span>
-                    <div className="flex items-center space-x-2">
-                      <div className="bg-green-200 rounded-full h-2 w-20">
-                        <div 
-                          className="bg-green-600 h-2 rounded-full"
-                          style={{ 
-                            width: `${Math.min(100, (count / (analytics?.totalOutputs || 1)) * 100)}%` 
-                          }}
-                        ></div>
-                      </div>
-                      <span className="text-sm font-medium text-gray-900">{count}</span>
+              <div className="bg-white overflow-hidden shadow rounded-lg">
+                <div className="p-5">
+                  <div className="flex items-center">
+                    <div className="flex-shrink-0">
+                      <Zap className="h-6 w-6 text-blue-400" />
+                    </div>
+                    <div className="ml-5 w-0 flex-1">
+                      <dl>
+                        <dt className="text-sm font-medium text-gray-500 truncate">
+                          Content Pieces
+                        </dt>
+                        <dd className="text-lg font-semibold text-gray-900">
+                          {analytics?.totalOutputs || 0}
+                        </dd>
+                      </dl>
                     </div>
                   </div>
-                ))}
+                </div>
               </div>
-            </div>
-          </div>
-        </div>
 
-        {/* Recent Activity */}
-        <div className="bg-white shadow rounded-lg">
-          <div className="px-4 py-5 sm:p-6">
-            <h3 className="text-lg leading-6 font-medium text-gray-900 mb-4">
-              Recent Activity
-            </h3>
-            <div className="flow-root">
-              <ul className="-mb-8">
-                {analytics?.recentActivity.map((activity, activityIdx) => (
-                  <li key={activity.id}>
-                    <div className="relative pb-8">
-                      {activityIdx !== analytics.recentActivity.length - 1 ? (
-                        <span
-                          className="absolute top-4 left-4 -ml-px h-full w-0.5 bg-gray-200"
-                          aria-hidden="true"
-                        />
-                      ) : null}
-                      <div className="relative flex space-x-3">
-                        <div>
-                          <span className={`h-8 w-8 rounded-full flex items-center justify-center ring-8 ring-white ${
-                            activity.status === 'completed' ? 'bg-green-500' :
-                            activity.status === 'processing' ? 'bg-yellow-500' :
-                            'bg-gray-500'
-                          }`}>
-                            <FileText className="h-4 w-4 text-white" />
-                          </span>
-                        </div>
-                        <div className="min-w-0 flex-1 pt-1.5 flex justify-between space-x-4">
-                          <div>
-                            <p className="text-sm text-gray-500">
-                              {activity.action}{' '}
-                              <span className="font-medium text-gray-900">
-                                {activity.title}
-                              </span>
-                            </p>
-                          </div>
-                          <div className="text-right text-sm whitespace-nowrap text-gray-500">
-                            {new Date(activity.timestamp).toLocaleDateString()}
-                          </div>
-                        </div>
-                      </div>
+              <div className="bg-white overflow-hidden shadow rounded-lg">
+                <div className="p-5">
+                  <div className="flex items-center">
+                    <div className="flex-shrink-0">
+                      <Clock className="h-6 w-6 text-green-400" />
                     </div>
-                  </li>
-                ))}
-              </ul>
-            </div>
-          </div>
-        </div>
+                    <div className="ml-5 w-0 flex-1">
+                      <dl>
+                        <dt className="text-sm font-medium text-gray-500 truncate">
+                          Processing Time
+                        </dt>
+                        <dd className="text-lg font-semibold text-gray-900">
+                          {formatDuration(analytics?.totalProcessingTime || 0)}
+                        </dd>
+                      </dl>
+                    </div>
+                  </div>
+                </div>
+              </div>
 
-        {/* Educational Insights */}
-        <div className="mt-8">
-          <div className="flex items-center justify-between mb-4">
-            <div>
-              <h2 className="text-lg font-medium text-gray-900">Educational Insights</h2>
-              <p className="text-sm text-gray-500">
-                AI-powered insights about people and concepts in your podcasts
-              </p>
-            </div>
-          </div>
-
-          <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4 mb-6">
-            <div className="bg-white shadow rounded-lg p-4">
-              <p className="text-xs uppercase text-gray-500">Total Insights</p>
-              <p className="mt-2 text-2xl font-semibold text-gray-900">
-                {analytics?.insights?.summary?.totalInsights || 0}
-              </p>
-              <p className="text-xs text-gray-500 mt-1">Entities extracted across all projects</p>
-            </div>
-            <div className="bg-white shadow rounded-lg p-4">
-              <p className="text-xs uppercase text-gray-500">People</p>
-              <p className="mt-2 text-2xl font-semibold text-gray-900">
-                {analytics?.insights?.summary?.insightsByCategory?.person || 0}
-              </p>
-              <p className="text-xs text-gray-500 mt-1">Individuals mentioned in podcasts</p>
-            </div>
-            <div className="bg-white shadow rounded-lg p-4">
-              <p className="text-xs uppercase text-gray-500">Concepts</p>
-              <p className="mt-2 text-2xl font-semibold text-gray-900">
-                {analytics?.insights?.summary?.insightsByCategory?.concept || 0}
-              </p>
-              <p className="text-xs text-gray-500 mt-1">Technical terms and ideas explained</p>
-            </div>
-            <div className="bg-white shadow rounded-lg p-4">
-              <p className="text-xs uppercase text-gray-500">Avg Confidence</p>
-              <p className="mt-2 text-2xl font-semibold text-gray-900">
-                {Math.round((analytics?.insights?.summary?.avgConfidence || 0) * 100)}%
-              </p>
-              <p className="text-xs text-gray-500 mt-1">AI extraction accuracy score</p>
-            </div>
-          </div>
-
-          {analytics?.insights?.records && analytics.insights.records.length > 0 && (
-            <div className="bg-white shadow rounded-lg">
-              <div className="px-4 py-5 sm:p-6">
-                <h3 className="text-lg font-medium text-gray-900 mb-4">Recent Insights</h3>
-                <div className="overflow-x-auto">
-                  <table className="min-w-full divide-y divide-gray-200 text-sm">
-                    <thead className="bg-gray-50">
-                      <tr>
-                        <th className="px-4 py-2 text-left font-medium text-gray-500">Label</th>
-                        <th className="px-4 py-2 text-left font-medium text-gray-500">Category</th>
-                        <th className="px-4 py-2 text-left font-medium text-gray-500">Confidence</th>
-                        <th className="px-4 py-2 text-left font-medium text-gray-500">AI Cost</th>
-                        <th className="px-4 py-2 text-left font-medium text-gray-500">Created</th>
-                      </tr>
-                    </thead>
-                    <tbody className="divide-y divide-gray-100 bg-white">
-                      {analytics.insights.records.slice(0, 10).map(insight => (
-                        <tr key={insight.id}>
-                          <td className="px-4 py-3">
-                            <div className="text-gray-900 font-medium">{insight.label}</div>
-                            <div className="text-xs text-gray-500">{insight.entity_id}</div>
-                          </td>
-                          <td className="px-4 py-3">
-                            <span className={`inline-flex items-center px-2 py-1 rounded-full text-xs font-medium ${
-                              insight.category === 'person'
-                                ? 'bg-blue-50 text-blue-700'
-                                : 'bg-purple-50 text-purple-700'
-                            }`}>
-                              {insight.category}
-                            </span>
-                          </td>
-                          <td className="px-4 py-3 text-gray-700">
-                            {Math.round(insight.confidence * 100)}%
-                          </td>
-                          <td className="px-4 py-3 text-gray-900 font-medium">
-                            {formatCurrency(Number(insight.cost_usd || 0))}
-                          </td>
-                          <td className="px-4 py-3 text-gray-500">
-                            {new Date(insight.created_at).toLocaleDateString()}
-                          </td>
-                        </tr>
-                      ))}
-                    </tbody>
-                  </table>
+              <div className="bg-white overflow-hidden shadow rounded-lg">
+                <div className="p-5">
+                  <div className="flex items-center">
+                    <div className="flex-shrink-0">
+                      <TrendingUp className="h-6 w-6 text-indigo-400" />
+                    </div>
+                    <div className="ml-5 w-0 flex-1">
+                      <dl>
+                        <dt className="text-sm font-medium text-gray-500 truncate">
+                          Est. AI Spend
+                        </dt>
+                        <dd className="text-lg font-semibold text-gray-900">
+                          {formatCurrency(analytics?.estimatedCosts || 0)}
+                        </dd>
+                      </dl>
+                    </div>
+                  </div>
                 </div>
               </div>
             </div>
-          )}
-        </div>
 
-        {/* Narrative Coverage Radar */}
-        <div className="mt-8">
-          <div className="flex items-center justify-between mb-4">
-            <div>
-              <h2 className="text-lg font-medium text-gray-900">Narrative Coverage Radar</h2>
-              <p className="text-sm text-gray-500">
-                AI-driven visibility into topic mix, CTA cadence, and editorial gaps
-              </p>
+          {/* Content Mix */}
+          <section className="space-y-4">
+            <div className="flex items-center justify-between">
+              <h2 className="text-lg font-semibold text-gray-900">Content Mix</h2>
             </div>
-          </div>
-
-          <div className="relative">
-            {!coverageFeatureEnabled && (
-              <div className="absolute inset-0 z-10 flex items-center justify-center">
-                <div className="bg-white/95 border border-gray-200 rounded-xl shadow p-6 text-center max-w-md">
-                  <p className="text-sm font-semibold text-gray-900">Narrative Coverage Radar</p>
-                  <p className="text-xs text-gray-600 mt-2">
-                    Work in progress — this feature is temporarily disabled while we finish the manual
-                    run workflow. Thanks for your patience!
-                  </p>
-                </div>
-              </div>
-            )}
-
-            <div className={coverageFeatureEnabled ? '' : 'blur-sm pointer-events-none select-none'}>
-              {coverageFeatureEnabled && projectsNeedingCoverage.length > 0 && (
-                <div className="mb-6 bg-amber-50 border border-amber-200 rounded-lg p-4">
-                  <div className="flex items-start justify-between">
-                    <div>
-                      <h3 className="text-sm font-semibold text-amber-900">
-                        {projectsNeedingCoverage.length} episode{projectsNeedingCoverage.length === 1 ? '' : 's'} awaiting coverage
-                      </h3>
-                      <p className="text-xs text-amber-800">
-                        Run the radar only when needed to control AI spend.
-                      </p>
-                    </div>
-                    {coverageRunError && (
-                      <p className="text-xs text-red-700">{coverageRunError}</p>
-                    )}
-                  </div>
-                  <div className="mt-3 space-y-2">
-                    {projectsNeedingCoverage.map(project => (
-                      <div
-                        key={project.id}
-                        className="bg-white rounded-md px-3 py-2 flex items-center justify-between shadow-sm"
+            <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
+              {/* Content Breakdown */}
+              <div className="bg-white shadow rounded-lg">
+                <div className="px-4 py-5 sm:p-6">
+                  <div className="flex items-center space-x-2 mb-4">
+                    <h3 className="text-lg leading-6 font-medium text-gray-900">Content Type Breakdown</h3>
+                    <div className="relative group">
+                      <button
+                        type="button"
+                        aria-label="How content breakdown works"
+                        className="h-6 w-6 flex items-center justify-center rounded-full border border-gray-200 bg-white text-xs text-gray-600 hover:text-gray-800"
                       >
-                        <div>
-                          <p className="text-sm font-medium text-gray-900">{project.title || 'Untitled Project'}</p>
-                          <p className="text-xs text-gray-500">
-                            Uploaded {new Date(project.created_at).toLocaleDateString()} • Tier {project.performance_level || 'basic'}
-                          </p>
+                        ?
+                      </button>
+                      <div className="pointer-events-none absolute left-0 mt-2 w-64 rounded-lg border border-gray-200 bg-white p-3 text-xs text-gray-700 shadow-lg opacity-0 transition-opacity duration-150 group-hover:opacity-100 group-focus-within:opacity-100 z-10">
+                        <p className="font-semibold text-gray-900 mb-1">What you see</p>
+                        <p>Counts of outputs by type, filtered by the selected time range.</p>
+                        <p>Use this to track which formats you’re producing most often.</p>
+                      </div>
+                    </div>
+                  </div>
+                  <div className="space-y-3">
+                    {Object.entries(analytics?.contentBreakdown || {}).map(([type, count]) => (
+                      <div key={type} className="flex items-center justify-between">
+                        <span className="text-sm text-gray-600 capitalize">
+                          {type.replace('_', ' ')}
+                        </span>
+                        <div className="flex items-center space-x-2">
+                          <div className="bg-blue-200 rounded-full h-2 w-20">
+                            <div 
+                              className="bg-blue-600 h-2 rounded-full"
+                              style={{ 
+                                width: `${Math.min(100, (count / (analytics?.totalOutputs || 1)) * 100)}%` 
+                              }}
+                            ></div>
+                          </div>
+                          <span className="text-sm font-medium text-gray-900">{count}</span>
                         </div>
-                        <button
-                          type="button"
-                          onClick={() => handleRunCoverage(project.id)}
-                          disabled={coverageRunner === project.id}
-                          className="inline-flex items-center px-3 py-1.5 text-xs font-medium rounded-md border border-amber-300 text-amber-900 bg-amber-100 hover:bg-amber-200 disabled:opacity-60"
-                        >
-                          {coverageRunner === project.id ? 'Running…' : 'Run coverage'}
-                        </button>
                       </div>
                     ))}
                   </div>
                 </div>
-              )}
-
-              <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4 mb-6">
-                <div className="bg-white shadow rounded-lg p-4">
-                  <p className="text-xs uppercase text-gray-500">Analyses Run</p>
-                  <p className="mt-2 text-2xl font-semibold text-gray-900">{analytics.coverage.summary.totalAnalyses}</p>
-                  <p className="text-xs text-gray-500 mt-1">Snapshots saved across recent episodes</p>
-                </div>
-                <div className="bg-white shadow rounded-lg p-4">
-                  <p className="text-xs uppercase text-gray-500">Avg Topics/Episode</p>
-                  <p className="mt-2 text-2xl font-semibold text-gray-900">{analytics.coverage.summary.avgTopics}</p>
-                  <p className="text-xs text-gray-500 mt-1">Unique editorial themes surfaced</p>
-                </div>
-                <div className="bg-white shadow rounded-lg p-4">
-                  <p className="text-xs uppercase text-gray-500">Goals Tracked</p>
-                  <p className="mt-2 text-2xl font-semibold text-gray-900">{analytics.coverage.summary.goalsTracked}</p>
-                  <p className="text-xs text-gray-500 mt-1">Active narrative guardrails</p>
-                </div>
-                <div className="bg-white shadow rounded-lg p-4">
-                  <p className="text-xs uppercase text-gray-500">Opportunities Logged</p>
-                  <p className="mt-2 text-2xl font-semibold text-gray-900">
-                    {analytics.coverage.summary.latestOpportunities.length}
-                  </p>
-                  <p className="text-xs text-gray-500 mt-1">Most recent AI recommendations</p>
-                </div>
               </div>
 
-              <div className="grid grid-cols-1 lg:grid-cols-2 gap-6 mb-6">
-                <div className="bg-white shadow rounded-lg">
-                  <div className="px-4 py-5 sm:p-6">
-                    <div className="flex items-center justify-between mb-4">
-                      <h3 className="text-lg font-medium text-gray-900">Top Topics</h3>
-                      <span className="text-xs text-gray-500">
-                        {(analytics.coverage.snapshots[0]?.coverage_window || 'full episode').replace('_', ' ')}
-                      </span>
-                    </div>
-                    {topicHeat.length === 0 ? (
-                      <p className="text-sm text-gray-500">Run a project to see coverage insights.</p>
-                    ) : (
-                      <div className="space-y-4">
-                        {topicHeat.map(topic => (
-                          <div key={topic.id} className="border border-gray-100 rounded-lg p-3">
-                            <div className="flex items-center justify-between">
-                              <div>
-                                <p className="text-sm font-semibold text-gray-900">{topic.label}</p>
-                                <p className="text-xs text-gray-500">
-                                  {topic.mentions} mentions • {Math.round(topic.avgShare * 100)}% share of voice
-                                </p>
-                              </div>
-                              <span className={`text-xs font-medium px-2 py-1 rounded-full ${
-                                topic.status === 'Over'
-                                  ? 'bg-purple-50 text-purple-700'
-                                  : topic.status === 'Under'
-                                  ? 'bg-amber-50 text-amber-700'
-                                  : 'bg-emerald-50 text-emerald-700'
-                              }`}>
-                                {topic.status}
-                              </span>
-                            </div>
-                            <div className="mt-3">
-                              <div className="w-full bg-gray-100 rounded-full h-2">
-                                <div
-                                  className="h-2 rounded-full bg-blue-500"
-                                  style={{ width: `${Math.min(100, topic.avgShare * 100)}%` }}
-                                />
-                              </div>
-                              <div className="mt-2 flex items-center justify-between text-xs text-gray-500">
-                                <span>{topic.goalAligned ? '🎯 Matches goal' : 'Exploratory'}</span>
-                                <span>{topic.lastMention ? formatRelativeDate(topic.lastMention) : '—'}</span>
-                              </div>
-                            </div>
-                          </div>
-                        ))}
-                      </div>
-                    )}
-                  </div>
-                </div>
-
-                <div className="bg-white shadow rounded-lg">
-                  <div className="px-4 py-5 sm:p-6">
-                    <div className="flex items-center justify-between mb-4">
-                      <h3 className="text-lg font-medium text-gray-900">Opportunities & Gaps</h3>
-                      <span className="text-xs text-gray-500">Last {analytics.coverage.summary.latestOpportunities.length} recommendations</span>
-                    </div>
-                    {analytics.coverage.summary.latestOpportunities.length === 0 ? (
-                      <p className="text-sm text-gray-500">No gaps detected yet.</p>
-                    ) : (
-                      <div className="space-y-4">
-                        {analytics.coverage.summary.latestOpportunities.map(opportunity => (
-                          <div key={opportunity.id} className="border border-gray-100 rounded-lg p-3">
-                            <div className="flex items-center justify-between mb-2">
-                              <div>
-                                <p className="text-sm font-semibold text-gray-900">{opportunity.label}</p>
-                                <p className="text-xs text-gray-500">
-                                  {opportunity.projectTitle || 'Recent episode'} • {formatRelativeDate(opportunity.created_at)}
-                                </p>
-                              </div>
-                              <span className={`text-xs font-medium px-2 py-1 rounded-full ${
-                                opportunity.severity === 'high'
-                                  ? 'bg-red-50 text-red-700'
-                                  : opportunity.severity === 'medium'
-                                  ? 'bg-yellow-50 text-yellow-700'
-                                  : 'bg-slate-50 text-slate-700'
-                              }`}>
-                                {opportunity.type}
-                              </span>
-                            </div>
-                            <p className="text-sm text-gray-700">{opportunity.summary}</p>
-                            <p className="text-xs text-blue-600 mt-2">
-                              Next: {opportunity.recommendedAction || 'Review AI suggestion'}
-                            </p>
-                          </div>
-                        ))}
-                      </div>
-                    )}
-                  </div>
-                </div>
-              </div>
-
+              {/* Platform Distribution */}
               <div className="bg-white shadow rounded-lg">
                 <div className="px-4 py-5 sm:p-6">
-                  <h3 className="text-lg font-medium text-gray-900 mb-4">Coverage Timeline</h3>
-                  {analytics.coverage.snapshots.length === 0 ? (
-                    <p className="text-sm text-gray-500">No coverage snapshots recorded yet.</p>
+                  <div className="flex items-center space-x-2 mb-4">
+                    <h3 className="text-lg leading-6 font-medium text-gray-900">Platform Distribution</h3>
+                    <div className="relative group">
+                      <button
+                        type="button"
+                        aria-label="How platform distribution works"
+                        className="h-6 w-6 flex items-center justify-center rounded-full border border-gray-200 bg-white text-xs text-gray-600 hover:text-gray-800"
+                      >
+                        ?
+                      </button>
+                      <div className="pointer-events-none absolute left-0 mt-2 w-64 rounded-lg border border-gray-200 bg-white p-3 text-xs text-gray-700 shadow-lg opacity-0 transition-opacity duration-150 group-hover:opacity-100 group-focus-within:opacity-100 z-10">
+                        <p className="font-semibold text-gray-900 mb-1">What you see</p>
+                        <p>Output volume by platform within the chosen time range.</p>
+                        <p>Helps balance distribution across channels.</p>
+                      </div>
+                    </div>
+                  </div>
+                  <div className="space-y-3">
+                    {Object.entries(analytics?.platformStats || {}).map(([platform, count]) => (
+                      <div key={platform} className="flex items-center justify-between">
+                        <span className="text-sm text-gray-600">
+                          {getPlatformDisplayName(platform)}
+                        </span>
+                        <div className="flex items-center space-x-2">
+                          <div className="bg-green-200 rounded-full h-2 w-20">
+                            <div 
+                              className="bg-green-600 h-2 rounded-full"
+                              style={{ 
+                                width: `${Math.min(100, (count / (analytics?.totalOutputs || 1)) * 100)}%` 
+                              }}
+                            ></div>
+                          </div>
+                          <span className="text-sm font-medium text-gray-900">{count}</span>
+                        </div>
+                      </div>
+                    ))}
+                  </div>
+                </div>
+              </div>
+            </div>
+          </section>
+
+          {/* Recent Activity */}
+          <details className="bg-white shadow rounded-lg">
+            <summary className="px-4 py-5 sm:p-6 cursor-pointer">
+              <div className="flex items-center space-x-2">
+                <h3 className="text-lg leading-6 font-medium text-gray-900">Recent Activity</h3>
+                <div className="relative group">
+                  <button
+                    type="button"
+                    aria-label="How Recent Activity works"
+                    className="h-6 w-6 flex items-center justify-center rounded-full border border-gray-200 bg-white text-xs text-gray-600 hover:text-gray-800"
+                    onClick={(e) => e.stopPropagation()}
+                  >
+                    ?
+                  </button>
+                  <div className="pointer-events-none absolute left-0 mt-2 w-64 rounded-lg border border-gray-200 bg-white p-3 text-xs text-gray-700 shadow-lg opacity-0 transition-opacity duration-150 group-hover:opacity-100 group-focus-within:opacity-100 z-10">
+                    <p className="font-semibold text-gray-900 mb-1">What you see</p>
+                    <p>Latest projects within your selected time range, showing upload/processing/completion.</p>
+                    <p>Use it to confirm recent runs and spot items stuck in processing.</p>
+                  </div>
+                </div>
+              </div>
+            </summary>
+            <div className="px-4 pb-5 sm:px-6 sm:pb-6">
+              <div className="flow-root">
+                <ul className="-mb-8">
+                  {analytics?.recentActivity.map((activity, activityIdx) => (
+                    <li key={activity.id}>
+                      <div className="relative pb-8">
+                        {activityIdx !== analytics.recentActivity.length - 1 ? (
+                          <span
+                            className="absolute top-4 left-4 -ml-px h-full w-0.5 bg-gray-200"
+                            aria-hidden="true"
+                          />
+                        ) : null}
+                        <div className="relative flex space-x-3">
+                          <div>
+                            <span className={`h-8 w-8 rounded-full flex items-center justify-center ring-8 ring-white ${
+                              activity.status === 'completed' ? 'bg-green-500' :
+                              activity.status === 'processing' ? 'bg-yellow-500' :
+                              'bg-gray-500'
+                            }`}>
+                              <FileText className="h-4 w-4 text-white" />
+                            </span>
+                          </div>
+                          <div className="min-w-0 flex-1 pt-1.5 flex justify-between space-x-4">
+                            <div>
+                              <p className="text-sm text-gray-500">
+                                {activity.action}{' '}
+                                <span className="font-medium text-gray-900">
+                                  {activity.title}
+                                </span>
+                              </p>
+                            </div>
+                            <div className="text-right text-sm whitespace-nowrap text-gray-500">
+                              {new Date(activity.timestamp).toLocaleDateString()}
+                            </div>
+                          </div>
+                        </div>
+                      </div>
+                    </li>
+                  ))}
+                </ul>
+              </div>
+            </div>
+          </details>
+        </section>
+
+        {/* Tab Navigation */}
+        <div className="border-b border-gray-200 mb-8">
+          <nav className="-mb-px flex space-x-8" aria-label="Tabs">
+            <button
+              onClick={() => setActiveTab('insights')}
+              className={`${
+                activeTab === 'insights'
+                  ? 'border-blue-500 text-blue-600'
+                  : 'border-transparent text-gray-500 hover:text-gray-700 hover:border-gray-300'
+              } whitespace-nowrap py-4 px-1 border-b-2 font-medium text-sm`}
+            >
+              Educational Insights
+            </button>
+            {coverageFeatureEnabled && (
+              <button
+                onClick={() => setActiveTab('coverage')}
+                className={`${
+                  activeTab === 'coverage'
+                    ? 'border-blue-500 text-blue-600'
+                    : 'border-transparent text-gray-500 hover:text-gray-700 hover:border-gray-300'
+                } whitespace-nowrap py-4 px-1 border-b-2 font-medium text-sm`}
+              >
+                Narrative Coverage
+              </button>
+            )}
+          </nav>
+        </div>
+
+        <div className="space-y-8">
+          {/* Educational Insights Tab */}
+          {activeTab === 'insights' && (
+          <section className="space-y-4">
+                <div className="bg-white shadow rounded-lg">
+                  <div className="px-4 py-5 sm:p-6">
+                    <div className="flex items-center justify-between mb-4">
+                      <div>
+                        <div className="flex items-center space-x-2">
+                          <h2 className="text-lg font-medium text-gray-900">Educational Insights</h2>
+                          <div className="relative group">
+                            <button
+                              type="button"
+                              aria-label="How Educational Insights works"
+                              className="h-6 w-6 flex items-center justify-center rounded-full border border-gray-200 bg-white text-xs text-gray-600 hover:text-gray-800"
+                            >
+                              ?
+                            </button>
+                            <div className="pointer-events-none absolute left-0 mt-2 w-80 rounded-lg border border-gray-200 bg-white p-3 text-xs text-gray-700 shadow-lg opacity-0 transition-opacity duration-150 group-hover:opacity-100 group-focus-within:opacity-100 z-10">
+                              <p className="font-semibold text-gray-900 mb-1">How it works</p>
+                              <p>1) Upload and finish processing an episode to generate a transcript.</p>
+                              <p>2) AI extracts people and concepts; results respect your time range filter.</p>
+                              <p>3) Each row shows confidence and AI cost so you can track spend.</p>
+                            </div>
+                          </div>
+                        </div>
+                        <p className="text-sm text-gray-500">
+                          AI-powered insights about people and concepts in your podcasts
+                        </p>
+                      </div>
+                    </div>
+
+                    <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4 mb-6">
+                      <div className="bg-gray-50 border border-gray-200 rounded-lg p-4">
+                        <p className="text-xs uppercase text-gray-500">Total Insights</p>
+                        <p className="mt-2 text-2xl font-semibold text-gray-900">
+                          {analytics?.insights?.summary?.totalInsights || 0}
+                        </p>
+                        <p className="text-xs text-gray-500 mt-1">Entities extracted across all projects</p>
+                      </div>
+                      <div className="bg-gray-50 border border-gray-200 rounded-lg p-4">
+                        <p className="text-xs uppercase text-gray-500">People</p>
+                        <p className="mt-2 text-2xl font-semibold text-gray-900">
+                          {analytics?.insights?.summary?.insightsByCategory?.person || 0}
+                        </p>
+                        <p className="text-xs text-gray-500 mt-1">Individuals mentioned in podcasts</p>
+                      </div>
+                      <div className="bg-gray-50 border border-gray-200 rounded-lg p-4">
+                        <p className="text-xs uppercase text-gray-500">Concepts</p>
+                        <p className="mt-2 text-2xl font-semibold text-gray-900">
+                          {analytics?.insights?.summary?.insightsByCategory?.concept || 0}
+                        </p>
+                        <p className="text-xs text-gray-500 mt-1">Technical terms and ideas explained</p>
+                      </div>
+                      <div className="bg-gray-50 border border-gray-200 rounded-lg p-4">
+                        <p className="text-xs uppercase text-gray-500">Avg Confidence</p>
+                        <p className="mt-2 text-2xl font-semibold text-gray-900">
+                          {Math.round((analytics?.insights?.summary?.avgConfidence || 0) * 100)}%
+                        </p>
+                        <p className="text-xs text-gray-500 mt-1">AI extraction accuracy score</p>
+                      </div>
+                    </div>
+
+                    {analytics?.insights?.records && analytics.insights.records.length > 0 && (
+                      <div className="bg-white border border-gray-100 rounded-lg">
+                        <div className="px-4 py-5 sm:p-6">
+                          <h3 className="text-lg font-medium text-gray-900 mb-4">Recent Insights</h3>
+                          <div className="overflow-x-auto">
+                            <table className="min-w-full divide-y divide-gray-200 text-sm">
+                              <thead className="bg-gray-50">
+                                <tr>
+                                  <th className="px-4 py-2 text-left font-medium text-gray-500">Label</th>
+                                  <th className="px-4 py-2 text-left font-medium text-gray-500">Category</th>
+                                  <th className="px-4 py-2 text-left font-medium text-gray-500">Confidence</th>
+                                  <th className="px-4 py-2 text-left font-medium text-gray-500">AI Cost</th>
+                                  <th className="px-4 py-2 text-left font-medium text-gray-500">Created</th>
+                                </tr>
+                              </thead>
+                              <tbody className="divide-y divide-gray-100 bg-white">
+                                {analytics.insights.records.slice(0, 10).map(insight => (
+                                  <tr key={insight.id}>
+                                    <td className="px-4 py-3">
+                                      <div className="text-gray-900 font-medium">{insight.label}</div>
+                                      <div className="text-xs text-gray-500">{insight.entity_id}</div>
+                                    </td>
+                                    <td className="px-4 py-3">
+                                      <span className={`inline-flex items-center px-2 py-1 rounded-full text-xs font-medium ${
+                                        insight.category === 'person'
+                                          ? 'bg-blue-50 text-blue-700'
+                                          : 'bg-purple-50 text-purple-700'
+                                      }`}>
+                                        {insight.category}
+                                      </span>
+                                    </td>
+                                    <td className="px-4 py-3 text-gray-700">
+                                      {Math.round(insight.confidence * 100)}%
+                                    </td>
+                                    <td className="px-4 py-3 text-gray-900 font-medium">
+                                      {formatCurrency(Number(insight.cost_usd || 0))}
+                                    </td>
+                                    <td className="px-4 py-3 text-gray-500">
+                                      {new Date(insight.created_at).toLocaleDateString()}
+                                    </td>
+                                  </tr>
+                                ))}
+                              </tbody>
+                            </table>
+                          </div>
+                        </div>
+                      </div>
+                    )}
+
+                    {(!analytics.insights.records || analytics.insights.records.length === 0) && (
+                      <div className="bg-gray-50 border border-gray-200 rounded-lg p-4 text-sm text-gray-600">
+                        No insights yet. Run processing on an episode to generate transcripts, then revisit this tab to see AI-extracted entities and costs.
+                      </div>
+                    )}
+                  </div>
+                </div>
+          </section>
+          )}
+
+          {/* Narrative Coverage Tab */}
+          {activeTab === 'coverage' && coverageFeatureEnabled && (
+          <section className="space-y-6">
+            <div className="flex flex-col gap-3 md:flex-row md:items-start md:justify-between">
+              <div>
+                <div className="flex items-center gap-2">
+                  <h2 className="text-lg font-semibold text-gray-900">Narrative Coverage Radar</h2>
+                  <span className="text-xs text-gray-500">Topics • CTAs • Gaps</span>
+                </div>
+                <p className="text-sm text-gray-500">
+                  AI-driven visibility into topic mix, CTA cadence, and editorial gaps.
+                </p>
+                {coverageRunError && (
+                  <p className="text-xs text-red-600 mt-2">{coverageRunError}</p>
+                )}
+              </div>
+              <div className="flex items-center gap-3">
+                {selectedProjects.size > 0 && (
+                  <button
+                    type="button"
+                    onClick={() => setSelectedProjects(new Set())}
+                    className="text-xs font-medium text-gray-700 hover:text-gray-900"
+                  >
+                    Clear filters ({selectedProjects.size})
+                  </button>
+                )}
+                <div className="relative project-filter-container">
+                  <button
+                    type="button"
+                    onClick={() => setProjectFilterOpen(open => !open)}
+                    className="inline-flex items-center px-3 py-2 border border-gray-200 rounded-md bg-white text-sm font-medium text-gray-700 shadow-sm hover:bg-gray-50"
+                  >
+                    Filter projects
+                  </button>
+                  {projectFilterOpen && (
+                    <div className="absolute right-0 z-10 mt-2 w-72 rounded-lg border border-gray-200 bg-white shadow-lg p-4">
+                      <div className="flex items-center justify-between mb-3">
+                        <p className="text-sm font-semibold text-gray-900">Filter by episode</p>
+                        <button
+                          type="button"
+                          onClick={() => setProjectFilterOpen(false)}
+                          className="text-xs text-gray-500 hover:text-gray-700"
+                        >
+                          Close
+                        </button>
+                      </div>
+                      <div className="space-y-2 max-h-64 overflow-y-auto">
+                        {analytics.projectsSummary.length === 0 ? (
+                          <p className="text-xs text-gray-500">No projects yet.</p>
+                        ) : (
+                          analytics.projectsSummary.map(project => (
+                            <label
+                              key={project.id}
+                              className="flex items-center gap-2 text-sm text-gray-700"
+                            >
+                              <input
+                                type="checkbox"
+                                className="h-4 w-4 rounded border-gray-300 text-blue-600 focus:ring-blue-500"
+                                checked={selectedProjects.has(project.id)}
+                                onChange={() => toggleProjectSelection(project.id)}
+                              />
+                              <span className="truncate">{project.title || 'Untitled project'}</span>
+                            </label>
+                          ))
+                        )}
+                      </div>
+                      <button
+                        type="button"
+                        onClick={() => setSelectedProjects(new Set())}
+                        className="mt-3 text-xs text-blue-600 hover:text-blue-800"
+                      >
+                        Reset filters
+                      </button>
+                    </div>
+                  )}
+                </div>
+              </div>
+            </div>
+
+            {projectsNeedingCoverage.length > 0 && (
+              <div className="bg-amber-50 border border-amber-200 rounded-lg p-4">
+                <div className="flex items-start justify-between gap-3">
+                  <div>
+                    <h3 className="text-sm font-semibold text-amber-900">
+                      {projectsNeedingCoverage.length} episode{projectsNeedingCoverage.length === 1 ? '' : 's'} awaiting coverage
+                    </h3>
+                    <p className="text-xs text-amber-800">
+                      Run the radar only when needed to control AI spend.
+                    </p>
+                  </div>
+                </div>
+                <div className="mt-3 space-y-2">
+                  {projectsNeedingCoverage.map(project => (
+                    <div
+                      key={project.id}
+                      className="bg-white rounded-md px-3 py-2 flex items-center justify-between shadow-sm"
+                    >
+                      <div>
+                        <p className="text-sm font-medium text-gray-900">{project.title || 'Untitled Project'}</p>
+                        <p className="text-xs text-gray-500">
+                          Uploaded {new Date(project.created_at).toLocaleDateString()} • Tier {project.performance_level || 'basic'}
+                        </p>
+                      </div>
+                      <button
+                        type="button"
+                        onClick={() => handleRunCoverage(project.id)}
+                        disabled={coverageRunner === project.id}
+                        className="inline-flex items-center px-3 py-1.5 text-xs font-medium rounded-md border border-amber-300 text-amber-900 bg-amber-100 hover:bg-amber-200 disabled:opacity-60"
+                      >
+                        {coverageRunner === project.id ? 'Running…' : 'Run coverage'}
+                      </button>
+                    </div>
+                  ))}
+                </div>
+              </div>
+            )}
+
+            {goalsNeedingMentions.length > 0 && (
+              <div className="bg-blue-50 border border-blue-100 rounded-lg p-4">
+                <p className="text-sm font-semibold text-blue-900">Goals needing mentions</p>
+                <p className="text-xs text-blue-800 mt-1">
+                  These goals have no recent matches in the selected projects.
+                </p>
+                <div className="mt-2 flex flex-wrap gap-2">
+                  {goalsNeedingMentions.slice(0, 6).map(goal => (
+                    <span
+                      key={goal.id}
+                      className="px-2 py-1 rounded-full border border-blue-200 bg-white text-xs text-blue-800"
+                    >
+                      {goal.topic_label}
+                    </span>
+                  ))}
+                </div>
+              </div>
+            )}
+
+            <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
+              <div className="bg-white shadow rounded-lg p-4">
+                <p className="text-xs uppercase text-gray-500">Analyses Run</p>
+                <p className="mt-2 text-2xl font-semibold text-gray-900">
+                  {filteredCoverageSummary?.totalAnalyses || 0}
+                </p>
+                <p className="text-xs text-gray-500 mt-1">Snapshots saved across recent episodes</p>
+              </div>
+              <div className="bg-white shadow rounded-lg p-4">
+                <p className="text-xs uppercase text-gray-500">Avg Topics/Episode</p>
+                <p className="mt-2 text-2xl font-semibold text-gray-900">
+                  {filteredCoverageSummary?.avgTopics || 0}
+                </p>
+                <p className="text-xs text-gray-500 mt-1">Unique editorial themes surfaced</p>
+              </div>
+              <div className="bg-white shadow rounded-lg p-4">
+                <p className="text-xs uppercase text-gray-500">Goals Tracked</p>
+                <p className="mt-2 text-2xl font-semibold text-gray-900">
+                  {filteredCoverageSummary?.goalsTracked || 0}
+                </p>
+                <p className="text-xs text-gray-500 mt-1">Active narrative guardrails</p>
+              </div>
+              <div className="bg-white shadow rounded-lg p-4">
+                <p className="text-xs uppercase text-gray-500">Opportunities Logged</p>
+                <p className="mt-2 text-2xl font-semibold text-gray-900">
+                  {filteredCoverageSummary?.latestOpportunities?.length || 0}
+                </p>
+                <p className="text-xs text-gray-500 mt-1">Most recent AI recommendations</p>
+              </div>
+            </div>
+
+            <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
+              <div className="bg-white shadow rounded-lg">
+                <div className="px-4 py-5 sm:p-6">
+                  <div className="flex items-center justify-between mb-4">
+                    <h3 className="text-lg font-medium text-gray-900">Top Topics</h3>
+                    <span className="text-xs text-gray-500">
+                      {(coverageTimeline[0]?.coverage_window || 'full episode').replace('_', ' ')}
+                    </span>
+                  </div>
+                  {topicHeat.length === 0 ? (
+                    <p className="text-sm text-gray-500">Run a project to see coverage insights.</p>
                   ) : (
-                    <div className="overflow-x-auto">
-                      <table className="min-w-full divide-y divide-gray-200 text-sm">
-                        <thead className="bg-gray-50">
-                          <tr>
-                            <th className="px-4 py-2 text-left font-medium text-gray-500">Episode</th>
-                            <th className="px-4 py-2 text-left font-medium text-gray-500">Topics</th>
-                            <th className="px-4 py-2 text-left font-medium text-gray-500">CTA Mentions</th>
-                            <th className="px-4 py-2 text-left font-medium text-gray-500">AI Spend</th>
-                            <th className="px-4 py-2 text-left font-medium text-gray-500">Captured</th>
-                          </tr>
-                        </thead>
-                        <tbody className="divide-y divide-gray-100 bg-white">
-                          {analytics.coverage.snapshots.slice(0, 6).map(snapshot => (
-                            <tr key={snapshot.id}>
-                              <td className="px-4 py-3">
-                                <div className="text-gray-900 font-medium">
-                                  {snapshot.project_title || 'Untitled Project'}
-                                </div>
-                                <div className="text-xs text-gray-500">
-                                  {snapshot.coverage_window || 'full episode'}
-                                </div>
-                              </td>
-                              <td className="px-4 py-3 text-gray-700">
-                                {(snapshot.topics || []).length}
-                              </td>
-                              <td className="px-4 py-3 text-gray-700">
-                                {(snapshot.ctas || []).length}
-                              </td>
-                              <td className="px-4 py-3 text-gray-900 font-medium">
-                                {formatCurrency(Number(snapshot.ai_cost_usd || 0))}
-                              </td>
-                              <td className="px-4 py-3 text-gray-500">
-                                {new Date(snapshot.created_at).toLocaleDateString()}
-                              </td>
-                            </tr>
-                          ))}
-                        </tbody>
-                      </table>
+                    <div className="space-y-4">
+                      {topicHeat.map(topic => (
+                        <div key={topic.id} className="border border-gray-100 rounded-lg p-3">
+                          <div className="flex items-center justify-between">
+                            <div>
+                              <p className="text-sm font-semibold text-gray-900">{topic.label}</p>
+                              <p className="text-xs text-gray-500">
+                                {topic.mentions} mentions • {Math.round(topic.avgShare * 100)}% share of voice
+                              </p>
+                            </div>
+                            <span className={`text-xs font-medium px-2 py-1 rounded-full ${
+                              topic.status === 'Over'
+                                ? 'bg-purple-50 text-purple-700'
+                                : topic.status === 'Under'
+                                ? 'bg-amber-50 text-amber-700'
+                                : 'bg-emerald-50 text-emerald-700'
+                            }`}>
+                              {topic.status}
+                            </span>
+                          </div>
+                          <div className="mt-3">
+                            <div className="w-full bg-gray-100 rounded-full h-2">
+                              <div
+                                className="h-2 rounded-full bg-blue-500"
+                                style={{ width: `${Math.min(100, topic.avgShare * 100)}%` }}
+                              />
+                            </div>
+                            <div className="mt-2 flex items-center justify-between text-xs text-gray-500">
+                              <span>{topic.goalAligned ? '🎯 Matches goal' : 'Exploratory'}</span>
+                              <span>{topic.lastMention ? formatRelativeDate(topic.lastMention) : '—'}</span>
+                            </div>
+                          </div>
+                        </div>
+                      ))}
                     </div>
                   )}
                 </div>
               </div>
 
-              {/* Narrative Goals Manager */}
               <div className="bg-white shadow rounded-lg">
                 <div className="px-4 py-5 sm:p-6">
-                  <div className="flex flex-col lg:flex-row lg:items-start lg:space-x-8">
-                    <div className="flex-1">
-                      <div className="flex items-center justify-between mb-4">
-                        <div>
-                          <h3 className="text-lg font-medium text-gray-900">Narrative Goals</h3>
-                          <p className="text-sm text-gray-500">
-                            Set guardrails so the coverage radar knows what to watch for.
+                  <div className="flex items-center justify-between mb-4">
+                    <h3 className="text-lg font-medium text-gray-900">Opportunities & Gaps</h3>
+                    <span className="text-xs text-gray-500">
+                      Last {filteredCoverageSummary?.latestOpportunities?.length || 0} recommendations
+                    </span>
+                  </div>
+                  {filteredCoverageSummary?.latestOpportunities?.length === 0 ? (
+                    <p className="text-sm text-gray-500">No gaps detected yet.</p>
+                  ) : (
+                    <div className="space-y-4">
+                      {filteredCoverageSummary?.latestOpportunities?.map(opportunity => (
+                        <div key={opportunity.id} className="border border-gray-100 rounded-lg p-3">
+                          <div className="flex items-center justify-between mb-2">
+                            <div>
+                              <p className="text-sm font-semibold text-gray-900">{opportunity.label}</p>
+                              <p className="text-xs text-gray-500">
+                                {opportunity.projectTitle || 'Recent episode'} • {formatRelativeDate(opportunity.created_at)}
+                              </p>
+                            </div>
+                            <span className={`text-xs font-medium px-2 py-1 rounded-full ${
+                              opportunity.severity === 'high'
+                                ? 'bg-red-50 text-red-700'
+                                : opportunity.severity === 'medium'
+                                ? 'bg-yellow-50 text-yellow-700'
+                                : 'bg-slate-50 text-slate-700'
+                            }`}>
+                              {opportunity.type}
+                            </span>
+                          </div>
+                          <p className="text-sm text-gray-700">{opportunity.summary}</p>
+                          <p className="text-xs text-blue-600 mt-2">
+                            Next: {opportunity.recommendedAction || 'Review AI suggestion'}
                           </p>
                         </div>
-                        <span className="text-xs text-gray-500">
+                      ))}
+                    </div>
+                  )}
+                </div>
+              </div>
+            </div>
+
+            <div className="bg-white shadow rounded-lg">
+              <div className="px-4 py-5 sm:p-6">
+                <div className="flex items-center justify-between mb-4">
+                  <h3 className="text-lg font-medium text-gray-900">Coverage Timeline</h3>
+                  <div className="flex items-center gap-3">
+                    <button
+                      type="button"
+                      onClick={handleDeleteSelected}
+                      disabled={selectedSnapshots.size === 0 || deleting}
+                      className="inline-flex items-center px-3 py-1.5 text-xs font-medium rounded-md border border-red-200 text-red-700 bg-red-50 hover:bg-red-100 disabled:opacity-60"
+                    >
+                      {deleting ? 'Deleting…' : `Delete selected (${selectedSnapshots.size})`}
+                    </button>
+                    <label className="flex items-center gap-2 text-sm text-gray-600">
+                      <input
+                        type="checkbox"
+                        className="h-4 w-4 rounded border-gray-300 text-blue-600 focus:ring-blue-500"
+                        checked={selectedSnapshots.size === coverageTimeline.length && coverageTimeline.length > 0}
+                        onChange={handleSelectAll}
+                      />
+                      <span>Select all</span>
+                    </label>
+                  </div>
+                </div>
+                {coverageTimeline.length === 0 ? (
+                  <p className="text-sm text-gray-500">No coverage snapshots recorded yet.</p>
+                ) : (
+                  <div className="overflow-x-auto">
+                    <table className="min-w-full divide-y divide-gray-200 text-sm">
+                      <thead className="bg-gray-50">
+                        <tr>
+                          <th className="px-4 py-2 text-left font-medium text-gray-500 w-10">
+                            <input
+                              type="checkbox"
+                              className="h-4 w-4 rounded border-gray-300 text-blue-600 focus:ring-blue-500"
+                              checked={selectedSnapshots.size === coverageTimeline.length && coverageTimeline.length > 0}
+                              onChange={handleSelectAll}
+                            />
+                          </th>
+                          <th className="px-4 py-2 text-left font-medium text-gray-500">Episode</th>
+                          <th className="px-4 py-2 text-left font-medium text-gray-500">Topics</th>
+                          <th className="px-4 py-2 text-left font-medium text-gray-500">CTA Mentions</th>
+                          <th className="px-4 py-2 text-left font-medium text-gray-500">AI Spend</th>
+                          <th className="px-4 py-2 text-left font-medium text-gray-500">Captured</th>
+                        </tr>
+                      </thead>
+                      <tbody className="divide-y divide-gray-100 bg-white">
+                        {coverageTimeline.map(snapshot => (
+                          <tr key={snapshot.id} className={selectedSnapshots.has(snapshot.id) ? 'bg-blue-50' : ''}>
+                            <td className="px-4 py-3">
+                              <input
+                                type="checkbox"
+                                className="h-4 w-4 rounded border-gray-300 text-blue-600 focus:ring-blue-500"
+                                checked={selectedSnapshots.has(snapshot.id)}
+                                onChange={() => handleSelectSnapshot(snapshot.id)}
+                              />
+                            </td>
+                            <td className="px-4 py-3">
+                              <div className="text-gray-900 font-medium">
+                                {snapshot.project_title || 'Untitled Project'}
+                              </div>
+                              <div className="text-xs text-gray-500">
+                                {snapshot.coverage_window || 'full episode'}
+                              </div>
+                            </td>
+                            <td className="px-4 py-3 text-gray-700">
+                              {(snapshot.topics || []).length}
+                            </td>
+                            <td className="px-4 py-3 text-gray-700">
+                              {(snapshot.ctas || []).length}
+                            </td>
+                            <td className="px-4 py-3 text-gray-900 font-medium">
+                              {formatCurrency(Number(snapshot.ai_cost_usd || 0))}
+                            </td>
+                            <td className="px-4 py-3 text-gray-500">
+                              {new Date(snapshot.created_at).toLocaleDateString()}
+                            </td>
+                          </tr>
+                        ))}
+                      </tbody>
+                    </table>
+                  </div>
+                )}
+              </div>
+            </div>
+
+            <div className="bg-white shadow rounded-lg">
+              <div className="px-4 py-5 sm:p-6">
+                <div className="flex flex-col lg:flex-row lg:items-start lg:space-x-8">
+                  <div className="flex-1">
+                    <div className="flex items-center justify-between mb-4">
+                      <div>
+                        <h3 className="text-lg font-medium text-gray-900">Narrative Goals</h3>
+                        <p className="text-sm text-gray-500">
+                          Set guardrails so the coverage radar knows what to watch for.
+                        </p>
+                      </div>
+                      <div className="text-right">
+                        <span className="text-xs text-gray-500 block">
                           Tracking {coverageGoals.length} goal{coverageGoals.length === 1 ? '' : 's'}
                         </span>
+                        {goalsNeedingMentions.length > 0 && (
+                          <span className="text-xs text-amber-600">Needs mentions: {goalsNeedingMentions.length}</span>
+                        )}
                       </div>
+                    </div>
 
-                      {coverageGoals.length === 0 ? (
-                        <p className="text-sm text-gray-500">No goals yet. Add one using the form.</p>
-                      ) : (
-                        <div className="space-y-3">
-                          {coverageGoals.map(goal => (
-                            <div
-                              key={goal.id}
-                              className="border border-gray-100 rounded-lg p-3 flex flex-col sm:flex-row sm:items-center sm:justify-between"
-                            >
-                              <div>
-                                <p className="text-sm font-semibold text-gray-900">{goal.topic_label}</p>
-                                <p className="text-xs text-gray-500">
-                                  {goal.goal_type.toUpperCase()} • Target {goal.target_mentions || 1}{' '}
-                                  {goal.goal_type === 'cta' ? 'mentions per cadence' : 'mentions'}
-                                  {goal.cadence_days ? ` • ${goal.cadence_days}d cadence` : ''}
-                                </p>
+                    {coverageGoals.length === 0 ? (
+                      <p className="text-sm text-gray-500">No goals yet. Add one using the form.</p>
+                    ) : (
+                      <div className="space-y-3">
+                        {coverageGoals.map(goal => (
+                          <div
+                            key={goal.id}
+                            className="border border-gray-100 rounded-lg p-3 flex flex-col sm:flex-row sm:items-center sm:justify-between"
+                          >
+                            <div>
+                              <p className="text-sm font-semibold text-gray-900">{goal.topic_label}</p>
+                              <p className="text-xs text-gray-500">
+                                {goal.goal_type.toUpperCase()} • Target {goal.target_mentions || 1}{' '}
+                                {goal.goal_type === 'cta' ? 'mentions per cadence' : 'mentions'}
+                                {goal.cadence_days ? ` • ${goal.cadence_days}d cadence` : ''}
+                              </p>
+                            </div>
+                            <div className="flex items-center space-x-2 mt-3 sm:mt-0">
+                              <span
+                                className={`text-xs font-medium px-2 py-1 rounded-full ${
+                                  GOAL_STATUS_CLASSES[goal.status] || 'bg-gray-100 text-gray-600'
+                                }`}
+                              >
+                                {goal.status}
+                              </span>
+                              {goal.status !== 'archived' && (
+                                <>
+                                  <button
+                                    type="button"
+                                    className="text-xs text-blue-600 hover:text-blue-800 font-medium"
+                                    onClick={() => handleToggleGoalStatus(goal.id, goal.status)}
+                                  >
+                                    {goal.status === 'active' ? 'Pause' : 'Activate'}
+                                  </button>
+                                  <button
+                                    type="button"
+                                    className="text-xs text-red-600 hover:text-red-800 font-medium disabled:opacity-50"
+                                    onClick={() => handleArchiveGoal(goal.id, goal.topic_label)}
+                                    disabled={archivingGoal === goal.id}
+                                  >
+                                    {archivingGoal === goal.id ? 'Archiving...' : 'Archive'}
+                                  </button>
+                                </>
+                              )}
+                            </div>
+                          </div>
+                        ))}
+                      </div>
+                    )}
+                  </div>
+
+                  <div className="mt-6 lg:mt-0 lg:w-80 space-y-4">
+                    <div className="mb-1">
+                      <details className="bg-gradient-to-br from-indigo-50 to-blue-50 border border-indigo-200 rounded-lg p-4">
+                        <summary className="cursor-pointer font-semibold text-sm text-indigo-900 mb-2 flex items-center gap-2">
+                          <span>📚 Example Goals Library</span>
+                          <span className="text-xs font-normal text-indigo-600">(Click to expand)</span>
+                        </summary>
+                        <div className="mt-4 space-y-5 text-xs">
+                          {EXAMPLE_NARRATIVE_GOALS.map((category, idx) => (
+                            <div key={idx} className="bg-white rounded-lg border border-indigo-100 p-4">
+                              <div className="mb-3">
+                                <h4 className="font-bold text-gray-900 text-sm">{category.category}</h4>
+                                <p className="text-gray-600 text-xs mt-1">{category.description}</p>
                               </div>
-                              <div className="flex items-center space-x-2 mt-3 sm:mt-0">
-                                <span
-                                  className={`text-xs font-medium px-2 py-1 rounded-full ${
-                                    GOAL_STATUS_CLASSES[goal.status] || 'bg-gray-100 text-gray-600'
-                                  }`}
-                                >
-                                  {goal.status}
-                                </span>
-                                {goal.status !== 'archived' && (
-                                  <>
-                                    <button
-                                      type="button"
-                                      className="text-xs text-blue-600 hover:text-blue-800 font-medium"
-                                      onClick={() => handleToggleGoalStatus(goal.id, goal.status)}
-                                    >
-                                      {goal.status === 'active' ? 'Pause' : 'Activate'}
-                                    </button>
-                                    <button
-                                      type="button"
-                                      className="text-xs text-red-600 hover:text-red-800 font-medium disabled:opacity-50"
-                                      onClick={() => handleArchiveGoal(goal.id, goal.topic_label)}
-                                      disabled={archivingGoal === goal.id}
-                                    >
-                                      {archivingGoal === goal.id ? 'Archiving...' : 'Archive'}
-                                    </button>
-                                  </>
-                                )}
+                              <div className="space-y-2">
+                                {category.examples.map((example, exIdx) => (
+                                  <div key={exIdx} className="bg-gray-50 rounded border border-gray-200 p-3 hover:border-indigo-300 transition-colors">
+                                    <div className="font-medium text-gray-900">{example.label}</div>
+                                    <div className="text-gray-600 mt-1">{example.description}</div>
+                                    <div className="mt-2 flex items-center gap-2 text-gray-500">
+                                      <span className="uppercase font-semibold text-indigo-600">{example.type}</span>
+                                      <span>•</span>
+                                      <span>{example.target} mention{example.target !== 1 ? 's' : ''}</span>
+                                      {example.cadence && (
+                                        <>
+                                          <span>•</span>
+                                          <span>every {example.cadence} days</span>
+                                        </>
+                                      )}
+                                    </div>
+                                  </div>
+                                ))}
                               </div>
                             </div>
                           ))}
                         </div>
-                      )}
+                      </details>
                     </div>
 
-                    <div className="mt-6 lg:mt-0 lg:w-80">
-                      {/* Example Goals Section */}
-                      <div className="mb-6">
-                        <details className="bg-gradient-to-br from-indigo-50 to-blue-50 border border-indigo-200 rounded-lg p-4">
-                          <summary className="cursor-pointer font-semibold text-sm text-indigo-900 mb-2 flex items-center gap-2">
-                            <span>📚 Example Goals Library</span>
-                            <span className="text-xs font-normal text-indigo-600">(Click to expand)</span>
-                          </summary>
-                          <div className="mt-4 space-y-5 text-xs">
-                            {EXAMPLE_NARRATIVE_GOALS.map((category, idx) => (
-                              <div key={idx} className="bg-white rounded-lg border border-indigo-100 p-4">
-                                <div className="mb-3">
-                                  <h4 className="font-bold text-gray-900 text-sm">{category.category}</h4>
-                                  <p className="text-gray-600 text-xs mt-1">{category.description}</p>
-                                </div>
-                                <div className="space-y-2">
-                                  {category.examples.map((example, exIdx) => (
-                                    <div key={exIdx} className="bg-gray-50 rounded border border-gray-200 p-3 hover:border-indigo-300 transition-colors">
-                                      <div className="font-medium text-gray-900">{example.label}</div>
-                                      <div className="text-gray-600 mt-1">{example.description}</div>
-                                      <div className="mt-2 flex items-center gap-2 text-gray-500">
-                                        <span className="uppercase font-semibold text-indigo-600">{example.type}</span>
-                                        <span>•</span>
-                                        <span>{example.target} mention{example.target !== 1 ? 's' : ''}</span>
-                                        {example.cadence && (
-                                          <>
-                                            <span>•</span>
-                                            <span>every {example.cadence} days</span>
-                                          </>
-                                        )}
-                                      </div>
-                                    </div>
-                                  ))}
-                                </div>
-                              </div>
-                            ))}
-                          </div>
-                        </details>
-                      </div>
-
-                      <form onSubmit={handleCreateGoal} className="bg-gray-50 rounded-lg p-4 space-y-4">
-                        <div>
-                          <label className="block text-sm font-medium text-gray-700">
-                            Topic / CTA label
-                          </label>
-                          <input
-                            type="text"
-                            value={goalForm.label}
-                            onChange={(e) => setGoalForm(current => ({ ...current, label: e.target.value.slice(0, 80) }))}
-                            className="mt-1 block w-full rounded-md border-gray-300 shadow-sm focus:border-blue-500 focus:ring-blue-500 text-sm"
-                            placeholder="Ex: Mention accelerator CTA"
-                          />
-                        </div>
-
-                        <div>
-                          <label className="block text-sm font-medium text-gray-700">
-                            Goal type
-                          </label>
-                          <select
-                            value={goalForm.type}
-                            onChange={(e) => setGoalForm(current => ({ ...current, type: e.target.value }))}
-                            className="mt-1 block w-full rounded-md border-gray-300 shadow-sm focus:border-blue-500 focus:ring-blue-500 text-sm"
+                    <div className="bg-white border border-gray-200 rounded-lg p-4">
+                      <h4 className="text-sm font-semibold text-gray-900 mb-2">Quick add from recent analysis</h4>
+                      <p className="text-xs text-gray-500 mb-3">
+                        One-click goals based on your latest topics and CTAs.
+                      </p>
+                      <div className="flex flex-wrap gap-2">
+                        {suggestedGoals.slice(0, 6).map((suggestion, idx) => (
+                          <button
+                            key={idx}
+                            type="button"
+                            onClick={() => handleQuickAddGoal(suggestion)}
+                            className="px-2 py-1 text-xs rounded-full border border-gray-200 bg-gray-50 text-gray-800 hover:border-blue-200 hover:text-blue-700"
                           >
-                            {GOAL_TYPE_OPTIONS.map(option => (
-                              <option key={option.value} value={option.value}>
-                                {option.label}
-                              </option>
-                            ))}
-                          </select>
-                          <p className="mt-1 text-xs text-gray-500">
-                            {GOAL_TYPE_OPTIONS.find(option => option.value === goalForm.type)?.helper}
-                          </p>
-                        </div>
+                            {suggestion.label} • {suggestion.type}
+                          </button>
+                        ))}
+                      </div>
+                    </div>
 
-                        <div className="grid grid-cols-2 gap-4">
-                          <div>
-                            <label className="block text-sm font-medium text-gray-700">
-                              Target mentions
-                            </label>
-                            <input
-                              type="number"
-                              min={1}
-                              value={goalForm.target}
-                              onChange={(e) => setGoalForm(current => ({ ...current, target: Number(e.target.value) }))}
-                              className="mt-1 block w-full rounded-md border-gray-300 shadow-sm focus:border-blue-500 focus:ring-blue-500 text-sm"
-                            />
-                          </div>
-                          <div>
-                            <label className="block text-sm font-medium text-gray-700">
-                              Cadence (days)
-                            </label>
-                            <input
-                              type="number"
-                              min={1}
-                              value={goalForm.cadence}
-                              onChange={(e) => setGoalForm(current => ({ ...current, cadence: Number(e.target.value) }))}
-                              className="mt-1 block w-full rounded-md border-gray-300 shadow-sm focus:border-blue-500 focus:ring-blue-500 text-sm"
-                            />
-                          </div>
-                        </div>
-
-                        {goalError && (
-                          <div className="text-xs text-red-600">{goalError}</div>
-                        )}
-
+                    <div className="bg-gray-50 rounded-lg p-4 space-y-4">
+                      <div className="flex items-center justify-between">
+                        <h4 className="text-sm font-semibold text-gray-900">Create a goal</h4>
                         <button
-                          type="submit"
-                          disabled={goalSaving}
-                          className="w-full inline-flex justify-center items-center px-3 py-2 border border-transparent text-sm font-medium rounded-md shadow-sm text-white bg-blue-600 hover:bg-blue-700 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-blue-500 disabled:opacity-60"
+                          type="button"
+                          onClick={() => setGoalFormOpen(open => !open)}
+                          className="text-xs text-blue-600 hover:text-blue-800"
                         >
-                          {goalSaving ? 'Saving…' : 'Add goal'}
+                          {goalFormOpen ? 'Hide' : 'Show'}
                         </button>
-                      </form>
+                      </div>
+                      {goalFormOpen && (
+                        <form onSubmit={handleCreateGoal} className="space-y-4">
+                          <div>
+                            <label className="block text-sm font-medium text-gray-700">
+                              Topic / CTA label
+                            </label>
+                            <input
+                              type="text"
+                              value={goalForm.label}
+                              onChange={(e) => setGoalForm(current => ({ ...current, label: e.target.value.slice(0, 80) }))}
+                              className="mt-1 block w-full rounded-md border-gray-300 shadow-sm focus:border-blue-500 focus:ring-blue-500 text-sm"
+                              placeholder="Ex: Mention accelerator CTA"
+                            />
+                          </div>
+
+                          <div>
+                            <label className="block text-sm font-medium text-gray-700">
+                              Goal type
+                            </label>
+                            <select
+                              value={goalForm.type}
+                              onChange={(e) => setGoalForm(current => ({ ...current, type: e.target.value }))}
+                              className="mt-1 block w-full rounded-md border-gray-300 shadow-sm focus:border-blue-500 focus:ring-blue-500 text-sm"
+                            >
+                              {GOAL_TYPE_OPTIONS.map(option => (
+                                <option key={option.value} value={option.value}>
+                                  {option.label}
+                                </option>
+                              ))}
+                            </select>
+                            <p className="mt-1 text-xs text-gray-500">
+                              {GOAL_TYPE_OPTIONS.find(option => option.value === goalForm.type)?.helper}
+                            </p>
+                          </div>
+
+                          <div className="grid grid-cols-2 gap-4">
+                            <div>
+                              <label className="block text-sm font-medium text-gray-700">
+                                Target mentions
+                              </label>
+                              <input
+                                type="number"
+                                min={1}
+                                value={goalForm.target}
+                                onChange={(e) => setGoalForm(current => ({ ...current, target: Number(e.target.value) }))}
+                                className="mt-1 block w-full rounded-md border-gray-300 shadow-sm focus:border-blue-500 focus:ring-blue-500 text-sm"
+                              />
+                            </div>
+                            <div>
+                              <label className="block text-sm font-medium text-gray-700">
+                                Cadence (days)
+                              </label>
+                              <input
+                                type="number"
+                                min={1}
+                                value={goalForm.cadence}
+                                onChange={(e) => setGoalForm(current => ({ ...current, cadence: Number(e.target.value) }))}
+                                className="mt-1 block w-full rounded-md border-gray-300 shadow-sm focus:border-blue-500 focus:ring-blue-500 text-sm"
+                              />
+                            </div>
+                          </div>
+
+                          {goalError && (
+                            <div className="text-xs text-red-600">{goalError}</div>
+                          )}
+
+                          <button
+                            type="submit"
+                            disabled={goalSaving}
+                            className="w-full inline-flex justify-center items-center px-3 py-2 border border-transparent text-sm font-medium rounded-md shadow-sm text-white bg-blue-600 hover:bg-blue-700 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-blue-500 disabled:opacity-60"
+                          >
+                            {goalSaving ? 'Saving…' : 'Add goal'}
+                          </button>
+                        </form>
+                      )}
                     </div>
                   </div>
                 </div>
               </div>
             </div>
-          </div>
+          </section>
+          )}
+
         </div>
       </div>
     </div>

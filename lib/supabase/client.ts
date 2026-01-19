@@ -176,6 +176,8 @@ export type Database = {
           audio_duration: number | null
           status: 'uploading' | 'processing' | 'completed' | 'failed'
           transcription_text: string | null
+          preset_speakers: any[] | null
+          speaker_keywords: any[] | null
           processing_started_at: string | null
           processing_completed_at: string | null
           processing_time_seconds: number | null
@@ -192,6 +194,8 @@ export type Database = {
           audio_duration?: number | null
           status?: 'uploading' | 'processing' | 'completed' | 'failed'
           transcription_text?: string | null
+          preset_speakers?: any[] | null
+          speaker_keywords?: any[] | null
           processing_started_at?: string | null
           processing_completed_at?: string | null
           processing_time_seconds?: number | null
@@ -208,6 +212,8 @@ export type Database = {
           audio_duration?: number | null
           status?: 'uploading' | 'processing' | 'completed' | 'failed'
           transcription_text?: string | null
+          preset_speakers?: any[] | null
+          speaker_keywords?: any[] | null
           processing_started_at?: string | null
           processing_completed_at?: string | null
           processing_time_seconds?: number | null

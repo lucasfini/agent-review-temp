@@ -57,3 +57,30 @@ export function parseTimeToSeconds(timeString: string): number {
 
   return 0;
 }
+
+/**
+ * Format seconds into human-readable "X minutes Y seconds" format (Teams-style)
+ */
+export function formatTimeHumanReadable(seconds: number): string {
+  if (!Number.isFinite(seconds) || seconds < 0) {
+    return '0 seconds';
+  }
+
+  const hours = Math.floor(seconds / 3600);
+  const minutes = Math.floor((seconds % 3600) / 60);
+  const secs = Math.floor(seconds % 60);
+
+  const parts: string[] = [];
+
+  if (hours > 0) {
+    parts.push(`${hours} hour${hours > 1 ? 's' : ''}`);
+  }
+  if (minutes > 0) {
+    parts.push(`${minutes} minute${minutes > 1 ? 's' : ''}`);
+  }
+  if (secs > 0 || parts.length === 0) {
+    parts.push(`${secs} second${secs !== 1 ? 's' : ''}`);
+  }
+
+  return parts.join(' ');
+}

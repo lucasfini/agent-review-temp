@@ -33,6 +33,13 @@ export interface CostSummary {
   }>;
 }
 
+interface UsageEvent {
+  service_name: string;
+  provider: string;
+  billed_cost: number;
+  created_at: string;
+}
+
 type Timeframe = '30d' | 'quarter' | 'ytd';
 
 function getDateRange(timeframe: Timeframe): { start: Date; end: Date; previousStart: Date; previousEnd: Date } {
@@ -95,10 +102,10 @@ export async function GET(request: NextRequest) {
       .select('service_name, provider, billed_cost, created_at')
       .eq('user_id', user.id)
       .gte('created_at', start.toISOString())
-      .lte('created_at', end.toISOString());
+      .lte('created_at', end.toISOString()) as { data: UsageEvent[] | null; error: any };
 
-    if (currentError) {
-      throw new Error(`Failed to fetch current period usage: ${currentError.message}`);
+    if (currentError || !currentEvents) {
+      throw new Error(`Failed to fetch current period usage: ${currentError?.message || 'No data'}`);
     }
 
     // Fetch usage events for previous period
@@ -107,15 +114,15 @@ export async function GET(request: NextRequest) {
       .select('service_name, provider, billed_cost, created_at')
       .eq('user_id', user.id)
       .gte('created_at', previousStart.toISOString())
-      .lte('created_at', previousEnd.toISOString());
+      .lte('created_at', previousEnd.toISOString()) as { data: UsageEvent[] | null; error: any };
 
-    if (previousError) {
-      throw new Error(`Failed to fetch previous period usage: ${previousError.message}`);
+    if (previousError || !previousEvents) {
+      throw new Error(`Failed to fetch previous period usage: ${previousError?.message || 'No data'}`);
     }
 
     // Calculate totals
-    const totalCost = currentEvents?.reduce((sum, e) => sum + Number(e.billed_cost), 0) || 0;
-    const previousPeriodCost = previousEvents?.reduce((sum, e) => sum + Number(e.billed_cost), 0) || 0;
+    const totalCost = currentEvents.reduce((sum, e) => sum + Number(e.billed_cost), 0);
+    const previousPeriodCost = previousEvents.reduce((sum, e) => sum + Number(e.billed_cost), 0);
     const changePercent = previousPeriodCost > 0
       ? ((totalCost - previousPeriodCost) / previousPeriodCost) * 100
       : 0;
@@ -124,12 +131,12 @@ export async function GET(request: NextRequest) {
     const currentByService: Record<string, number> = {};
     const previousByService: Record<string, number> = {};
 
-    currentEvents?.forEach(event => {
+    currentEvents.forEach(event => {
       const key = groupBy === 'provider' ? event.provider : event.service_name;
       currentByService[key] = (currentByService[key] || 0) + Number(event.billed_cost);
     });
 
-    previousEvents?.forEach(event => {
+    previousEvents.forEach(event => {
       const key = groupBy === 'provider' ? event.provider : event.service_name;
       previousByService[key] = (previousByService[key] || 0) + Number(event.billed_cost);
     });

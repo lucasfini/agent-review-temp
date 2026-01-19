@@ -44,7 +44,17 @@ export async function POST(
         'id, user_id, title, transcription_text, ai_summary, performance_level'
       )
       .eq('id', projectId)
-      .single();
+      .single() as {
+        data: {
+          id: string;
+          user_id: string;
+          title: string;
+          transcription_text: string;
+          ai_summary: string;
+          performance_level: string
+        } | null;
+        error: any
+      };
 
     if (projectError || !project) {
       return NextResponse.json(
@@ -123,7 +133,8 @@ export async function POST(
       cost: coverageAnalysis.aiUsage.costUsd,
       topics: coverageAnalysis.topics.length,
       ctas: coverageAnalysis.ctas.length,
-      opportunities: coverageAnalysis.opportunities.length
+      opportunities: coverageAnalysis.opportunities.length,
+      fallback: coverageAnalysis.notes?.includes('Heuristic') ? true : false
     });
   } catch (error: any) {
     console.error('[RUN COVERAGE] Error:', error);

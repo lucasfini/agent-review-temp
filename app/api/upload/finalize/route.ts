@@ -143,14 +143,14 @@ export async function POST(request: NextRequest) {
         audio_fingerprint: audioFingerprint,
         status: 'uploading',
         performance_level: performanceLevel
-      })
+      } as any)
       .select()
-      .single();
+      .single() as { data: any; error: any };
 
-    if (projectError) {
+    if (projectError || !project) {
       console.error('Project creation error:', projectError);
       return NextResponse.json(
-        { error: `Database error: ${projectError.message}` },
+        { error: `Database error: ${projectError?.message || 'Unknown error'}` },
         { status: 500 }
       );
     }
@@ -223,7 +223,8 @@ export async function POST(request: NextRequest) {
     // Update project status
     const { error: updateError } = await supabaseAdmin
       .from('projects')
-      .update({ 
+      // @ts-expect-error - Supabase types issue with update
+      .update({
         status: 'processing',
         processing_started_at: new Date().toISOString()
       })
@@ -238,6 +239,9 @@ export async function POST(request: NextRequest) {
 
     // Start transcription process if OpenAI key is available
     if (process.env.OPENAI_API_KEY) {
+      const diarizationProvider = (process.env.ASSEMBLYAI_API_KEY || process.env.ASSEMBLYAI_ACCESS_KEY) ? 'assemblyai' : 'deepgram';
+      console.log(`[UPLOAD][CHUNKED] Starting transcription with provider: ${diarizationProvider}`);
+
       fetch(`${process.env.VERCEL_URL || 'http://localhost:3000'}/api/transcribe`, {
         method: 'POST',
         headers: {
@@ -247,7 +251,8 @@ export async function POST(request: NextRequest) {
           projectId: project.id,
           fileName: storageFileName,
           fingerprint: audioFingerprint,
-          performanceLevel
+          performanceLevel,
+          diarizationProvider
         })
       }).catch(error => {
         console.error('Failed to start transcription:', error);

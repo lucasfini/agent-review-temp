@@ -31,7 +31,7 @@ export async function POST(request: NextRequest) {
           email: email.toLowerCase().trim(),
           name: name?.trim() || null,
         },
-      ])
+      ] as any)
       .select()
 
     if (error) {

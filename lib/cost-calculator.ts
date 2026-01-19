@@ -56,14 +56,10 @@ export const PRICING = {
     name: 'GPT-4o-mini'
   },
 
-  // Speaker diarization (local)
-  PYANNOTE: {
+  // Speaker diarization (included in AssemblyAI or local Sortformer)
+  SORTFORMER: {
     cost: 0.0, // Free - local processing
-    name: 'PyAnnote (Local)'
-  },
-  NEMO: {
-    cost: 0.0, // Free - local processing
-    name: 'NeMo (Local)'
+    name: 'Sortformer (Local)'
   },
 
   // AI generation (Claude)
@@ -99,10 +95,10 @@ export function calculateTranscriptionCost(
 
 /**
  * Calculate speaker diarization cost
- * AssemblyAI includes it, local methods are free
+ * AssemblyAI includes it, Sortformer is free (local)
  */
 export function calculateDiarizationCost(
-  method: 'pyannote' | 'nemo' | 'text-based' | 'assemblyai'
+  method: 'sortformer' | 'assemblyai'
 ): number {
   // All current methods are free (local processing or included)
   return 0;
@@ -160,7 +156,7 @@ export function applyMarkup(cost: number, markupPercent?: number): number {
 export function calculateTotalCost(params: {
   audioSeconds: number;
   transcriptionProvider: 'openai' | 'assemblyai';
-  diarizationMethod: 'pyannote' | 'nemo' | 'text-based' | 'assemblyai';
+  diarizationMethod: 'sortformer' | 'assemblyai';
   aiProcessingTokens?: {
     nameExtraction?: { input: number; output: number };
     roleClassification?: { input: number; output: number };
@@ -235,19 +231,19 @@ export function estimateCost(
 
   switch (performanceLevel) {
     case 'basic':
-      // OpenAI Whisper + PyAnnote (free)
-      return minutes * PRICING.OPENAI_WHISPER.perMinute;
+      // AssemblyAI transcription + diarization (numbered speakers)
+      return minutes * PRICING.ASSEMBLYAI_UNIVERSAL.perMinute;
 
     case 'standard':
-      // OpenAI Whisper + PyAnnote + basic content generation
-      const baseTranscription = minutes * PRICING.OPENAI_WHISPER.perMinute;
-      const estimatedGeneration = 0.10; // Rough estimate for basic content
+      // AssemblyAI + AI name extraction + summary
+      const baseTranscription = minutes * PRICING.ASSEMBLYAI_UNIVERSAL.perMinute;
+      const estimatedGeneration = 0.05; // AI enhancement
       return baseTranscription + estimatedGeneration;
 
     case 'premium':
-      // AssemblyAI + full content generation
+      // AssemblyAI + full AI enhancement (names, roles, chapters, takeaways, quotes)
       const premiumTranscription = minutes * PRICING.ASSEMBLYAI_UNIVERSAL.perMinute;
-      const premiumGeneration = 0.25; // Rough estimate for premium content
+      const premiumGeneration = 0.20; // Full AI processing
       return premiumTranscription + premiumGeneration;
 
     default:

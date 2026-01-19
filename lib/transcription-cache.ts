@@ -39,7 +39,7 @@ export async function getCachedTranscription(
       .from(TABLE_NAME)
       .select('transcription_text, transcription_segments, speaker_data, duration, created_at')
       .eq('fingerprint', fingerprint)
-      .single();
+      .single() as { data: any; error: any };
 
     if (error || !data) {
       if (error && !isTableMissingError(error) && error.code !== 'PGRST116') {
@@ -81,7 +81,7 @@ export async function cacheTranscriptionResult(
 
     const { error } = await supabaseAdmin
       .from(TABLE_NAME)
-      .upsert(upsertPayload, { onConflict: 'fingerprint' });
+      .upsert(upsertPayload as any, { onConflict: 'fingerprint' });
 
     if (error && !isTableMissingError(error)) {
       console.warn('[TRANSCRIPTION CACHE] Upsert failed:', error);
@@ -100,8 +100,8 @@ export async function applyCachedTranscriptionToProject(
 ): Promise<boolean> {
   try {
     const now = new Date().toISOString();
-    const { error } = await supabaseAdmin
-      .from('projects')
+    const { error } = await (supabaseAdmin
+      .from('projects') as any)
       .update({
         transcription_text: cached.transcriptionText,
         transcription_segments: cached.transcriptionSegments,
@@ -161,7 +161,7 @@ export async function getProjectFingerprint(
       .from('projects')
       .select('audio_fingerprint')
       .eq('id', projectId)
-      .single();
+      .single() as { data: any; error: any };
 
     if (error || !data) {
       return null;

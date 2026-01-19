@@ -1,5 +1,5 @@
-// AI-powered chapter detection for podcasts using Claude Sonnet 4.5
-import Anthropic from '@anthropic-ai/sdk';
+// AI-powered chapter detection for podcasts using GPT-4o-mini
+import OpenAI from 'openai';
 import { TranscriptionSegment } from '../types';
 
 export interface PodcastChapter {
@@ -20,7 +20,7 @@ export interface ChaptersResult {
 }
 
 /**
- * Detect and generate chapter markers using Claude Sonnet 4.5
+ * Detect and generate chapter markers using GPT-4o-mini
  */
 export async function detectPodcastChapters(
   transcriptionText: string,
@@ -29,14 +29,14 @@ export async function detectPodcastChapters(
     speakerContext?: Record<string, { name: string; role?: string }>;
   } = {}
 ): Promise<ChaptersResult> {
-  const apiKey = process.env.ANTHROPIC_API_KEY;
+  const apiKey = process.env.OPENAI_API_KEY;
   if (!apiKey) {
-    throw new Error('ANTHROPIC_API_KEY not configured');
+    throw new Error('OPENAI_API_KEY not configured');
   }
 
-  console.log('[CHAPTERS] 📚 Detecting chapter markers...');
+  console.log('[CHAPTERS] 📚 Detecting chapter markers with GPT-4o-mini...');
 
-  const anthropic = new Anthropic({ apiKey });
+  const openai = new OpenAI({ apiKey });
 
   // Build context about speakers if available
   let speakerInfo = '';
@@ -52,70 +52,77 @@ export async function detectPodcastChapters(
     ? segments[segments.length - 1].end
     : 0;
 
-  const prompt = `You are analyzing a podcast/interview transcription to identify natural chapter breaks and topic changes.
+  const durationMinutes = Math.round(totalDuration / 60);
 
+  const prompt = `You are an expert content producer. Analyze the podcast transcript to identify 5-8 natural thematic shifts.
+
+GOAL: Create a navigation menu that helps a listener find specific, high-value moments.
+
+STRICT CHAPTER RULES:
+
+Title: Must be punchy and "curiosity-gap" driven (3-8 words). Avoid generic titles like "Introduction" or "Closing Thoughts."
+
+Description: Do NOT repeat the title. Each description must explain the specific perspective or surprising fact shared in that segment.
+
+Bad: "The guest discusses their history in AI."
+
+Good: "The guest reveals why their early failures in neural networks actually led to their current breakthrough in LLM efficiency."
+
+Timestamps: Ensure startTime and endTime are accurate based on the text.
+
+Key Topics: Provide 2-4 granular tags per chapter.
+
+OUTPUT FORMAT:
+Return ONLY a valid JSON object with a "chapters" array:
+{
+  "chapters": [
+    {
+      "title": "The Hidden Cost of Rapid Scaling",
+      "startTime": 0,
+      "endTime": 450,
+      "description": "A deep dive into why most Series A startups fail by over-hiring before finding product-market fit.",
+      "keyTopics": ["scaling", "hiring strategy", "startup failure"]
+    }
+  ]
+}
+
+TRANSCRIPT DATA:
+Audio Duration: ${durationMinutes} minutes
 ${speakerInfo}
-Audio Duration: ${Math.round(totalDuration / 60)} minutes
-
-Task: Identify 5-8 distinct chapters/sections based on topic changes, speaker introductions, or conversation shifts.
-
-For each chapter, provide:
-1. A concise, descriptive title (3-8 words)
-2. Start and end timestamps (in seconds)
-3. A brief description (1-2 sentences)
-4. 2-4 key topics discussed in that chapter
-
-Return ONLY a valid JSON array in this exact format:
-[
-  {
-    "title": "Introduction and Guest Background",
-    "startTime": 0,
-    "endTime": 245,
-    "description": "Host welcomes the guest and discusses their background in AI research.",
-    "keyTopics": ["introductions", "guest background", "AI research overview"]
-  }
-]
-
-Note: We will automatically convert startTime/endTime to start_time/end_time in the response.
-
-Guidelines:
-- Chapters should be roughly 3-10 minutes each
-- Chapter breaks should occur at natural topic transitions
-- Titles should be specific and descriptive
-- Start time of first chapter should be 0
-- End time of last chapter should be approximately ${Math.round(totalDuration)}
-- Chapters must not overlap
-- Return ONLY the JSON array, no other text
-
 Transcription:
 ${transcriptionText.slice(0, 80000)}`;
 
   try {
-    const response = await anthropic.messages.create({
-      model: 'claude-sonnet-4-5-20250929',
+    const response = await openai.chat.completions.create({
+      model: 'gpt-4o-mini',
       max_tokens: 2000,
       temperature: 0.2,
-      messages: [{
-        role: 'user',
-        content: prompt
-      }]
+      response_format: { type: "json_object" },
+      messages: [
+        {
+          role: 'system',
+          content: 'You are an expert content producer who creates engaging chapter markers. Always return valid JSON objects.'
+        },
+        {
+          role: 'user',
+          content: prompt
+        }
+      ]
     });
 
-    const responseText = response.content[0].type === 'text'
-      ? response.content[0].text
-      : '';
+    const responseText = response.choices[0]?.message?.content || '{}';
 
     // Parse JSON response
-    const chapters = parseChaptersResponse(responseText);
+    const chapters = parseChaptersResponse(responseText, totalDuration);
 
-    console.log(`[CHAPTERS] ✅ Detected ${chapters.length} chapters`);
-    console.log(`[CHAPTERS] 📊 Tokens: ${response.usage.input_tokens} in, ${response.usage.output_tokens} out`);
+    console.log(`[CHAPTERS] ✅ Detected ${chapters.length} chapters with GPT-4o-mini`);
+    console.log(`[CHAPTERS] 📊 Tokens: ${response.usage?.prompt_tokens || 0} in, ${response.usage?.completion_tokens || 0} out`);
 
     return {
       chapters,
       tokensUsed: {
-        input: response.usage.input_tokens,
-        output: response.usage.output_tokens
+        input: response.usage?.prompt_tokens || 0,
+        output: response.usage?.completion_tokens || 0
       },
       generatedAt: new Date().toISOString()
     };
@@ -127,9 +134,9 @@ ${transcriptionText.slice(0, 80000)}`;
 }
 
 /**
- * Parse and validate chapters response from Claude
+ * Parse and validate chapters response from GPT-4o-mini
  */
-function parseChaptersResponse(content: string): PodcastChapter[] {
+function parseChaptersResponse(content: string, totalDuration: number): PodcastChapter[] {
   // Strip markdown code blocks if present
   let cleanContent = content.trim();
   if (cleanContent.startsWith('```')) {
@@ -139,12 +146,23 @@ function parseChaptersResponse(content: string): PodcastChapter[] {
   try {
     const parsed = JSON.parse(cleanContent);
 
-    if (!Array.isArray(parsed)) {
-      throw new Error('Response is not an array');
+    // Handle both direct array and object with chapters property
+    let chaptersArray: any[] = [];
+    if (Array.isArray(parsed)) {
+      chaptersArray = parsed;
+    } else if (parsed.chapters && Array.isArray(parsed.chapters)) {
+      chaptersArray = parsed.chapters;
+    } else {
+      throw new Error('Response does not contain a valid chapters array');
+    }
+
+    if (chaptersArray.length === 0) {
+      console.warn('[CHAPTERS] ⚠️ No chapters found in response');
+      return [];
     }
 
     // Validate and normalize each chapter
-    return parsed.map((chapter, index) => ({
+    const normalizedChapters = chaptersArray.map((chapter, index) => ({
       title: typeof chapter.title === 'string' ? chapter.title.trim() : `Chapter ${index + 1}`,
       start_time: typeof chapter.startTime === 'number' ? chapter.startTime : 0,
       end_time: typeof chapter.endTime === 'number' ? chapter.endTime : 0,
@@ -154,8 +172,29 @@ function parseChaptersResponse(content: string): PodcastChapter[] {
         : []
     })).filter(chapter => chapter.end_time > chapter.start_time);
 
+    // Validation: Ensure first chapter starts at 0
+    if (normalizedChapters.length > 0 && normalizedChapters[0].start_time !== 0) {
+      console.warn(`[CHAPTERS] ⚠️ First chapter doesn't start at 0 (starts at ${normalizedChapters[0].start_time}), adjusting...`);
+      normalizedChapters[0].start_time = 0;
+    }
+
+    // Validation: Ensure last chapter ends near total duration (within 10% tolerance)
+    if (normalizedChapters.length > 0 && totalDuration > 0) {
+      const lastChapter = normalizedChapters[normalizedChapters.length - 1];
+      const tolerance = totalDuration * 0.1; // 10% tolerance
+      const expectedEnd = Math.round(totalDuration);
+
+      if (Math.abs(lastChapter.end_time - expectedEnd) > tolerance) {
+        console.warn(`[CHAPTERS] ⚠️ Last chapter ends at ${lastChapter.end_time}s, expected ~${expectedEnd}s, adjusting...`);
+        lastChapter.end_time = expectedEnd;
+      }
+    }
+
+    return normalizedChapters;
+
   } catch (parseError: any) {
     console.error('[CHAPTERS] JSON parse error:', parseError);
+    console.error('[CHAPTERS] Raw content:', content.substring(0, 500));
     // Return empty chapters on parse failure
     return [];
   }

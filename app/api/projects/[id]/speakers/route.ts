@@ -19,6 +19,7 @@ export async function PATCH(
     // Update the speaker data in the database
     const { error } = await supabaseAdmin
       .from('projects')
+      // @ts-expect-error - Supabase types issue with update
       .update({
         speaker_data: speakerData
       })

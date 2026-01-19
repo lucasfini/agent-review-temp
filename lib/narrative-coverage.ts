@@ -138,9 +138,9 @@ export async function saveNarrativeCoverageSnapshot(input: NarrativeCoverageSnap
 
   const { data, error } = await supabaseAdmin
     .from('narrative_coverage_snapshots')
-    .insert(payload)
+    .insert(payload as any)
     .select('id')
-    .single();
+    .single() as { data: { id: string } | null; error: any };
 
   if (error) {
     console.error('[NARRATIVE COVERAGE] Failed to save snapshot', error);
@@ -162,7 +162,7 @@ export async function appendCoverageCostToProject(
     .from('projects')
     .select('actual_processing_cost, cost_breakdown')
     .eq('id', projectId)
-    .single();
+    .single() as { data: any; error: any };
 
   if (error) {
     console.error('[NARRATIVE COVERAGE] Failed to fetch project cost breakdown', error);
@@ -182,12 +182,14 @@ export async function appendCoverageCostToProject(
     total: updatedTotal
   };
 
-  const { error: updateError } = await supabaseAdmin
-    .from('projects')
-    .update({
-      actual_processing_cost: updatedTotal,
-      cost_breakdown: updatedBreakdown
-    })
+  const updatePayload: any = {
+    actual_processing_cost: updatedTotal,
+    cost_breakdown: updatedBreakdown
+  };
+
+  const { error: updateError } = await (supabaseAdmin
+    .from('projects') as any)
+    .update(updatePayload)
     .eq('id', projectId);
 
   if (updateError) {

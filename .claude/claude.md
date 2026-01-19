@@ -7,110 +7,93 @@ AI-powered content repurposing platform that takes podcasts/audio and automatica
 - **Framework**: Next.js 14 (App Router, TypeScript, Tailwind CSS)
 - **Database**: Supabase (PostgreSQL + Auth + Storage)
 - **Storage**: Supabase Storage (transitioning from Cloudflare R2)
-- **AI Services**: 
-  - OpenAI Whisper (transcription)
-  - PyAnnote (speaker diarization)
+- **AI Services**:
+  - AssemblyAI (transcription + speaker diarization)
+  - Sortformer (advanced speaker diarization - optional)
   - Anthropic Claude-3.5 (copywriting)
   - DALL-E 3 (graphics - later phase)
 - **Payments**: Stripe
 - **Deployment**: Vercel (planned)
 
 ## Current Setup Status
-✅ GitHub repo created: https://github.com/lucasfini/audiorepurpose  
-✅ Next.js project initialized with TypeScript + Tailwind  
-✅ Supabase account created  
-✅ All API keys configured in .env.local  
-✅ Dependencies installed (@supabase/supabase-js, openai, @anthropic-ai/sdk, stripe)  
-✅ **PyAnnote + Whisper Pipeline Implemented** (NEW)  
-✅ **Speaker Diarization Fixed** (NEW)  
-✅ **Hugging Face Authentication Setup** (NEW)  
+✅ GitHub repo created: https://github.com/lucasfini/audiorepurpose
+✅ Next.js project initialized with TypeScript + Tailwind
+✅ Supabase account created
+✅ All API keys configured in .env.local
+✅ Dependencies installed (@supabase/supabase-js, @anthropic-ai/sdk, stripe)
+✅ **AssemblyAI Integration Complete** - Transcription + Speaker Diarization
+✅ **Sortformer Diarization** - Optional advanced speaker detection
+✅ **3-Tier Processing System** - Basic, Pro, Premium  
 
 ## Environment Variables Available
 - NEXT_PUBLIC_SUPABASE_URL
 - NEXT_PUBLIC_SUPABASE_ANON_KEY
 - SUPABASE_SERVICE_ROLE_KEY
-- OPENAI_API_KEY
+- ASSEMBLYAI_API_KEY
 - ANTHROPIC_API_KEY
 - STRIPE_SECRET_KEY / NEXT_PUBLIC_STRIPE_PUBLISHABLE_KEY
-- **HUGGING_FACE_ACCESS_TOKEN** (NEW)
 
-## Recent Major Implementation: Proper Speaker Diarization
+## Current Implementation: AssemblyAI-Powered Processing
 
-### Problem Solved
-The previous speaker detection was fundamentally flawed - it was trying to analyze voice patterns from text transcripts instead of actual audio. This resulted in:
-- 26+ speakers detected instead of 2-4
-- Poor accuracy in speaker boundaries
-- No real voice analysis
+### Architecture
+The system uses **AssemblyAI** as the primary transcription and speaker diarization service:
 
-### Solution: PyAnnote + Whisper Pipeline
-Implemented proper audio-based speaker diarization:
-
-#### Architecture
 ```
-Audio File → [PyAnnote: Speaker Analysis] + [Whisper: Transcription] → Timestamp Alignment → Final Result
+Audio File → [AssemblyAI: Transcription + Diarization] → Speaker Grouping → AI Enhancement → Final Result
 ```
 
-#### Pipeline Flow
-1. **PyAnnote**: Analyzes raw audio for speaker voice patterns → produces speaker segments with timestamps
-2. **Whisper**: Transcribes audio to text → produces text segments with timestamps  
-3. **Alignment**: Custom algorithm matches each text segment to the best overlapping speaker segment by temporal intersection
-4. **Result**: Text segments with accurate speaker attribution
+### Pipeline Flow
+1. **Upload**: Audio files stored in memory or Supabase Storage
+2. **AssemblyAI Processing**: Simultaneous transcription + speaker diarization
+3. **Speaker Grouping**: Segments grouped by speaker ID
+4. **AI Enhancement** (tier-based):
+   - **Basic**: Numbered speakers (Speaker 1, Speaker 2)
+   - **Pro**: AI name extraction + summary
+   - **Premium**: + Role classification + chapters + takeaways + quotes
+5. **Caching**: Base transcription cached for cost efficiency
 
-#### Technical Implementation
-- **Files Modified**: 
-  - `lib/pyannote-integration.ts` - Main integration logic
-  - `scripts/pyannote_diarization.py` - Python script for PyAnnote processing
-  - `app/api/transcribe/route.ts` - Background speaker analysis
-- **Dependencies**: PyAnnote.audio, PyTorch, TorchAudio (Python 3.12 virtual environment)
-- **Authentication**: Hugging Face token for PyAnnote model access
-- **Fallback**: Rule-based detection when PyAnnote unavailable
+### Key Files
+- `app/api/transcribe/route.ts` - Main transcription endpoint with tier-based processing
+- `lib/assemblyai-integration.ts` - AssemblyAI API integration
+- `scripts/sortformer_diarization.py` - Optional Sortformer model for advanced diarization
+- `lib/name-extraction.ts` - AI speaker name extraction
+- `lib/speaker-role-classifier.ts` - Premium tier role classification
+- `lib/transcription-cache.ts` - Caching system for cost optimization
 
-#### Key Files
-- `scripts/pyannote_env/` - Python virtual environment with PyAnnote dependencies
-- `lib/pyannote-integration.ts:275-333` - Enhanced speaker detection function
-- `lib/pyannote-integration.ts:339-406` - Timestamp alignment algorithm
-- `scripts/pyannote_diarization.py:42-66` - HF authentication setup
-
-### Setup Requirements
-```bash
-cd scripts
-source pyannote_env/bin/activate  # Pre-configured environment
-python pyannote_diarization.py --help  # Test functionality
-```
-
-### Expected Results
-- 2-4 speakers for typical podcasts (not 26!)
-- Accurate speaker boundaries based on voice characteristics
-- Better handling of overlapping speech and interruptions
-- Proper timing alignment between speech and speaker changes
+### Features
+- **Accurate speaker detection**: 2-4 speakers for typical podcasts
+- **Tiered processing**: Basic, Pro, Premium with progressive AI features
+- **Cost optimization**: Base transcription cached and reused
+- **Credit system**: Usage tracking with pre-flight balance checks
+- **Speaker roster matching**: Pre-defined speaker names can be matched automatically
 
 ## Current Architecture
 
 ### Audio Processing Pipeline
-1. **Upload**: Audio files stored in Supabase Storage or local memory
-2. **Transcription**: OpenAI Whisper with chunking for large files (>25MB)
-3. **Speaker Detection**: PyAnnote analyzes audio for voice patterns
-4. **Alignment**: Custom algorithm aligns speaker segments with transcription
-5. **Enhancement**: AI name extraction and speaker identification
+1. **Upload**: Audio files stored in memory (or Supabase Storage for large files)
+2. **Transcription**: AssemblyAI processes audio for transcription + speaker diarization
+3. **Speaker Grouping**: Segments organized by speaker ID
+4. **Enhancement**: Tier-based AI processing (names, roles, summary, chapters, etc.)
+5. **Caching**: Base transcription cached for cost efficiency
 6. **Storage**: Results saved to Supabase database
 
 ### File Structure
 ```
 /app/api/
-  transcribe/route.ts          # Main transcription endpoint
+  transcribe/route.ts          # Main transcription endpoint (AssemblyAI + AI enhancement)
   upload/route.ts              # File upload handling
   generate-content/route.ts    # Content generation
 /lib/
-  audio-chunker.ts            # Large file processing
-  speaker-detection.ts        # Rule-based fallback detection
-  pyannote-integration.ts     # PyAnnote + Whisper pipeline
-  name-extraction.ts          # AI speaker name extraction
-  supabase/                   # Database utilities
+  assemblyai-integration.ts    # AssemblyAI API integration
+  transcription-cache.ts       # Caching system for cost optimization
+  name-extraction.ts           # AI speaker name extraction
+  speaker-role-classifier.ts   # Speaker role classification (Premium)
+  tier-config.ts               # Tier-based feature configuration
+  billing/                     # Credit tracking and usage
+  supabase/                    # Database utilities
 /scripts/
-  pyannote_diarization.py     # Python speaker diarization
-  pyannote_env/               # Python virtual environment
-/components/                  # React components
-/database-*.sql              # Database schema
+  sortformer_diarization.py    # Optional advanced diarization
+/components/                   # React components
 ```
 
 ### Database Schema
@@ -118,51 +101,59 @@ python pyannote_diarization.py --help  # Test functionality
 projects table:
 - id, title, status, created_at
 - transcription_text (full transcript)
-- transcription_segments (JSON - Whisper segments)
-- speaker_data (JSON - PyAnnote + alignment results)
-- processing timestamps and metadata
+- transcription_segments (JSON - AssemblyAI segments)
+- speaker_data (JSON - speaker info + segments)
+- ai_summary, chapters, key_takeaways, social_quotes (tier-based)
+- performance_level (basic/pro/premium)
+- cost tracking and metadata
 ```
 
-## Current Status (Updated)
-**Major Milestone**: ✅ **Speaker Diarization Pipeline Complete**
+## Current Status
+**Major Milestone**: ✅ **Production-Ready AssemblyAI Integration**
 
-The system now has:
-- Proper audio-based speaker detection using PyAnnote
-- Parallel processing of audio (PyAnnote + Whisper)
-- Custom alignment algorithm for timestamp matching
-- Hugging Face authentication for model access
-- Robust fallback to rule-based detection
-- Full integration with existing transcription workflow
+The system features:
+- **AssemblyAI integration**: Professional transcription + speaker diarization
+- **3-tier processing system**: Basic, Pro, Premium with progressive AI features
+- **Transcription caching**: Cost optimization through smart caching
+- **Credit system**: Pre-flight balance checks and usage tracking
+- **Speaker roster matching**: AI-powered matching of pre-defined speakers
+- **Full AI enhancement pipeline**: Names, roles, summaries, chapters, takeaways, quotes
 
 ## Architecture Decisions Made
 
-### PyAnnote vs Whisper Requirements
-- **Both are needed**: PyAnnote for speaker analysis, Whisper for transcription
-- **Parallel processing**: Both analyze the same audio file independently
-- **Alignment crucial**: Custom algorithm matches results by timestamp overlap
+### AssemblyAI as Primary Service
+- **All-in-one solution**: Single API for transcription + diarization
+- **Production quality**: Professional-grade accuracy and reliability
+- **Cost effective**: ~$0.37/hour with included speaker detection
+- **Minimal complexity**: No local GPU requirements or Python dependencies
 
-### Hugging Face Integration
-- **Free tier**: No cost for authentication token
-- **Model access**: PyAnnote requires HF token for speaker-diarization-3.1 model
-- **Monthly limits**: Free usage with enhanced quotas for Pro ($9/month)
+### Tiered Processing System
+- **Basic**: AssemblyAI transcription + numbered speakers ($0.37/hr base)
+- **Pro**: + AI name extraction + summary (~$0.40-0.45/hr)
+- **Premium**: + Roles + chapters + takeaways + quotes (~$0.50-0.60/hr)
+
+### Caching Strategy
+- **Fingerprint-based**: Audio content hashed for deduplication
+- **Cache hits**: Reuse base transcription, only pay for AI enhancement
+- **Cost savings**: ~75% reduction on repeated processing of same audio
 
 ### Technical Choices
-- **Python 3.12**: PyTorch compatibility (Python 3.13 not yet supported)
-- **Virtual environment**: Isolated dependencies to avoid system conflicts
-- **NumPy downgrade**: Required "numpy<2" for PyAnnote compatibility
-- **Environment variables**: HF token passed securely to Python subprocess
+- **TypeScript-first**: Minimal Python usage (Sortformer only, optional)
+- **Memory storage**: In-memory file handling for fast processing
+- **Supabase storage**: Fallback for large files or persistence needs
+- **Credit system**: Pre-flight balance checks prevent failed jobs
 
 ## Immediate Next Steps
-1. **Test with real audio**: Upload and test speaker diarization accuracy
-2. **Performance optimization**: Cache PyAnnote pipeline initialization
-3. **GPU acceleration**: Add CUDA support for faster processing (optional)
-4. **Error monitoring**: Enhanced logging for production debugging
+1. **User testing**: Get feedback on speaker detection and AI-generated content
+2. **Cost monitoring**: Track actual costs vs. estimates across tiers
+3. **Cache optimization**: Monitor cache hit rates and savings
+4. **Content quality**: Refine AI prompts based on user feedback
 
 ## Business Impact
-- **Accuracy improvement**: 2-4 speakers instead of 26+ false positives
-- **User experience**: Proper speaker attribution in generated content
-- **Content quality**: Better audiogram clips and speaker-specific quotes
-- **Competitive advantage**: Professional-grade speaker detection
+- **Tiered pricing**: Multiple price points to maximize conversions
+- **Cost efficiency**: Caching reduces processing costs by ~75%
+- **User experience**: Professional speaker attribution and content quality
+- **Competitive advantage**: Fast, accurate processing with AI enhancement
 
 ## Code Style Preferences
 - TypeScript strict mode
@@ -182,27 +173,30 @@ The system now has:
 
 ## Performance Targets
 - MVP delivery: 4-6 weeks
-- Processing time: <30 minutes per 1-hour podcast
-- **Speaker detection**: <2 minutes for PyAnnote analysis
+- Processing time: <5 minutes per 1-hour podcast (AssemblyAI)
+- **Speaker detection**: Included in transcription time
 - Target: 500 paid users by Month 6
-- Unit economics: 93% gross margin, 18:1 LTV:CAC
+- Unit economics: 90-93% gross margin, 18:1 LTV:CAC
 
 ## Key Features (MVP - Month 1)
 - Audio file upload (mp3, wav)
-- Whisper transcription with timestamps
-- **PyAnnote speaker diarization** (NEW)
-- **Accurate speaker attribution** (NEW)
-- AI-generated outputs:
-  - 5-8 audiogram clips (social media)
-  - Blog post (3000+ words, SEO optimized)
-  - Social media posts (Twitter, LinkedIn, Instagram captions)
-  - Quote graphics with proper speaker attribution
-  - Email newsletter
-  - Show notes with chapters and speaker identification
+- **AssemblyAI transcription + speaker diarization**
+- **3-tier processing system** (Basic, Pro, Premium)
+- **Speaker roster matching** (optional pre-defined speakers)
+- **Transcription caching** for cost optimization
+- AI-generated outputs (tier-based):
+  - AI summary (Pro+)
+  - Speaker name extraction (Pro+)
+  - Speaker role classification (Premium)
+  - Chapter detection (Premium)
+  - Key takeaways (Premium)
+  - Social media quotes (Premium)
+  - Inline insights and entity detection
 
 ## Priority Order
 1. Speed to market (ship fast, iterate)
 2. User experience (simple, intuitive)
-3. **Audio processing quality** (PyAnnote pipeline complete)
-4. Code quality (maintainable, not perfect)
-5. Scalability (plan for it, don't over-engineer)
+3. **Audio processing quality** (AssemblyAI + AI enhancement)
+4. Cost efficiency (caching + tiered pricing)
+5. Code quality (maintainable, not perfect)
+6. Scalability (plan for it, don't over-engineer)

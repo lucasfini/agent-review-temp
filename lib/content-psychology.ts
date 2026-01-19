@@ -18,14 +18,14 @@ export interface PlatformPsychology {
 
 export const PLATFORM_PSYCHOLOGY: Record<string, PlatformPsychology> = {
   twitter: {
-    platform: 'Twitter/X',
-    averageAttentionSpan: '8 seconds per tweet',
+    platform: 'X',
+    averageAttentionSpan: '8 seconds per post',
     optimalLength: {
       min: 150,
       max: 280,
       unit: 'characters'
     },
-    scrollSpeed: 'Very fast (0.5-1 second per tweet)',
+    scrollSpeed: 'Very fast (0.5-1 second per post)',
     consumptionPattern: 'Scanning mode - users scroll rapidly, stop only for hooks',
     psychologicalTriggers: [
       'Pattern interrupts (unexpected statements)',
@@ -38,17 +38,17 @@ export const PLATFORM_PSYCHOLOGY: Record<string, PlatformPsychology> = {
     bestPractices: [
       'First 5 words are critical - must hook immediately',
       'Use line breaks to improve scannability',
-      'One idea per tweet maximum',
+      'One idea per post maximum',
       'End threads with clear CTA',
-      'Use 2-3 hashtags max (only in last tweet)',
+      'Use 2-3 hashtags max (only in last post)',
       'Thread structure: Hook → Value → Proof → CTA'
     ],
     structureRules: [
-      'Tweet 1: MUST be pure hook (question, bold claim, or shocking stat)',
-      'Tweets 2-3: Expand on hook with value',
-      'Tweets 4-6: Provide proof, examples, or tactics',
-      'Tweet 7-8: Summarize and CTA',
-      'Pattern interrupt every 2-3 tweets to maintain attention'
+      'Post 1: MUST be pure hook (question, bold claim, or shocking stat)',
+      'Posts 2-3: Expand on hook with value',
+      'Posts 4-6: Provide proof, examples, or tactics',
+      'Posts 7-8: Summarize and CTA',
+      'Pattern interrupt every 2-3 posts to maintain attention'
     ]
   },
 
@@ -259,7 +259,7 @@ export const STRICT_CONTENT_LIMITS: Record<string, ContentLimits> = {
     truncationStrategy: 'hard'
   },
   twitter_thread: {
-    hardMax: 280, // Per tweet
+    hardMax: 280, // Per post
     softMax: 270,
     min: 100,
     unit: 'characters',
@@ -400,10 +400,10 @@ export function getOptimalThreadLength(theme: string): number {
   return 7; // Default
 }
 
-export function shouldIncludePatternInterrupt(tweetIndex: number, totalTweets: number): boolean {
-  // Add pattern interrupt every 2-3 tweets in longer threads
-  if (totalTweets <= 5) return false;
-  return tweetIndex === Math.floor(totalTweets / 2);
+export function shouldIncludePatternInterrupt(postIndex: number, totalPosts: number): boolean {
+  // Add pattern interrupt every 2-3 posts in longer threads
+  if (totalPosts <= 5) return false;
+  return postIndex === Math.floor(totalPosts / 2);
 }
 
 export function getHookIntensity(platform: string): string {

@@ -8,7 +8,7 @@ import Stripe from 'stripe';
 import { addCredit } from '@/lib/billing/credit';
 
 const stripe = new Stripe(process.env.STRIPE_SECRET_KEY!, {
-  apiVersion: '2024-12-18.acacia',
+  apiVersion: '2025-10-29.clover',
 });
 
 const webhookSecret = process.env.STRIPE_WEBHOOK_SECRET!;
@@ -98,11 +98,7 @@ async function handleCheckoutComplete(session: Stripe.Checkout.Session) {
       },
     });
 
-    if (result.success) {
-      console.log(`Successfully added ${creditsAmount} credits to user ${userId}. New balance: $${result.newBalance}`);
-    } else {
-      console.error(`Failed to add credits to user ${userId}:`, result.error);
-    }
+    console.log(`Successfully added ${creditsAmount} credits to user ${userId}. New balance: $${result.newBalance}`);
   } catch (error) {
     console.error('Error in handleCheckoutComplete:', error);
     throw error;

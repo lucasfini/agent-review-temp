@@ -135,7 +135,7 @@ export default function ContentSelectionModal({
             <h2 className="text-lg font-semibold text-gray-900">
               Generate Content
             </h2>
-            <p className="text-xs text-gray-600 mt-0.5">
+            <p className="text-xs text-gray-600 mt-0.5 truncate max-w-xl">
               {projectTitle || `Project ${projectId.slice(0, 8)}`}
             </p>
           </header>
@@ -146,6 +146,7 @@ export default function ContentSelectionModal({
                 blocks={blocks}
                 onBlocksChange={setBlocks}
                 estimatedCost={estimate?.totalCost || 0}
+                showEstimate={false}
               />
             </div>
 
@@ -165,58 +166,14 @@ export default function ContentSelectionModal({
                   tokenEstimate={modelSelection.tokenEstimate}
                 />
               </div>
-
-              <div className="border border-gray-300 rounded p-3 bg-white">
-                <h3 className="text-sm font-semibold text-gray-900 mb-2">Cost Estimate</h3>
-                {estimate ? (
-                  <>
-                    <div className="mb-2">
-                      <div className="text-xl font-semibold text-gray-900">{formatCost(estimate.totalCost)}</div>
-                      <div className="text-xs text-gray-600 mt-0.5">
-                        {enabledCount} {enabledCount === 1 ? 'block' : 'blocks'} · {formatTokens(estimate.totalTokens)}
-                      </div>
-                      <div className="text-xs text-gray-500 mt-0.5">{estimate.modelName}</div>
-                    </div>
-                    <button
-                      type="button"
-                      onClick={() => setShowCostDetails(!showCostDetails)}
-                      className="w-full flex items-center justify-between text-xs text-gray-700 border border-gray-300 rounded px-2 py-1 hover:bg-gray-50"
-                    >
-                      <span>{showCostDetails ? 'Hide' : 'Show'} details</span>
-                      <ChevronDown className={`w-3.5 h-3.5 transition-transform ${showCostDetails ? 'rotate-180' : ''}`} />
-                    </button>
-                    {showCostDetails && (
-                      <div className="mt-2 pt-2 border-t border-gray-200 space-y-1 text-xs">
-                        <div className="space-y-1">
-                          {estimate.breakdown.map(entry => (
-                            <div key={entry.type} className="flex items-center justify-between text-gray-600">
-                              <span>{entry.type}</span>
-                              <span className="font-medium text-gray-900">{formatCost(entry.cost)}</span>
-                            </div>
-                          ))}
-                        </div>
-                        {modelSelection.tokenEstimate && (
-                          <div className="pt-2 border-t border-gray-200 text-xs text-gray-500 space-y-0.5">
-                            <div>Total: {formatTokens(modelSelection.tokenEstimate.totalTokens)}</div>
-                            <div>Input: {formatTokens(modelSelection.tokenEstimate.totalInputTokens)}</div>
-                            <div>Output: {formatTokens(modelSelection.tokenEstimate.totalOutputTokens)}</div>
-                          </div>
-                        )}
-                      </div>
-                    )}
-                  </>
-                ) : (
-                  <p className="text-xs text-gray-600">Select content blocks</p>
-                )}
-              </div>
             </div>
           </div>
         </div>
 
         {/* Footer */}
-        <div className="px-5 py-3 border-t border-gray-200 bg-gray-50 flex items-center justify-between">
-          <div className="text-xs text-gray-600">
-            {estimate ? `${enabledCount} ${enabledCount === 1 ? 'block' : 'blocks'} • ${formatCost(estimate.totalCost)}` : 'Select content blocks'}
+        <div className="px-5 py-3 border-t border-gray-200 bg-gray-50 flex items-center justify-between sticky bottom-0 z-10">
+          <div className="text-xs text-gray-600 font-medium">
+            {enabledCount} of {blocks.length} selected
           </div>
           <div className="flex items-center gap-2">
             <button
@@ -229,16 +186,21 @@ export default function ContentSelectionModal({
             <button
               onClick={handleGenerate}
               disabled={isGenerating || !enabledCount}
-              className="inline-flex items-center px-3 py-1.5 bg-blue-600 text-white text-sm font-medium rounded hover:bg-blue-700 disabled:opacity-50 disabled:cursor-not-allowed"
+              className="inline-flex items-center px-4 py-1.5 bg-blue-600 text-white text-sm font-medium rounded hover:bg-blue-700 disabled:opacity-50 disabled:cursor-not-allowed shadow-sm"
             >
               {isGenerating ? (
                 <>
                   <Loader2 className="w-4 h-4 mr-1.5 animate-spin" />
-                  Generating
+                  Generating...
                 </>
               ) : (
                 <>
                   Generate Content
+                  {estimate && estimate.totalCost > 0 && (
+                    <span className="ml-1 opacity-90">
+                      (~{formatCost(estimate.totalCost)})
+                    </span>
+                  )}
                 </>
               )}
             </button>

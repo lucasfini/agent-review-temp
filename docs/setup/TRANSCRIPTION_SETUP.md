@@ -1,324 +1,205 @@
-# Fast Cloud Transcription with AssemblyAI
+# Transcription Setup
 
-This project now supports **AssemblyAI** for ultra-fast cloud-based transcription + speaker diarization, achieving 60x faster processing than local PyAnnote/Whisper.
+This project uses **AssemblyAI** for cloud-based transcription + speaker diarization, providing professional-grade accuracy with fast processing times.
+
+**Optional**: Sortformer can be used for local speaker diarization if preferred.
 
 ## Performance Comparison
 
-| Method | 2-Hour Podcast Processing | Cost | Accuracy |
-|--------|--------------------------|------|----------|
-| **AssemblyAI (Cloud)** | ~2 minutes | $0.30 | 97%+ |
-| **Whisper + PyAnnote (Local MPS)** | ~6 hours | $0 | 85-90% |
-| **Whisper + PyAnnote (Local CPU)** | ~40 hours | $0 | 85-90% |
+| Method | Processing Time (1hr audio) | Cost | Accuracy |
+|--------|----------------------------|------|----------|
+| **AssemblyAI (Cloud)** | ~2-3 minutes | ~$0.37 | 97%+ |
+| **Sortformer (Local)** | ~15-30 minutes | $0 | 90-95% |
 
-## Quick Start
+## Quick Setup
 
-### 1. Get an AssemblyAI API Key
+### 1. Get AssemblyAI API Key
 
-1. Sign up at [AssemblyAI](https://www.assemblyai.com/)
-2. Get your API key from the [dashboard](https://www.assemblyai.com/app)
-3. **Free tier**: $50 credits + 60 minutes/month
-
-### 2. Add to Environment Variables
-
-Add to your `.env` or `.env.local`:
+1. Sign up at https://www.assemblyai.com
+2. Get your API key from the dashboard
+3. Add to `.env.local`:
 
 ```bash
-# AssemblyAI Configuration (for fast cloud processing)
-ASSEMBLYAI_API_KEY=your_api_key_here
-# Or use: ASSEMBLYAI_ACCESS_KEY=your_api_key_here (either name works)
-
-# Transcription Strategy (choose one)
-TRANSCRIPTION_PROVIDER=auto          # Intelligent selection (recommended)
-# TRANSCRIPTION_PROVIDER=assemblyai  # Always use AssemblyAI
-# TRANSCRIPTION_PROVIDER=local       # Always use local (Whisper + PyAnnote)
-
-# Fallback Behavior
-TRANSCRIPTION_FALLBACK_TO_LOCAL=true # Fallback to local if AssemblyAI fails
+ASSEMBLYAI_API_KEY=your_key_here
 ```
 
-### 3. That's It!
+### 2. Configure Tier Settings (Optional)
 
-Your application will now automatically use AssemblyAI for transcription + speaker diarization.
+The system supports 3 processing tiers:
 
----
+```bash
+# Basic tier (default): Transcription + numbered speakers
+# Pro tier: + AI name extraction + summary
+# Premium tier: + Role classification + chapters + takeaways + quotes
 
-## How It Works
-
-### Provider Selection Logic
-
-The system intelligently chooses between cloud and local processing based on:
-
-1. **Provider Setting (`TRANSCRIPTION_PROVIDER`)**:
-   - `auto`: Intelligent selection based on availability and cost
-   - `assemblyai`: Always use AssemblyAI (fastest)
-   - `local`: Always use Whisper + PyAnnote/NeMo (free)
-
-2. **Auto Mode Decision Tree**:
-   ```
-   ┌─ AssemblyAI API key configured?
-   │  ├─ YES ─┬─ Cost within budget? ($2 default)
-   │  │       ├─ YES → Use AssemblyAI ⚡
-   │  │       └─ NO → Use local processing 🏠
-   │  └─ NO → Use local processing 🏠
-   ```
-
-3. **Fallback Behavior**:
-   - If AssemblyAI fails and `TRANSCRIPTION_FALLBACK_TO_LOCAL=true`
-   - Automatically falls back to Whisper + PyAnnote
-
-### Architecture
-
-#### AssemblyAI Flow (Fast):
-```
-Upload Audio → AssemblyAI Cloud
-    ↓
-Transcription + Speaker Diarization (simultaneous)
-    ↓
-Word-level timestamps + Speaker labels
-    ↓
-Save to database (complete) → Return to user
+# Set default tier (optional)
+DEFAULT_PROCESSING_TIER=pro
 ```
 
-**Time**: ~2 minutes for 2-hour podcast
-**Cost**: $0.30 for 2-hour podcast
+## Environment Variables
 
-#### Local Flow (Free):
-```
-Upload Audio → Whisper Transcription (local)
-    ↓
-Speaker Diarization (PyAnnote/MPS or NeMo/CUDA)
-    ↓
-Word-level alignment
-    ↓
-Save transcription → Background speaker analysis → Update database
-```
+### Required
 
-**Time**: ~6 hours for 2-hour podcast (with MPS)
-**Cost**: $0 (local processing)
+| Variable | Description |
+|----------|-------------|
+| `ASSEMBLYAI_API_KEY` | Your AssemblyAI API key (required) |
 
----
-
-## Environment Variables Reference
-
-### Core Configuration
+### Optional
 
 | Variable | Default | Description |
 |----------|---------|-------------|
-| `ASSEMBLYAI_API_KEY` | (none) | Your AssemblyAI API key |
-| `TRANSCRIPTION_PROVIDER` | `auto` | `assemblyai`, `local`, or `auto` |
-| `TRANSCRIPTION_FALLBACK_TO_LOCAL` | `true` | Fallback to local if cloud fails |
+| `DEFAULT_PROCESSING_TIER` | `basic` | Default processing tier (basic/pro/premium) |
+| `ANTHROPIC_API_KEY` | - | Required for Pro/Premium AI features |
 
-### Local PyAnnote/NeMo Settings
+### Optional Sortformer Configuration
 
-*These only apply when using local processing:*
+Only needed if using local Sortformer diarization:
 
 | Variable | Default | Description |
 |----------|---------|-------------|
-| `PYANNOTE_PYTHON_PATH` | `python3` | Path to Python with PyAnnote |
-| `HUGGING_FACE_ACCESS_TOKEN` | (required) | HF token for PyAnnote models |
-| `EXPECTED_SPEAKERS` | auto | Lock speaker count (e.g., `2`) |
-| `PYANNOTE_MERGE_GAP_S` | `1.2` | Merge same-speaker segments |
-| `PYANNOTE_WINDOWED` | `false` | Enable windowed processing |
+| `SORTFORMER_PYTHON_PATH` | `python3` | Path to Python with Sortformer dependencies |
+| `SORTFORMER_DEVICE` | auto | Device for processing (cpu/cuda/mps) |
 
-See `PYANNOTE_SETUP.md` for full local setup instructions.
+## Processing Flow
 
----
+```
+Audio Upload
+    ↓
+AssemblyAI Processing (Transcription + Diarization)
+    ↓
+Speaker Grouping
+    ↓
+Tier-Based AI Enhancement
+    ↓
+Caching (for cost optimization)
+    ↓
+Final Output
+```
 
-## Cost Management
+## Tier Features
 
-### Pricing
+### Basic Tier
+- AssemblyAI transcription
+- Speaker diarization
+- Numbered speakers (Speaker 1, Speaker 2, etc.)
+- **Cost**: ~$0.37/hour
 
-AssemblyAI charges $0.15 per hour of audio:
+### Pro Tier
+- Everything in Basic
+- AI name extraction
+- Podcast summary
+- **Cost**: ~$0.40-0.45/hour
 
-| Audio Duration | Cost |
-|----------------|------|
-| 30 minutes | $0.08 |
-| 1 hour | $0.15 |
-| 2 hours | $0.30 |
-| 10 hours | $1.50 |
+### Premium Tier
+- Everything in Pro
+- Speaker role classification (host, guest, etc.)
+- Chapter detection
+- Key takeaways extraction
+- Social media quotes
+- **Cost**: ~$0.50-0.60/hour
 
-### Budget Control
+## Caching System
 
-In `auto` mode, you can set a maximum cost per file:
+The system automatically caches base transcriptions to reduce costs:
+
+- **First processing**: Full AssemblyAI cost
+- **Subsequent processing**: $0 transcription cost (cache hit)
+- Only pay for tier-specific AI enhancements
+
+Example:
+- First processing (Premium): $0.55
+- Re-processing with different tier (Pro): $0.05 (only AI enhancement)
+- **Savings**: ~90% on repeat processing
+
+## Usage in Code
 
 ```typescript
-// In lib/transcription-strategy.ts, line ~90
-const maxCost = config.maxCostUSD ?? 2.00; // Default: $2 per file
+// In your upload/transcription flow
+const result = await transcribeAudio({
+  projectId: 'project-123',
+  fileName: 'audio.mp3',
+  performanceLevel: 'premium', // basic, pro, or premium
+});
+
+// Result includes:
+// - transcription text
+// - speaker segments
+// - AI-generated content (based on tier)
+// - cost breakdown
 ```
 
-If estimated cost exceeds this, the system automatically falls back to local processing.
-
-### Free Tier
-
-AssemblyAI provides:
-- $50 in credits (333 hours of audio)
-- 60 free minutes per month (ongoing)
-
-This is enough to process **333 hours of podcasts** with your free tier!
-
----
-
-## Monitoring
-
-### Check Provider Status
-
-Your application logs will show the selected provider:
-
-```
-[TRANSCRIPTION] Strategy info: {
-  assemblyAIAvailable: true,
-  pyAnnoteAvailable: true,
-  defaultProvider: 'auto',
-  fallbackEnabled: true
-}
-[TRANSCRIPTION] 📡 Using AssemblyAI for fast cloud processing
-[TRANSCRIPTION] ✅ AssemblyAI completed in 123.4s
-[TRANSCRIPTION] Cost: $0.30
-[TRANSCRIPTION] Speakers: 2, Segments: 145
-```
-
-### API Response
-
-When using AssemblyAI, the API response includes:
+## API Response Format
 
 ```json
 {
   "success": true,
-  "projectId": "...",
-  "transcription": "...",
-  "duration": 7200,
-  "segments": 145,
-  "method": "assemblyai",
+  "tier": "premium",
+  "transcription": "Full transcript text...",
   "speakers": 2,
-  "cost_usd": 0.30
+  "duration": 3600,
+  "cost": 0.55,
+  "costBreakdown": {
+    "transcription": 0.37,
+    "aiProcessing": 0.18,
+    "total": 0.55
+  },
+  "features": {
+    "summary": true,
+    "chapters": true,
+    "takeaways": true,
+    "quotes": true,
+    "roles": true
+  }
 }
 ```
 
----
-
 ## Troubleshooting
 
-### "AssemblyAI API key not found"
+### Missing API Key
+**Error**: "AssemblyAI not configured"
 
-**Cause**: `ASSEMBLYAI_API_KEY` not set in environment.
+**Solution**: Add `ASSEMBLYAI_API_KEY` to `.env.local`
 
-**Solution**:
-1. Get your API key from https://www.assemblyai.com/app
-2. Add to `.env.local`:
-   ```
-   ASSEMBLYAI_API_KEY=your_key_here
-   ```
-3. Restart your Next.js application
+### Insufficient Credits
+**Error**: "Insufficient credits"
 
-### "AssemblyAI processing failed"
+**Solution**: Add credits via the billing dashboard or Stripe integration
 
-**Cause**: API error or network issue.
+### Slow Processing
+**Issue**: Processing takes longer than expected
 
-**Solution**:
-1. Check your API key is valid
-2. Check AssemblyAI service status
-3. If `TRANSCRIPTION_FALLBACK_TO_LOCAL=true`, it will automatically fallback
-4. Check logs for specific error message
+**Check**:
+- AssemblyAI status: https://status.assemblyai.com
+- Your internet connection
+- File size (larger files take longer)
 
-### Still Using Local Processing
+### Poor Speaker Detection
+**Issue**: Wrong number of speakers detected
 
-**Check these**:
-1. Is `ASSEMBLYAI_API_KEY` set correctly?
-2. Is `TRANSCRIPTION_PROVIDER` set to `assemblyai` or `auto`?
-3. Check logs for provider selection decision
-4. Restart Next.js to pick up env changes
+**Solutions**:
+- Check audio quality (clear recording, minimal background noise)
+- Use speaker roster feature to pre-define expected speakers
+- Post-processing settings can help (see SPEAKER_DIARIZATION_CONFIG.md)
 
----
+## Cost Optimization Tips
 
-## Migration from Local-Only
+1. **Use caching**: Process same audio multiple times with different tiers
+2. **Choose appropriate tier**: Don't use Premium if you only need transcription
+3. **Batch processing**: Process multiple files in sequence
+4. **Monitor usage**: Track costs via billing dashboard
 
-If you're currently using only Whisper + PyAnnote:
-
-### Before:
-```env
-# .env.local
-PYANNOTE_PYTHON_PATH=/path/to/pyannote_env/bin/python
-HUGGING_FACE_ACCESS_TOKEN=hf_...
-EXPECTED_SPEAKERS=2
-```
-
-### After (Hybrid):
-```env
-# .env.local
-# Cloud (Primary - Fast)
-ASSEMBLYAI_API_KEY=your_assemblyai_key
-TRANSCRIPTION_PROVIDER=auto
-TRANSCRIPTION_FALLBACK_TO_LOCAL=true
-
-# Local (Fallback - Free)
-PYANNOTE_PYTHON_PATH=/path/to/pyannote_env/bin/python
-HUGGING_FACE_ACCESS_TOKEN=hf_...
-EXPECTED_SPEAKERS=2
-```
-
-Now you have:
-- ⚡ **Fast**: AssemblyAI for production (2 min processing)
-- 🏠 **Free**: Local fallback if needed
-- 🛡️ **Reliable**: Automatic failover
-
----
-
-## Advanced Configuration
-
-### Custom Strategy
-
-You can customize the provider selection logic in `lib/transcription-strategy.ts`:
-
-```typescript
-// Example: Only use AssemblyAI for files > 1 hour
-const estimatedDuration = ...; // seconds
-const maxCost = estimatedDuration > 3600 ? 5.00 : 0.50;
-
-const result = await selectTranscriptionStrategy({
-  provider: 'auto',
-  audioFilePath: '/path/to/audio.mp3',
-  maxCostUSD: maxCost,
-  fallbackToLocal: true
-});
-```
-
-### Webhooks (Optional)
-
-For very long files, you can use AssemblyAI webhooks instead of polling:
-
-```typescript
-const result = await transcribeWithAssemblyAI(audioFilePath, {
-  webhookUrl: 'https://your-app.com/api/webhooks/assemblyai'
-});
-```
-
----
-
-## Why AssemblyAI?
-
-1. **60x Faster**: 2 minutes vs 2 hours for typical podcast
-2. **Higher Accuracy**: 97%+ vs 85-90% for speaker diarization
-3. **Zero Infrastructure**: No Python, no GPU setup, no maintenance
-4. **Scalable**: Handles unlimited concurrent requests
-5. **Cost-Effective**: $0.15/hour is cheaper than GPU server costs
-6. **Word-Level Timestamps**: Built-in, perfect alignment
-7. **99 Languages**: Supports 95 with diarization
-
-## When to Use Local Processing
-
-Local processing (Whisper + PyAnnote) is better when:
-- Development/testing (avoid API costs)
-- Privacy requirements (keep audio local)
-- Very high volume (>1000 hours/month)
-- Offline/air-gapped environments
-
----
-
-## Support
+## Additional Resources
 
 - **AssemblyAI Docs**: https://www.assemblyai.com/docs
-- **API Status**: https://status.assemblyai.com/
-- **Pricing**: https://www.assemblyai.com/pricing
-- **PyAnnote Setup**: See `PYANNOTE_SETUP.md`
+- **AssemblyAI Pricing**: https://www.assemblyai.com/pricing
+- **Speaker Diarization Config**: See `SPEAKER_DIARIZATION_CONFIG.md`
+- **Tier Configuration**: See project documentation
 
-For issues with this integration, check application logs for detailed error messages.
+## Migration Notes
+
+If you previously used local PyAnnote/Whisper:
+- All processing now uses AssemblyAI by default
+- PyAnnote configuration variables are no longer needed
+- HuggingFace tokens no longer required
+- Python environment setup no longer needed (unless using Sortformer)
+- Expect significant speed improvements (60x faster)

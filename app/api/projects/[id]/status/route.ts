@@ -21,9 +21,9 @@ export async function GET(
       .from('projects')
       .select('*')
       .eq('id', projectId)
-      .single();
+      .single() as { data: any; error: any };
 
-    if (error) {
+    if (error || !project) {
       console.error('Database error:', error);
       return NextResponse.json(
         { error: 'Project not found' },

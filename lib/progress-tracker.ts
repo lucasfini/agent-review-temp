@@ -42,8 +42,8 @@ export async function updateProcessingProgress(
       updateData.status = 'processing';
     }
 
-    const { error } = await supabaseAdmin
-      .from('projects')
+    const { error } = await (supabaseAdmin
+      .from('projects') as any)
       .update(updateData)
       .eq('id', projectId);
 

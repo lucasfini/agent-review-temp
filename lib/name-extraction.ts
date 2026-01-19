@@ -1,10 +1,11 @@
 // AI-powered name extraction from podcast transcriptions
 // Uses segment-based mapping for accurate speaker attribution
-import OpenAI from 'openai';
+import { getAICompletion, AICompletionResponse } from '@/lib/ai-providers/multi-provider';
 import { SpeakerSegment, DetectedSpeaker } from './types';
-import { getPrompt, getSystemMessage, prompts } from '@/lib/prompts/loader';
+import { getPrompt, prompts } from '@/lib/prompts/loader';
 import type { SpeakerNameExtractionVars } from '@/lib/prompts/types';
-import { trackOpenAIUsage } from '@/lib/billing/track-usage';
+import { logUsageEvent, debitCredit } from '@/lib/billing/credit';
+import { calculateTokenCost } from '@/lib/billing/cost-map';
 
 export interface ExtractedName {
   name: string;
@@ -24,15 +25,812 @@ export interface NamedSpeaker extends DetectedSpeaker {
   roleEvidence?: string[];
   autoRoleAssigned?: boolean;
   customName?: string;
+
+  // Roster matching metadata
+  rosterMatched?: boolean;
+  rosterMatchMethod?: 'self_intro' | 'speaking_time' | 'introduced_by_other' | 'keyword_freq' | 'speaker_order';
+  rosterMatchConfidence?: number;
+}
+
+// Roster speaker type for pre-defined speakers
+export interface PresetSpeaker {
+  id: string;
+  name: string;
+  role: 'host' | 'guest' | 'cohost' | 'moderator' | 'other' | null;
+  description?: string;
+  priority: number;
 }
 
 /**
- * Extract speaker names using segment-based mapping for accurate attribution
- *
- * NEW APPROACH: Uses speaker segment data directly instead of text position estimation
- * This ensures names are correctly mapped to the speaker who actually said them
+ * NEW INTERFACES FOR TWO-PHASE EXTRACTION
  */
-export async function extractSpeakerNames(
+
+// Name candidate collected from transcript (Phase 1)
+interface NameCandidate {
+  name: string;
+  firstMentionSegmentIndex: number;
+  mentionedBy: string[];  // speakerIds who mentioned this name
+  mentionCount: number;
+  contexts: string[];  // evidence segments
+  introductionType?: 'guest_intro' | 'direct_address' | 'mentioned';
+}
+
+// Role candidate extracted from line labels (Phase 1)
+interface RoleCandidate {
+  role: string;
+  speakerId: string;
+  confidence: number;
+  evidence: string;
+}
+
+/**
+ * UTILITY FUNCTIONS FOR HYBRID NAME EXTRACTION
+ */
+
+/**
+ * Validate if a string is a valid person name
+ * Filters out common false positives and role words
+ */
+function isValidName(name: string): boolean {
+  if (name.length < 2 || name.length > 50) return false;
+  if (!/^[A-Z]/.test(name)) return false;
+
+  const lower = name.toLowerCase();
+
+  // EXPANDED: Comprehensive role word filtering (exact match)
+  const roleWords = [
+    'correspondent', 'expert', 'analyst', 'commentator', 'journalist',
+    'reporter', 'moderator', 'host', 'cohost', 'guest', 'speaker',
+    'interviewer', 'panelist', 'contributor', 'pundit', 'producer',
+    'editor', 'director', 'manager', 'assistant', 'coordinator'
+  ];
+  if (roleWords.includes(lower)) return false;
+
+  // Reject single-word names (most real names are 2+ words)
+  const words = name.trim().split(/\s+/);
+  if (words.length < 2) return false;  // "Correspondent" → false, "Alice Fraser" → true
+
+  // Filter out common false positive words
+  const commonWords = [
+    'not', 'never', 'trying', 'going', 'show', 'podcast',
+    'political', 'bugle', 'episode', 'today', 'welcome',
+    'thanks', 'hello', 'okay', 'right', 'yeah', 'well', 'good'
+  ];
+  if (commonWords.some(word => lower.includes(word))) return false;
+
+  // Must contain only letters, spaces, hyphens
+  if (!/^[A-Za-z\s-]+$/.test(name)) return false;
+
+  return true;
+}
+
+/**
+ * Format seconds to MM:SS or H:MM:SS
+ */
+function formatMins(seconds: number): string {
+  const mins = Math.floor(seconds / 60);
+  const secs = Math.floor(seconds % 60);
+  if (mins >= 60) {
+    const hours = Math.floor(mins / 60);
+    const remainingMins = mins % 60;
+    return `${hours}:${remainingMins.toString().padStart(2, '0')}:${secs.toString().padStart(2, '0')}`;
+  }
+  return `${mins}:${secs.toString().padStart(2, '0')}`;
+}
+
+/**
+ * Convert SpeakerSegment to compact format for LLM
+ */
+function compactSegment(seg: SpeakerSegment): import('@/lib/prompts/types').CompactSegment {
+  // Truncate long segments (>300 chars)
+  const text = seg.text.length > 300
+    ? seg.text.substring(0, 300) + "..."
+    : seg.text;
+
+  return {
+    speakerId: seg.speakerId,
+    time: `${formatMins(seg.startTime)}-${formatMins(seg.endTime)}`,
+    text
+  };
+}
+
+/**
+ * Estimate token count for a compact segment
+ */
+function estimateTokens(seg: import('@/lib/prompts/types').CompactSegment): number {
+  const text = `[${seg.speakerId}] ${seg.time}: ${seg.text}\n\n`;
+  return Math.ceil(text.length / 4); // ~4 chars per token
+}
+
+/**
+ * Select segments for LLM processing (2000-3000 token budget)
+ * Prioritizes: intro window, name mentions, direct address
+ */
+function selectSegmentsForLLM(allSegments: SpeakerSegment[]): {
+  segments: import('@/lib/prompts/types').CompactSegment[];
+  estimatedTokens: number;
+} {
+  const selected: import('@/lib/prompts/types').CompactSegment[] = [];
+  let tokens = 0;
+  const MAX_TOKENS = 3000;
+
+  // PRIORITY 1: Intro window (first 3 minutes)
+  const introSegments = allSegments.filter(s => s.startTime <= 180);
+  for (const seg of introSegments) {
+    const compact = compactSegment(seg);
+    const segTokens = estimateTokens(compact);
+    if (tokens + segTokens <= MAX_TOKENS) {
+      selected.push(compact);
+      tokens += segTokens;
+    }
+  }
+
+  // PRIORITY 2: Name-mention segments (first 5 minutes)
+  const nameMentionPattern = /\b[A-Z][a-z]+(?:\s+[A-Z][a-z]+)+\b/;
+  const nameMentions = allSegments
+    .filter(s => s.startTime <= 300 && nameMentionPattern.test(s.text))
+    .slice(0, 20);
+
+  for (const seg of nameMentions) {
+    const compact = compactSegment(seg);
+    const segTokens = estimateTokens(compact);
+    if (tokens + segTokens <= MAX_TOKENS) {
+      // Avoid duplicates
+      if (!selected.some(s => s.speakerId === compact.speakerId && s.time === compact.time)) {
+        selected.push(compact);
+        tokens += segTokens;
+      }
+    }
+  }
+
+  // PRIORITY 3: Direct address ("Name," or "Name what...")
+  const directAddressPattern = /\b([A-Z][a-z]+),\s|\b([A-Z][a-z]+)\s+(?:what|how|why)/;
+  const directAddress = allSegments
+    .filter(s => directAddressPattern.test(s.text))
+    .slice(0, 10);
+
+  for (const seg of directAddress) {
+    const compact = compactSegment(seg);
+    const segTokens = estimateTokens(compact);
+    if (tokens + segTokens <= MAX_TOKENS) {
+      // Avoid duplicates
+      if (!selected.some(s => s.speakerId === compact.speakerId && s.time === compact.time)) {
+        selected.push(compact);
+        tokens += segTokens;
+      }
+    }
+  }
+
+  console.log(`[NAME EXTRACTION] Selected ${selected.length} segments (~${tokens} tokens) for LLM processing`);
+
+  return { segments: selected, estimatedTokens: tokens };
+}
+
+/**
+ * PHASE 1: CANDIDATE COLLECTION FUNCTIONS
+ */
+
+/**
+ * Collect all name candidates mentioned in the transcript
+ * Scans entire transcript for proper names (2+ capitalized words)
+ * Returns Map of name -> NameCandidate with metadata
+ */
+function collectNameCandidates(segments: SpeakerSegment[]): Map<string, NameCandidate> {
+  const candidates = new Map<string, NameCandidate>();
+
+  // Pattern: 2+ capitalized words (real names)
+  const namePattern = /\b([A-Z][a-z]+\s+[A-Z][a-z]+(?:\s+[A-Z][a-z]+)?)\b/g;
+
+  for (let i = 0; i < segments.length; i++) {
+    const seg = segments[i];
+    const matches = Array.from(seg.text.matchAll(namePattern));
+
+    for (const match of matches) {
+      const name = match[1].trim();
+
+      // Validate using isValidName
+      if (!isValidName(name)) continue;
+
+      const matchIndex = match.index || 0;
+
+      // Check if this is a guest introduction
+      const preContext = seg.text.substring(Math.max(0, matchIndex - 50), matchIndex);
+      const isGuestIntro = /\b(?:joined|joining|welcome|introduce)\s+(?:by|us|you to)?\s*$/i.test(preContext);
+
+      // Check if this is direct address (name followed by comma or question)
+      const postContext = seg.text.substring(matchIndex + name.length, matchIndex + name.length + 15);
+      const isDirect = /^,\s|^\s+(?:what|how|why|do|can|would)/i.test(postContext);
+
+      // Add or update candidate
+      if (!candidates.has(name)) {
+        candidates.set(name, {
+          name,
+          firstMentionSegmentIndex: i,
+          mentionedBy: [seg.speakerId],
+          mentionCount: 1,
+          contexts: [seg.text.substring(0, 150)],
+          introductionType: isGuestIntro ? 'guest_intro' : (isDirect ? 'direct_address' : 'mentioned')
+        });
+      } else {
+        const candidate = candidates.get(name)!;
+        candidate.mentionCount++;
+        if (!candidate.mentionedBy.includes(seg.speakerId)) {
+          candidate.mentionedBy.push(seg.speakerId);
+        }
+        if (candidate.contexts.length < 3) {
+          candidate.contexts.push(seg.text.substring(0, 150));
+        }
+      }
+    }
+  }
+
+  console.log(`[NAME CANDIDATES] Found ${candidates.size} name candidates:`,
+    Array.from(candidates.keys()).join(', '));
+
+  return candidates;
+}
+
+/**
+ * Collect role candidates from line labels
+ * Extracts roles like "Correspondent", "Expert" from formatted lines
+ * Returns Map of speakerId -> RoleCandidate
+ */
+function collectRoleCandidates(segments: SpeakerSegment[]): Map<string, RoleCandidate> {
+  const roleCandidates = new Map<string, RoleCandidate>();
+
+  // Line label pattern: "RoleName X minutes Y seconds:"
+  const lineLabelPattern = /^([A-Z][a-z]+(?:\s+[A-Z][a-z]+)?)\s+\d+\s+minutes?\s+\d+\s+seconds?:/;
+
+  const roleWords = [
+    'correspondent', 'expert', 'analyst', 'commentator', 'host',
+    'cohost', 'moderator', 'journalist', 'reporter', 'guest',
+    'interviewer', 'panelist', 'contributor', 'pundit'
+  ];
+
+  for (const seg of segments) {
+    const match = seg.text.match(lineLabelPattern);
+    if (match) {
+      const label = match[1].trim();
+      const lower = label.toLowerCase();
+
+      // Check if this is a role word
+      const isRole = roleWords.includes(lower) ||
+                     roleWords.some(role => lower.includes(role));
+
+      if (isRole) {
+        roleCandidates.set(seg.speakerId, {
+          role: label,
+          speakerId: seg.speakerId,
+          confidence: 0.95,
+          evidence: seg.text.substring(0, 100)
+        });
+        console.log(`[ROLE CANDIDATE] ${seg.speakerId} → Role: "${label}"`);
+      } else if (isValidName(label)) {
+        // This is an actual name in line label format (not a role)
+        console.log(`[LINE LABEL NAME] ${seg.speakerId} → Name: "${label}" (not a role)`);
+      }
+    }
+  }
+
+  return roleCandidates;
+}
+
+/**
+ * Run deterministic heuristics to identify speaker names
+ * NEW: Returns three separate buckets instead of unified results
+ * PHASE 1: Candidate collection only (assignment happens later)
+ */
+function runDeterministicHeuristics(
+  segments: SpeakerSegment[]
+): {
+  selfIntroductions: Map<string, import('@/lib/prompts/types').HeuristicResult>;
+  nameCandidates: Map<string, NameCandidate>;
+  roleCandidates: Map<string, RoleCandidate>;
+} {
+  console.log(`[NAME EXTRACTION] Running deterministic heuristics on ${segments.length} segments`);
+
+  const selfIntroductions = new Map<string, import('@/lib/prompts/types').HeuristicResult>();
+
+  // STEP 1: Self-introductions (speaker-specific, high confidence)
+  // These are immediately assigned because the speaker explicitly identifies themselves
+  const selfPatterns = [
+    { pattern: /\bmy name (?:is|'s)\s+([A-Z][a-z]+(?:\s+[A-Z][a-z]+){1,2})\b/i, conf: 0.98 },
+    { pattern: /\bI'?m\s+([A-Z][a-z]+(?:\s+[A-Z][a-z]+){1,2})(?:\s+and|,|\.|$)/i, conf: 0.95 },
+    { pattern: /\bI am\s+([A-Z][a-z]+(?:\s+[A-Z][a-z]+){1,2})(?:\s+and|,|\.|$)/i, conf: 0.92 },
+  ];
+
+  for (const seg of segments) {
+    for (const { pattern, conf } of selfPatterns) {
+      const match = seg.text.match(pattern);
+      if (match && isValidName(match[1])) {
+        const existing = selfIntroductions.get(seg.speakerId);
+        if (!existing || conf > existing.confidence) {
+          selfIntroductions.set(seg.speakerId, {
+            speakerId: seg.speakerId,
+            name: match[1].trim(),
+            confidence: conf,
+            method: 'self_intro',
+            evidence: [{
+              speakerId: seg.speakerId,
+              startTime: seg.startTime,
+              endTime: seg.endTime,
+              text: seg.text.substring(0, 150)
+            }]
+          });
+          console.log(`[HEURISTIC] Self-intro: ${seg.speakerId} → "${match[1].trim()}" (conf: ${conf})`);
+        }
+        break;
+      }
+    }
+  }
+
+  // STEP 2: Collect name candidates (not speaker-specific yet)
+  const nameCandidates = collectNameCandidates(segments);
+
+  // STEP 3: Collect role candidates (from line labels)
+  const roleCandidates = collectRoleCandidates(segments);
+
+  console.log(`[NAME EXTRACTION] Heuristics complete: ${selfIntroductions.size} self-intros, ${nameCandidates.size} name candidates, ${roleCandidates.size} roles`);
+
+  return { selfIntroductions, nameCandidates, roleCandidates };
+}
+
+/**
+ * PHASE 2: SPEAKER-NAME ASSIGNMENT FUNCTIONS
+ */
+
+/**
+ * Find best speaker match for a name candidate using evidence scoring
+ * Scores each unnamed speaker based on multiple evidence types
+ * Returns speaker with highest evidence score
+ */
+function findBestSpeakerForName(
+  candidate: NameCandidate,
+  unnamedSpeakers: string[],
+  segments: SpeakerSegment[]
+): { speakerId: string; evidenceScore: number } | null {
+
+  if (unnamedSpeakers.length === 0) return null;
+
+  const mentionSegment = segments[candidate.firstMentionSegmentIndex];
+  const introducerId = mentionSegment.speakerId;
+
+  // Score each unnamed speaker
+  const scores: Array<{ speakerId: string; score: number; reasons: string[] }> = [];
+
+  for (const speakerId of unnamedSpeakers) {
+    let score = 0;
+    const reasons: string[] = [];
+
+    // EVIDENCE 1: Next speaker after introduction (strongest)
+    if (candidate.introductionType === 'guest_intro') {
+      const firstAppearanceIndex = segments.findIndex(
+        (s, i) => i > candidate.firstMentionSegmentIndex && s.speakerId === speakerId
+      );
+      if (firstAppearanceIndex > -1) {
+        const distance = firstAppearanceIndex - candidate.firstMentionSegmentIndex;
+        if (distance <= 5) {
+          score += 50;
+          reasons.push('next_after_intro');
+        } else if (distance <= 10) {
+          score += 30;
+          reasons.push('soon_after_intro');
+        }
+      }
+    }
+
+    // EVIDENCE 2: Direct address to this speaker
+    for (let i = 0; i < segments.length; i++) {
+      const seg = segments[i];
+      if (seg.text.includes(candidate.name) && i + 1 < segments.length && segments[i + 1].speakerId === speakerId) {
+        score += 40;
+        reasons.push('direct_address_before');
+        break;
+      }
+      if (seg.speakerId === speakerId && i + 1 < segments.length && segments[i + 1].text.includes(candidate.name)) {
+        score += 35;
+        reasons.push('direct_address_after');
+        break;
+      }
+    }
+
+    // EVIDENCE 3: Proximity in transcript
+    const speakerSegmentIndices = segments
+      .map((s, i) => s.speakerId === speakerId ? i : -1)
+      .filter(i => i > -1);
+
+    const avgDistance = speakerSegmentIndices.length > 0
+      ? speakerSegmentIndices.reduce((sum, idx) => sum + Math.abs(idx - candidate.firstMentionSegmentIndex), 0) / speakerSegmentIndices.length
+      : 999;
+
+    if (avgDistance < 10) {
+      score += 20;
+      reasons.push('close_proximity');
+    } else if (avgDistance < 20) {
+      score += 10;
+      reasons.push('moderate_proximity');
+    }
+
+    // EVIDENCE 4: Speaking order (fallback)
+    if (unnamedSpeakers.length > 1) {
+      const isFirstUnnamed = unnamedSpeakers[0] === speakerId;
+      if (isFirstUnnamed && candidate.firstMentionSegmentIndex < segments.length / 2) {
+        score += 15;
+        reasons.push('first_mentioned_first_speaker');
+      }
+    }
+
+    scores.push({ speakerId, score, reasons });
+  }
+
+  // Sort by score descending
+  scores.sort((a, b) => b.score - a.score);
+
+  if (scores.length > 0 && scores[0].score > 0) {
+    console.log(`[EVIDENCE] Best match for "${candidate.name}": ${scores[0].speakerId} (score: ${scores[0].score}, reasons: ${scores[0].reasons.join(', ')})`);
+    return { speakerId: scores[0].speakerId, evidenceScore: scores[0].score };
+  }
+
+  return null;
+}
+
+/**
+ * Calculate assignment confidence based on evidence score
+ * Maps evidence scores to confidence values
+ */
+function calculateAssignmentConfidence(
+  candidate: NameCandidate,
+  targetSpeakerId: string,
+  segments: SpeakerSegment[],
+  evidenceScore: number
+): number {
+  let confidence = 0.60;  // Base
+
+  // Boost based on evidence score
+  if (evidenceScore >= 50) confidence = 0.90;       // Very strong
+  else if (evidenceScore >= 40) confidence = 0.85;  // Strong
+  else if (evidenceScore >= 30) confidence = 0.82;  // Good
+  else if (evidenceScore >= 20) confidence = 0.78;  // Moderate
+  else confidence = 0.70;                           // Weak
+
+  // Additional boosts
+  if (candidate.introductionType === 'guest_intro') confidence += 0.05;
+  if (candidate.mentionCount >= 2) confidence += 0.03;
+
+  return Math.min(confidence, 0.95);
+}
+
+/**
+ * Assign name candidates to speakers based on evidence
+ * Phase 2 of hybrid extraction
+ */
+function assignNamesToSpeakers(
+  speakerIds: string[],
+  segments: SpeakerSegment[],
+  selfIntroductions: Map<string, import('@/lib/prompts/types').HeuristicResult>,
+  nameCandidates: Map<string, NameCandidate>,
+  threshold: number = 0.80
+): Map<string, import('@/lib/prompts/types').HeuristicResult> {
+
+  const assignments = new Map<string, import('@/lib/prompts/types').HeuristicResult>();
+
+  // PRIORITY 1: Self-introductions (100% confidence)
+  for (const [speakerId, result] of selfIntroductions) {
+    assignments.set(speakerId, result);
+  }
+
+  // PRIORITY 2: Guest introductions (80-90% confidence)
+  const unnamedSpeakers = speakerIds.filter(id => !assignments.has(id));
+
+  for (const [name, candidate] of nameCandidates) {
+    // Skip if this candidate is already assigned
+    if (Array.from(assignments.values()).some(a => a.name === name)) continue;
+
+    // Find speaker this name likely refers to
+    const targetMatch = findBestSpeakerForName(
+      candidate,
+      unnamedSpeakers,
+      segments
+    );
+
+    if (targetMatch) {
+      const confidence = calculateAssignmentConfidence(candidate, targetMatch.speakerId, segments, targetMatch.evidenceScore);
+
+      // AGGRESSIVE: Assign if confidence >= threshold (user requirement)
+      if (confidence >= threshold) {
+        assignments.set(targetMatch.speakerId, {
+          speakerId: targetMatch.speakerId,
+          name: candidate.name,
+          confidence,
+          method: candidate.introductionType === 'guest_intro' ? 'guest_intro' : 'direct_address',
+          evidence: candidate.contexts.map((text, idx) => ({
+            speakerId: candidate.mentionedBy[idx] || 'unknown',
+            startTime: 0,
+            endTime: 0,
+            text
+          }))
+        });
+
+        console.log(`[ASSIGNMENT] ${targetMatch.speakerId} → "${candidate.name}" (conf: ${confidence.toFixed(2)})`);
+
+        // Remove from unnamed list
+        const idx = unnamedSpeakers.indexOf(targetMatch.speakerId);
+        if (idx > -1) unnamedSpeakers.splice(idx, 1);
+      }
+    }
+  }
+
+  console.log(`[ASSIGNMENT] Assigned ${assignments.size}/${speakerIds.length} speakers`);
+  return assignments;
+}
+
+/**
+ * Run structured LLM extraction for remaining speakers
+ * Returns Map of speakerId -> LLMAssignment
+ */
+async function runStructuredLLMExtraction(
+  segments: SpeakerSegment[],
+  existingResults: Map<string, import('@/lib/prompts/types').HeuristicResult>,
+  options?: { userId?: string; projectId?: string }
+): Promise<Map<string, import('@/lib/prompts/types').LLMAssignment>> {
+  // Select segments (2000-3000 tokens)
+  const selection = selectSegmentsForLLM(segments);
+
+  const speakerIds = Array.from(new Set(segments.map(s => s.speakerId)));
+  const unnamedSpeakers = speakerIds.filter(id => !existingResults.has(id));
+
+  if (unnamedSpeakers.length === 0) {
+    console.log('[NAME EXTRACTION] All speakers already named, skipping LLM');
+    return new Map();
+  }
+
+  console.log(`[NAME EXTRACTION] Calling LLM for ${unnamedSpeakers.length} unnamed speakers`);
+
+  try {
+    // Build structured utterances for GPT
+    const structuredUtterances = selection.segments.map(s => ({
+      speaker_id: s.speakerId,
+      time_range: s.time,
+      text: s.text
+    }));
+
+    // Get config from prompts
+    const config = prompts.audioRepurpose.speakerNameExtraction as any;
+
+    // Build user prompt with structured format
+    const userPrompt = (config.userPrompt as string).replace(
+      '${utterances}',
+      JSON.stringify(structuredUtterances, null, 2)
+    );
+
+    // Call LLM with deterministic settings
+    const response = await getAICompletion({
+      model: config.model,
+      messages: [
+        { role: 'system', content: config.system },
+        { role: 'user', content: userPrompt }
+      ],
+      temperature: config.temperature,
+      maxTokens: config.max_tokens,
+      topP: config.top_p
+    });
+
+    // Track usage if userId/projectId provided
+    if (options?.userId && options?.projectId) {
+      const inputTokens = response.usage?.inputTokens || Math.ceil((config.system.length + userPrompt.length) / 4);
+      const outputTokens = response.usage?.outputTokens || Math.ceil((response.content?.length || 0) / 4);
+
+      const costResult = calculateTokenCost(
+        'openai_gpt4_input',
+        'openai_gpt4_output',
+        inputTokens,
+        outputTokens
+      );
+
+      // Log input tokens
+      await logUsageEvent({
+        userId: options.userId,
+        projectId: options.projectId,
+        serviceKey: 'openai_gpt4_input',
+        serviceName: 'GPT-4o Input (Speaker Extraction)',
+        provider: 'openai',
+        units: inputTokens,
+        unitType: 'input_tokens',
+        rawCost: costResult.breakdown.input.rawCost,
+        marginPercent: 35,
+        billedCost: costResult.breakdown.input.billedCost,
+        metadata: {
+          model: config.model,
+          feature: 'speaker_name_extraction_gpt'
+        }
+      });
+
+      // Log output tokens
+      await logUsageEvent({
+        userId: options.userId,
+        projectId: options.projectId,
+        serviceKey: 'openai_gpt4_output',
+        serviceName: 'GPT-4o Output (Speaker Extraction)',
+        provider: 'openai',
+        units: outputTokens,
+        unitType: 'output_tokens',
+        rawCost: costResult.breakdown.output.rawCost,
+        marginPercent: 35,
+        billedCost: costResult.breakdown.output.billedCost,
+        metadata: {
+          model: config.model,
+          feature: 'speaker_name_extraction_gpt'
+        }
+      });
+
+      // Debit user credits (don't throw on billing errors)
+      try {
+        await debitCredit(
+          options.userId,
+          costResult.billedCost,
+          undefined,
+          {
+            reason: `Speaker name extraction (GPT) - ${unnamedSpeakers.length} speakers`,
+            metadata: {
+              projectId: options.projectId,
+              feature: 'speaker_name_extraction',
+              speakers: unnamedSpeakers.length
+            }
+          }
+        );
+      } catch (billingError) {
+        console.error('[NAME EXTRACTION] Billing debit failed:', billingError);
+      }
+    }
+
+    // Parse JSON (remove markdown fences if present)
+    const content = response.content.replace(/^```json\s*/, '').replace(/\s*```$/, '').trim();
+    const result = JSON.parse(content);
+
+    // Validate and convert new GPT format to Map
+    const llmResults = new Map<string, import('@/lib/prompts/types').LLMAssignment>();
+
+    if (result.speakers && typeof result.speakers === 'object') {
+      Object.entries(result.speakers).forEach(([speakerId, data]: [string, any]) => {
+        if (!data || typeof data !== 'object') return;
+
+        const name = data.name;
+        const confidence = typeof data.confidence === 'number' ? data.confidence : 0.5;
+        const evidence = data.evidence || '';
+
+        // Skip null names (GPT explicitly returned null)
+        if (name === null || name === 'null' || !name) {
+          console.log(`[LLM] ${speakerId} -> No name found (GPT returned null)`);
+          return;
+        }
+
+        // Validate name
+        if (!isValidName(name)) {
+          console.log(`[LLM] Rejected assignment for ${speakerId}: invalid name "${name}"`);
+          return;
+        }
+
+        // Create LLMAssignment format
+        llmResults.set(speakerId, {
+          speakerId,
+          name,
+          confidence,
+          nameType: confidence > 0.8 ? 'self_intro' : 'uncertain',
+          evidence: [{
+            speakerId,
+            startTime: 0,
+            endTime: 0,
+            text: evidence
+          }],
+          notes: `GPT extraction (conf: ${confidence})`
+        });
+
+        console.log(`[LLM] ${speakerId} -> "${name}" (conf: ${confidence.toFixed(2)})`);
+      });
+    }
+
+    console.log(`[NAME EXTRACTION] LLM returned ${llmResults.size} valid assignments`);
+
+    return llmResults;
+
+  } catch (error: any) {
+    console.error('[NAME EXTRACTION] LLM extraction failed:', error);
+    return new Map();
+  }
+}
+
+/**
+ * Merge heuristic and LLM results
+ * Heuristics take precedence (higher confidence)
+ */
+function mergeResults(
+  heuristic: Map<string, import('@/lib/prompts/types').HeuristicResult>,
+  llm: Map<string, import('@/lib/prompts/types').LLMAssignment>
+): Map<string, import('@/lib/prompts/types').HeuristicResult | import('@/lib/prompts/types').LLMAssignment> {
+  const merged = new Map<string, import('@/lib/prompts/types').HeuristicResult | import('@/lib/prompts/types').LLMAssignment>();
+
+  // Add all heuristic results first (higher priority)
+  for (const [speakerId, result] of heuristic) {
+    merged.set(speakerId, result);
+  }
+
+  // Add LLM results for speakers not already named
+  for (const [speakerId, result] of llm) {
+    if (!merged.has(speakerId)) {
+      merged.set(speakerId, result);
+    } else {
+      console.log(`[MERGE] Skipping LLM result for ${speakerId} (heuristic already found "${merged.get(speakerId)!.name}")`);
+    }
+  }
+
+  return merged;
+}
+
+/**
+ * Resolve conflicts where multiple speakers have the same name
+ * Keep highest confidence, remove others
+ */
+function resolveConflicts(
+  results: Map<string, import('@/lib/prompts/types').HeuristicResult | import('@/lib/prompts/types').LLMAssignment>
+): Map<string, import('@/lib/prompts/types').HeuristicResult | import('@/lib/prompts/types').LLMAssignment> {
+  // Detect duplicate names across speakers
+  const nameToSpeakers = new Map<string, string[]>();
+  for (const [speakerId, result] of results) {
+    const name = result.name.toLowerCase();
+    if (!nameToSpeakers.has(name)) nameToSpeakers.set(name, []);
+    nameToSpeakers.get(name)!.push(speakerId);
+  }
+
+  // Resolve: keep highest confidence, remove others
+  for (const [name, speakerIds] of nameToSpeakers) {
+    if (speakerIds.length > 1) {
+      console.log(`[CONFLICT] Multiple speakers named "${name}": ${speakerIds.join(', ')}`);
+
+      const sorted = speakerIds
+        .map(id => ({ id, result: results.get(id)! }))
+        .sort((a, b) => b.result.confidence - a.result.confidence);
+
+      console.log(`[CONFLICT] Keeping ${sorted[0].id} (conf: ${sorted[0].result.confidence}), removing others`);
+
+      // Remove lower confidence assignments
+      for (let i = 1; i < sorted.length; i++) {
+        results.delete(sorted[i].id);
+      }
+    }
+  }
+
+  return results;
+}
+
+/**
+ * Helper function to convert HeuristicResult or LLMAssignment to ExtractedName
+ */
+function toExtractedName(
+  result: import('@/lib/prompts/types').HeuristicResult | import('@/lib/prompts/types').LLMAssignment
+): ExtractedName {
+  return {
+    name: result.name,
+    fullName: result.name,
+    nicknames: [],
+    firstMentionTime: result.evidence[0]?.startTime || 0,
+    confidence: result.confidence,
+    context: result.evidence.map(e => e.text.substring(0, 100)).join(' | ')
+  };
+}
+
+/**
+ * HYBRID NAME EXTRACTION - NEW ARCHITECTURE
+ * Combines deterministic heuristics with structured LLM fallback
+ *
+ * FLOW:
+ * 1. Run deterministic heuristics (self-intro, line labels, guest intro)
+ * 2. Early exit if ≥70% coverage
+ * 3. Run LLM for remaining unnamed speakers
+ * 4. Merge results (heuristics take precedence)
+ * 5. Resolve conflicts (duplicate names)
+ * 6. Convert to NamedSpeaker format with fallback names
+ */
+async function extractSpeakerNamesHybrid(
   transcriptionText: string,
   speakers: Record<string, DetectedSpeaker>,
   speakerSegments: SpeakerSegment[],
@@ -41,48 +839,206 @@ export async function extractSpeakerNames(
     projectId?: string;
   }
 ): Promise<Record<string, NamedSpeaker>> {
-  console.log(`[NAME EXTRACTION] Starting segment-based name extraction for ${Object.keys(speakers).length} speakers`);
+  console.log(`[NAME EXTRACTION HYBRID] Starting for ${Object.keys(speakers).length} speakers`);
+
+  const speakerIds = Object.keys(speakers);
+  const namedSpeakers: Record<string, NamedSpeaker> = {};
+
+  // Early exit: Single speaker (no extraction needed)
+  if (speakerIds.length === 1) {
+    console.log('[NAME EXTRACTION HYBRID] Single speaker detected, using fallback name');
+    const speaker = speakers[speakerIds[0]];
+    namedSpeakers[speakerIds[0]] = {
+      ...speaker,
+      extractedName: null,
+      finalName: speaker.fallbackName || 'Speaker',
+      rosterMatched: false
+    };
+    return namedSpeakers;
+  }
+
+  // STEP 1: Run deterministic heuristics (NEW: three-bucket return)
+  const { selfIntroductions, nameCandidates, roleCandidates } = runDeterministicHeuristics(speakerSegments);
+
+  // STEP 2: Assign names to speakers based on candidates
+  const nameAssignments = assignNamesToSpeakers(
+    speakerIds,
+    speakerSegments,
+    selfIntroductions,
+    nameCandidates
+  );
+
+  // STEP 3: Check coverage threshold
+  const coverageRatio = nameAssignments.size / speakerIds.length;
+  console.log(`[NAME EXTRACTION HYBRID] Coverage: ${nameAssignments.size}/${speakerIds.length} (${(coverageRatio * 100).toFixed(1)}%)`);
+
+  let finalResults: Map<string, import('@/lib/prompts/types').HeuristicResult | import('@/lib/prompts/types').LLMAssignment> = nameAssignments;
+
+  // REDUCED THRESHOLD: Run LLM if coverage < 90% (was 70%)
+  if (coverageRatio < 0.90) {
+    console.log('[NAME EXTRACTION HYBRID] Running LLM fallback');
+    const llmResults = await runStructuredLLMExtraction(
+      speakerSegments,
+      nameAssignments,
+      options
+    );
+
+    const merged = mergeResults(nameAssignments, llmResults);
+    finalResults = resolveConflicts(merged);
+  }
+
+  // STEP 4: Build final NamedSpeaker objects (with role badges)
+  speakerIds.forEach((id, index) => {
+    const speaker = speakers[id];
+    const extractedResult = finalResults.get(id);
+    const roleCandidate = roleCandidates.get(id);
+
+    if (extractedResult) {
+      namedSpeakers[id] = {
+        ...speaker,
+        extractedName: toExtractedName(extractedResult),
+        finalName: extractedResult.name,
+        rosterMatched: false,
+        // NEW: Add role as metadata/badge
+        role: roleCandidate?.role,
+        roleConfidence: roleCandidate?.confidence
+      };
+    } else {
+      // Fallback to numbered speaker
+      const fallbackName = generateFallbackName(speaker, index, speakerIds.length);
+      namedSpeakers[id] = {
+        ...speaker,
+        extractedName: null,
+        finalName: fallbackName,
+        rosterMatched: false,
+        role: roleCandidate?.role,
+        roleConfidence: roleCandidate?.confidence
+      };
+    }
+  });
+
+  console.log(`[NAME EXTRACTION HYBRID] Final mapping:`, Object.keys(namedSpeakers).map(id =>
+    `${id}: "${namedSpeakers[id].finalName}"${namedSpeakers[id].role ? ` [${namedSpeakers[id].role}]` : ''} ${namedSpeakers[id].extractedName ? `(confidence: ${namedSpeakers[id].extractedName?.confidence.toFixed(2)})` : '(fallback)'}`
+  ));
+
+  return namedSpeakers;
+}
+
+/**
+ * Extract speaker names using segment-based mapping for accurate attribution
+ *
+ * ENHANCED: Prioritizes roster matching if provided, falls back to pattern extraction
+ * Uses speaker segment data directly instead of text position estimation
+ */
+export async function extractSpeakerNames(
+  transcriptionText: string,
+  speakers: Record<string, DetectedSpeaker>,
+  speakerSegments: SpeakerSegment[],
+  options?: {
+    userId?: string;
+    projectId?: string;
+    rosterSpeakers?: PresetSpeaker[];
+    excludedSpeakers?: Set<string>;
+  }
+): Promise<Record<string, NamedSpeaker>> {
+  const excludedSpeakers = options?.excludedSpeakers || new Set();
+
+  if (excludedSpeakers.size > 0) {
+    console.log(`[NAME EXTRACTION] Excluding ${excludedSpeakers.size} non-speaker segments:`, Array.from(excludedSpeakers));
+  }
+
+  // Filter out excluded speakers from processing
+  const filteredSpeakers = Object.fromEntries(
+    Object.entries(speakers).filter(([id]) => !excludedSpeakers.has(id))
+  );
+
+  console.log(`[NAME EXTRACTION] Starting segment-based name extraction for ${Object.keys(filteredSpeakers).length} speakers (${Object.keys(speakers).length} total, ${excludedSpeakers.size} filtered)`);
   console.log(`[NAME EXTRACTION] Analyzing ${speakerSegments.length} speaker segments`);
 
   try {
-    // NEW: Extract names directly from segments (no text position estimation!)
-    const segmentNames = await extractNamesFromSegments(speakerSegments, transcriptionText, options);
+    // PRIORITY: Try roster matching first if available
+    if (options?.rosterSpeakers && options.rosterSpeakers.length > 0) {
+      console.log(`[NAME EXTRACTION] 🎯 Roster matching with ${options.rosterSpeakers.length} entries`);
 
-    // Map segment names to speakers
-    const namedSpeakers: Record<string, NamedSpeaker> = {};
-    const speakerIds = Object.keys(speakers).sort();
+      try {
+        const { matchSpeakersToRoster } = await import('./speaker-roster-matcher');
 
-    speakerIds.forEach((id, index) => {
-      const speaker = speakers[id];
-      const extractedName = segmentNames.get(id);
+        const rosterMatches = await matchSpeakersToRoster(
+          filteredSpeakers,
+          speakerSegments,
+          transcriptionText,
+          options.rosterSpeakers
+        );
 
-      namedSpeakers[id] = {
-        ...speaker,
-        extractedName: extractedName || null,
-        finalName: extractedName?.name || generateFallbackName(speaker, index, speakerIds.length)
-      };
-    });
+        // Apply roster matches
+        const namedSpeakers: Record<string, NamedSpeaker> = {};
+        const matchedIds = new Set(rosterMatches.map(m => m.detectedSpeakerId));
 
-    console.log(`[NAME EXTRACTION] Final mapping:`, Object.keys(namedSpeakers).map(id =>
-      `${id}: "${namedSpeakers[id].finalName}" ${namedSpeakers[id].extractedName ? `(confidence: ${namedSpeakers[id].extractedName?.confidence})` : '(fallback)'}`
-    ));
+        for (const match of rosterMatches) {
+          const speaker = filteredSpeakers[match.detectedSpeakerId];
+          namedSpeakers[match.detectedSpeakerId] = {
+            ...speaker,
+            extractedName: {
+              name: match.rosterSpeaker.name,
+              fullName: match.rosterSpeaker.name,
+              nicknames: [],
+              firstMentionTime: 0,
+              confidence: match.confidence,
+              context: match.evidence.join(' | ')
+            },
+            finalName: match.rosterSpeaker.name,
+            role: match.rosterSpeaker.role || undefined,
+            customName: match.rosterSpeaker.name,
+            rosterMatched: true,
+            rosterMatchMethod: match.matchMethod,
+            rosterMatchConfidence: match.confidence
+          };
+        }
 
-    return namedSpeakers;
+        // Fall back to hybrid extraction for unmatched speakers
+        const unmatchedSpeakers = Object.fromEntries(
+          Object.entries(filteredSpeakers).filter(([id]) => !matchedIds.has(id))
+        );
+
+        if (Object.keys(unmatchedSpeakers).length > 0) {
+          console.log(`[NAME EXTRACTION] Hybrid extraction for ${Object.keys(unmatchedSpeakers).length} unmatched speakers`);
+
+          const unmatchedSegments = speakerSegments.filter(s => !matchedIds.has(s.speakerId));
+          const hybridResults = await extractSpeakerNamesHybrid(transcriptionText, unmatchedSpeakers, unmatchedSegments, options);
+
+          // Merge results
+          for (const [id, namedSpeaker] of Object.entries(hybridResults)) {
+            namedSpeakers[id] = namedSpeaker;
+          }
+        }
+
+        console.log(`[NAME EXTRACTION] Roster matching complete: ${rosterMatches.length} matched, ${Object.keys(unmatchedSpeakers).length} unmatched`);
+        return namedSpeakers;
+
+      } catch (error) {
+        console.error('[NAME EXTRACTION] Roster matching failed:', error);
+        // Fall through to standard extraction
+      }
+    }
+
+    // FALLBACK: Use hybrid extraction (heuristics + LLM)
+    return await extractSpeakerNamesHybrid(transcriptionText, filteredSpeakers, speakerSegments, options);
   } catch (error) {
     console.error('[NAME EXTRACTION] Error extracting speaker names:', error);
 
     // Enhanced fallback with better default names
     const result: Record<string, NamedSpeaker> = {};
-    const speakerIds = Object.keys(speakers).sort();
+    const speakerIds = Object.keys(filteredSpeakers).sort();
 
     speakerIds.forEach((id, index) => {
-      const speaker = speakers[id];
+      const speaker = filteredSpeakers[id];
       const fallbackName = generateFallbackName(speaker, index, speakerIds.length);
 
       result[id] = {
         ...speaker,
         extractedName: null,
-        finalName: fallbackName
+        finalName: fallbackName,
+        rosterMatched: false
       };
     });
 
@@ -92,842 +1048,6 @@ export async function extractSpeakerNames(
 
     return result;
   }
-}
-
-/**
- * Use OpenAI to identify names mentioned in the transcription
- */
-async function identifyNamesWithAI(
-  transcriptionText: string,
-  strategy: string = 'general',
-  options?: {
-    userId?: string;
-    projectId?: string;
-  }
-): Promise<ExtractedName[]> {
-  // Create OpenAI client only when needed
-  const openai = new OpenAI({
-    apiKey: process.env.OPENAI_API_KEY,
-  });
-
-  // Get config for speaker name extraction
-  const config = prompts.audioRepurpose.speakerNameExtraction;
-
-  // Map strategy names to config keys
-  const strategyMap: Record<string, keyof typeof config.strategies> = {
-    'general': 'general',
-    'introduction': 'introductionFocused',
-    'qa_pattern': 'qaPattern'
-  };
-
-  const configKey = strategyMap[strategy] || 'general';
-  const strategyConfig = config.strategies[configKey];
-
-  // Build template variables
-  const vars: SpeakerNameExtractionVars = {
-    transcriptionText
-  };
-
-  // Get prompt using config loader (note: system message is separate in config)
-  const systemMessage = strategyConfig.system;
-  const { prompt } = getPrompt(
-    ['audioRepurpose', 'speakerNameExtraction', 'strategies', configKey],
-    vars
-  );
-
-  const response = await openai.chat.completions.create({
-    model: config.model,
-    messages: [
-      {
-        role: 'system',
-        content: systemMessage
-      },
-      {
-        role: 'user',
-        content: prompt
-      }
-    ],
-    temperature: config.temperature,
-    max_tokens: config.max_tokens,
-  });
-
-  // Track usage and billing (don't throw on billing errors)
-  if (options?.userId) {
-    try {
-      await trackOpenAIUsage({
-        userId: options.userId,
-        projectId: options.projectId,
-        response,
-        modelName: config.model,
-        purpose: `Name Extraction (${strategy})`,
-        metadata: {
-          strategy,
-          transcriptLength: transcriptionText.length,
-        },
-        shouldDebit: false, // Don't debit yet - will batch later
-      });
-    } catch (billingError) {
-      console.error('[NAME EXTRACTION] Billing tracking failed:', billingError);
-      // Continue processing even if billing fails
-    }
-  }
-
-  try {
-    let content = response?.choices[0]?.message?.content || '[]';
-    console.log(`[NAME EXTRACTION] Raw AI ${strategy} response:`, content.substring(0, 200) + '...');
-
-    // Strip markdown code blocks if present
-    if (content.trim().startsWith('```')) {
-      content = content.replace(/^```(?:json)?\s*\n?/m, '').replace(/\n?```\s*$/m, '');
-    }
-
-    // Enhanced JSON extraction with better error handling
-    let jsonContent = '';
-
-    // Strategy 1: Try to extract complete JSON array
-    const fullArrayMatch = content.match(/\[[^\[\]]*(?:\[[^\[\]]*\][^\[\]]*)*\]/g);
-    if (fullArrayMatch) {
-      jsonContent = fullArrayMatch[0];
-    } else {
-      // Strategy 2: Look for JSON-like structure between brackets
-      const bracketMatch = content.match(/\[([\s\S]*?)\]/);
-      if (bracketMatch) {
-        let innerContent = bracketMatch[1].trim();
-        
-        // Clean up common AI response issues
-        innerContent = innerContent
-          .replace(/,\s*}/g, '}')  // Remove trailing commas before }
-          .replace(/,\s*]/g, ']')  // Remove trailing commas before ]
-          .replace(/}\s*{/g, '}, {')  // Add commas between objects
-          .replace(/"\s*\n\s*"/g, '", "')  // Fix broken string quotes across lines
-          .replace(/"\s*:\s*"([^"]*?)"\s*([}\],])/g, '": "$1"$2');  // Fix quote issues
-        
-        // Ensure proper object separation
-        if (innerContent && !innerContent.trim().startsWith('{')) {
-          innerContent = '{' + innerContent;
-        }
-        if (innerContent && !innerContent.trim().endsWith('}')) {
-          innerContent = innerContent + '}';
-        }
-        
-        jsonContent = '[' + innerContent + ']';
-      } else {
-        jsonContent = '[]';
-      }
-    }
-    
-    console.log(`[NAME EXTRACTION] Cleaned JSON for ${strategy}:`, jsonContent);
-
-    const extractedNames: any[] = JSON.parse(jsonContent);
-
-    // Handle both formats:
-    // New format (general strategy): ["First Last", "First Last"]
-    // Old format (intro/qa strategies): [{ name: "...", fullName: "...", ... }]
-    return extractedNames.map((name, index) => {
-      // New format: simple string
-      if (typeof name === 'string') {
-        return {
-          name: name.trim(),
-          fullName: name.trim(),
-          nicknames: [],
-          firstMentionTime: 0,
-          confidence: 0.9, // High confidence for new prompt format
-          context: `Mentioned in transcription (${strategy})`
-        };
-      }
-
-      // Old format: object with properties
-      return {
-        name: name.name || `Unknown ${index + 1}`,
-        fullName: name.fullName || name.name,
-        nicknames: Array.isArray(name.nicknames) ? name.nicknames : [],
-        firstMentionTime: 0,
-        confidence: typeof name.confidence === 'number' ? name.confidence : 0.7,
-        context: name.context || `Mentioned in transcription (${strategy})`
-      };
-    });
-    
-  } catch (parseError) {
-    console.error(`[NAME EXTRACTION] Failed to parse AI ${strategy} response:`, parseError);
-    console.log(`[NAME EXTRACTION] AI response content:`, response?.choices[0]?.message?.content);
-    
-    // Fallback: Manual name extraction from response text
-    const content = response?.choices[0]?.message?.content || '';
-    const fallbackNames = extractNamesFromText(content, strategy);
-    
-    if (fallbackNames.length > 0) {
-      console.log(`[NAME EXTRACTION] Fallback extraction found ${fallbackNames.length} names for ${strategy}`);
-      return fallbackNames;
-    }
-    
-    return [];
-  }
-}
-
-/**
- * Fallback name extraction from AI response text when JSON parsing fails
- */
-function extractNamesFromText(content: string, strategy: string): ExtractedName[] {
-  const names: ExtractedName[] = [];
-
-  // Try to extract from simple string array format first: ["Name", "Name"]
-  const simpleArrayPattern = /\[\s*"([^"]+)"\s*(?:,\s*"([^"]+)"\s*)*\]/;
-  const arrayMatch = content.match(simpleArrayPattern);
-  if (arrayMatch) {
-    const quotedNames = content.match(/"([^"]+)"/g);
-    if (quotedNames) {
-      quotedNames.forEach(quoted => {
-        const name = quoted.replace(/"/g, '').trim();
-        if (name && name.length > 1 && /^[A-Z][a-z]+\s+[A-Z][a-z]+/.test(name)) {
-          names.push({
-            name: name,
-            fullName: name,
-            nicknames: [],
-            firstMentionTime: 0,
-            confidence: 0.7,
-            context: `Extracted from ${strategy} response text`
-          });
-        }
-      });
-      if (names.length > 0) return names;
-    }
-  }
-
-  // Look for quoted names in old object format
-  const namePattern = /"name":\s*"([^"]+)"/gi;
-  const matches: RegExpMatchArray[] = [];
-  let match;
-  while ((match = namePattern.exec(content)) !== null) {
-    matches.push(match);
-  }
-
-  matches.forEach((match, index) => {
-    const name = match[1].trim();
-    if (name && name.length > 1 && name !== 'Unknown') {
-      names.push({
-        name: name,
-        fullName: name,
-        nicknames: [],
-        firstMentionTime: 0,
-        confidence: 0.6, // Lower confidence for fallback extraction
-        context: `Extracted from ${strategy} response text`
-      });
-    }
-  });
-  
-  // If no names found, try looking for common self-introduction patterns
-  if (names.length === 0) {
-    const introPatterns = [
-      /I'm ([A-Z][a-z]+ [A-Z][a-z]+)/g,
-      /My name is ([A-Z][a-z]+ [A-Z][a-z]+)/g,
-      /This is ([A-Z][a-z]+ [A-Z][a-z]+)/g
-    ];
-    
-    for (const pattern of introPatterns) {
-      const matches: RegExpMatchArray[] = [];
-      let match;
-      while ((match = pattern.exec(content)) !== null) {
-        matches.push(match);
-      }
-      matches.forEach(match => {
-        const name = match[1].trim();
-        if (name && !names.some(n => n.name === name)) {
-          names.push({
-            name: name,
-            fullName: name,
-            nicknames: [],
-            firstMentionTime: 0,
-            confidence: 0.7,
-            context: `Pattern extraction from ${strategy}`
-          });
-        }
-      });
-    }
-  }
-  
-  return names;
-}
-
-/**
- * Map extracted names to specific speakers based on timing and context
- */
-async function mapNamesToSpeakers(
-  speakers: Record<string, DetectedSpeaker>,
-  extractedNames: ExtractedName[],
-  transcriptionText: string
-): Promise<Record<string, NamedSpeaker>> {
-  const namedSpeakers: Record<string, NamedSpeaker> = {};
-  
-  // Convert speakers to named speakers initially
-  Object.entries(speakers).forEach(([id, speaker]) => {
-    namedSpeakers[id] = {
-      ...speaker,
-      extractedName: null,
-      finalName: speaker.id
-    };
-  });
-  
-  if (extractedNames.length === 0) {
-    return namedSpeakers;
-  }
-  
-  // For each extracted name, find timing and map to speakers
-  for (const extractedName of extractedNames) {
-    try {
-      // Find when this name is first mentioned in the text
-      const namePattern = new RegExp(`\\b${extractedName.name}\\b`, 'i');
-      const match = transcriptionText.match(namePattern);
-      
-      if (match) {
-        // Estimate timing based on text position (rough approximation)
-        const textPosition = match.index || 0;
-        const estimatedTime = (textPosition / transcriptionText.length) * getTotalDuration(speakers);
-        
-        extractedName.firstMentionTime = estimatedTime;
-        
-        // Find the speaker most likely to be this person
-        const matchedSpeaker = findBestSpeakerMatch(speakers, extractedName, estimatedTime);
-        
-        if (matchedSpeaker) {
-          namedSpeakers[matchedSpeaker.id].extractedName = extractedName;
-          namedSpeakers[matchedSpeaker.id].finalName = extractedName.name;
-        }
-      }
-    } catch (error) {
-      console.error('Error mapping name to speaker:', error);
-    }
-  }
-  
-  // If we have exactly 2 speakers and 2 names, do smart mapping
-  const speakerIds = Object.keys(speakers);
-  if (speakerIds.length === 2 && extractedNames.length >= 2) {
-    namedSpeakers[speakerIds[0]].finalName = extractedNames[0].name;
-    namedSpeakers[speakerIds[0]].extractedName = extractedNames[0];
-    
-    namedSpeakers[speakerIds[1]].finalName = extractedNames[1].name;
-    namedSpeakers[speakerIds[1]].extractedName = extractedNames[1];
-  }
-  
-  return namedSpeakers;
-}
-
-/**
- * Find the best speaker match for an extracted name based on timing
- */
-function findBestSpeakerMatch(
-  speakers: Record<string, DetectedSpeaker>,
-  extractedName: ExtractedName,
-  estimatedTime: number
-): DetectedSpeaker | null {
-  let bestMatch: DetectedSpeaker | null = null;
-  let closestDistance = Infinity;
-  
-  Object.values(speakers).forEach(speaker => {
-    // Find the segment closest to when the name was mentioned
-    speaker.segments.forEach(segment => {
-      const segmentMidpoint = (segment.startTime + segment.endTime) / 2;
-      const distance = Math.abs(segmentMidpoint - estimatedTime);
-      
-      if (distance < closestDistance) {
-        closestDistance = distance;
-        bestMatch = speaker;
-      }
-    });
-  });
-  
-  return bestMatch;
-}
-
-/**
- * Calculate total duration of all speakers
- */
-function getTotalDuration(speakers: Record<string, DetectedSpeaker>): number {
-  return Math.max(...Object.values(speakers).map(speaker => 
-    Math.max(...speaker.segments.map(segment => segment.endTime))
-  ));
-}
-
-/**
- * Get the display name for a speaker, preferring extracted names
- */
-export function getSpeakerDisplayName(namedSpeaker: NamedSpeaker): string {
-  if (namedSpeaker.customName && namedSpeaker.customName.trim().length > 0) {
-    return namedSpeaker.customName.trim();
-  }
-  if (namedSpeaker.extractedName) {
-    return namedSpeaker.extractedName.name;
-  }
-  if (namedSpeaker.finalName) {
-    return namedSpeaker.finalName;
-  }
-  // Fallback for edge cases where finalName is missing
-  if (namedSpeaker.fallbackName) {
-    return namedSpeaker.fallbackName;
-  }
-  return `Speaker ${namedSpeaker.id}`;
-}
-
-/**
- * Generate speaker colors for UI display
- */
-export function getSpeakerColor(speakerId: string): string {
-  const colors = [
-    'text-blue-600 bg-blue-50',
-    'text-green-600 bg-green-50', 
-    'text-purple-600 bg-purple-50',
-    'text-orange-600 bg-orange-50',
-    'text-pink-600 bg-pink-50',
-    'text-indigo-600 bg-indigo-50'
-  ];
-  
-  // Generate consistent color based on speaker ID
-  const hash = speakerId.split('').reduce((acc, char) => acc + char.charCodeAt(0), 0);
-  return colors[hash % colors.length];
-}
-
-/**
- * Extract speaker names directly from speaker segments (NEW APPROACH)
- * This uses segment data with accurate speaker IDs instead of text position estimation
- */
-async function extractNamesFromSegments(
-  speakerSegments: SpeakerSegment[],
-  transcriptionText: string,
-  options?: {
-    userId?: string;
-    projectId?: string;
-  }
-): Promise<Map<string, ExtractedName>> {
-  const speakerNames = new Map<string, ExtractedName>();
-
-  console.log(`[NAME EXTRACTION] Analyzing ${speakerSegments.length} segments for self-introductions`);
-
-  // Self-introduction patterns with confidence scores
-  // NOTE: No /i flag - requires actual capitalized names only
-  const selfIntroPatterns = [
-    { pattern: /\bmy name (?:is|'s)\s+([A-Z][a-z]+(?:\s+[A-Z][a-z]+)?)\b/, confidence: 0.98, type: 'self' },
-    { pattern: /\bI'?m\s+([A-Z][a-z]+(?:\s+[A-Z][a-z]+)?)\b/, confidence: 0.95, type: 'self' },
-    { pattern: /\bI am\s+([A-Z][a-z]+(?:\s+[A-Z][a-z]+)?)\b/, confidence: 0.90, type: 'self' },
-    { pattern: /\bthis is\s+([A-Z][a-z]+(?:\s+[A-Z][a-z]+)?)\s+(?:here|from|speaking|and)\b/, confidence: 0.92, type: 'self' },
-    { pattern: /\byou'?re listening to\s+([A-Z][a-z]+(?:\s+[A-Z][a-z]+)?)\b/, confidence: 0.88, type: 'self' },
-    { pattern: /\byour host\s+([A-Z][a-z]+(?:\s+[A-Z][a-z]+)?)\b/, confidence: 0.85, type: 'self' },
-  ];
-
-  // Guest introduction patterns (host introducing someone else)
-  // These names should be mapped to OTHER speakers, not the current speaker
-  const guestIntroPatterns = [
-    { pattern: /\b(?:joined|join|joining)\s+(?:once again\s+)?by\s+(?:my friend\s+)?(?:[^,]+,\s+)*([A-Z][a-z]+\s+[A-Z][a-z]+)\b/, confidence: 0.90, type: 'guest' },
-    { pattern: /\bwith (?:me|us)\s+(?:is|today)\s+(?:[^,]+,\s+)*([A-Z][a-z]+\s+[A-Z][a-z]+)\b/, confidence: 0.90, type: 'guest' },
-    { pattern: /\b(?:today|here)\s+(?:we have|I have)\s+(?:[^,]+,\s+)*([A-Z][a-z]+\s+[A-Z][a-z]+)\b/, confidence: 0.88, type: 'guest' },
-    { pattern: /\bwelcome(?:,|\s+to\s+the\s+show)?\s+([A-Z][a-z]+\s+[A-Z][a-z]+)\b/, confidence: 0.85, type: 'guest' },
-  ];
-
-  // Anti-patterns (should NOT be considered self-introductions)
-  const antiPatterns = [
-    /\b(?:today|here|now) (?:we have|with)\s+[A-Z][a-z]+/i,  // "today we have John"
-    /\b(?:thanks|thank you)\s+[A-Z][a-z]+/i,                 // "thanks John"
-    /\b(?:welcome)\s+[A-Z][a-z]+/i,                          // "welcome Sarah"
-    /\b(?:I'?m|I am)\s+(?:not|never|still|also|just|always|really|very|so|too)\b/i,  // "I'm not...", "I am never..."
-  ];
-
-  // Common words that should NOT be names
-  const commonWords = [
-    'not', 'never', 'trying', 'going', 'coming', 'looking', 'making', 'taking',
-    'working', 'getting', 'doing', 'being', 'having', 'saying', 'thinking',
-    'really', 'very', 'quite', 'pretty', 'still', 'always', 'just', 'also'
-  ];
-
-  // Titles and roles that should NOT be extracted as names
-  const titlesAndRoles = [
-    'host', 'co-host', 'cohost', 'guest', 'moderator', 'panelist',
-    'commentator', 'analyst', 'expert', 'journalist', 'reporter', 'correspondent',
-    'lawyer', 'attorney', 'doctor', 'professor', 'teacher', 'instructor',
-    'author', 'writer', 'blogger', 'podcaster', 'youtuber', 'influencer',
-    'entrepreneur', 'founder', 'ceo', 'executive', 'director', 'manager',
-    'political', 'sensation', 'friend', 'colleague', 'partner'
-  ];
-
-  // Helper function to validate extracted names
-  const isValidName = (name: string, commonWords: string[], titlesAndRoles: string[]): boolean => {
-    // Validate name (basic sanity check)
-    if (name.length < 2 || name.length > 50) return false;
-
-    // Ensure first character is actually uppercase (proper noun)
-    if (!/^[A-Z]/.test(name)) {
-      console.log(`[NAME EXTRACTION] Rejected "${name}" - not capitalized`);
-      return false;
-    }
-
-    // Reject common words that are not names
-    const nameLower = name.toLowerCase();
-    if (commonWords.some(word => nameLower.includes(word))) {
-      console.log(`[NAME EXTRACTION] Rejected "${name}" - contains common word`);
-      return false;
-    }
-
-    // Reject titles and roles (e.g., "political commentator" should not be a name)
-    const nameWords = nameLower.split(/\s+/);
-    if (titlesAndRoles.some(title => nameWords.includes(title))) {
-      console.log(`[NAME EXTRACTION] Rejected "${name}" - contains title/role word`);
-      return false;
-    }
-
-    // Reject if contains non-letter characters (except spaces and hyphens)
-    if (!/^[A-Za-z\s-]+$/.test(name)) {
-      console.log(`[NAME EXTRACTION] Rejected "${name}" - invalid characters`);
-      return false;
-    }
-
-    return true;
-  };
-
-  // Track guest names that need to be mapped to other speakers
-  const guestNameCandidates: Array<{ name: string; introducerSpeakerId: string; segmentIndex: number; confidence: number; context: string }> = [];
-
-  // Check each segment for self-introductions and guest introductions
-  for (let i = 0; i < speakerSegments.length; i++) {
-    const segment = speakerSegments[i];
-    const segmentText = segment.text.trim();
-
-    // Skip very short segments
-    if (segmentText.length < 10) continue;
-
-    // Check anti-patterns first (but not for guest introductions)
-    const hasAntiPattern = antiPatterns.some(pattern => pattern.test(segmentText));
-
-    // Check SELF-introduction patterns
-    if (!hasAntiPattern) {
-      for (const { pattern, confidence, type } of selfIntroPatterns) {
-        const match = segmentText.match(pattern);
-        if (match) {
-          const name = match[1].trim();
-          const speakerId = segment.speakerId;
-
-          // Validate name
-          if (!isValidName(name, commonWords, titlesAndRoles)) continue;
-
-          // Only store if this speaker doesn't have a name yet, or this is higher confidence
-          const existing = speakerNames.get(speakerId);
-          if (!existing || confidence > existing.confidence) {
-            speakerNames.set(speakerId, {
-              name,
-              fullName: name,
-              nicknames: [],
-              firstMentionTime: segment.startTime,
-              confidence,
-              context: segmentText.substring(0, 150)
-            });
-
-            console.log(`[NAME EXTRACTION] Self-intro: "${speakerId}" → "${name}" (confidence: ${confidence}) from: "${segmentText.substring(0, 80)}..."`);
-          }
-
-          // Don't check other patterns for this segment
-          break;
-        }
-      }
-    }
-
-    // Check GUEST introduction patterns (host introducing someone else)
-    for (const { pattern, confidence, type } of guestIntroPatterns) {
-      const match = segmentText.match(pattern);
-      if (match) {
-        const name = match[1].trim();
-        const introducerSpeakerId = segment.speakerId;
-
-        // Validate name
-        if (!isValidName(name, commonWords, titlesAndRoles)) continue;
-
-        // Store as guest candidate (will be mapped to another speaker later)
-        guestNameCandidates.push({
-          name,
-          introducerSpeakerId,
-          segmentIndex: i,
-          confidence,
-          context: segmentText.substring(0, 150)
-        });
-
-        console.log(`[NAME EXTRACTION] Guest intro: Host "${introducerSpeakerId}" introduces guest "${name}" at segment ${i}`);
-        break;
-      }
-    }
-  }
-
-  // Map guest names to other speakers (not the introducer)
-  for (const guest of guestNameCandidates) {
-    // Find the next speaker after the introduction (likely the guest responding)
-    let guestSpeakerId: string | null = null;
-
-    // Look at the next few segments to find a different speaker
-    for (let i = guest.segmentIndex + 1; i < Math.min(guest.segmentIndex + 5, speakerSegments.length); i++) {
-      const nextSegment = speakerSegments[i];
-      if (nextSegment.speakerId !== guest.introducerSpeakerId) {
-        guestSpeakerId = nextSegment.speakerId;
-        break;
-      }
-    }
-
-    // If no speaker found after, look before
-    if (!guestSpeakerId) {
-      for (let i = guest.segmentIndex - 1; i >= Math.max(0, guest.segmentIndex - 3); i--) {
-        const prevSegment = speakerSegments[i];
-        if (prevSegment.speakerId !== guest.introducerSpeakerId) {
-          guestSpeakerId = prevSegment.speakerId;
-          break;
-        }
-      }
-    }
-
-    // Assign guest name to the identified speaker
-    if (guestSpeakerId && !speakerNames.has(guestSpeakerId)) {
-      speakerNames.set(guestSpeakerId, {
-        name: guest.name,
-        fullName: guest.name,
-        nicknames: [],
-        firstMentionTime: speakerSegments[guest.segmentIndex].startTime,
-        confidence: guest.confidence,
-        context: guest.context
-      });
-
-      console.log(`[NAME EXTRACTION] Guest mapping: "${guestSpeakerId}" → "${guest.name}" (introduced by "${guest.introducerSpeakerId}")`);
-    }
-  }
-
-  console.log(`[NAME EXTRACTION] Pattern matching found ${speakerNames.size} names`);
-
-  // If we didn't find enough names via pattern matching, fall back to AI extraction
-  const uniqueSpeakers = new Set(speakerSegments.map(s => s.speakerId)).size;
-  if (speakerNames.size < Math.min(2, uniqueSpeakers)) {
-    console.log('[NAME EXTRACTION] Pattern matching found insufficient names, using AI fallback...');
-
-    try {
-      const aiNames = await multiPassNameExtraction(transcriptionText, options);
-
-      // Map AI-extracted names to segments (but still use segment data, not text position!)
-      for (const aiName of aiNames) {
-        const matchedSegment = findSegmentContainingName(speakerSegments, aiName.name);
-        if (matchedSegment && !speakerNames.has(matchedSegment.speakerId)) {
-          speakerNames.set(matchedSegment.speakerId, {
-            ...aiName,
-            firstMentionTime: matchedSegment.startTime,
-            context: matchedSegment.text.substring(0, 150)
-          });
-
-          console.log(`[NAME EXTRACTION] AI match: "${matchedSegment.speakerId}" → "${aiName.name}" from segment`);
-        }
-      }
-    } catch (error) {
-      console.warn('[NAME EXTRACTION] AI fallback failed:', error);
-    }
-  }
-
-  return speakerNames;
-}
-
-/**
- * Find the segment where a name is first mentioned (for AI-extracted names)
- * This ensures even AI-extracted names use segment data for mapping
- */
-function findSegmentContainingName(
-  segments: SpeakerSegment[],
-  name: string
-): SpeakerSegment | null {
-  const namePattern = new RegExp(`\\b${name}\\b`, 'i');
-
-  // Look for self-introduction patterns first
-  const selfIntroPattern = new RegExp(`\\b(?:I'?m|my name is|I am)\\s+${name}\\b`, 'i');
-
-  for (const segment of segments) {
-    if (selfIntroPattern.test(segment.text)) {
-      return segment;
-    }
-  }
-
-  // Fall back to any mention
-  for (const segment of segments) {
-    if (namePattern.test(segment.text)) {
-      return segment;
-    }
-  }
-
-  return null;
-}
-
-/**
- * Multi-pass name extraction for better accuracy
- */
-async function multiPassNameExtraction(
-  transcriptionText: string,
-  options?: {
-    userId?: string;
-    projectId?: string;
-  }
-): Promise<ExtractedName[]> {
-  const allNames: ExtractedName[] = [];
-
-  // Pass 1: General name extraction
-  const MIN_UNIQUE_NAMES = 2;
-  const pushNamesFromPass = async (label: string, strategy: string) => {
-    try {
-      console.log(`[NAME EXTRACTION] ${label}`);
-      const names = await identifyNamesWithAI(transcriptionText, strategy, options);
-      allNames.push(...names);
-    } catch (error) {
-      console.warn(`[NAME EXTRACTION] ${label} failed:`, error);
-    }
-  };
-
-  await pushNamesFromPass('Pass 1: General name extraction', 'general');
-
-  if (countUniqueNames(allNames) < MIN_UNIQUE_NAMES) {
-    await pushNamesFromPass('Pass 2: Introduction-focused extraction', 'introduction');
-  } else {
-    console.log('[NAME EXTRACTION] Skipping introduction pass (enough names found).');
-  }
-  
-  if (countUniqueNames(allNames) < MIN_UNIQUE_NAMES) {
-    await pushNamesFromPass('Pass 3: Q&A pattern extraction', 'qa_pattern');
-  } else {
-    console.log('[NAME EXTRACTION] Skipping Q&A pass (enough names found).');
-  }
-  
-  // Deduplicate and merge names
-  return deduplicateNames(allNames);
-}
-
-
-/**
- * Deduplicate and merge similar names from multiple passes
- */
-function deduplicateNames(names: ExtractedName[]): ExtractedName[] {
-  if (names.length === 0) return names;
-  
-  const uniqueNames: ExtractedName[] = [];
-  
-  for (const name of names) {
-    // Check if this name already exists (case-insensitive)
-    const existing = uniqueNames.find(existing => 
-      existing.name.toLowerCase() === name.name.toLowerCase() ||
-      existing.fullName?.toLowerCase() === name.name.toLowerCase() ||
-      existing.nicknames.some(nick => nick.toLowerCase() === name.name.toLowerCase())
-    );
-    
-    if (existing) {
-      // Merge information and use higher confidence
-      if (name.confidence > existing.confidence) {
-        existing.name = name.name;
-        existing.confidence = name.confidence;
-      }
-      
-      // Merge nicknames
-      name.nicknames.forEach(nick => {
-        if (!existing.nicknames.includes(nick)) {
-          existing.nicknames.push(nick);
-        }
-      });
-      
-      // Update context with more information
-      if (name.context && !existing.context.includes(name.context)) {
-        existing.context += ` | ${name.context}`;
-      }
-    } else {
-      uniqueNames.push({ ...name });
-    }
-  }
-  
-  console.log(`[NAME EXTRACTION] Deduplicated ${names.length} names to ${uniqueNames.length} unique names`);
-  return uniqueNames;
-}
-
-function countUniqueNames(names: ExtractedName[]): number {
-  const unique = new Set(names.map((name) => name.name.toLowerCase()));
-  return unique.size;
-}
-
-/**
- * Enhanced name mapping with better speaker assignment
- */
-async function enhancedNameMapping(
-  speakers: Record<string, DetectedSpeaker>,
-  extractedNames: ExtractedName[],
-  transcriptionText: string
-): Promise<Record<string, NamedSpeaker>> {
-  const namedSpeakers: Record<string, NamedSpeaker> = {};
-  const speakerIds = Object.keys(speakers);
-  
-  // Initialize all speakers with fallback names
-  speakerIds.forEach((id, index) => {
-    const speaker = speakers[id];
-    namedSpeakers[id] = {
-      ...speaker,
-      extractedName: null,
-      finalName: generateFallbackName(speaker, index, speakerIds.length)
-    };
-  });
-  
-  if (extractedNames.length === 0) {
-    console.log('[NAME EXTRACTION] No names extracted, using fallback names');
-    return namedSpeakers;
-  }
-  
-  // Enhanced mapping strategies
-  
-  // Strategy 1: Timing-based mapping for names with clear context
-  for (const extractedName of extractedNames) {
-    if (extractedName.confidence > 0.8) {
-      const bestSpeaker = findBestSpeakerByContext(extractedName, speakers, transcriptionText);
-      if (bestSpeaker && !namedSpeakers[bestSpeaker.id].extractedName) {
-        namedSpeakers[bestSpeaker.id].extractedName = extractedName;
-        namedSpeakers[bestSpeaker.id].finalName = extractedName.name;
-        console.log(`[NAME EXTRACTION] High-confidence mapping: ${bestSpeaker.id} -> ${extractedName.name}`);
-      }
-    }
-  }
-  
-  // Strategy 2: Simple assignment for remaining names
-  const remainingNames = extractedNames.filter(name => 
-    !Object.values(namedSpeakers).some(speaker => speaker.extractedName?.name === name.name)
-  );
-  
-  const unnamedSpeakers = speakerIds.filter(id => !namedSpeakers[id].extractedName);
-  
-  for (let i = 0; i < Math.min(remainingNames.length, unnamedSpeakers.length); i++) {
-    const speakerId = unnamedSpeakers[i];
-    const name = remainingNames[i];
-    
-    namedSpeakers[speakerId].extractedName = name;
-    namedSpeakers[speakerId].finalName = name.name;
-    console.log(`[NAME EXTRACTION] Remaining assignment: ${speakerId} -> ${name.name}`);
-  }
-  
-  return namedSpeakers;
-}
-
-/**
- * Find best speaker match based on context analysis
- */
-function findBestSpeakerByContext(
-  extractedName: ExtractedName,
-  speakers: Record<string, DetectedSpeaker>,
-  transcriptionText: string
-): DetectedSpeaker | null {
-  // Look for the name in the transcription and try to map to speaker timing
-  const namePattern = new RegExp(`\\b${extractedName.name}\\b`, 'gi');
-  const matches: RegExpMatchArray[] = [];
-  let match;
-  while ((match = namePattern.exec(transcriptionText)) !== null) {
-    matches.push(match);
-  }
-  
-  if (matches.length === 0) return null;
-  
-  // Find the first clear mention
-  const firstMatch = matches[0];
-  const textPosition = firstMatch.index || 0;
-  
-  // Estimate timing based on text position (rough approximation)
-  const estimatedTime = (textPosition / transcriptionText.length) * getTotalDuration(speakers);
-  
-  // Find speaker closest to this time
-  return findBestSpeakerMatch(speakers, extractedName, estimatedTime);
 }
 
 /**
@@ -982,4 +1102,42 @@ function extractRoleFromSegments(speaker: DetectedSpeaker): string | null {
   }
 
   return null;
+}
+
+/**
+ * Get display name for a speaker (prioritizes custom > extracted > final > fallback)
+ */
+export function getSpeakerDisplayName(namedSpeaker: NamedSpeaker): string {
+  if (namedSpeaker.customName && namedSpeaker.customName.trim().length > 0) {
+    return namedSpeaker.customName.trim();
+  }
+  if (namedSpeaker.extractedName) {
+    return namedSpeaker.extractedName.name;
+  }
+  if (namedSpeaker.finalName) {
+    return namedSpeaker.finalName;
+  }
+  // Fallback for edge cases where finalName is missing
+  if (namedSpeaker.fallbackName) {
+    return namedSpeaker.fallbackName;
+  }
+  return `Speaker ${namedSpeaker.id}`;
+}
+
+/**
+ * Generate speaker colors for UI display
+ */
+export function getSpeakerColor(speakerId: string): string {
+  const colors = [
+    'text-blue-600 bg-blue-50',
+    'text-green-600 bg-green-50',
+    'text-purple-600 bg-purple-50',
+    'text-orange-600 bg-orange-50',
+    'text-pink-600 bg-pink-50',
+    'text-indigo-600 bg-indigo-50'
+  ];
+
+  // Generate consistent color based on speaker ID
+  const hash = speakerId.split('').reduce((acc, char) => acc + char.charCodeAt(0), 0);
+  return colors[hash % colors.length];
 }

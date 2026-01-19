@@ -177,14 +177,14 @@ export default function ContentSelection({
           return (
             <section
               key={section.id}
-              className="border border-gray-200 rounded-lg bg-white"
+              className="border border-gray-200 rounded-lg bg-white overflow-hidden"
             >
-              <div className="flex items-center justify-between px-3 py-2 border-b border-gray-100 bg-gray-50 rounded-t-lg">
+              <div className="flex items-center justify-between px-4 py-3 border-b border-gray-100 bg-white">
                 <div>
-                  <p className="text-xs font-semibold text-gray-900">{section.label}</p>
-                  <p className="text-[11px] text-gray-500">{section.description}</p>
+                  <p className="text-sm font-semibold text-gray-900">{section.label}</p>
+                  <p className="text-xs text-gray-500 mt-0.5">{section.description}</p>
                 </div>
-                <span className="text-[11px] font-medium text-gray-500">
+                <span className="text-xs font-medium text-gray-500 bg-gray-50 px-2 py-1 rounded-full">
                   {selectedInSection}/{sectionBlocks.length} selected
                 </span>
               </div>
@@ -198,62 +198,101 @@ export default function ContentSelection({
 
                   return (
                     <div key={contentType.id} className="bg-white">
-                      {/* Content Type Header */}
-                      <div className="px-3 py-3">
-                        <div className="flex items-start gap-3">
-                          {/* Select All Checkbox for this type */}
+                      {/* Content Type Header - Clickable Row */}
+                      <div 
+                        className="px-4 py-3 bg-gray-50/80 hover:bg-gray-50 border-b border-gray-100 cursor-pointer transition-colors"
+                        onClick={() => toggleExpanded(contentType.id)}
+                      >
+                        <div className="flex items-center gap-3">
+                          {/* Expand/Collapse Chevron (Left Aligned) */}
                           <button
-                            onClick={() => handleSelectAllType(contentType.id)}
-                            className={`mt-1 h-4 w-4 rounded border flex items-center justify-center flex-shrink-0 transition-colors ${
-                              selectionState === 'all'
-                                ? 'border-blue-600 bg-blue-600 text-white'
-                                : selectionState === 'some'
-                                ? 'border-blue-600 bg-blue-600 text-white'
-                                : 'border-gray-300 text-transparent hover:border-gray-400'
-                            }`}
+                            className="text-gray-400 hover:text-gray-600 transition-colors p-1 -ml-2"
+                            onClick={(e) => {
+                              e.stopPropagation(); // Prevent double toggle
+                              toggleExpanded(contentType.id);
+                            }}
                           >
-                            {selectionState === 'all' && <Check className="h-3 w-3" />}
-                            {selectionState === 'some' && <Minus className="h-3 w-3" />}
+                            <ChevronDown
+                              className={`w-4 h-4 transition-transform duration-200 ${
+                                isExpanded ? 'rotate-180' : '-rotate-90'
+                              }`}
+                            />
                           </button>
 
-                          <div className="flex h-10 w-10 items-center justify-center rounded-md bg-gray-100 text-gray-500 flex-shrink-0">
-                            <IconComponent className="h-4 w-4" />
+                          {/* Select All Checkbox for this type */}
+                          <button
+                            onClick={(e) => {
+                              e.stopPropagation();
+                              handleSelectAllType(contentType.id);
+                            }}
+                            className={`h-5 w-5 rounded border flex items-center justify-center flex-shrink-0 transition-all ${
+                              selectionState === 'all'
+                                ? 'border-blue-600 bg-blue-600 text-white shadow-sm'
+                                : selectionState === 'some'
+                                ? 'border-blue-600 bg-blue-600 text-white shadow-sm'
+                                : 'border-gray-300 bg-white text-transparent hover:border-gray-400'
+                            }`}
+                          >
+                            {selectionState === 'all' && <Check className="h-3.5 w-3.5" />}
+                            {selectionState === 'some' && <Minus className="h-3.5 w-3.5" />}
+                          </button>
+
+                          <div className="flex h-10 w-10 items-center justify-center rounded-lg bg-white border border-gray-200 text-gray-600 flex-shrink-0 shadow-sm">
+                            <IconComponent className="h-5 w-5" />
                           </div>
 
                           <div className="flex-1 min-w-0">
-                            <div className="flex flex-wrap items-center gap-2 mb-1">
-                              <p className="text-sm font-medium text-gray-900">{contentType.name}</p>
-                              {contentType.badge && (
-                                <span className="text-[10px] uppercase tracking-wide px-1.5 py-0.5 bg-gray-100 text-gray-600 rounded border border-gray-200">
-                                  {contentType.badge}
-                                </span>
-                              )}
-                              <span className="text-[11px] text-gray-500">
-                                ({typeBlocks.length} {typeBlocks.length === 1 ? 'piece' : 'pieces'})
+                            <div className="flex items-center gap-2">
+                              <p className="text-sm font-semibold text-gray-900">{contentType.name}</p>
+                              <span className="text-xs text-gray-500">
+                                • {typeBlocks.length} {typeBlocks.length === 1 ? 'item' : 'items'}
                               </span>
                             </div>
-                            <p className="text-xs text-gray-600">
+                            <p className="text-xs text-gray-500 mt-0.5 line-clamp-1">
                               {contentType.description}
                             </p>
                           </div>
 
-                          {/* Expand/Collapse Button */}
-                          <button
-                            onClick={() => toggleExpanded(contentType.id)}
-                            className="text-gray-400 hover:text-gray-600 transition-colors p-1"
-                          >
-                            <ChevronDown
-                              className={`w-4 h-4 transition-transform ${
-                                isExpanded ? 'rotate-180' : ''
-                              }`}
-                            />
-                          </button>
+                          {/* Category Tone Selector */}
+                          <div className="pl-4 border-l border-gray-200" onClick={(e) => e.stopPropagation()}>
+                            <select
+                              value={(() => {
+                                const themes = typeBlocks.map(b => b.theme);
+                                const uniqueThemes = new Set(themes);
+                                return uniqueThemes.size === 1 ? themes[0] : '';
+                              })()}
+                              onChange={(e) => {
+                                const newThemeId = e.target.value;
+                                if (!newThemeId) return;
+                                onBlocksChange(
+                                  blocks.map(block =>
+                                    block.contentTypeId === contentType.id
+                                      ? { ...block, theme: newThemeId }
+                                      : block
+                                  )
+                                );
+                              }}
+                              className="w-32 text-xs border-0 bg-transparent py-1.5 pl-0 pr-7 text-gray-600 font-medium focus:ring-0 cursor-pointer hover:text-gray-900"
+                              style={{ textAlign: 'right', direction: 'rtl' }} // Hack to align text right
+                            >
+                              <option value="" disabled>Mixed</option>
+                              {getThemeCategories().map(category => (
+                                <optgroup key={category} label={category}>
+                                  {getThemesByCategory(category).map(theme => (
+                                    <option key={theme.id} value={theme.id}>
+                                      {theme.name}
+                                    </option>
+                                  ))}
+                                </optgroup>
+                              ))}
+                            </select>
+                          </div>
                         </div>
                       </div>
 
                       {/* Individual Blocks */}
                       {isExpanded && (
-                        <div className="px-3 pb-2 space-y-2">
+                        <div className="px-3 pt-3 pb-2 space-y-2">
                           {typeBlocks.map((block) => {
                             const theme = CONTENT_THEMES.find(t => t.id === block.theme);
 
@@ -322,30 +361,6 @@ export default function ContentSelection({
           );
         })}
       </div>
-
-      {/* Cost Display */}
-      {showEstimate && (
-        <div className="border border-gray-300 rounded p-3 bg-white">
-          <div className="flex items-center justify-between text-sm">
-            <span className="text-gray-600">Estimated Cost</span>
-            <span className="font-semibold text-gray-900">
-              ${estimatedCost.toFixed(4)}
-            </span>
-          </div>
-          <p className="text-xs text-gray-500 mt-1">
-            {enabledCount} {enabledCount === 1 ? 'block' : 'blocks'} selected
-          </p>
-        </div>
-      )}
-
-      {/* No selection warning */}
-      {isNoneSelected && (
-        <div className="bg-red-50 border border-red-300 rounded p-2">
-          <p className="text-xs text-red-900">
-            Select at least one content block to generate
-          </p>
-        </div>
-      )}
     </div>
   );
 }

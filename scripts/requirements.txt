@@ -1,18 +1,15 @@
-# Speaker Diarization Dependencies
-# Note: PyTorch should be installed first from official source
+# Speaker Diarization Dependencies (Optional)
+# Note: Only required if using Sortformer diarization
 
 # Audio processing dependencies
 soundfile>=0.12.0
 librosa>=0.10.0
 
-# Hugging Face integration (for model downloads)
+# Hugging Face integration (for Sortformer model downloads)
 transformers>=4.30.0
 accelerate>=0.20.0
 
-# PyAnnote dependencies (install after PyTorch)
-pyannote.audio>=3.1.0
-
-# NVIDIA NeMo dependencies for Sortformer models (DISABLED - for future use)
+# NVIDIA NeMo dependencies for Sortformer models (optional)
 # System deps: apt-get install libsndfile1 ffmpeg
 # Cython>=0.29.0
 # packaging>=21.0

@@ -52,7 +52,7 @@ export async function getCachedGeneratedContent(
       .from(TABLE_NAME)
       .select('cache_key, project_id, content_types, transcription_hash, analysis, generated_content, created_at')
       .eq('cache_key', cacheKey)
-      .single();
+      .single() as { data: any; error: any };
 
     if (error || !data) {
       if (error && !isTableMissingError(error) && error.code !== 'PGRST116') {
@@ -91,7 +91,7 @@ export async function cacheGeneratedContent(payload: CachedContentPayload): Prom
           analysis: payload.analysis,
           generated_content: payload.generatedContent,
           created_at: new Date().toISOString()
-        },
+        } as any,
         { onConflict: 'cache_key' }
       );
 

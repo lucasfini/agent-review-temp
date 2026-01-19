@@ -6,7 +6,7 @@ import promptsConfig from '@/config/prompts.json';
 import type { PromptsConfig, TemplateVars } from './types';
 
 // Typed config export
-export const prompts = promptsConfig as PromptsConfig;
+export const prompts = promptsConfig as unknown as PromptsConfig;
 
 /**
  * Substitute template variables in a prompt string

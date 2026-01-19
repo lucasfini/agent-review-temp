@@ -101,7 +101,7 @@ export async function getBalance(userId: string): Promise<CreditBalance> {
     .from('account_credits')
     .select('balance, lifetime_credits_added, lifetime_credits_spent, version, updated_at')
     .eq('user_id', userId)
-    .single();
+    .single() as { data: any; error: any };
 
   if (error && error.code !== 'PGRST116') {
     // PGRST116 = no rows returned
@@ -118,9 +118,9 @@ export async function getBalance(userId: string): Promise<CreditBalance> {
         lifetime_credits_added: 0,
         lifetime_credits_spent: 0,
         version: 0,
-      })
+      } as any)
       .select('balance, lifetime_credits_added, lifetime_credits_spent, version, updated_at')
-      .single();
+      .single() as { data: any; error: any };
 
     if (insertError) {
       throw new Error(`Failed to create credit account: ${insertError.message}`);
@@ -196,7 +196,7 @@ export async function debitCredit(
     p_user_id: userId,
     p_amount: amount,
     p_current_version: version,
-  });
+  } as any) as { data: any; error: any };
 
   if (error) {
     throw new Error(`Failed to debit credits: ${error.message}`);
@@ -230,9 +230,9 @@ export async function debitCredit(
       usage_event_id: usageEventId,
       reason: options?.reason,
       metadata: options?.metadata || {},
-    })
+    } as any)
     .select('id')
-    .single();
+    .single() as { data: any; error: any };
 
   if (txError) {
     console.error('Failed to log credit transaction:', txError);
@@ -280,7 +280,7 @@ export async function addCredit(
     p_user_id: userId,
     p_amount: amount,
     p_transaction_type: transactionType,
-  });
+  } as any) as { data: any; error: any };
 
   if (error) {
     throw new Error(`Failed to add credits: ${error.message}`);
@@ -301,9 +301,9 @@ export async function addCredit(
       admin_user_id: options?.adminUserId,
       reason: options?.reason,
       metadata: options?.metadata || {},
-    })
+    } as any)
     .select('id')
-    .single();
+    .single() as { data: any; error: any };
 
   if (txError) {
     console.error('Failed to log credit transaction:', txError);
@@ -359,9 +359,9 @@ export async function logUsageEvent(params: {
       metadata: params.metadata || {},
       status: params.status || 'completed',
       processed_at: new Date().toISOString(),
-    })
+    } as any)
     .select()
-    .single();
+    .single() as { data: any; error: any };
 
   if (error) {
     throw new Error(`Failed to log usage event: ${error.message}`);
@@ -433,7 +433,7 @@ export async function getUsageHistory(
   const offset = filters?.offset || 0;
   query = query.range(offset, offset + limit - 1);
 
-  const { data, error, count } = await query;
+  const { data, error, count } = await query as { data: any[] | null; error: any; count: number | null };
 
   if (error) {
     throw new Error(`Failed to get usage history: ${error.message}`);
@@ -498,7 +498,7 @@ export async function getTransactionHistory(
   const offset = filters?.offset || 0;
   query = query.range(offset, offset + limit - 1);
 
-  const { data, error, count } = await query;
+  const { data, error, count } = await query as { data: any[] | null; error: any; count: number | null };
 
   if (error) {
     throw new Error(`Failed to get transaction history: ${error.message}`);
@@ -567,7 +567,7 @@ export async function getAllUserBalances(filters?: {
   const offset = filters?.offset || 0;
   query = query.range(offset, offset + limit - 1);
 
-  const { data, error, count } = await query;
+  const { data, error, count } = await query as { data: any[] | null; error: any; count: number | null };
 
   if (error) {
     throw new Error(`Failed to get all user balances: ${error.message}`);
@@ -619,7 +619,7 @@ export async function getRevenueAnalytics(filters?: {
     query = query.lte('created_at', filters.endDate.toISOString());
   }
 
-  const { data, error } = await query;
+  const { data, error } = await query as { data: any[] | null; error: any };
 
   if (error) {
     throw new Error(`Failed to get revenue analytics: ${error.message}`);

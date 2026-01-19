@@ -41,6 +41,15 @@ const MODEL_ID = config.model;
 const INPUT_RATE_PER_TOKEN = 3 / 1_000_000; // $3 per million input tokens
 const OUTPUT_RATE_PER_TOKEN = 15 / 1_000_000; // $15 per million output tokens
 
+const STRICT_JSON_INSTRUCTION = `You are a JSON generator. Respond with ONLY one JSON object, no prose, no markdown fences. Shape:
+{
+  "coverage_window": "full_episode",
+  "topics": [{"id": "string", "label": "string", "keywords": ["string"], "mentionCount": 0, "shareOfVoice": 0.0, "relatedCtas": ["string"], "assetsCovered": ["string"]}],
+  "ctas": [{"id": "string", "label": "string", "mentionCount": 0, "cadenceDays": 7}],
+  "opportunities": [{"type": "balanced|underrepresented|overindexed|cta-gap|new|debt", "label": "string", "severity": "low|medium|high", "summary": "string", "recommendedAction": "string"}],
+  "notes": "optional string"
+}`;
+
 const DEFAULT_RESULT: NarrativeCoverageAnalysisResult = {
   topics: [],
   ctas: [],
@@ -87,7 +96,7 @@ export async function analyzeNarrativeCoverage(
     tier: options.tier || 'unknown',
     goalsText: goalsText || 'None provided',
     transcriptSlice,
-    summarySnippet,
+    summarySection: summarySnippet ? `\n\nExisting summary:\n${summarySnippet}\n` : '',
     MAX_TRANSCRIPT_CHARS
   };
 
@@ -95,15 +104,16 @@ export async function analyzeNarrativeCoverage(
     ['audioRepurpose', 'narrativeCoverage'],
     vars
   );
+  const strictPrompt = `${STRICT_JSON_INSTRUCTION}\n\n${instructions}`;
 
   const response = await anthropic.messages.create({
     model: config.model,
     max_tokens: config.max_tokens,
-    temperature: config.temperature,
+    temperature: 0,
     messages: [
       {
         role: 'user',
-        content: instructions
+        content: strictPrompt
       }
     ]
   });
@@ -125,12 +135,17 @@ export async function analyzeNarrativeCoverage(
     inputTokens * INPUT_RATE_PER_TOKEN + outputTokens * OUTPUT_RATE_PER_TOKEN
   );
 
+  // Fallback: if AI returned nothing, derive simple topics from transcript
+  const hasAiTopics = normalizedTopics.length > 0 || normalizedCtas.length > 0;
+  const fallbackTopics = hasAiTopics ? [] : deriveHeuristicTopics(transcriptSlice, 6);
+  const fallbackCtas = hasAiTopics ? [] : deriveHeuristicCtas(transcriptSlice);
+
   return {
-    topics: normalizeShareOfVoice(normalizedTopics),
-    ctas: normalizedCtas,
+    topics: normalizeShareOfVoice(hasAiTopics ? normalizedTopics : fallbackTopics),
+    ctas: hasAiTopics ? normalizedCtas : fallbackCtas,
     opportunities: normalizedOpportunities,
     coverageWindow: parsed?.coverage_window || coverageWindow,
-    notes: parsed?.notes || undefined,
+    notes: hasAiTopics ? parsed?.notes || undefined : 'Heuristic topics/ctas generated due to empty AI response.',
     aiUsage: {
       provider: 'anthropic',
       model: MODEL_ID,
@@ -160,14 +175,18 @@ function safeJsonParse(raw: string | null | undefined) {
   if (!raw) return null;
 
   const trimmed = raw.trim();
-  const jsonStart = trimmed.indexOf('{');
-  const jsonEnd = trimmed.lastIndexOf('}');
+  // Extract fenced block if present
+  const fenceMatch = trimmed.match(/```(?:json)?\s*([\s\S]*?)```/i);
+  let candidate = fenceMatch ? fenceMatch[1].trim() : trimmed;
+
+  let jsonStart = candidate.indexOf('{');
+  let jsonEnd = candidate.lastIndexOf('}');
 
   if (jsonStart === -1 || jsonEnd === -1) {
     return null;
   }
 
-  let jsonString = trimmed.slice(jsonStart, jsonEnd + 1);
+  let jsonString = candidate.slice(jsonStart, jsonEnd + 1);
 
   // Attempt to fix common JSON errors
   try {
@@ -180,15 +199,27 @@ function safeJsonParse(raw: string | null | undefined) {
       // Remove trailing commas before ] or }
       jsonString = jsonString.replace(/,(\s*[}\]])/g, '$1');
 
+      // Fix missing commas between array elements (common AI mistake)
+      // This catches cases like: ]{ or ]} or }{ patterns
+      jsonString = jsonString.replace(/\]\s*\{/g, '],{');
+      jsonString = jsonString.replace(/\}\s*\{/g, '},{');
+      jsonString = jsonString.replace(/\}\s*\[/g, '},[');
+      jsonString = jsonString.replace(/\]\s*\[/g, '],[');
+
       // Fix unescaped quotes in strings (basic attempt)
       // This is imperfect but catches some cases
-
       return JSON.parse(jsonString);
     } catch (secondError) {
-      console.error('[NARRATIVE COVERAGE] Failed to parse JSON after cleanup attempt');
-      console.error('[NARRATIVE COVERAGE] Raw response excerpt:', raw.slice(0, 1000));
-      console.error('[NARRATIVE COVERAGE] Extracted JSON:', jsonString.slice(0, 500));
-      return null;
+      try {
+        const balanced = balanceJson(jsonString);
+        return JSON.parse(balanced);
+      } catch (thirdError) {
+        console.error('[NARRATIVE COVERAGE] Failed to parse JSON after cleanup attempt');
+        console.error('[NARRATIVE COVERAGE] Raw response excerpt:', raw.slice(0, 1000));
+        console.error('[NARRATIVE COVERAGE] Extracted JSON excerpt:', jsonString.slice(0, 1000));
+        console.error('[NARRATIVE COVERAGE] JSON error at position:', String(thirdError).match(/position (\d+)/)?.[1] || 'unknown');
+        return null;
+      }
     }
   }
 }
@@ -269,5 +300,177 @@ function normalizeShareOfVoice(topics: TopicSignal[]): TopicSignal[] {
   return topics.map(topic => ({
     ...topic,
     shareOfVoice: Number(((topic.mentionCount || 0) / total).toFixed(4))
+  }));
+}
+
+function deriveHeuristicCtas(transcript: string): CtaSignal[] {
+  if (!transcript) return [];
+  const patterns = [
+    { id: 'newsletter', label: 'Newsletter CTA', match: /\bnewsletter|\bsubscribe|\bmailing list/gi },
+    { id: 'sponsor', label: 'Sponsor Mention', match: /\bsponsor|\bbrought to you by|\bpresentation of/gi },
+    { id: 'signup', label: 'Signup CTA', match: /\bsign ?up|\bjoin now|\bget started/gi },
+    { id: 'offer', label: 'Offer/Promo', match: /\boffer|\bpromo|\bdiscount|\bcoupon/gi }
+  ];
+
+  const results: CtaSignal[] = [];
+  patterns.forEach(pat => {
+    const matches = transcript.match(pat.match);
+    if (matches && matches.length > 0) {
+      results.push({
+        id: pat.id,
+        label: pat.label,
+        mentionCount: matches.length,
+        cadenceDays: undefined,
+        sentimentScore: undefined
+      });
+    }
+  });
+
+  return results;
+}
+
+function balanceJson(input: string) {
+  const stack: string[] = [];
+  let inString = false;
+  let escaped = false;
+  for (let i = 0; i < input.length; i++) {
+    const ch = input[i];
+    if (escaped) {
+      escaped = false;
+      continue;
+    }
+    if (ch === '\\') {
+      escaped = true;
+      continue;
+    }
+    if (ch === '"' && !escaped) {
+      inString = !inString;
+      continue;
+    }
+    if (inString) continue;
+    if (ch === '{' || ch === '[') {
+      stack.push(ch);
+    } else if (ch === '}' || ch === ']') {
+      stack.pop();
+    }
+  }
+
+  let suffix = '';
+  while (stack.length) {
+    const opener = stack.pop();
+    suffix += opener === '{' ? '}' : ']';
+  }
+  return input + suffix;
+}
+
+function extractNGrams(text: string, n: number, stopwords: Set<string>): string[] {
+  const words = text
+    .toLowerCase()
+    .replace(/[^a-z0-9\s]/g, ' ')
+    .split(/\s+/)
+    .filter(Boolean)
+    .filter(w => w.length >= 3 && !stopwords.has(w));
+
+  const ngrams: string[] = [];
+  for (let i = 0; i <= words.length - n; i++) {
+    const gram = words.slice(i, i + n);
+    if (gram.length === n) {
+      ngrams.push(gram.join(' '));
+    }
+  }
+  return ngrams;
+}
+
+function deriveHeuristicTopics(transcript: string, maxTopics: number): TopicSignal[] {
+  if (!transcript) return [];
+
+  const stopwords = new Set([
+    // Existing basic words
+    'the','a','an','and','or','but','to','of','in','on','for','with','at','by','from','as','is','it','that','this','these','those','be','are','was','were','can','could','should','would','have','has','had','do','does','did','not','no','yes','you','i','we','they','he','she','them','him','her','our','your','their','my','me','us',
+
+    // NEW: Filler words causing issues
+    'think','like','about','what','just','know','want','need','get','make','take','go','come','see','look',
+    'going','something','things','thing','stuff','way','time','day','year','people','person',
+    'really','very','much','many','some','more','most','all','every','each','other','another',
+    'said','say','saying','says','tell','told','telling','asks','asked','asking',
+
+    // NEW: Podcast-specific fillers
+    'yeah','well','okay','ok','um','uh','ah','oh','hmm',
+    'episode','podcast','show','today','right','actually','basically','literally',
+    'kind','sort','little','bit','probably','maybe','perhaps',
+
+    // NEW: Question words
+    'who','where','when','why','how','which','whose','whom'
+  ]);
+
+  // Extract bi-grams (2-word) and tri-grams (3-word) phrases
+  const bigrams = extractNGrams(transcript, 2, stopwords);
+  const trigrams = extractNGrams(transcript, 3, stopwords);
+
+  // Count frequencies
+  const bigramFreq = new Map<string, number>();
+  bigrams.forEach(gram => bigramFreq.set(gram, (bigramFreq.get(gram) || 0) + 1));
+
+  const trigramFreq = new Map<string, number>();
+  trigrams.forEach(gram => trigramFreq.set(gram, (trigramFreq.get(gram) || 0) + 1));
+
+  // Combine (prefer tri-grams for more context)
+  const allPhrases: Array<[string, number]> = [
+    ...Array.from(trigramFreq.entries()),
+    ...Array.from(bigramFreq.entries())
+  ];
+
+  // Filter phrases appearing 2+ times (reduce noise)
+  const filtered = allPhrases.filter(([phrase, count]) => count >= 2);
+
+  // If we have enough multi-word phrases, use them
+  if (filtered.length >= maxTopics) {
+    const sorted = filtered
+      .sort((a, b) => b[1] - a[1])
+      .slice(0, maxTopics);
+
+    const total = sorted.reduce((sum, [, count]) => sum + count, 0) || 1;
+
+    return sorted.map(([phrase, count], idx) => ({
+      id: `heuristic_${idx}`,
+      label: phrase,
+      keywords: phrase.split(' '),
+      mentionCount: count,
+      shareOfVoice: Number((count / total).toFixed(4)),
+      relatedCtas: [],
+      assetsCovered: []
+    }));
+  }
+
+  // Fallback: improved single-word extraction
+  const words = transcript
+    .toLowerCase()
+    .replace(/[^a-z0-9\s]/g, ' ')
+    .split(/\s+/)
+    .filter(Boolean)
+    .filter(w =>
+      w.length >= 5 &&           // Increase from >3 to >=5
+      !stopwords.has(w) &&
+      !/^\d+$/.test(w) &&         // No purely numeric
+      /[a-z]{3,}/.test(w)         // Must have 3+ consecutive letters
+    );
+
+  const freq = new Map<string, number>();
+  words.forEach(w => freq.set(w, (freq.get(w) || 0) + 1));
+
+  const sorted = Array.from(freq.entries())
+    .sort((a, b) => b[1] - a[1])
+    .slice(0, maxTopics);
+
+  const total = sorted.reduce((sum, [, count]) => sum + count, 0) || 1;
+
+  return sorted.map(([word, count], idx) => ({
+    id: `heuristic_${idx}`,
+    label: word,
+    keywords: [word],
+    mentionCount: count,
+    shareOfVoice: Number((count / total).toFixed(4)),
+    relatedCtas: [],
+    assetsCovered: []
   }));
 }

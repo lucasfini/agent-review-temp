@@ -1,5 +1,5 @@
-// AI-powered social media quote extraction using Claude Sonnet 4.5
-import Anthropic from '@anthropic-ai/sdk';
+// AI-powered social media quote extraction using GPT-4o
+import OpenAI from 'openai';
 
 export interface SocialQuote {
   quote: string;
@@ -21,7 +21,7 @@ export interface QuotesResult {
 }
 
 /**
- * Extract best quotes for social sharing using Claude Sonnet 4.5
+ * Extract best quotes for social sharing using GPT-4o
  */
 export async function extractSocialQuotes(
   transcriptionText: string,
@@ -30,16 +30,16 @@ export async function extractSocialQuotes(
     speakerContext?: Record<string, { name: string; role?: string }>;
   } = {}
 ): Promise<QuotesResult> {
-  const apiKey = process.env.ANTHROPIC_API_KEY;
+  const apiKey = process.env.OPENAI_API_KEY;
   if (!apiKey) {
-    throw new Error('ANTHROPIC_API_KEY not configured');
+    throw new Error('OPENAI_API_KEY not configured');
   }
 
   const { maxQuotes = 8, speakerContext } = options;
 
-  console.log('[QUOTES] 💬 Extracting social media quotes...');
+  console.log('[QUOTES] 💬 Extracting high-impact social quotes with GPT-4o...');
 
-  const anthropic = new Anthropic({ apiKey });
+  const openai = new OpenAI({ apiKey });
 
   // Build context about speakers if available
   let speakerInfo = '';
@@ -50,70 +50,86 @@ export async function extractSocialQuotes(
     }
   }
 
-  const prompt = `You are analyzing a podcast/interview transcription to find the best quotes for social media sharing.
+  const prompt = `You are a world-class Social Media Manager specializing in "High-Signal" content. Your task is to find ${maxQuotes} quotes from this transcript that will stop a user's thumb mid-scroll.
 
-${speakerInfo}
+WHAT MAKES A QUOTE SHAREABLE?
 
-Task: Identify ${maxQuotes} highly shareable quotes that are:
-- Insightful, inspiring, or thought-provoking
-- Self-contained and understandable without context
-- Concise (ideally under 280 characters)
-- Memorable and quotable
-- Suitable for social media platforms
+The "Vibe" Shift: Look for moments where the speaker drops their guard, uses a powerful metaphor, or challenges a common industry myth.
 
-For each quote, provide:
-1. The exact quote (word-for-word from transcription)
-2. Who said it (speaker name)
-3. Category (e.g., "wisdom", "advice", "insight", "humor", "motivation")
-4. Platforms it's suitable for (twitter, linkedin, instagram)
+Self-Contained: The quote must make sense to someone who has NOT listened to the podcast.
 
-Return ONLY a valid JSON array in this exact format:
+Verbatim but Clean: You MUST use the speaker's exact words. You may only remove filler words (um, uh, like) if they distract from the core point.
+
+STRICT PLATFORM GUIDES (2026 STANDARDS):
+
+X (Twitter): Under 280 characters. Focus on "Contrarian" or "Punchy" insights.
+
+LinkedIn: 100–300 characters. Focus on "Professional Growth" or "Frameworks."
+
+Instagram: Under 125 characters (for the 'See More' cutoff). Focus on "Inspirational" or "Relatable" vibes.
+
+SOCIAL SEO VERIFICATION:
+Prioritize quotes that contain natural keywords related to the podcast's main topic. These keywords improve discoverability when shared on social platforms. Look for quotes that mention:
+- Industry-specific terms
+- Trending frameworks or methodologies
+- Named tools or products
+- Specific metrics or data points
+
+OUTPUT FORMAT:
+Return ONLY a valid JSON array:
 [
   {
-    "quote": "The best time to plant a tree was 20 years ago. The second best time is now.",
-    "speaker": "John Smith",
-    "category": "wisdom",
-    "platform": ["twitter", "linkedin", "instagram"]
+    "quote": "If you aren't embarrassed by the first version of your product, you launched too late.",
+    "speaker": "Reid Hoffman",
+    "category": "Growth Myth-Busting",
+    "platform": ["twitter", "linkedin"]
   }
 ]
 
-Guidelines:
-- Extract ${maxQuotes} MOST shareable quotes
-- Quotes should be verbatim from the transcription
-- Each quote should stand alone without needing context
-- Prioritize impactful, memorable statements
-- Consider character limits: Twitter (280), Instagram (2200), LinkedIn (3000)
-- Return ONLY the JSON array, no other text
-
+TRANSCRIPT DATA:
+${speakerInfo}
 Transcription:
 ${transcriptionText.slice(0, 80000)}`;
 
   try {
-    const response = await anthropic.messages.create({
-      model: 'claude-sonnet-4-5-20250929',
+    const response = await openai.chat.completions.create({
+      model: 'gpt-4o',
       max_tokens: 1500,
-      temperature: 0.3,
-      messages: [{
-        role: 'user',
-        content: prompt
-      }]
+      temperature: 0.5,
+      messages: [
+        {
+          role: 'system',
+          content: 'You are a world-class social media strategist who identifies viral-worthy quotes. You prioritize authenticity, impact, and platform-specific optimization. Always return valid JSON arrays.'
+        },
+        {
+          role: 'user',
+          content: prompt
+        }
+      ]
     });
 
-    const responseText = response.content[0].type === 'text'
-      ? response.content[0].text
-      : '';
+    const responseText = response.choices[0]?.message?.content || '[]';
 
     // Parse JSON response
     const quotes = parseQuotesResponse(responseText);
 
-    console.log(`[QUOTES] ✅ Extracted ${quotes.length} social media quotes`);
-    console.log(`[QUOTES] 📊 Tokens: ${response.usage.input_tokens} in, ${response.usage.output_tokens} out`);
+    console.log(`[QUOTES] ✅ Extracted ${quotes.length} high-impact social quotes with GPT-4o`);
+    console.log(`[QUOTES] 📊 Tokens: ${response.usage?.prompt_tokens || 0} in, ${response.usage?.completion_tokens || 0} out`);
+
+    // Log platform distribution for analytics
+    const platformCounts: Record<string, number> = {};
+    quotes.forEach(q => {
+      q.platform.forEach(p => {
+        platformCounts[p] = (platformCounts[p] || 0) + 1;
+      });
+    });
+    console.log(`[QUOTES] 📱 Platform distribution:`, platformCounts);
 
     return {
       quotes,
       tokensUsed: {
-        input: response.usage.input_tokens,
-        output: response.usage.output_tokens
+        input: response.usage?.prompt_tokens || 0,
+        output: response.usage?.completion_tokens || 0
       },
       generatedAt: new Date().toISOString()
     };
@@ -125,7 +141,7 @@ ${transcriptionText.slice(0, 80000)}`;
 }
 
 /**
- * Parse and validate quotes response from Claude
+ * Parse and validate quotes response from GPT-4o
  */
 function parseQuotesResponse(content: string): SocialQuote[] {
   // Strip markdown code blocks if present
@@ -141,18 +157,25 @@ function parseQuotesResponse(content: string): SocialQuote[] {
       throw new Error('Response is not an array');
     }
 
+    if (parsed.length === 0) {
+      console.warn('[QUOTES] ⚠️ No quotes found in response');
+      return [];
+    }
+
     // Validate and normalize each quote
-    return parsed.map(item => {
+    const normalizedQuotes = parsed.map(item => {
       const quote = typeof item.quote === 'string' ? item.quote.trim() : '';
       const speaker = typeof item.speaker === 'string' ? item.speaker.trim() : 'Unknown';
-      const category = typeof item.category === 'string' ? item.category.trim().toLowerCase() : 'insight';
+      const category = typeof item.category === 'string' ? item.category.trim() : 'insight';
       const platform = Array.isArray(item.platform)
-        ? item.platform.map((p: any) => String(p).toLowerCase())
+        ? item.platform.map((p: any) => String(p).toLowerCase()).filter((p: string) => ['twitter', 'linkedin', 'instagram', 'facebook'].includes(p))
         : ['twitter', 'linkedin', 'instagram'];
 
       // Extract timestamps if provided (optional feature)
       const startTime = typeof item.startTime === 'number' ? item.startTime : 0;
       const endTime = typeof item.endTime === 'number' ? item.endTime : 0;
+
+      const characterCount = quote.length;
 
       return {
         quote,
@@ -160,13 +183,40 @@ function parseQuotesResponse(content: string): SocialQuote[] {
         startTime,
         endTime,
         category,
-        platform,
-        characterCount: quote.length
+        platform: platform.length > 0 ? platform : ['twitter', 'linkedin', 'instagram'],
+        characterCount
       };
     }).filter(item => item.quote.length > 0 && item.quote.length <= 500);
 
+    // Platform-specific validation and warnings
+    normalizedQuotes.forEach((item, index) => {
+      const charCount = item.characterCount;
+
+      // X/Twitter validation (280 chars)
+      if (item.platform.includes('twitter') && charCount > 280) {
+        console.warn(`[QUOTES] ⚠️ Quote #${index + 1} exceeds Twitter limit (${charCount} > 280 chars), may be truncated`);
+      }
+
+      // LinkedIn optimal range (100-300 chars)
+      if (item.platform.includes('linkedin')) {
+        if (charCount < 100) {
+          console.warn(`[QUOTES] ⚠️ Quote #${index + 1} may be too short for LinkedIn impact (${charCount} < 100 chars)`);
+        } else if (charCount > 300) {
+          console.warn(`[QUOTES] ⚠️ Quote #${index + 1} may be too long for LinkedIn (${charCount} > 300 chars)`);
+        }
+      }
+
+      // Instagram 'See More' cutoff (125 chars)
+      if (item.platform.includes('instagram') && charCount > 125) {
+        console.warn(`[QUOTES] ⚠️ Quote #${index + 1} exceeds Instagram 'See More' cutoff (${charCount} > 125 chars)`);
+      }
+    });
+
+    return normalizedQuotes;
+
   } catch (parseError: any) {
     console.error('[QUOTES] JSON parse error:', parseError);
+    console.error('[QUOTES] Raw content:', content.substring(0, 500));
     // Return empty array on parse failure
     return [];
   }

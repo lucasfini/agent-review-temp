@@ -33,6 +33,12 @@ interface ConversationViewProps {
   projectId?: string;
   onSpeakerUpdate?: (updatedSpeakerData: any) => void;
   userTier?: 'basic' | 'pro' | 'premium'; // User's subscription tier
+  filteredSpeakers?: Array<{
+    speakerId: string;
+    filterReason?: 'ad_read' | 'intro' | 'outro' | 'promo' | 'venue_announcement';
+    confidence: number;
+    evidence: string;
+  }>;
 }
 
 interface InsightCard {
@@ -61,7 +67,8 @@ export default function ConversationView({
   className = "",
   projectId,
   onSpeakerUpdate,
-  userTier = 'basic'
+  userTier = 'basic',
+  filteredSpeakers = []
 }: ConversationViewProps) {
   const [showTimestamps, setShowTimestamps] = useState(true);
   const [selectedSpeaker, setSelectedSpeaker] = useState<string | null>(null);
@@ -86,6 +93,17 @@ export default function ConversationView({
   const [insightsLoading, setInsightsLoading] = useState(true);
   const [insightsError, setInsightsError] = useState<string | null>(null);
   const [refreshingInsights, setRefreshingInsights] = useState(false);
+
+  // Helper to check if a speaker is filtered
+  const getFilterInfo = (speakerId: string) => {
+    return filteredSpeakers.find(f => f.speakerId === speakerId);
+  };
+
+  // Helper to format filter reason for display
+  const formatFilterReason = (reason?: string) => {
+    if (!reason) return '';
+    return reason.replace(/_/g, ' ').replace(/\b\w/g, l => l.toUpperCase());
+  };
 
   const handleEditSpeaker = (speakerId: string, currentName: string) => {
     setEditingSpeaker(speakerId);
@@ -610,9 +628,9 @@ export default function ConversationView({
   };
 
   return (
-    <div className={`space-y-6 p-4 ${className}`}>
+    <div className={`h-full flex flex-col ${className}`}>
       {/* Conversation Header */}
-      <div className="flex flex-col gap-3 lg:flex-row lg:items-center lg:justify-between">
+      <div className="flex-shrink-0 p-4 pb-3 flex flex-col gap-3 lg:flex-row lg:items-center lg:justify-between">
         <div className="flex items-center gap-3">
           <div className="flex items-center justify-center h-9 w-9 rounded-full bg-blue-50 text-blue-600">
             <MessageCircle className="h-4 w-4" />
@@ -713,7 +731,7 @@ export default function ConversationView({
       {/* Inline Insight Presets */}
       {/* Speaker Legend */}
       {showSpeakerLegend && !selectedSpeaker && speakerList.length > 1 && (
-        <div className="flex flex-wrap gap-3 p-4 bg-gray-50 border border-gray-200 rounded-lg">
+        <div className="flex-shrink-0 flex flex-wrap gap-3 p-4 mx-4 mb-3 bg-gray-50 border border-gray-200 rounded-lg">
           <span className="text-xs font-medium text-gray-700 self-center">Speakers:</span>
           {speakerList.map(speakerId => {
             const speaker = speakers[speakerId];
@@ -770,6 +788,17 @@ export default function ConversationView({
                 ) : (
                   <div className="flex items-center space-x-1">
                     <span>{currentName}</span>
+
+                    {/* Roster match indicator */}
+                    {speaker.rosterMatched && (
+                      <span
+                        className="ml-1.5 px-2 py-0.5 rounded-full text-[10px] font-semibold bg-blue-100 text-blue-700 border border-blue-200"
+                        title={`Matched via ${(speaker.rosterMatchMethod || 'roster').replace(/_/g, ' ')} (${Math.round((speaker.rosterMatchConfidence || 0) * 100)}% confidence)`}
+                      >
+                        ROSTER
+                      </span>
+                    )}
+
                     {projectId && (
                       <div className="flex items-center space-x-1 opacity-0 group-hover:opacity-100 transition-opacity">
                         <button
@@ -868,7 +897,7 @@ export default function ConversationView({
 
       {/* Bulk Selection Controls */}
       {projectId && selectedSegments.size > 0 && (
-        <div className="p-4 border border-blue-100 bg-blue-50 rounded-lg text-xs text-blue-900 space-y-3">
+        <div className="flex-shrink-0 mx-4 mb-3 p-4 border border-blue-100 bg-blue-50 rounded-lg text-xs text-blue-900 space-y-3">
           <div className="flex flex-wrap items-center gap-2">
             <span className="font-medium">
               {selectedSegments.size} segment{selectedSegments.size === 1 ? '' : 's'} selected
@@ -924,7 +953,8 @@ export default function ConversationView({
       )}
 
       {/* Conversation Segments */}
-      <div className="space-y-4 max-h-96 overflow-y-auto p-2">
+      <div className="flex-1 overflow-y-auto px-4 pb-4">
+        <div className="space-y-4">
         {filteredSegments.map(({ segment, index: segmentIndex }) => {
           const speaker = speakers[segment.speakerId];
 
@@ -937,6 +967,8 @@ export default function ConversationView({
           const speakerName = getSpeakerDisplayName(speaker) || 'Unknown Speaker';
           const speakerRoleLabel = formatRoleLabel(speaker.role);
           const roleTooltip = speaker.roleSummary || (speaker.autoRoleAssigned ? 'Automatically assigned role' : '');
+          const filterInfo = getFilterInfo(segment.speakerId);
+          const isFiltered = !!filterInfo;
           const colorClass = getSpeakerColor(segment.speakerId);
           const duration = segment.endTime - segment.startTime;
           const isSelected = selectedSegments.has(segmentIndex);
@@ -975,10 +1007,18 @@ export default function ConversationView({
                 {/* Speaker Name and Timing */}
                 <div className="flex items-center justify-between mb-2 flex-wrap gap-2">
                   <div className="flex items-center gap-2 flex-wrap">
-                    <span className={`text-sm font-semibold ${colorClass.split(' ')[0]}`}>
+                    <span className={`text-sm font-semibold ${isFiltered ? 'text-gray-400 italic' : colorClass.split(' ')[0]}`}>
                       {speakerName}
                     </span>
-                    {speakerRoleLabel && (
+                    {isFiltered && filterInfo && (
+                      <span
+                        className="inline-flex items-center text-[11px] uppercase tracking-wide px-2 py-0.5 rounded-full bg-yellow-100 text-yellow-700 border border-yellow-200"
+                        title={`Filtered: ${filterInfo.evidence} (confidence: ${(filterInfo.confidence * 100).toFixed(0)}%)`}
+                      >
+                        {formatFilterReason(filterInfo.filterReason)}
+                      </span>
+                    )}
+                    {!isFiltered && speakerRoleLabel && (
                       <span
                         className="inline-flex items-center text-[11px] uppercase tracking-wide px-2 py-0.5 rounded-full bg-gray-100 text-gray-600 border border-gray-200"
                         title={roleTooltip}
@@ -1039,10 +1079,11 @@ export default function ConversationView({
             </div>
           );
         })}
+        </div>
       </div>
 
       {/* Footer Stats */}
-      <div className="text-xs text-gray-500 pt-4 mt-4 border-t border-gray-200">
+      <div className="flex-shrink-0 px-4 pb-4 text-xs text-gray-500 pt-4 border-t border-gray-200">
         {selectedSpeaker ? (
           <span>
             Showing {filteredSegments.length} segments from {getSpeakerDisplayName(speakers[selectedSpeaker])}
@@ -1134,7 +1175,7 @@ function deriveSpeakerInsightCards(speakerData: any): InsightCard[] {
   const segments: SpeakerSegment[] = Array.isArray(speakerData.segments) ? speakerData.segments : [];
   const processedAt = speakerData?.detectionMetadata?.processedAt;
 
-  return Object.entries(speakerData.speakers)
+  return (Object.entries(speakerData.speakers)
     .map(([speakerId, speaker]: [string, any]) => {
       if (!speaker || typeof speaker !== 'object') return null;
       const label = getSpeakerDisplayName(speaker);
@@ -1188,7 +1229,7 @@ function deriveSpeakerInsightCards(speakerData: any): InsightCard[] {
         origin: 'speaker'
       };
     })
-    .filter((card): card is InsightCard => Boolean(card));
+    .filter(card => card !== null)) as InsightCard[];
 }
 
 function deriveEntityInsightCards(transcriptionText?: string, speakerData?: any): InsightCard[] {
@@ -1603,7 +1644,6 @@ function InlineInsightsDrawer({
             const subtitleParts: string[] = [];
             if (card.category) subtitleParts.push(card.category);
             if (card.origin === 'speaker') subtitleParts.push('speaker');
-            if (card.origin === 'takeaway') subtitleParts.push('takeaway');
             if (card.origin === 'entity') subtitleParts.push('entity');
 
             return (

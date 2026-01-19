@@ -16,9 +16,8 @@ docs/
 
 Getting started and initial configuration:
 
-- **PYANNOTE_SETUP.md** - PyAnnote speaker diarization setup
-- **TRANSCRIPTION_SETUP.md** - Transcription service configuration
-- **SPEAKER_DIARIZATION_CONFIG.md** - Speaker detection configuration
+- **TRANSCRIPTION_SETUP.md** - AssemblyAI transcription service configuration
+- **SPEAKER_DIARIZATION_CONFIG.md** - Speaker detection configuration (Sortformer)
 
 ## Guides (`guides/`)
 

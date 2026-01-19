@@ -20,7 +20,7 @@ export async function POST(request: NextRequest) {
       .from('projects')
       .select('transcription_text, status')
       .eq('id', projectId)
-      .single();
+      .single() as { data: { transcription_text: string; status: string } | null; error: any };
 
     if (projectError || !project) {
       return NextResponse.json(
@@ -44,6 +44,7 @@ export async function POST(request: NextRequest) {
     // Update project with selected content types
     const { error: updateError } = await supabaseAdmin
       .from('projects')
+      // @ts-expect-error - Supabase types issue with update
       .update({
         selected_content_types: selectedContentTypes
       })

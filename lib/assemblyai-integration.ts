@@ -140,6 +140,14 @@ export async function transcribeWithAssemblyAI(
 
     console.log(`[ASSEMBLYAI] ✅ Transcription completed in ${processingTime.toFixed(1)}s`);
 
+    // LOG RAW UTTERANCES SAMPLE (first 10 utterances)
+    if (transcript.utterances && transcript.utterances.length > 0) {
+      const sampleSize = Math.min(10, transcript.utterances.length);
+      console.log(`\n[ASSEMBLYAI] 📋 RAW UTTERANCES SAMPLE (first ${sampleSize} of ${transcript.utterances.length}):`);
+      console.log(JSON.stringify(transcript.utterances.slice(0, sampleSize), null, 2));
+      console.log(`[ASSEMBLYAI] 📋 Full utterances count: ${transcript.utterances.length}\n`);
+    }
+
     // Get duration from transcript (in milliseconds)
     const durationMs = transcript.audio_duration || 0;
     const durationSeconds = durationMs / 1000;

@@ -5,6 +5,7 @@ import { Upload, FileAudio, X, AlertCircle, CheckCircle, Clock, History, Trash2,
 import { supabase } from '@/lib/supabase/client';
 import { useAuth } from '@/lib/auth/context';
 import { calculateOverallProgress, getStageDisplayName, type ProcessingStage } from '@/lib/tier-progress-config';
+import { SpeakerRosterForm, type RosterSpeaker } from '@/components/SpeakerRosterForm';
 
 type PerformanceLevel = 'basic' | 'pro' | 'premium';
 
@@ -40,6 +41,7 @@ export default function UploadPage() {
   const [historyLoading, setHistoryLoading] = useState(true);
   const [performanceLevel, setPerformanceLevel] = useState<PerformanceLevel>('premium');
   const performanceLevelRef = useRef<PerformanceLevel>('premium');
+  const [rosterSpeakers, setRosterSpeakers] = useState<RosterSpeaker[]>([]);
 
   const handlePerformanceChange = (level: PerformanceLevel) => {
     performanceLevelRef.current = level;
@@ -55,13 +57,14 @@ export default function UploadPage() {
 
   const fetchUploadHistory = async () => {
     try {
+      if (!user?.id) return;
       setHistoryLoading(true);
       const { data, error } = await supabase
         .from('projects')
         .select('id, title, audio_file_name, audio_file_size, audio_duration, status, created_at, processing_completed_at')
-        .eq('user_id', user?.id)
+        .eq('user_id', user.id)
         .order('created_at', { ascending: false })
-        .limit(20);
+        .limit(20) as { data: any[] | null; error: any };
 
       if (error) {
         console.error('Error fetching upload history:', error);
@@ -77,6 +80,8 @@ export default function UploadPage() {
   };
 
   const deleteHistoryItem = async (projectId: string) => {
+    if (!user?.id) return;
+
     if (!confirm('Are you sure you want to delete this upload? This will also delete all generated content.')) {
       return;
     }
@@ -104,7 +109,7 @@ export default function UploadPage() {
         .from('projects')
         .delete()
         .eq('id', projectId)
-        .eq('user_id', user?.id);
+        .eq('user_id', user.id);
 
       if (error) {
         console.error('Error deleting project:', error);
@@ -257,6 +262,11 @@ const formatDuration = (seconds: number) => {
       formData.append('audio', uploadedFile.file);
       formData.append('title', uploadedFile.file.name.replace(/\.[^/.]+$/, ""));
       formData.append('performanceLevel', filePerformanceLevel);
+
+      // Add roster speakers if provided
+      if (rosterSpeakers.length > 0) {
+        formData.append('rosterSpeakers', JSON.stringify(rosterSpeakers));
+      }
 
       // Get session token
       const { data: { session } } = await supabase.auth.getSession();
@@ -489,6 +499,12 @@ const formatDuration = (seconds: number) => {
             ))}
           </div>
         </div>
+
+        {/* Speaker Roster Form */}
+        <SpeakerRosterForm
+          speakers={rosterSpeakers}
+          onChange={setRosterSpeakers}
+        />
 
         {/* Upload Area */}
         <div className="mb-8">

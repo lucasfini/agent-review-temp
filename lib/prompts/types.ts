@@ -78,11 +78,13 @@ export interface InsightExtractionVars {
   titleContext: string;
   speakerContext: string;
   transcript: string;
+  [key: string]: string | number | boolean;
 }
 
 export interface ResearchLinksVars {
   label: string;
   context: string;
+  [key: string]: string | number | boolean;
 }
 
 export interface ContentGenerationVars {
@@ -90,6 +92,7 @@ export interface ContentGenerationVars {
   speakerNames: string;
   transcriptionText: string;
   count: number;
+  [key: string]: string | number | boolean;
 }
 
 export interface NarrativeCoverageVars {
@@ -99,12 +102,56 @@ export interface NarrativeCoverageVars {
   tier: string;
   goalsText: string;
   transcriptSlice: string;
-  summarySnippet?: string;
+  summarySection: string;
   MAX_TRANSCRIPT_CHARS: number;
+  [key: string]: string | number | boolean;
 }
 
 export interface SpeakerNameExtractionVars {
-  transcriptionText: string;
+  speakerIds: string[];
+  segments: CompactSegment[];
+  totalSpeakers: number;
+}
+
+export interface CompactSegment {
+  speakerId: string;
+  time: string; // "0:00-0:15"
+  text: string;
+}
+
+export interface LLMExtractionResult {
+  assignments: LLMAssignment[];
+  unassignedNames: Array<{
+    name: string;
+    reason: 'mentioned_only' | 'show_title' | 'location' | 'unclear_context';
+  }>;
+}
+
+export interface LLMAssignment {
+  speakerId: string;
+  name: string;
+  confidence: number;
+  nameType: 'self_intro' | 'introduced_by_other' | 'direct_address' | 'label_line' | 'uncertain';
+  evidence: Array<{
+    speakerId: string;
+    startTime: number;
+    endTime: number;
+    text: string;
+  }>;
+  notes: string;
+}
+
+export interface HeuristicResult {
+  speakerId: string;
+  name: string;
+  confidence: number;
+  method: 'self_intro' | 'guest_intro' | 'label_line' | 'direct_address';
+  evidence: Array<{
+    speakerId: string;
+    startTime: number;
+    endTime: number;
+    text: string;
+  }>;
 }
 
 export interface SpeakerRoleVars {
