@@ -2,39 +2,41 @@
   "audioRepurpose": {
     "insightExtraction": {
       "id": "insight_extraction",
-      "model": "claude-3-5-haiku-20241022",
-      "temperature": 0.3,
-      "max_tokens": 4096,
+      "model": "gpt-4o-mini",
+      "temperature": 0.2,
+      "max_tokens": 4000,
+      "response_format": { "type": "json_object" },
       "params": {
-        "maxTranscriptChars": 50000,
+        "maxTranscriptChars": 100000,
         "targetInsightCountRange": [8, 15]
       },
-      "prompt": "${titleContext}${speakerContext}\n\nExtract 8–15 key educational insights from this podcast transcript. Include only clear, well-defined concepts or notable people that provide learning value.\n\nDo NOT include:\n- Podcast hosts or repeated known speaker names\n- Vague themes without clear labels\n- Unclear references without enough context to define\n\nFor each insight, return this structure exactly (key names and shape must match):\n\nentity_id: lowercase-hyphenated-id\nlabel: Human readable name\ncategory: person | concept\nmatch_text: Primary detected matching text\nmatch_variants: [alternative names or abbreviations]\ntranscript_excerpts: [{ text: short quote, timestamp: 123 }]\nsimple_definition: 1–2 sentence accessible definition\nfull_explanation: 3–5 sentence deeper explanation\nrelated_concepts: [other concepts mentioned in similar context]\nwhy_it_matters: Why this insight is relevant to the episode\nrelationships: [{ type: string, entityId: string, description: string }]\nconfidence: number between 0 and 1\n\nGuidelines:\n- Prioritize relevance, clarity, and frequency of mention\n- If context is too vague to confidently define something, skip it\n- Insights should be ordered from most important to least important\n\nReturn ONLY a JSON array. No prose.\n\nTRANSCRIPT (truncated to first 50,000 characters):\n${transcript.substring(0, 50000)}"
+      "system": "You are an expert Educational Data Analyst. Output strict JSON only.",
+      "prompt": "CONTEXT:\n${titleContext}\n${speakerContext}\n\nTASK:\nExtract 8–15 key educational insights from the transcript below. Return a JSON object with a key 'insights' containing an array of objects.\n\nSTRICT FILTERS:\n- IGNORE: Hosts, sponsors, generic chitchat, or vague themes.\n- KEEP: Specific methodologies, frameworks, distinct concepts, notable people, tools, software, or products.\n\nCATEGORY DEFINITIONS:\n- \"person\": Notable individuals, experts, historical figures, thought leaders\n- \"concept\": Ideas, methodologies, frameworks, theories, abstract concepts\n- \"tool\": Software, products, platforms, technologies, companies, organizations\n\nJSON SCHEMA PER INSIGHT:\n{\n  \"entity_id\": \"kebab-case-id\",\n  \"label\": \"Title Case Name\",\n  \"category\": \"person\" | \"concept\" | \"tool\",\n  \"match_text\": \"Exact text from transcript\",\n  \"match_variants\": [\"optional\", \"alternative\", \"spellings\"],\n  \"simple_definition\": \"ELI5 definition (1 sentence)\",\n  \"full_explanation\": \"Academic definition (2-3 sentences)\",\n  \"why_it_matters\": \"Relevance to this specific episode\",\n  \"confidence\": 0.95\n}\n\nTRANSCRIPT:\n${transcript}"
     },
     "researchLinks": {
       "person": {
         "id": "research_links_person",
         "model": "sonar-pro",
-        "temperature": 0.2,
+        "temperature": 0.1,
         "max_tokens": 500,
         "params": {
           "recency": "month",
           "return_citations": true
         },
-        "system": "You are a research assistant helping to find authoritative sources for educational content. Return only valid JSON.",
-        "prompt": "Find 2-3 authoritative sources about ${label}, a person mentioned in this context:\n\n\"${context}\"\n\nProvide official websites, Wikipedia articles, or credible biographical sources.\n\nOnly return links if the source exists and the URL is valid.\n\nReturn ONLY a JSON array with this exact structure:\n[\n  {\n    title: Source title,\n    url: https://...,\n    description: Brief description of what this source covers,\n    type: wikipedia | official | article\n  }\n]\n\nFocus on the most authoritative and relevant sources."
+        "system": "You are a research librarian. Validate potential resources. Return strictly valid JSON.",
+        "prompt": "Search for the official online presence of '${label}' (Person), mentioned here: \"${context}\".\n\nReturn a JSON array of 2-3 VALID, LIVE URLs (Official Website, LinkedIn, or Wikipedia).\n\nOutput Format:\n[ { \"title\": \"...\", \"url\": \"...\", \"type\": \"official\" } ]"
       },
       "concept": {
         "id": "research_links_concept",
         "model": "sonar-pro",
-        "temperature": 0.2,
+        "temperature": 0.1,
         "max_tokens": 500,
         "params": {
-          "recency": "month",
+          "recency": "year",
           "return_citations": true
         },
-        "system": "You are a research assistant helping to find authoritative sources for educational content. Return only valid JSON.",
-        "prompt": "Find 2-3 authoritative sources to explain ${label}, a concept or term mentioned in this context:\n\n\"${context}\"\n\nProvide official documentation, Wikipedia articles, or reputable explainers.\n\nOnly return links if the source exists and the URL is valid.\n\nReturn ONLY a JSON array with this exact structure:\n[\n  {\n    title: Source title,\n    url: https://...,\n    description: Brief description of what this source covers,\n    type: wikipedia | documentation | article | academic\n  }\n]\n\nFocus on educational sources that help readers understand the concept."
+        "system": "You are a research librarian. Find authoritative definitions. Return strictly valid JSON.",
+        "prompt": "Find 2-3 authoritative sources explaining the concept '${label}', mentioned here: \"${context}\".\n\nPrioritize: Official Documentation, University/.edu resources, or reputable Industry Whitepapers.\n\nReturn a JSON array of VALID, LIVE URLs.\n\nOutput Format:\n[ { \"title\": \"...\", \"url\": \"...\", \"type\": \"academic\" } ]"
       }
     },
     "contentGeneration": {

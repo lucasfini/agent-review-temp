@@ -2,7 +2,7 @@
 // Orchestrates Pass 1 (GPT Intelligence) and Pass 2 (Claude Reassignment)
 // Provides final clean speaker attribution with quality checks
 
-import { identifySpeakers, IntelligentSpeaker, SpeakerIntelligenceResult } from './speaker-intelligence';
+import { identifySpeakers, IntelligentSpeaker, SpeakerIntelligenceResult, ProjectType } from './speaker-intelligence';
 import { reassignTranscript, ReassignedUtterance, TranscriptReassignmentResult } from './transcript-reassignment';
 import { SpeakerSegment } from './types';
 
@@ -39,6 +39,7 @@ export interface TwoPassOptions {
   gptModel?: string;
   claudeModel?: string;
   projectTitle?: string;
+  projectType?: ProjectType;
   userId?: string;
   projectId?: string;
 }
@@ -85,7 +86,8 @@ export async function runTwoPassAttribution(
     pass1Result = await identifySpeakers(utterances, {
       apiKey: options.openaiApiKey,
       model: options.gptModel,
-      projectTitle: options.projectTitle
+      projectTitle: options.projectTitle,
+      projectType: options.projectType
     });
 
     console.log(`\n✓ Pass 1 complete: ${pass1Result.speakers.length} speakers identified`);

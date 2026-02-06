@@ -125,7 +125,7 @@ export async function classifySpeakerRoles(
           metadata: {
             speakerCount: speakerEntries.length,
           },
-          shouldDebit: false, // Don't debit yet - will batch later
+          shouldDebit: true, // Debiting enabled
         });
       } catch (billingError) {
         console.error('[SPEAKER ROLES] Billing tracking failed:', billingError);

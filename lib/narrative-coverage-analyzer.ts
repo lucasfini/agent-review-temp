@@ -7,6 +7,7 @@ import type {
 } from '@/lib/narrative-coverage';
 import { getPrompt, prompts } from '@/lib/prompts/loader';
 import type { NarrativeCoverageVars } from '@/lib/prompts/types';
+import { trackAnthropicUsage } from '@/lib/billing/track-usage';
 
 interface NarrativeGoal {
   id: string;
@@ -33,6 +34,8 @@ export interface NarrativeCoverageAnalyzerOptions {
   tier?: string;
   maxTopics?: number;
   coverageWindow?: string;
+  userId?: string;
+  projectId?: string;
 }
 
 // Get configuration from centralized config
@@ -117,6 +120,21 @@ export async function analyzeNarrativeCoverage(
       }
     ]
   });
+
+  // Track usage and bill user
+  if (options.userId) {
+    // Map config model to billed model name (assuming sonnet-4.5 for high quality analysis)
+    const modelName = config.model.includes('sonnet') ? 'sonnet-4.5' : 'haiku-4.5';
+    
+    await trackAnthropicUsage({
+      userId: options.userId,
+      projectId: options.projectId,
+      response,
+      modelName,
+      purpose: 'Narrative Coverage Analysis',
+      shouldDebit: true
+    });
+  }
 
   const rawText =
     response.content[0]?.type === 'text'

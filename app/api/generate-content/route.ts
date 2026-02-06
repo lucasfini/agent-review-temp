@@ -1,5 +1,4 @@
 import { NextRequest, NextResponse } from 'next/server';
-import OpenAI from 'openai';
 import { supabaseAdmin } from '@/lib/supabase/server';
 import { trackOpenAIUsage } from '@/lib/billing/track-usage';
 import type { ContentBlock, OutputType } from '@/lib/content-types';
@@ -13,10 +12,7 @@ import {
   completeGenerationProgress,
   failGenerationProgress
 } from '@/lib/generation-progress';
-
-const openai = new OpenAI({
-  apiKey: process.env.OPENAI_API_KEY,
-});
+import { getAICompletion, type AIMessage } from '@/lib/ai-providers/multi-provider';
 
 /**
  * Parse JSON response from OpenAI, stripping markdown code fences if present
@@ -269,17 +265,18 @@ async function getExistingContentCounts(projectId: string): Promise<Record<strin
  */
 async function getStoryAngles(
   cleanedSummary: string,
+  model: string,
   userId?: string,
   projectId?: string
 ): Promise<string[]> {
-  console.log('[STORY ANGLES] 🎯 Identifying distinct narrative angles...');
+  console.log(`[STORY ANGLES] 🎯 Identifying distinct narrative angles using ${model}...`);
 
   try {
-    const response = await openai.chat.completions.create({
-      model: 'gpt-4o-mini',
+    const result = await getAICompletion({
+      model,
       temperature: 0.2,
-      max_tokens: 500,
-      response_format: { type: "json_object" },
+      maxTokens: 500,
+      responseFormat: { type: "json_object" },
       messages: [
         {
           role: 'system',
@@ -299,22 +296,36 @@ Return JSON format:
       ]
     });
 
+    // Mock response for tracking
+    const mockResponse = {
+      id: `mock-${Date.now()}`,
+      object: 'chat.completion',
+      created: Date.now(),
+      model: result.model,
+      choices: [{ message: { content: result.content } }],
+      usage: {
+        prompt_tokens: result.usage.inputTokens,
+        completion_tokens: result.usage.outputTokens,
+        total_tokens: result.usage.totalTokens
+      }
+    };
+
     // Track usage
     if (userId) {
       await trackOpenAIUsage({
         userId,
         projectId,
-        response,
-        modelName: 'gpt-4o-mini',
+        response: mockResponse,
+        modelName: model,
         purpose: 'Story Angle Identification',
         metadata: { summaryLength: cleanedSummary.length },
         shouldDebit: false
       });
     }
 
-    const content = response.choices[0]?.message?.content || '{"angles":[]}';
-    const result = parseAIResponse(content);
-    const angles = result.angles || [];
+    const content = result.content || '{"angles":[]}';
+    const parsed = parseAIResponse(content);
+    const angles = parsed.angles || [];
 
     console.log(`[STORY ANGLES] ✅ Identified ${angles.length} angles:`, angles);
 
@@ -378,11 +389,11 @@ export async function POST(request: NextRequest) {
       console.warn('[BILLING] Could not find user_id for project:', projectId);
     }
 
-    // Force GPT-4o for Universal Content Engine
-    const modelToUse = 'gpt-4o';
+    // Use selected model or default to GPT-4o
+    const modelToUse = modelId || 'gpt-4o';
 
     console.log(`[GENERATION] 🚀 Starting Universal Content Engine for project ${projectId}`);
-    console.log(`[GENERATION] 📦 Processing ${blocks.length} blocks with GPT-4o`);
+    console.log(`[GENERATION] 📦 Processing ${blocks.length} blocks with ${modelToUse}`);
 
     // Initialize progress tracking
     await initializeGenerationProgress(projectId, blocks.length);
@@ -532,7 +543,7 @@ ${narrativeContext}
 Cleaned Transcription (Ad-free):
 ${transcription.slice(0, 80000)}`;
 
-  const response = await openai.chat.completions.create({
+  const result = await getAICompletion({
     model,
     messages: [{
       role: 'system',
@@ -542,16 +553,30 @@ ${transcription.slice(0, 80000)}`;
       content: analysisPrompt
     }],
     temperature: 0.3,
-    max_tokens: 4000,
-    response_format: { type: "json_object" }
+    maxTokens: 4000,
+    responseFormat: { type: "json_object" }
   });
+
+  // Mock response for tracking
+  const mockResponse = {
+    id: `mock-${Date.now()}`,
+    object: 'chat.completion',
+    created: Date.now(),
+    model: result.model,
+    choices: [{ message: { content: result.content } }],
+    usage: {
+      prompt_tokens: result.usage.inputTokens,
+      completion_tokens: result.usage.outputTokens,
+      total_tokens: result.usage.totalTokens
+    }
+  };
 
   // Track usage
   if (userId) {
     await trackOpenAIUsage({
       userId,
       projectId,
-      response,
+      response: mockResponse,
       modelName: model,
       purpose: 'Content Analysis',
       metadata: { transcriptLength: transcription.length },
@@ -559,7 +584,7 @@ ${transcription.slice(0, 80000)}`;
     });
   }
 
-  const content = response.choices[0]?.message?.content || '{}';
+  const content = result.content || '{}';
   return parseAIResponse(content);
 }
 
@@ -611,7 +636,7 @@ async function generateTwitterThread(
 ): Promise<any[]> {
   // Step 1: Get 3 distinct story angles from cleaned summary
   const cleanedSummary = narrativeMetadata.cleaned_narrative_summary || transcription.substring(0, 10000);
-  const storyAngles = await getStoryAngles(cleanedSummary, userId, projectId);
+  const storyAngles = await getStoryAngles(cleanedSummary, model, userId, projectId);
 
   // Step 2: Select angle based on block number (cycle through angles)
   const angleIndex = (block.blockNumber - 1) % storyAngles.length;
@@ -649,7 +674,7 @@ ${theme.promptModifier}
     additionalContext
   });
 
-  const response = await openai.chat.completions.create({
+  const result = await getAICompletion({
     model,
     messages: [
       {
@@ -659,24 +684,38 @@ ${theme.promptModifier}
       { role: 'user', content: prompt }
     ],
     temperature: 0.7,
-    max_tokens: 1500,
-    response_format: { type: "json_object" }
+    maxTokens: 1500,
+    responseFormat: { type: "json_object" }
   });
+
+  // Mock response for tracking
+  const mockResponse = {
+    id: `mock-${Date.now()}`,
+    object: 'chat.completion',
+    created: Date.now(),
+    model: result.model,
+    choices: [{ message: { content: result.content } }],
+    usage: {
+      prompt_tokens: result.usage.inputTokens,
+      completion_tokens: result.usage.outputTokens,
+      total_tokens: result.usage.totalTokens
+    }
+  };
 
   if (userId) {
     await trackOpenAIUsage({
       userId,
       projectId,
-      response,
+      response: mockResponse,
       modelName: model,
       purpose: `X Thread (${theme.name})`,
       shouldDebit: true
     });
   }
 
-  const content = response.choices[0]?.message?.content || '{"tweets":[]}';
-  const result = parseAIResponse(content);
-  let tweets = result.tweets || [];
+  const content = result.content || '{"tweets":[]}';
+  const parsed = parseAIResponse(content);
+  let tweets = parsed.tweets || [];
 
   // Enforce 280 character limit
   tweets = tweets.map((t: any) => {
@@ -764,7 +803,7 @@ ${theme.promptModifier}
     additionalContext
   });
 
-  const response = await openai.chat.completions.create({
+  const result = await getAICompletion({
     model,
     messages: [
       {
@@ -774,26 +813,40 @@ ${theme.promptModifier}
       { role: 'user', content: prompt }
     ],
     temperature: 0.7,
-    max_tokens: 800,
-    response_format: { type: "json_object" }
+    maxTokens: 800,
+    responseFormat: { type: "json_object" }
   });
+
+  // Mock response for tracking
+  const mockResponse = {
+    id: `mock-${Date.now()}`,
+    object: 'chat.completion',
+    created: Date.now(),
+    model: result.model,
+    choices: [{ message: { content: result.content } }],
+    usage: {
+      prompt_tokens: result.usage.inputTokens,
+      completion_tokens: result.usage.outputTokens,
+      total_tokens: result.usage.totalTokens
+    }
+  };
 
   if (userId) {
     await trackOpenAIUsage({
       userId,
       projectId,
-      response,
+      response: mockResponse,
       modelName: model,
       purpose: `LinkedIn Post (${theme.name})`,
       shouldDebit: true
     });
   }
 
-  const content = response.choices[0]?.message?.content || '{"post":"","hashtags":[]}';
-  const result = parseAIResponse(content);
+  const content = result.content || '{"post":"","hashtags":[]}';
+  const parsed = parseAIResponse(content);
 
   // Enforce character limit
-  const limited = enforceContentLimit(result.post, 'linkedin_post', true);
+  const limited = enforceContentLimit(parsed.post, 'linkedin_post', true);
 
   return [{
     type: 'linkedin_post',
@@ -805,7 +858,7 @@ ${theme.promptModifier}
       platform: 'LinkedIn',  // Specific platform badge
       theme: theme.name,
       angle: insight.text || narrativeMetadata.main_topic || 'Professional Insight',  // Main narrative angle
-      hashtags: result.hashtags || [],
+      hashtags: parsed.hashtags || [],
       insight: insight.text,  // Keep for backward compatibility
       themeId: theme.id,
       blockNumber: block.blockNumber,
@@ -875,7 +928,7 @@ ${theme.promptModifier}
     additionalContext
   });
 
-  const response = await openai.chat.completions.create({
+  const result = await getAICompletion({
     model,
     messages: [
       {
@@ -885,26 +938,40 @@ ${theme.promptModifier}
       { role: 'user', content: prompt }
     ],
     temperature: 0.7,
-    max_tokens: 1000,
-    response_format: { type: "json_object" }
+    maxTokens: 1000,
+    responseFormat: { type: "json_object" }
   });
+
+  // Mock response for tracking
+  const mockResponse = {
+    id: `mock-${Date.now()}`,
+    object: 'chat.completion',
+    created: Date.now(),
+    model: result.model,
+    choices: [{ message: { content: result.content } }],
+    usage: {
+      prompt_tokens: result.usage.inputTokens,
+      completion_tokens: result.usage.outputTokens,
+      total_tokens: result.usage.totalTokens
+    }
+  };
 
   if (userId) {
     await trackOpenAIUsage({
       userId,
       projectId,
-      response,
+      response: mockResponse,
       modelName: model,
       purpose: `Instagram Carousel (${theme.name})`,
       shouldDebit: true
     });
   }
 
-  const content = response.choices[0]?.message?.content || '{"angle":"","slides":[],"caption":"","hashtags":[]}';
-  const result = parseAIResponse(content);
+  const content = result.content || '{"angle":"","slides":[],"caption":"","hashtags":[]}';
+  const parsed = parseAIResponse(content);
 
   // Enforce exactly 7 slides
-  let slides = result.slides || [];
+  let slides = parsed.slides || [];
   if (slides.length !== 7) {
     console.warn(`[INSTAGRAM] ⚠️ Expected 7 slides, got ${slides.length}. Adjusting...`);
     // Ensure we have exactly 7 slides
@@ -926,9 +993,9 @@ ${theme.promptModifier}
   });
 
   // Enforce caption limit
-  const captionLimited = enforceContentLimit(result.caption || '', 'instagram_caption', true);
+  const captionLimited = enforceContentLimit(parsed.caption || '', 'instagram_caption', true);
 
-  const carouselAngle = result.angle || instagramAngle;
+  const carouselAngle = parsed.angle || instagramAngle;
 
   return [{
     type: 'instagram_caption',
@@ -942,7 +1009,7 @@ ${theme.promptModifier}
       angle: carouselAngle,  // Main narrative angle for carousel
       slides: slides,  // Exactly 7 slides
       slideCount: slides.length,
-      hashtags: result.hashtags || [],
+      hashtags: parsed.hashtags || [],
       themeId: theme.id,
       blockNumber: block.blockNumber
     }
@@ -1003,7 +1070,7 @@ ${theme.promptModifier}
     additionalContext
   });
 
-  const response = await openai.chat.completions.create({
+  const result = await getAICompletion({
     model,
     messages: [
       {
@@ -1013,40 +1080,54 @@ ${theme.promptModifier}
       { role: 'user', content: prompt }
     ],
     temperature: 0.7,
-    max_tokens: 3000,
-    response_format: { type: "json_object" }
+    maxTokens: 3000,
+    responseFormat: { type: "json_object" }
   });
+
+  // Mock response for tracking
+  const mockResponse = {
+    id: `mock-${Date.now()}`,
+    object: 'chat.completion',
+    created: Date.now(),
+    model: result.model,
+    choices: [{ message: { content: result.content } }],
+    usage: {
+      prompt_tokens: result.usage.inputTokens,
+      completion_tokens: result.usage.outputTokens,
+      total_tokens: result.usage.totalTokens
+    }
+  };
 
   if (userId) {
     await trackOpenAIUsage({
       userId,
       projectId,
-      response,
+      response: mockResponse,
       modelName: model,
       purpose: `Blog Post (${theme.name})`,
       shouldDebit: true
     });
   }
 
-  const content = response.choices[0]?.message?.content || '{"title":"","content":"","metaDescription":""}';
-  const result = parseAIResponse(content);
+  const content = result.content || '{"title":"","content":"","metaDescription":""}';
+  const parsed = parseAIResponse(content);
 
   // Enforce word limit
-  const limited = enforceContentLimit(result.content || '', 'blog_post', true);
+  const limited = enforceContentLimit(parsed.content || '', 'blog_post', true);
 
-  const finalBlogAngle = result.title || blogAngle;
+  const finalBlogAngle = parsed.title || blogAngle;
 
   return [{
     type: 'blog_post',
     platform: 'general',  // Using 'general' instead of 'blog' for platform constraint compatibility
-    title: result.title || `Blog Post #${block.blockNumber}`,
+    title: parsed.title || `Blog Post #${block.blockNumber}`,
     content: limited.content,
     metadata: {
       ui_metadata: buildUIMetadata('blog_post', theme.name),
       platform: 'Blog Post',  // Specific platform badge
       theme: theme.name,
       angle: finalBlogAngle,  // Main narrative angle (blog title or topic)
-      metaDescription: result.metaDescription || '',
+      metaDescription: parsed.metaDescription || '',
       themeId: theme.id,
       blockNumber: block.blockNumber,
       wasTruncated: limited.wasTruncated
@@ -1117,7 +1198,7 @@ ${theme.promptModifier}
     additionalContext
   });
 
-  const response = await openai.chat.completions.create({
+  const result = await getAICompletion({
     model,
     messages: [
       {
@@ -1127,42 +1208,56 @@ ${theme.promptModifier}
       { role: 'user', content: prompt }
     ],
     temperature: 0.7,
-    max_tokens: 2000,
-    response_format: { type: "json_object" }
+    maxTokens: 2000,
+    responseFormat: { type: "json_object" }
   });
+
+  // Mock response for tracking
+  const mockResponse = {
+    id: `mock-${Date.now()}`,
+    object: 'chat.completion',
+    created: Date.now(),
+    model: result.model,
+    choices: [{ message: { content: result.content } }],
+    usage: {
+      prompt_tokens: result.usage.inputTokens,
+      completion_tokens: result.usage.outputTokens,
+      total_tokens: result.usage.totalTokens
+    }
+  };
 
   if (userId) {
     await trackOpenAIUsage({
       userId,
       projectId,
-      response,
+      response: mockResponse,
       modelName: model,
       purpose: `Newsletter (${theme.name})`,
       shouldDebit: true
     });
   }
 
-  const content = response.choices[0]?.message?.content || '{"subject":"","previewText":"","content":"","cta":"","ps":""}';
-  const result = parseAIResponse(content);
+  const content = result.content || '{"subject":"","previewText":"","content":"","cta":"","ps":""}';
+  const parsed = parseAIResponse(content);
 
-  const limited = enforceContentLimit(result.content || '', 'newsletter', true);
+  const limited = enforceContentLimit(parsed.content || '', 'newsletter', true);
 
-  const finalNewsletterAngle = result.subject || newsletterAngle;
+  const finalNewsletterAngle = parsed.subject || newsletterAngle;
 
   return [{
     type: 'email_newsletter',
     platform: 'general',  // Using 'general' instead of 'email' for platform constraint compatibility
-    title: result.subject || `Newsletter #${block.blockNumber}`,
+    title: parsed.subject || `Newsletter #${block.blockNumber}`,
     content: limited.content,
     metadata: {
       ui_metadata: buildUIMetadata('newsletter', theme.name),
       platform: 'Email Newsletter',  // Specific platform badge
       theme: theme.name,
       angle: finalNewsletterAngle,  // Main narrative angle (subject line or topic)
-      subject: result.subject || '',
-      previewText: result.previewText || '',
-      cta: result.cta || '',
-      ps: result.ps || '',
+      subject: parsed.subject || '',
+      previewText: parsed.previewText || '',
+      cta: parsed.cta || '',
+      ps: parsed.ps || '',
       themeId: theme.id,
       blockNumber: block.blockNumber
     }
@@ -1229,7 +1324,7 @@ FORBIDDEN: Darktrace, recruitment agencies, sponsor websites, promo codes.
     additionalContext
   });
 
-  const response = await openai.chat.completions.create({
+  const result = await getAICompletion({
     model,
     messages: [
       {
@@ -1239,27 +1334,41 @@ FORBIDDEN: Darktrace, recruitment agencies, sponsor websites, promo codes.
       { role: 'user', content: prompt }
     ],
     temperature: 0.7,
-    max_tokens: 1500,
-    response_format: { type: "json_object" }
+    maxTokens: 1500,
+    responseFormat: { type: "json_object" }
   });
+
+  // Mock response for tracking
+  const mockResponse = {
+    id: `mock-${Date.now()}`,
+    object: 'chat.completion',
+    created: Date.now(),
+    model: result.model,
+    choices: [{ message: { content: result.content } }],
+    usage: {
+      prompt_tokens: result.usage.inputTokens,
+      completion_tokens: result.usage.outputTokens,
+      total_tokens: result.usage.totalTokens
+    }
+  };
 
   if (userId) {
     await trackOpenAIUsage({
       userId,
       projectId,
-      response,
+      response: mockResponse,
       modelName: model,
       purpose: `Show Notes (${theme.name})`,
       shouldDebit: true
     });
   }
 
-  const content = response.choices[0]?.message?.content || '{"summary":"","topics":[],"quotes":[],"resources":[]}';
-  const result = parseAIResponse(content);
+  const content = result.content || '{"summary":"","topics":[],"quotes":[],"resources":[]}';
+  const parsed = parseAIResponse(content);
 
   // Filter out ad-related resources (Ad-Blocker Protocol for Show Notes)
   // ONLY allow: books, tools, studies, frameworks mentioned organically
-  let cleanedResources = result.resources || [];
+  let cleanedResources = parsed.resources || [];
   if (Array.isArray(cleanedResources)) {
     const forbiddenResourceTerms = [
       // Specific blacklisted brands
@@ -1275,19 +1384,19 @@ FORBIDDEN: Darktrace, recruitment agencies, sponsor websites, promo codes.
     });
   }
 
-  const finalShowNotesAngle = result.summary?.split('.')[0] || showNotesAngle;
+  const finalShowNotesAngle = parsed.summary?.split('.')[0] || showNotesAngle;
 
   return [{
     type: 'show_notes',
     platform: 'general',
     title: 'Show Notes',
-    content: JSON.stringify({ ...result, resources: cleanedResources }, null, 2),
+    content: JSON.stringify({ ...parsed, resources: cleanedResources }, null, 2),
     metadata: {
       ui_metadata: buildUIMetadata('show_notes', theme.name),
       platform: 'Show Notes',  // Specific platform badge
       theme: theme.name,
       angle: finalShowNotesAngle,  // Main narrative angle (first sentence of summary or topic)
-      ...result,
+      ...parsed,
       resources: cleanedResources,  // Use cleaned resources
       themeId: theme.id,
       blockNumber: block.blockNumber

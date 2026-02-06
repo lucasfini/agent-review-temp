@@ -11,6 +11,7 @@ export interface PromptConfig {
   prompt: string;
   system?: string;
   params?: Record<string, any>;
+  response_format?: { type: 'json_object' | 'text' };
 }
 
 export interface ContentGenerationPrompt {

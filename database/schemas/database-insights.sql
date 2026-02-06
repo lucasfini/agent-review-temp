@@ -3,7 +3,7 @@
 -- Cost: ~$0.04 per podcast using Claude Haiku 4.5 + Perplexity Sonar Pro
 
 -- Create enum types for category and status
-CREATE TYPE insight_category AS ENUM ('person', 'concept');
+CREATE TYPE insight_category AS ENUM ('person', 'concept', 'tool');
 CREATE TYPE insight_status AS ENUM ('auto_detected', 'user_highlight', 'refreshing');
 
 -- Main insights table

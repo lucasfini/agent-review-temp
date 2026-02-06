@@ -1,19 +1,21 @@
 "use client";
 
 import { useState, useCallback, useEffect, useRef } from 'react';
-import { Upload, FileAudio, X, AlertCircle, CheckCircle, Clock, History, Trash2, Eye } from 'lucide-react';
+import { Upload, FileAudio, X, AlertCircle, CheckCircle, Clock, History, Trash2, Eye, FileVideo } from 'lucide-react';
 import { supabase } from '@/lib/supabase/client';
 import { useAuth } from '@/lib/auth/context';
 import { calculateOverallProgress, getStageDisplayName, type ProcessingStage } from '@/lib/tier-progress-config';
 import { SpeakerRosterForm, type RosterSpeaker } from '@/components/SpeakerRosterForm';
+import { useAudioExtractor } from '@/lib/hooks/useAudioExtractor';
 
 type PerformanceLevel = 'basic' | 'pro' | 'premium';
 
 interface UploadedFile {
   file: File;
   id: string;
-  status: 'pending' | 'uploading' | 'processing' | 'completed' | 'error';
+  status: 'pending' | 'extracting' | 'uploading' | 'processing' | 'completed' | 'error';
   progress: number;
+  extractionProgress?: number;
   error?: string;
   projectId?: string;
   processingStage?: ProcessingStage;
@@ -42,6 +44,48 @@ export default function UploadPage() {
   const [performanceLevel, setPerformanceLevel] = useState<PerformanceLevel>('premium');
   const performanceLevelRef = useRef<PerformanceLevel>('premium');
   const [rosterSpeakers, setRosterSpeakers] = useState<RosterSpeaker[]>([]);
+  const [speakerCount, setSpeakerCount] = useState<number | undefined>(undefined);
+  const [recommendedSpeakerCount, setRecommendedSpeakerCount] = useState<number | undefined>(undefined);
+  
+  const { extractAudio } = useAudioExtractor();
+
+  // Heuristic to estimate speaker count from title
+  const estimateSpeakerCountFromTitle = (filename: string): number | undefined => {
+    const clean = filename.toLowerCase().replace(/\.[^/.]+$/, "").replace(/_/g, " ");
+    
+    // Base count is 1 (Host)
+    let count = 1;
+    
+    // Check for "with [Guest]" pattern
+    // e.g. "Ep 1 - Interview with John Smith" -> 2 speakers
+    // e.g. "Chat with John and Jane" -> 3 speakers
+    
+    const withMatch = clean.match(/\b(?:with|feat\.?|featuring|guest|starring)\s+(.+)/i);
+    if (withMatch) {
+      const guestPart = withMatch[1];
+      // Count "and", "&", "," in the guest part to estimate number of guests
+      const separators = (guestPart.match(/(?:,|\s+and\s+|&)/g) || []).length;
+      count += 1 + separators;
+    } else {
+      // If no "with", check for "Interview" or "Conversation" which implies at least 2
+      if (clean.includes('interview') || clean.includes('conversation') || clean.includes('chat') || clean.includes('debate')) {
+        count = Math.max(count, 2);
+      }
+    }
+    
+    return count > 1 ? Math.min(count, 12) : undefined;
+  };
+
+  // Update recommendation when a new file is added
+  useEffect(() => {
+    const pendingFile = uploadedFiles.find(f => f.status === 'pending' || f.status === 'extracting');
+    if (pendingFile) {
+      const estimated = estimateSpeakerCountFromTitle(pendingFile.file.name);
+      setRecommendedSpeakerCount(estimated);
+    } else {
+      setRecommendedSpeakerCount(undefined);
+    }
+  }, [uploadedFiles]);
 
   const handlePerformanceChange = (level: PerformanceLevel) => {
     performanceLevelRef.current = level;
@@ -153,6 +197,8 @@ const formatDuration = (seconds: number) => {
         return <CheckCircle className="h-5 w-5 text-green-500" />;
       case 'processing':
         return <Clock className="h-5 w-5 text-yellow-500 animate-spin" />;
+      case 'extracting':
+        return <FileVideo className="h-5 w-5 text-purple-500 animate-pulse" />;
       case 'failed':
         return <AlertCircle className="h-5 w-5 text-red-500" />;
       default:
@@ -193,47 +239,97 @@ const formatDuration = (seconds: number) => {
 
   const handleFiles = (files: File[]) => {
     const selectedLevel = performanceLevelRef.current;
+    
     const audioFiles = files.filter(file => 
       file.type.startsWith('audio/') || 
       ['.mp3', '.wav', '.m4a', '.flac', '.ogg'].some(ext => file.name.toLowerCase().endsWith(ext))
     );
+    
+    const videoFiles = files.filter(file => 
+      file.type.startsWith('video/') ||
+      ['.mp4', '.mov', '.mkv', '.avi', '.webm'].some(ext => file.name.toLowerCase().endsWith(ext))
+    );
 
-    // Check for oversized files
+    // Check for oversized files (only for audio files that will be uploaded directly)
     const maxSize = 500 * 1024 * 1024; // 500MB
     const oversizedFiles = audioFiles.filter(file => file.size > maxSize);
     
     if (oversizedFiles.length > 0) {
-      alert(`Some files are too large (max 500MB): ${oversizedFiles.map(f => f.name).join(', ')}`);
+      alert(`Some audio files are too large (max 500MB): ${oversizedFiles.map(f => f.name).join(', ')}`);
       return;
     }
 
-    const newUploadedFiles: UploadedFile[] = audioFiles.map(file => {
-      const fileSizeMB = (file.size / 1024 / 1024).toFixed(2);
-      const status: UploadedFile['status'] = 'pending';
-      
-      // Warn about large files
-      if (file.size > 25 * 1024 * 1024) {
-        console.log(`Large file detected: ${file.name} (${fileSizeMB}MB) - upload may take several minutes`);
-      }
-
-      return {
+    const newFiles: UploadedFile[] = [
+      ...audioFiles.map(file => ({
         file,
         id: Math.random().toString(36).substr(2, 9),
-        status,
+        status: 'pending' as const,
         progress: calculateOverallProgress(selectedLevel, 'pending', 0),
-        processingStage: 'pending',
+        processingStage: 'pending' as ProcessingStage,
         stageProgress: 0,
         processingMessage: 'Ready to upload',
         performanceLevel: selectedLevel
+      })),
+      ...videoFiles.map(file => ({
+        file,
+        id: Math.random().toString(36).substr(2, 9),
+        status: 'extracting' as const,
+        progress: 0,
+        extractionProgress: 0,
+        processingStage: 'pending' as ProcessingStage,
+        stageProgress: 0,
+        processingMessage: 'Extracting audio...',
+        performanceLevel: selectedLevel
+      }))
+    ];
+
+    setUploadedFiles(prev => [...prev, ...newFiles]);
+
+    // Start processing
+    newFiles.forEach(uploadedFile => {
+      if (uploadedFile.status === 'extracting') {
+        processVideoFile(uploadedFile);
+      } else {
+        processFile(uploadedFile);
+      }
+    });
+  };
+
+  const processVideoFile = async (uploadedFile: UploadedFile) => {
+    try {
+      const extractedAudioFile = await extractAudio(uploadedFile.file, (progress) => {
+        setUploadedFiles(prev => prev.map(f => 
+          f.id === uploadedFile.id ? { ...f, extractionProgress: progress } : f
+        ));
+      });
+      
+      // Update file in state and start upload
+      const updatedFile = {
+        ...uploadedFile,
+        file: extractedAudioFile,
+        status: 'pending' as const,
+        processingMessage: 'Audio extracted. Starting upload...',
+        extractionProgress: 100
       };
-    });
-
-    setUploadedFiles(prev => [...prev, ...newUploadedFiles]);
-
-    // Start processing each file
-    newUploadedFiles.forEach(uploadedFile => {
-      processFile(uploadedFile);
-    });
+      
+      setUploadedFiles(prev => prev.map(f => 
+        f.id === uploadedFile.id ? updatedFile : f
+      ));
+      
+      // Proceed to upload
+      processFile(updatedFile);
+      
+    } catch (error) {
+      console.error('Extraction error:', error);
+      setUploadedFiles(prev => prev.map(f => 
+        f.id === uploadedFile.id ? { 
+          ...f, 
+          status: 'error', 
+          error: 'Failed to extract audio from video.',
+          processingMessage: 'Extraction failed'
+        } : f
+      ));
+    }
   };
 
   const processFile = async (uploadedFile: UploadedFile) => {
@@ -266,6 +362,11 @@ const formatDuration = (seconds: number) => {
       // Add roster speakers if provided
       if (rosterSpeakers.length > 0) {
         formData.append('rosterSpeakers', JSON.stringify(rosterSpeakers));
+      }
+
+      // Add expected speaker count if provided
+      if (speakerCount && speakerCount >= 2 && speakerCount <= 12) {
+        formData.append('speakerCount', speakerCount.toString());
       }
 
       // Get session token
@@ -500,6 +601,52 @@ const formatDuration = (seconds: number) => {
           </div>
         </div>
 
+        {/* Expected Speaker Count */}
+        <div className="mb-6">
+          <label htmlFor="speaker-count" className="block text-sm font-semibold text-gray-800">
+            Number of Speakers (Optional)
+          </label>
+          <div className="flex items-center gap-2 mb-2">
+            <p className="text-xs text-gray-500">
+              If you know how many speakers are in your audio, enter it here (2-12).
+            </p>
+            {recommendedSpeakerCount && (
+              <span className="text-xs font-medium text-blue-600 bg-blue-50 px-2 py-0.5 rounded-full border border-blue-100">
+                Recommended: {recommendedSpeakerCount}
+              </span>
+            )}
+          </div>
+          <select
+            id="speaker-count"
+            value={speakerCount ?? ''}
+            onChange={(e) => {
+              const value = e.target.value;
+              if (value === '') {
+                setSpeakerCount(undefined);
+              } else {
+                setSpeakerCount(parseInt(value, 10));
+              }
+            }}
+            className={`mt-1 block w-32 rounded-md border px-3 py-2 text-sm shadow-sm focus:outline-none focus:ring-1 focus:ring-blue-500 bg-white ${
+              recommendedSpeakerCount && !speakerCount 
+                ? 'border-blue-300 ring-1 ring-blue-100' 
+                : 'border-gray-300 focus:border-blue-500'
+            }`}
+          >
+            <option value="">Optional</option>
+            {[2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12].map((num) => (
+              <option key={num} value={num}>
+                {num} Speakers
+              </option>
+            ))}
+          </select>
+          {recommendedSpeakerCount && !speakerCount && (
+            <p className="mt-1 text-[10px] text-blue-600 cursor-pointer hover:underline" onClick={() => setSpeakerCount(recommendedSpeakerCount)}>
+              Click to use recommendation from filename
+            </p>
+          )}
+        </div>
+
         {/* Speaker Roster Form */}
         <SpeakerRosterForm
           speakers={rosterSpeakers}
@@ -524,7 +671,7 @@ const formatDuration = (seconds: number) => {
               <div className="mt-4">
                 <label htmlFor="file-upload" className="cursor-pointer">
                   <span className="mt-2 block text-sm font-medium text-gray-900">
-                    Drop audio files here, or{' '}
+                    Drop audio/video files here, or{' '}
                     <span className="text-blue-600 hover:text-blue-500">browse</span>
                   </span>
                   <input
@@ -533,12 +680,12 @@ const formatDuration = (seconds: number) => {
                     type="file"
                     className="sr-only"
                     multiple
-                    accept="audio/*,.mp3,.wav,.m4a,.flac,.ogg"
+                    accept="audio/*,video/*,.mp3,.wav,.m4a,.flac,.ogg,.mp4,.mov,.mkv,.avi,.webm"
                     onChange={onFileInputChange}
                   />
                 </label>
                 <p className="mt-1 text-xs text-gray-500">
-                  MP3, WAV, M4A, FLAC, OGG up to 500MB
+                  Audio or Video files up to 500MB (Video will be converted to Audio)
                 </p>
               </div>
             </div>
@@ -558,7 +705,11 @@ const formatDuration = (seconds: number) => {
                 <div className="flex items-center justify-between">
                   <div className="flex items-center space-x-3 flex-1 min-w-0">
                     <div className="flex-shrink-0">
-                      <FileAudio className="h-8 w-8 text-blue-500" />
+                      {uploadedFile.status === 'extracting' ? (
+                        <FileVideo className="h-8 w-8 text-purple-500 animate-pulse" />
+                      ) : (
+                        <FileAudio className="h-8 w-8 text-blue-500" />
+                      )}
                     </div>
                     <div className="flex-1 min-w-0 max-w-xs sm:max-w-sm md:max-w-md lg:max-w-lg">
                       <p 
@@ -578,6 +729,9 @@ const formatDuration = (seconds: number) => {
                     <div className="flex items-center space-x-2 whitespace-nowrap">
                       {uploadedFile.status === 'pending' && (
                         <span className="text-xs px-2 py-1 rounded-full bg-gray-100 text-gray-600 font-medium">Pending</span>
+                      )}
+                      {uploadedFile.status === 'extracting' && (
+                         <span className="text-xs px-2 py-1 rounded-full bg-purple-100 text-purple-700 font-medium">Extracting</span>
                       )}
                       {uploadedFile.status === 'uploading' && (
                         <span className="text-xs px-2 py-1 rounded-full bg-blue-100 text-blue-700 font-medium">Uploading</span>
@@ -656,13 +810,13 @@ const formatDuration = (seconds: number) => {
                 </div>
                 
                 {/* Progress bar */}
-                {(uploadedFile.status === 'uploading' || uploadedFile.status === 'processing') && (
+                {(uploadedFile.status === 'uploading' || uploadedFile.status === 'processing' || uploadedFile.status === 'extracting') && (
                   <>
                     <div className="mt-3">
                       <div className="w-full bg-gray-200 rounded-full h-2">
                         <div
-                          className="bg-blue-600 h-2 rounded-full transition-all duration-300"
-                          style={{ width: `${uploadedFile.progress}%` }}
+                          className={`h-2 rounded-full transition-all duration-300 ${uploadedFile.status === 'extracting' ? 'bg-purple-500' : 'bg-blue-600'}`}
+                          style={{ width: `${uploadedFile.status === 'extracting' ? uploadedFile.extractionProgress : uploadedFile.progress}%` }}
                         />
                       </div>
                     </div>
@@ -670,7 +824,7 @@ const formatDuration = (seconds: number) => {
                       <div className="mt-2 flex flex-col gap-1 text-xs text-gray-600 sm:flex-row sm:items-center sm:justify-between">
                         {uploadedFile.processingStage && (
                           <span className="font-medium">
-                            {getStageDisplayName(uploadedFile.performanceLevel, uploadedFile.processingStage)}
+                            {uploadedFile.status === 'extracting' ? 'Extraction' : getStageDisplayName(uploadedFile.performanceLevel, uploadedFile.processingStage)}
                           </span>
                         )}
                         {uploadedFile.processingMessage && (

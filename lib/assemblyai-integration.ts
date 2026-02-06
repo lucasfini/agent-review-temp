@@ -10,6 +10,10 @@ export interface AssemblyAIConfig {
   apiKey?: string;
   languageCode?: string;
   speakerLabels?: boolean;
+  speakersExpected?: number; // Hint for AssemblyAI to find this many speakers (2-10)
+  speechModel?: 'best' | 'nano' | string; // Model to use
+  punctuation?: boolean;
+  formatText?: boolean;
   autoHighlights?: boolean;
   autoChapters?: boolean;
   entityDetection?: boolean;
@@ -31,6 +35,7 @@ export interface AssemblyAIResult {
     total_segments: number;
     language_code: string;
     confidence: number;
+    speech_model?: string;
     cost_usd?: number;
   };
   error?: string;
@@ -91,6 +96,10 @@ export async function transcribeWithAssemblyAI(
   const {
     languageCode = 'en',
     speakerLabels = true,
+    speakersExpected,
+    speechModel = 'best', // Default to highest accuracy model
+    punctuation = true,
+    formatText = true,
     autoHighlights = false,
     autoChapters = false,
     entityDetection = false,
@@ -107,14 +116,44 @@ export async function transcribeWithAssemblyAI(
     const fileSizeMB = stats.size / (1024 * 1024);
     console.log(`[ASSEMBLYAI] 📊 Audio file size: ${fileSizeMB.toFixed(2)}MB`);
 
-    // Upload and transcribe
+    // Upload audio file first, then submit transcription
     console.log('[ASSEMBLYAI] ⬆️  Uploading audio file...');
 
+    // Step 1: Upload the file explicitly so we can isolate upload vs transcription errors
+    let audioUrl: string;
+    try {
+      audioUrl = await client.files.upload(audioFilePath);
+      console.log('[ASSEMBLYAI] ✅ File uploaded successfully');
+    } catch (uploadError: any) {
+      console.error('[ASSEMBLYAI] ❌ File upload failed:', uploadError.message);
+      throw new Error(`AssemblyAI file upload failed: ${uploadError.message}`);
+    }
+
+    // Step 2: Build transcript params with the uploaded URL
     const transcriptParams: any = {
-      audio: audioFilePath,
+      audio_url: audioUrl,
       speaker_labels: speakerLabels,
       language_code: languageCode,
+      punctuate: punctuation,
+      format_text: formatText,
     };
+
+    // Only set speech_model if explicitly specified (API defaults to 'best')
+    if (speechModel && speechModel !== 'best') {
+      transcriptParams.speech_model = speechModel;
+    }
+
+    // Optional: hint for expected number of speakers (helps with speaker merging issues)
+    // AssemblyAI only accepts 2-10. If user expects more (e.g. 12), we clamp to 10 
+    // to give the strongest possible "merge" hint.
+    if (speakersExpected && speakersExpected >= 2) {
+      const clampedCount = Math.min(speakersExpected, 10);
+      transcriptParams.speakers_expected = clampedCount;
+      console.log(`[ASSEMBLYAI] 👥 Expected speakers hint: ${clampedCount} (requested: ${speakersExpected})`);
+    }
+
+    // Log the configuration being used
+    console.log(`[ASSEMBLYAI] 🛠️  Config: model=${speechModel}, punctuation=${punctuation}, format=${formatText}, diarization=${speakerLabels}`);
 
     // Optional features
     if (autoHighlights) transcriptParams.auto_highlights = true;
@@ -123,6 +162,7 @@ export async function transcribeWithAssemblyAI(
     if (webhookUrl) transcriptParams.webhook_url = webhookUrl;
 
     console.log('[ASSEMBLYAI] 🔄 Submitting transcription job...');
+    console.log('[ASSEMBLYAI] 📋 Params:', JSON.stringify({ ...transcriptParams, audio_url: '(redacted)' }));
     const transcript = await client.transcripts.transcribe(transcriptParams, {
       pollingInterval: pollInterval
     });
@@ -249,6 +289,7 @@ function convertAssemblyAIResponse(
       total_segments: speakerSegments.length,
       language_code: transcript.language_code || 'en',
       confidence: transcript.confidence || 0,
+      speech_model: transcript.speech_model || undefined,
       cost_usd: actualDuration !== undefined
         ? (actualDuration / 3600) * 0.27  // $0.27 per hour
         : ((transcript.audio_duration || 0) / 1000 / 3600) * 0.27

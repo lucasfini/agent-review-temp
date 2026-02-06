@@ -1,29 +1,28 @@
 /**
  * AI-Powered Insight Extraction Pipeline
- * Architecture: Claude Haiku 4.5 (Batch API) → Perplexity Sonar Pro
+ * Architecture: GPT-4o-mini (strict JSON mode) → Perplexity Sonar Pro
  * Purpose: Extract educational insights (concepts + people) from podcast transcripts
- * Cost: ~$0.04 per podcast
+ * Cost: ~$0.02 per podcast (~40% savings vs Claude Haiku)
  */
 
-import Anthropic from '@anthropic-ai/sdk';
 import { createClient } from '@supabase/supabase-js';
+import { getAICompletion, type AIMessage } from './ai-providers/multi-provider';
 import { generateResearchLinksForInsights, type PerplexitySource } from './ai-providers/perplexity';
 import { getPrompt, prompts } from '@/lib/prompts/loader';
 import type { InsightExtractionVars } from '@/lib/prompts/types';
+import { trackOpenAIUsage, trackAnthropicUsage } from '@/lib/billing/track-usage';
 
 // Get configuration from centralized config
 const config = prompts.audioRepurpose.insightExtraction;
-const HAIKU_MODEL = config.model;
-const HAIKU_INPUT_RATE = 1 / 1_000_000; // $1 per 1M input tokens
-const HAIKU_OUTPUT_RATE = 5 / 1_000_000; // $5 per 1M output tokens
 
-// Batch API provides 50% discount
-const BATCH_DISCOUNT = 0.5;
+// GPT-4o-mini pricing (per 1M tokens)
+const GPT4O_MINI_INPUT_RATE = 0.15 / 1_000_000;  // $0.15 per 1M input tokens
+const GPT4O_MINI_OUTPUT_RATE = 0.60 / 1_000_000; // $0.60 per 1M output tokens
 
 export interface ExtractedInsight {
   entity_id: string;
   label: string;
-  category: 'person' | 'concept';
+  category: 'person' | 'concept' | 'tool';
   match_text: string;
   match_variants?: string[];
   transcript_excerpts: Array<{
@@ -60,7 +59,8 @@ export interface EnrichedInsight extends ExtractedInsight {
  * Main orchestration function to process insights for a project
  */
 export async function processInsightsForProject(
-  projectId: string
+  projectId: string,
+  userId?: string
 ): Promise<{ success: boolean; insightCount: number; totalCost: number; error?: string }> {
   const startTime = Date.now();
 
@@ -76,7 +76,7 @@ export async function processInsightsForProject(
     // Fetch project data
     const { data: project, error: fetchError } = await supabase
       .from('projects')
-      .select('transcription_text, speaker_data, title')
+      .select('transcription_text, speaker_data, title, user_id')
       .eq('id', projectId)
       .single();
 
@@ -85,17 +85,24 @@ export async function processInsightsForProject(
       return { success: false, insightCount: 0, totalCost: 0, error: 'Project not found' };
     }
 
+    const effectiveUserId = userId || project.user_id;
+    if (!effectiveUserId) {
+        console.warn('[Insights] No user ID found for billing');
+    }
+
     if (!project.transcription_text) {
       console.warn('[Insights] No transcript available yet');
       return { success: false, insightCount: 0, totalCost: 0, error: 'No transcript' };
     }
 
-    // Step 1: Extract insights with Claude Haiku
-    console.log('[Insights] Extracting insights with Claude Haiku...');
+    // Step 1: Extract insights with GPT-4o-mini (strict JSON mode)
+    console.log('[Insights] Extracting insights with GPT-4o-mini...');
     const extractionResult = await extractInsightsWithHaiku(
       project.transcription_text,
       project.speaker_data,
-      project.title
+      project.title,
+      effectiveUserId,
+      projectId
     );
 
     if (extractionResult.insights.length === 0) {
@@ -159,18 +166,16 @@ export async function processInsightsForProject(
 }
 
 /**
- * Extract insights using Claude Haiku 4.5 with Batch API
+ * Extract insights using GPT-4o-mini with strict JSON mode
  */
 export async function extractInsightsWithHaiku(
   transcriptText: string,
   speakerData: any,
-  projectTitle?: string | null
+  projectTitle?: string | null,
+  userId?: string,
+  projectId?: string
 ): Promise<InsightExtractionResult> {
   const startTime = Date.now();
-
-  const anthropic = new Anthropic({
-    apiKey: process.env.ANTHROPIC_API_KEY!,
-  });
 
   // Build context about speakers
   let speakerContext = '';
@@ -180,45 +185,79 @@ export async function extractInsightsWithHaiku(
       .filter(Boolean)
       .join(', ');
     if (speakerNames) {
-      speakerContext = `\n\nSpeakers in this episode: ${speakerNames}`;
+      speakerContext = `Speakers in this episode: ${speakerNames}`;
     }
   }
 
-  const prompt = buildExtractionPrompt(transcriptText, speakerContext, projectTitle);
+  const userPrompt = buildExtractionPrompt(transcriptText, speakerContext, projectTitle);
+
+  // Build messages array for multi-provider
+  const messages: AIMessage[] = [];
+
+  // Add system message if defined in config
+  if (config.system) {
+    messages.push({ role: 'system', content: config.system });
+  }
+
+  messages.push({ role: 'user', content: userPrompt });
 
   try {
-    // Note: Batch API would be used in production for 50% discount
-    // For now, using standard API for immediate results
-    // TODO: Implement batch processing for production
-    const response = await anthropic.messages.create({
+    // Use multi-provider with strict JSON mode for GPT-4o-mini
+    const response = await getAICompletion({
       model: config.model,
-      max_tokens: config.max_tokens,
+      messages,
       temperature: config.temperature,
-      messages: [
-        {
-          role: 'user',
-          content: prompt,
-        },
-      ],
+      maxTokens: config.max_tokens,
+      // Enable strict JSON mode if config specifies it
+      responseFormat: config.response_format as { type: 'json_object' | 'text' } | undefined,
     });
 
-    // Parse response
-    const content = response.content[0];
-    if (content.type !== 'text') {
-      throw new Error('Unexpected response type from Claude');
+    // Track usage if user ID is present
+    if (userId) {
+      if (response.provider === 'openai') {
+        await trackOpenAIUsage({
+          userId,
+          projectId,
+          response: {
+            usage: {
+              prompt_tokens: response.usage.inputTokens,
+              completion_tokens: response.usage.outputTokens,
+              total_tokens: response.usage.totalTokens
+            }
+          },
+          modelName: config.model,
+          purpose: 'Insight Extraction',
+          shouldDebit: true
+        });
+      } else if (response.provider === 'anthropic') {
+        // Map model name to 'sonnet-4.5' or 'haiku-4.5' if possible, or fallback
+        const modelName = config.model.includes('sonnet') ? 'sonnet-4.5' : 'haiku-4.5';
+        await trackAnthropicUsage({
+          userId,
+          projectId,
+          response: {
+            usage: {
+              input_tokens: response.usage.inputTokens,
+              output_tokens: response.usage.outputTokens
+            }
+          },
+          modelName,
+          purpose: 'Insight Extraction',
+          shouldDebit: true
+        });
+      }
     }
 
-    const insights = parseInsightsFromResponse(content.text);
+    const insights = parseInsightsFromResponse(response.content);
 
-    // Calculate cost (with batch discount applied)
-    const inputTokens = response.usage.input_tokens;
-    const outputTokens = response.usage.output_tokens;
-    const cost =
-      (inputTokens * HAIKU_INPUT_RATE + outputTokens * HAIKU_OUTPUT_RATE) * (1 - BATCH_DISCOUNT);
+    // Calculate cost using GPT-4o-mini rates
+    const inputTokens = response.usage.inputTokens;
+    const outputTokens = response.usage.outputTokens;
+    const cost = inputTokens * GPT4O_MINI_INPUT_RATE + outputTokens * GPT4O_MINI_OUTPUT_RATE;
 
     const processingTime = Date.now() - startTime;
 
-    console.log(`[Haiku] Extracted ${insights.length} insights. Tokens: ${inputTokens}/${outputTokens}. Cost: $${cost.toFixed(4)}`);
+    console.log(`[GPT-4o-mini] Extracted ${insights.length} insights. Tokens: ${inputTokens}/${outputTokens}. Cost: $${cost.toFixed(4)}`);
 
     return {
       insights,
@@ -230,7 +269,7 @@ export async function extractInsightsWithHaiku(
       processing_time_ms: processingTime,
     };
   } catch (error) {
-    console.error('[Haiku] Extraction failed:', error);
+    console.error('[GPT-4o-mini] Extraction failed:', error);
     return {
       insights: [],
       cost_usd: 0,
@@ -259,48 +298,67 @@ function buildExtractionPrompt(
 }
 
 /**
- * Parse insights from Claude's JSON response
+ * Parse insights from GPT-4o-mini strict JSON response
+ * Expects format: { "insights": [...] } or legacy array format
  */
 function parseInsightsFromResponse(responseText: string): ExtractedInsight[] {
   try {
-    // Extract JSON from response (may be wrapped in code blocks)
-    const jsonMatch = responseText.match(/```json\s*([\s\S]*?)\s*```/) ||
-                      responseText.match(/\[[\s\S]*\]/);
+    // With strict JSON mode, response should be clean JSON
+    // But handle legacy formats and edge cases gracefully
+    let jsonText = responseText.trim();
 
-    if (!jsonMatch) {
-      console.error('[Parser] No JSON found in response');
-      return [];
+    // Remove markdown code fences if present
+    const fenceMatch = jsonText.match(/```(?:json)?\s*([\s\S]*?)\s*```/);
+    if (fenceMatch) {
+      jsonText = fenceMatch[1].trim();
     }
 
-    const jsonText = jsonMatch[1] || jsonMatch[0];
     const parsed = JSON.parse(jsonText);
 
-    if (!Array.isArray(parsed)) {
-      console.error('[Parser] Response is not an array');
+    // Handle both { insights: [...] } wrapper and legacy array format
+    let insightsArray: any[];
+    if (Array.isArray(parsed)) {
+      insightsArray = parsed;
+    } else if (parsed && Array.isArray(parsed.insights)) {
+      insightsArray = parsed.insights;
+    } else {
+      console.error('[Parser] Unexpected JSON structure:', Object.keys(parsed || {}));
       return [];
     }
 
     // Validate and normalize each insight
-    return parsed
+    return insightsArray
       .filter((item) => item.entity_id && item.label && item.category)
-      .map((item) => ({
-        entity_id: item.entity_id.toLowerCase().replace(/[^a-z0-9-]/g, '-'),
-        label: item.label,
-        category: item.category === 'person' ? 'person' : 'concept',
-        match_text: item.match_text || item.label,
-        match_variants: Array.isArray(item.match_variants) ? item.match_variants : [],
-        transcript_excerpts: Array.isArray(item.transcript_excerpts)
-          ? item.transcript_excerpts
-          : [],
-        simple_definition: item.simple_definition || '',
-        full_explanation: item.full_explanation || item.simple_definition || '',
-        related_concepts: Array.isArray(item.related_concepts) ? item.related_concepts : [],
-        why_it_matters: item.why_it_matters || '',
-        relationships: Array.isArray(item.relationships) ? item.relationships : [],
-        confidence: typeof item.confidence === 'number' ? item.confidence : 0.8,
-      }));
+      .map((item) => {
+        // Normalize category to one of: person, concept, tool
+        let category: 'person' | 'concept' | 'tool' = 'concept';
+        const rawCategory = (item.category || '').toLowerCase();
+        if (rawCategory === 'person') {
+          category = 'person';
+        } else if (rawCategory === 'tool' || rawCategory === 'product' || rawCategory === 'software' || rawCategory === 'org' || rawCategory === 'organization') {
+          category = 'tool';
+        }
+
+        return {
+          entity_id: item.entity_id.toLowerCase().replace(/[^a-z0-9-]/g, '-'),
+          label: item.label,
+          category,
+          match_text: item.match_text || item.label,
+          match_variants: Array.isArray(item.match_variants) ? item.match_variants : [],
+          transcript_excerpts: Array.isArray(item.transcript_excerpts)
+            ? item.transcript_excerpts
+            : [],
+          simple_definition: item.simple_definition || '',
+          full_explanation: item.full_explanation || item.simple_definition || '',
+          related_concepts: Array.isArray(item.related_concepts) ? item.related_concepts : [],
+          why_it_matters: item.why_it_matters || '',
+          relationships: Array.isArray(item.relationships) ? item.relationships : [],
+          confidence: typeof item.confidence === 'number' ? item.confidence : 0.8,
+        };
+      });
   } catch (error) {
     console.error('[Parser] Failed to parse insights:', error);
+    console.error('[Parser] Raw response:', responseText.slice(0, 500));
     return [];
   }
 }

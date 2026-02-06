@@ -2,7 +2,9 @@
 
 import { useState, useEffect, useMemo, useRef, useCallback } from 'react';
 import Link from 'next/link';
-import { FileText, Clock, CheckCircle, AlertCircle, Eye, Download, Share2, RefreshCw, Trash2, Zap, Play, MessageCircle, Crown, Star, Sparkles, BookOpen, Lightbulb, MessageSquare, PanelLeftClose, PanelLeftOpen, Search, Filter, Loader2, CheckSquare, Square, ListChecks, X } from 'lucide-react';
+import { useSearchParams, useRouter } from 'next/navigation';
+import { FileText, Clock, CheckCircle, AlertCircle, Eye, Download, Share2, RefreshCw, Trash2, Zap, Play, MessageCircle, Crown, Star, Sparkles, BookOpen, Lightbulb, MessageSquare, PanelLeftClose, PanelLeftOpen, Search, Filter, Loader2, CheckSquare, Square, ListChecks, X, PanelRightOpen, ScanSearch, MoreHorizontal, Users, Mic, Radio, User, HelpCircle } from 'lucide-react';
+import { DropdownMenu, DropdownMenuItem, DropdownMenuSeparator } from '@/components/ui/dropdown-menu';
 import { useAuth } from '@/lib/auth/context';
 import { supabase } from '@/lib/supabase/client';
 import ContentSelectionModal from '@/components/ContentSelectionModal';
@@ -10,8 +12,13 @@ import ExportModal, { type ExportPayload } from '@/components/ExportModal';
 import { exportContent } from '@/lib/export-utils';
 import ConversationView from '@/components/ConversationView';
 import TeamsStyleTranscript from '@/components/TeamsStyleTranscript';
+import ContextSidebar from '@/components/ContextSidebar';
 import type { CostEstimate } from '@/lib/cost-estimation';
 import type { ContentBlock } from '@/lib/content-types';
+import type { AudioPlayerRef } from '@/lib/hooks/useSpeakerSample';
+import { useProjectRefresh, useSpeakerDataRefresh } from '@/lib/hooks/useProjectRefresh';
+
+type ProjectType = 'DEBATE' | 'INTERVIEW' | 'PODCAST' | 'MONOLOGUE' | 'OTHER';
 
 interface Project {
   id: string;
@@ -36,6 +43,7 @@ interface Project {
   transcription_segments?: string;
   speaker_data?: any;
   performance_level?: 'basic' | 'pro' | 'premium';
+  project_type?: ProjectType;
   ai_summary?: string;
   chapters?: Array<{
     title: string;
@@ -70,6 +78,10 @@ export default function ProjectsPage() {
   const [projects, setProjects] = useState<Project[]>([]);
   const [selectedProject, setSelectedProject] = useState<Project | null>(null);
   const selectedProjectRef = useRef<string | null>(null);
+
+  // Audio player refs for speaker sample playback
+  const audioElementRef = useRef<HTMLAudioElement>(null);
+  const audioPlayerRef = useRef<AudioPlayerRef | null>(null);
   const [outputs, setOutputs] = useState<Output[]>([]);
   const [loading, setLoading] = useState(true);
   const [refreshing, setRefreshing] = useState(false);
@@ -78,14 +90,33 @@ export default function ProjectsPage() {
   const [selectedProjectForGeneration, setSelectedProjectForGeneration] = useState<Project | null>(null);
   const [generatingProjects, setGeneratingProjects] = useState<Set<string>>(new Set());
   const [showFullTranscription, setShowFullTranscription] = useState(false);
-  const [showConversationFormat, setShowConversationFormat] = useState(false);
   const [expandedOutputs, setExpandedOutputs] = useState<Set<string>>(new Set());
-  const [activeTab, setActiveTab] = useState<'transcript' | 'summary' | 'chapters' | 'takeaways' | 'quotes' | 'outputs'>('transcript');
+  const [activeTab, setActiveTab] = useState<'transcript' | 'conversation' | 'outputs'>('transcript');
   const [projectsSidebarOpen, setProjectsSidebarOpen] = useState(true);
   const [searchTerm, setSearchTerm] = useState('');
   const [tierFilter, setTierFilter] = useState<'all' | 'basic' | 'pro' | 'premium'>('all');
   const [sortBy, setSortBy] = useState<'recent' | 'oldest' | 'name-asc' | 'name-desc'>('recent');
   const [expandedFeatures, setExpandedFeatures] = useState<Set<string>>(new Set());
+
+  // Insights control state
+  const [insightsSidebarOpen, setInsightsSidebarOpen] = useState(false);
+  const [insightsStatus, setInsightsStatus] = useState<{ count: number; loading: boolean; generating: boolean }>({ count: 0, loading: true, generating: false });
+  const [triggerInsightGeneration, setTriggerInsightGeneration] = useState(0);
+  const [insightsData, setInsightsData] = useState<Array<{
+    id: string;
+    title: string;
+    category: 'concept' | 'person' | 'tool';
+    definition: string;
+    significance: string;
+    sources: Array<{ title: string; url: string }>;
+    matchText?: string;
+    matchVariants?: string[];
+  }>>([]);
+
+  // Right sidebar (Context) state
+  const [contextSidebarOpen, setContextSidebarOpen] = useState(true);
+  const [activeSpeakerId, setActiveSpeakerId] = useState<string | null>(null);
+  const [activeInsightId, setActiveInsightId] = useState<string | null>(null);
 
   // Export selection state
   const [selectionMode, setSelectionMode] = useState(false);
@@ -93,12 +124,203 @@ export default function ProjectsPage() {
   const [showExportModal, setShowExportModal] = useState(false);
   const [exportProjects, setExportProjects] = useState<Array<Project & { outputs: Output[] }>>([]);
 
+  // Coverage analysis state
+  const [runningCoverageId, setRunningCoverageId] = useState<string | null>(null);
+
+  // Audio URL state for speaker sample playback
+  const [audioUrl, setAudioUrl] = useState<string | null>(null);
+
   const { user } = useAuth();
+  const searchParams = useSearchParams();
+  const router = useRouter();
 
   // Keep ref in sync with selectedProject for use in realtime callbacks
   useEffect(() => {
     selectedProjectRef.current = selectedProject?.id || null;
   }, [selectedProject?.id]);
+
+  // ============================================================
+  // STALE DATA FIX: Watch for status completion and refresh
+  // When a project transitions to 'completed', the speaker data
+  // may be updated by the debate correction algorithm. This hook
+  // ensures we fetch the FRESH data after processing completes.
+  // ============================================================
+  const {
+    project: refreshedProject,
+    isRefreshing: isProjectRefreshing,
+    previousStatus: projectPreviousStatus,
+  } = useProjectRefresh(selectedProject?.id, {
+    completionDelay: 2000, // Wait 2s after completion before final refresh
+    pollingInterval: 3000,
+    debug: true, // Enable logging to track refresh cycles
+    onRefresh: (freshProject) => {
+      console.log('[REFRESH] Got fresh project data:', {
+        id: freshProject.id,
+        status: freshProject.status,
+        hasSpeakerData: !!freshProject.speaker_data,
+        speakerNames: freshProject.speaker_data?.speakers
+          ? Object.values(freshProject.speaker_data.speakers)
+              .map((s: any) => s.finalName || s.fallbackName)
+              .filter(Boolean)
+          : [],
+      });
+
+      // Update the selected project with fresh data
+      // IMPORTANT: Use ref instead of selectedProject to avoid stale closure issues
+      // when user switches projects while refresh is pending
+      if (freshProject && selectedProjectRef.current === freshProject.id) {
+        setSelectedProject(freshProject);
+
+        // Also update in the projects list
+        setProjects((prev) =>
+          prev.map((p) => (p.id === freshProject.id ? freshProject : p))
+        );
+      }
+    },
+  });
+
+  // Secondary hook: specifically watch for speaker data updates
+  // This handles the case where speaker_data is written AFTER status completion
+  useSpeakerDataRefresh(
+    selectedProject?.id,
+    selectedProject?.speaker_data,
+    (newSpeakerData) => {
+      console.log('[SPEAKER_REFRESH] Got updated speaker data');
+      // Use ref to get current project ID to avoid stale closure issues
+      const currentProjectId = selectedProjectRef.current;
+      if (currentProjectId && selectedProject && currentProjectId === selectedProject.id) {
+        const updatedProject = {
+          ...selectedProject,
+          speaker_data: newSpeakerData,
+        };
+        setSelectedProject(updatedProject);
+        setProjects((prev) =>
+          prev.map((p) => (p.id === currentProjectId ? updatedProject : p))
+        );
+      }
+    }
+  );
+
+  // Wire up audio player methods for speaker sample playback
+  useEffect(() => {
+    if (audioElementRef.current) {
+      audioPlayerRef.current = {
+        seekTo: (time: number) => {
+          if (audioElementRef.current) {
+            audioElementRef.current.currentTime = time;
+          }
+        },
+        play: () => {
+          audioElementRef.current?.play();
+        },
+        pause: () => {
+          audioElementRef.current?.pause();
+        },
+      };
+    }
+  }, [selectedProject?.id, audioUrl]);
+
+  // Fetch signed URL for audio playback when project changes
+  useEffect(() => {
+    async function fetchAudioUrl() {
+      if (!selectedProject?.id || !selectedProject?.audio_file_name) {
+        setAudioUrl(null);
+        return;
+      }
+
+      try {
+        const filePath = `${selectedProject.id}/${selectedProject.audio_file_name}`;
+        const { data, error } = await supabase.storage
+          .from('audio-files')
+          .createSignedUrl(filePath, 3600); // 1 hour expiry
+
+        if (error) {
+          console.error('Failed to get signed URL:', error);
+          setAudioUrl(null);
+          return;
+        }
+
+        setAudioUrl(data.signedUrl);
+      } catch (err) {
+        console.error('Error fetching audio URL:', err);
+        setAudioUrl(null);
+      }
+    }
+
+    fetchAudioUrl();
+  }, [selectedProject?.id, selectedProject?.audio_file_name]);
+
+  // Fetch insights for a project (called when project is selected)
+  const fetchProjectInsights = useCallback(async (projectId: string, tier: string = 'basic') => {
+    try {
+      setInsightsStatus(prev => ({ ...prev, loading: true }));
+      setInsightsData([]);
+
+      const response = await fetch(`/api/insights/${projectId}?tier=${tier}`);
+      const data = await response.json();
+
+      if (!response.ok) {
+        console.error('[Insights] Failed to fetch:', data.error);
+        setInsightsStatus({ count: 0, loading: false, generating: false });
+        return;
+      }
+
+      // Transform database insights to the format expected by ContextSidebar
+      const transformedInsights = (data.insights || []).map((insight: any) => {
+        // Map category to allowed types
+        let category: 'concept' | 'person' | 'tool' = 'concept';
+        if (insight.category === 'person') category = 'person';
+        else if (insight.category === 'tool') category = 'tool';
+
+        return {
+          id: insight.entity_id,
+          title: insight.label,
+          category,
+          definition: tier === 'premium'
+            ? insight.full_explanation
+            : tier === 'pro'
+            ? insight.simple_definition
+            : '',
+          significance: insight.why_it_matters || insight.transcript_excerpts?.[0]?.text || '',
+          sources: (insight.external_sources || []).map((s: any) => ({
+            title: s.title,
+            url: s.url || '',
+          })),
+          matchText: insight.match_text,
+          matchVariants: insight.match_variants || [],
+        };
+      });
+
+      setInsightsData(transformedInsights);
+      setInsightsStatus({ count: transformedInsights.length, loading: false, generating: false });
+    } catch (error) {
+      console.error('[Insights] Failed to fetch:', error);
+      setInsightsStatus({ count: 0, loading: false, generating: false });
+    }
+  }, []);
+
+  // Auto-select project from URL query parameter
+  useEffect(() => {
+    const projectId = searchParams.get('id');
+    const shouldGenerate = searchParams.get('generate') === 'true';
+
+    if (projectId && projects.length > 0 && !loading) {
+      const projectToSelect = projects.find(p => p.id === projectId);
+      if (projectToSelect && selectedProject?.id !== projectId) {
+        setSelectedProject(projectToSelect);
+        setShowFullTranscription(false);
+        setActiveTab('transcript');
+        fetchProjectOutputs(projectId);
+        fetchProjectInsights(projectId, projectToSelect.performance_level || 'basic');
+
+        // If generate=true is in URL, open the content generation modal
+        if (shouldGenerate && projectToSelect.transcription_text) {
+          setSelectedProjectForGeneration(projectToSelect);
+          setShowContentSelection(true);
+        }
+      }
+    }
+  }, [searchParams, projects, loading, fetchProjectInsights]);
 
   const parseSpeakerData = (data: any) => {
     if (!data) return null;
@@ -163,8 +385,10 @@ export default function ProjectsPage() {
 
     // Fetch projects and outputs
     await fetchProjects();
-    if (selectedProject) {
-      await fetchProjectOutputs(selectedProject.id);
+    // Use ref to get current selection to avoid stale closure
+    const currentSelectedId = selectedProjectRef.current;
+    if (currentSelectedId) {
+      await fetchProjectOutputs(currentSelectedId);
     }
 
     setRefreshing(false);
@@ -325,6 +549,49 @@ export default function ProjectsPage() {
     exitSelectionMode();
   };
 
+  // Run Coverage Analysis for a project
+  const handleRunCoverage = async (project: Project) => {
+    if (!user?.id) {
+      alert('You must be logged in to run coverage analysis.');
+      return;
+    }
+
+    if (!project.id || !project.transcription_text) {
+      alert('This project needs a transcript before running coverage analysis.');
+      return;
+    }
+
+    setRunningCoverageId(project.id);
+
+    try {
+      // Call the correct coverage analysis API endpoint
+      const response = await fetch(`/api/projects/${project.id}/run-coverage`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          userId: user.id,
+          force: true, // Re-run even if snapshot exists
+        }),
+      });
+
+      const result = await response.json();
+
+      if (!response.ok) {
+        throw new Error(result.error || result.message || 'Coverage analysis failed');
+      }
+
+      console.log('[Coverage] Analysis complete:', result);
+
+      // Show success message
+      alert(`Coverage analysis complete! Found ${result.topics || 0} topics, ${result.ctas || 0} CTAs, and ${result.opportunities || 0} insights.`);
+    } catch (error: any) {
+      console.error('[Coverage] Analysis failed:', error);
+      alert(`Coverage analysis failed: ${error.message}`);
+    } finally {
+      setRunningCoverageId(null);
+    }
+  };
+
   const handleDeleteProject = async (projectId: string) => {
     if (!user?.id) return;
     if (!confirm('Are you sure you want to delete this project? This will also delete all generated content and cannot be undone.')) {
@@ -439,6 +706,7 @@ export default function ProjectsPage() {
       // Set up real-time updates for outputs if a project is selected
       let outputsSubscription: any = null;
       if (selectedProject) {
+        const subscribedProjectId = selectedProject.id;
         outputsSubscription = supabase
           .channel('outputs_changes')
           .on(
@@ -447,11 +715,14 @@ export default function ProjectsPage() {
               event: '*',
               schema: 'public',
               table: 'outputs',
-              filter: `project_id=eq.${selectedProject.id}`,
+              filter: `project_id=eq.${subscribedProjectId}`,
             },
             (payload) => {
               console.log('Output change detected:', payload);
-              fetchProjectOutputs(selectedProject.id);
+              // Only fetch if this project is still selected (use ref for current value)
+              if (selectedProjectRef.current === subscribedProjectId) {
+                fetchProjectOutputs(subscribedProjectId);
+              }
             }
           )
           .subscribe();
@@ -642,7 +913,7 @@ export default function ProjectsPage() {
 
       const { data: projectsData, error } = await supabase
         .from('projects')
-        .select('*, transcription_segments, speaker_data, performance_level, ai_summary, chapters, key_takeaways, social_quotes')
+        .select('*, transcription_segments, speaker_data, performance_level, project_type, ai_summary, chapters, key_takeaways, social_quotes')
         .eq('user_id', user.id)
         .order('created_at', { ascending: false }) as { data: any[] | null; error: any };
 
@@ -655,9 +926,12 @@ export default function ProjectsPage() {
       const updatedProjects = projectsData || [];
       setProjects(updatedProjects);
 
-      if (selectedProject) {
+      // Use ref to get current selection to avoid stale closure issues
+      // when this function is called from realtime subscription callbacks
+      const currentSelectedId = selectedProjectRef.current;
+      if (currentSelectedId) {
         const refreshedSelection = updatedProjects.find(
-          (project) => project.id === selectedProject.id
+          (project) => project.id === currentSelectedId
         );
         if (refreshedSelection) {
           setSelectedProject(refreshedSelection);
@@ -838,6 +1112,67 @@ export default function ProjectsPage() {
     );
   };
 
+  const getProjectTypeBadge = (type: ProjectType | undefined) => {
+    if (!type) return null;
+
+    const typeConfig: Record<ProjectType, {
+      icon: any;
+      label: string;
+      color: string;
+      iconColor: string;
+      description: string;
+    }> = {
+      DEBATE: {
+        icon: Users,
+        label: 'Debate',
+        color: 'bg-amber-50 text-amber-700 border border-amber-200',
+        iconColor: 'text-amber-600',
+        description: 'Panel discussion with moderator',
+      },
+      INTERVIEW: {
+        icon: Mic,
+        label: 'Interview',
+        color: 'bg-green-50 text-green-700 border border-green-200',
+        iconColor: 'text-green-600',
+        description: '1-on-1 Q&A format',
+      },
+      PODCAST: {
+        icon: Radio,
+        label: 'Podcast',
+        color: 'bg-indigo-50 text-indigo-700 border border-indigo-200',
+        iconColor: 'text-indigo-600',
+        description: 'Conversational show',
+      },
+      MONOLOGUE: {
+        icon: User,
+        label: 'Monologue',
+        color: 'bg-slate-50 text-slate-700 border border-slate-200',
+        iconColor: 'text-slate-600',
+        description: 'Single speaker',
+      },
+      OTHER: {
+        icon: HelpCircle,
+        label: 'Other',
+        color: 'bg-gray-50 text-gray-600 border border-gray-200',
+        iconColor: 'text-gray-500',
+        description: 'Unclassified format',
+      },
+    };
+
+    const config = typeConfig[type];
+    const Icon = config.icon;
+
+    return (
+      <span
+        className={`inline-flex items-center px-1.5 py-0.5 rounded text-[10px] font-medium ${config.color}`}
+        title={config.description}
+      >
+        <Icon className={`w-2.5 h-2.5 mr-0.5 ${config.iconColor}`} />
+        {config.label}
+      </span>
+    );
+  };
+
   const getContentAvailability = (project: Project) => {
     const tier = project.performance_level || 'basic';
     const features = [];
@@ -916,33 +1251,38 @@ export default function ProjectsPage() {
   }
 
   return (
-    <div className="py-6">
-      <div className="max-w-7xl mx-auto px-4 sm:px-6 md:px-8">
-        {/* Header */}
-        <div className="mb-8">
-          <div className="flex items-center justify-between">
-            <div>
-              <h1 className="text-2xl font-bold leading-7 text-gray-900 sm:text-3xl">
-                Content Library
-              </h1>
-              <p className="mt-2 text-sm text-gray-600">
-                Manage your podcast transcriptions and AI-generated content
-              </p>
-            </div>
-            <button
-              onClick={handleRefresh}
-              disabled={refreshing}
-              className="inline-flex items-center px-4 py-2 border border-gray-300 rounded-md shadow-sm text-sm font-medium text-gray-700 bg-white hover:bg-gray-50 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-blue-500 disabled:opacity-50 disabled:cursor-not-allowed"
-            >
-              <RefreshCw className={`h-4 w-4 mr-2 ${refreshing ? 'animate-spin' : ''}`} />
-              {refreshing ? 'Refreshing...' : 'Refresh'}
-            </button>
-          </div>
+    <div className="flex flex-col h-screen w-full overflow-hidden bg-gray-50">
+      {/* Sticky Header Bar */}
+      <header className="flex-shrink-0 h-12 bg-white border-b border-gray-200 px-6 flex items-center justify-between">
+        <div className="flex items-center gap-3">
+          <h1 className="text-base font-semibold text-gray-900">Content Library</h1>
+          <span className="text-xs text-gray-400 hidden sm:inline">
+            {projects.length} project{projects.length !== 1 ? 's' : ''}
+          </span>
         </div>
+        <div className="flex items-center gap-2">
+          {/* Mobile sidebar toggles */}
+          <button
+            onClick={() => setProjectsSidebarOpen(!projectsSidebarOpen)}
+            className="lg:hidden p-2 text-gray-500 hover:text-gray-700 hover:bg-gray-100 rounded-md"
+            title={projectsSidebarOpen ? 'Hide projects' : 'Show projects'}
+          >
+            {projectsSidebarOpen ? <PanelLeftClose className="w-5 h-5" /> : <PanelLeftOpen className="w-5 h-5" />}
+          </button>
+          <button
+            onClick={() => setContextSidebarOpen(!contextSidebarOpen)}
+            className="lg:hidden p-2 text-gray-500 hover:text-gray-700 hover:bg-gray-100 rounded-md"
+            title={contextSidebarOpen ? 'Hide details' : 'Show details'}
+          >
+            <PanelRightOpen className="w-5 h-5" />
+          </button>
+        </div>
+      </header>
 
-        {projects.length === 0 ? (
-          // Empty state
-          <div className="text-center py-12 bg-white rounded-lg shadow">
+      {projects.length === 0 ? (
+        // Empty state - full width centered
+        <div className="flex-1 flex items-center justify-center p-8">
+          <div className="text-center py-12 px-8 bg-white rounded-lg shadow max-w-md">
             <FileText className="mx-auto h-12 w-12 text-gray-400" />
             <h3 className="mt-2 text-sm font-medium text-gray-900">Your library is empty</h3>
             <p className="mt-1 text-sm text-gray-500">
@@ -957,17 +1297,19 @@ export default function ProjectsPage() {
               </Link>
             </div>
           </div>
-        ) : (
-          <div className="flex gap-6">
-            {/* LEFT: Projects List (33% on desktop) - Collapsible */}
-            <div
-              className={`transition-all duration-300 ease-in-out border-r border-gray-200 pr-6 flex flex-col ${
+        </div>
+      ) : (
+        /* 3-Column Dashboard Layout */
+        <div className="flex flex-1 overflow-hidden">
+            {/* LEFT COLUMN: Projects List (25% on desktop) - Collapsible */}
+            <aside
+              className={`flex-shrink-0 transition-all duration-300 ease-in-out border-r border-gray-200 bg-gray-50/30 flex flex-col overflow-hidden ${
                 projectsSidebarOpen
-                  ? 'w-full lg:w-1/3 opacity-100'
-                  : 'w-0 opacity-0 overflow-hidden lg:pr-0'
+                  ? 'w-80 lg:w-1/4 min-w-[280px] opacity-100'
+                  : 'w-0 opacity-0'
               }`}
             >
-              <div className="flex-shrink-0 space-y-4 mb-4">
+              <div className="flex-shrink-0 p-5 pb-0 space-y-4">
                 {/* Header with Select Toggle */}
                 <div className="flex items-center justify-between">
                   <h2 className="text-lg font-medium text-gray-900">Projects</h2>
@@ -1093,7 +1435,7 @@ export default function ProjectsPage() {
               </div>
 
               {/* Scrollable Projects List */}
-              <div className="flex-1 overflow-y-auto space-y-2 pr-2" style={{ maxHeight: 'calc(100vh - 20rem)' }}>
+              <div className="flex-1 overflow-y-auto px-5 pb-5 space-y-3">
                 {filteredAndSortedProjects.length === 0 ? (
                   <div className="text-center py-8 text-gray-500">
                     <FileText className="mx-auto h-8 w-8 text-gray-400 mb-2" />
@@ -1113,26 +1455,33 @@ export default function ProjectsPage() {
                 ) : (
                   filteredAndSortedProjects.map((project) => {
                     const isProjectSelected = selectedProjectIds.has(project.id);
+                    const isActive = selectedProject?.id === project.id;
                     return (
                     <div
                       key={project.id}
-                      className={`group p-3 rounded-lg transition-all cursor-pointer border ${
+                      className={`group p-4 rounded-xl transition-all cursor-pointer border-2 overflow-hidden shadow-sm ${
                         selectionMode && isProjectSelected
-                          ? 'bg-blue-50 border-blue-300'
-                          : selectedProject?.id === project.id
-                          ? 'bg-blue-50/60 border-blue-200'
-                          : 'bg-white border-transparent hover:bg-gray-50 hover:border-gray-200'
+                          ? 'bg-blue-50 border-blue-400 shadow-blue-100'
+                          : isActive
+                          ? 'bg-white border-blue-500 shadow-md ring-2 ring-blue-100'
+                          : 'bg-white border-transparent hover:border-gray-200 hover:shadow-md'
                       }`}
                       onClick={() => {
                         if (selectionMode) {
                           toggleProjectSelection(project.id);
                           return;
                         }
+                        // Update URL to match selection, preventing "sticky" URL param from reverting selection
+                        router.push(`/dashboard/projects?id=${project.id}`);
                         setSelectedProject(project);
                         setShowFullTranscription(false);
-                        setShowConversationFormat(false);
                         setActiveTab('transcript');
+                        setInsightsSidebarOpen(false);
+                        setInsightsStatus({ count: 0, loading: true, generating: false });
+                        setInsightsData([]);
+                        setTriggerInsightGeneration(0);
                         fetchProjectOutputs(project.id);
+                        fetchProjectInsights(project.id, project.performance_level || 'basic');
                       }}
                     >
                       {/* Top Row: Checkbox (selection mode), Title & Status */}
@@ -1147,9 +1496,9 @@ export default function ProjectsPage() {
                               )}
                             </div>
                           )}
-                          <h3 className={`text-sm leading-snug text-gray-900 ${
+                          <h3 className={`text-sm leading-snug text-gray-900 truncate ${
                             selectedProject?.id === project.id ? 'font-semibold' : 'font-medium'
-                          }`}>
+                          }`} title={project.title}>
                             {project.title}
                           </h3>
                         </div>
@@ -1177,7 +1526,7 @@ export default function ProjectsPage() {
                       {/* Bottom Row: Metadata & Actions */}
                       <div className="flex items-end justify-between pt-2 border-t border-gray-100">
                         {/* Metadata */}
-                        <div className="flex flex-wrap gap-x-3 gap-y-1 text-[11px] text-gray-500">
+                        <div className="flex flex-wrap items-center gap-x-3 gap-y-1 text-[11px] text-gray-500">
                           <span>{new Date(project.created_at).toLocaleDateString()}</span>
                           {project.audio_duration && (
                             <span>{formatDuration(project.audio_duration)}</span>
@@ -1187,6 +1536,7 @@ export default function ProjectsPage() {
                               ${project.actual_processing_cost.toFixed(2)}
                             </span>
                           )}
+                          {project.project_type && getProjectTypeBadge(project.project_type)}
                         </div>
 
                         {/* Hover Actions */}
@@ -1231,46 +1581,75 @@ export default function ProjectsPage() {
                 )}
               </div>
 
-            </div>
+            </aside>
 
-            {/* RIGHT: Tabbed Content (67% on desktop, or full width when sidebar closed) */}
-            <div
-              className={`transition-all duration-300 ease-in-out ${
-                projectsSidebarOpen ? 'w-full lg:w-2/3' : 'w-full'
+            {/* MIDDLE COLUMN: Main Content Stage (50% on desktop) */}
+            <main
+              className={`flex-1 min-w-0 overflow-y-auto transition-all duration-300 ease-in-out ${
+                !projectsSidebarOpen && !contextSidebarOpen ? 'lg:w-full' : 'lg:w-1/2'
               }`}
             >
               {selectedProject ? (
-                <div className="bg-white rounded-lg border border-gray-200 shadow-sm h-[calc(100vh-12rem)] flex flex-col">
+                <div className="h-full flex flex-col bg-white">
                   {/* Header with Tier Badge and Actions */}
-                  <div className="px-6 py-4 border-b border-gray-200">
-                    <div className="flex items-center justify-between gap-4">
-                      <div className="flex items-center space-x-3 min-w-0 flex-1">
-                        {/* Toggle Projects Sidebar Button */}
+                  <div className="flex-shrink-0 px-4 py-3 border-b border-gray-200 bg-white">
+                    <div className="flex items-center justify-between gap-3">
+                      <div className="flex items-center space-x-2 min-w-0 flex-1">
+                        {/* Toggle Projects Sidebar Button - desktop only */}
                         <button
                           onClick={() => setProjectsSidebarOpen(!projectsSidebarOpen)}
-                          className="p-1.5 text-gray-500 hover:text-gray-700 hover:bg-gray-100 rounded-md transition-colors flex-shrink-0"
+                          className="hidden lg:flex p-1.5 text-gray-500 hover:text-gray-700 hover:bg-gray-100 rounded-md transition-colors flex-shrink-0"
                           title={projectsSidebarOpen ? 'Hide projects' : 'Show projects'}
                         >
                           {projectsSidebarOpen ? (
-                            <PanelLeftClose className="w-5 h-5" />
+                            <PanelLeftClose className="w-4 h-4" />
                           ) : (
-                            <PanelLeftOpen className="w-5 h-5" />
+                            <PanelLeftOpen className="w-4 h-4" />
                           )}
                         </button>
-                        <div className="h-6 w-px bg-gray-300 flex-shrink-0" />
-                        <h2 className="text-lg font-medium text-gray-900 truncate">{selectedProject.title}</h2>
-                        <div className="flex-shrink-0">
+                        <h2 className="text-base font-medium text-gray-900 truncate">{selectedProject.title}</h2>
+                        <div className="flex items-center gap-1.5 flex-shrink-0">
                           {getTierBadge(selectedProject.performance_level)}
+                          {selectedProject.project_type && getProjectTypeBadge(selectedProject.project_type)}
                         </div>
                       </div>
-                      <div className="flex items-center gap-2">
-                        <button
-                          onClick={() => handleSingleExport(selectedProject)}
-                          className="inline-flex items-center px-3 py-2 text-sm font-medium text-gray-700 bg-white border border-gray-300 rounded-md shadow-sm hover:bg-gray-50 transition-colors"
+                      <div className="flex items-center gap-2 flex-shrink-0">
+                        {/* More Actions Dropdown */}
+                        <DropdownMenu
+                          align="right"
+                          trigger={
+                            <button
+                              type="button"
+                              className="inline-flex items-center px-3 py-2 text-sm font-medium text-gray-700 bg-white border border-gray-300 rounded-md shadow-sm hover:bg-gray-50 transition-colors"
+                            >
+                              <MoreHorizontal className="w-4 h-4" />
+                              <span className="sr-only">More actions</span>
+                            </button>
+                          }
                         >
-                          <Download className="w-4 h-4 mr-2" />
-                          Export
-                        </button>
+                          <DropdownMenuItem
+                            onClick={() => handleRunCoverage(selectedProject)}
+                            disabled={runningCoverageId === selectedProject.id || !selectedProject.transcription_text}
+                          >
+                            {runningCoverageId === selectedProject.id ? (
+                              <Loader2 className="w-4 h-4 animate-spin" />
+                            ) : (
+                              <ScanSearch className="w-4 h-4" />
+                            )}
+                            {runningCoverageId === selectedProject.id ? 'Analyzing...' : 'Run Coverage'}
+                          </DropdownMenuItem>
+                          <DropdownMenuItem onClick={() => handleSingleExport(selectedProject)}>
+                            <Download className="w-4 h-4" />
+                            Export
+                          </DropdownMenuItem>
+                          <DropdownMenuSeparator />
+                          <DropdownMenuItem onClick={handleRefresh} disabled={refreshing}>
+                            <RefreshCw className={`w-4 h-4 ${refreshing ? 'animate-spin' : ''}`} />
+                            {refreshing ? 'Refreshing...' : 'Refresh'}
+                          </DropdownMenuItem>
+                        </DropdownMenu>
+
+                        {/* Generate Content Button (Primary) */}
                         <button
                           onClick={() => handleGenerateContent(selectedProject)}
                           disabled={generatingProjects.has(selectedProject.id)}
@@ -1288,156 +1667,156 @@ export default function ProjectsPage() {
                           ) : (
                             <>
                               <Zap className="w-4 h-4 mr-2" />
-                              Generate Content
+                              Generate
                             </>
                           )}
+                        </button>
+
+                        {/* Toggle Context Sidebar Button - desktop only */}
+                        <button
+                          onClick={() => setContextSidebarOpen(!contextSidebarOpen)}
+                          className="hidden lg:flex p-1.5 text-gray-500 hover:text-gray-700 hover:bg-gray-100 rounded-md transition-colors"
+                          title={contextSidebarOpen ? 'Hide details panel' : 'Show details panel'}
+                        >
+                          <PanelRightOpen className="w-4 h-4" />
                         </button>
                       </div>
                     </div>
                   </div>
 
                   {/* Tab Navigation */}
-                  <div className="border-b border-gray-200 px-6">
-                    <nav className="flex space-x-6" aria-label="Tabs">
+                  <div className="flex-shrink-0 border-b border-gray-200 px-4">
+                    <nav className="flex space-x-4" aria-label="Tabs">
                       <button
                         onClick={() => setActiveTab('transcript')}
-                        className={`py-3 px-1 border-b-2 font-medium text-sm transition-colors ${
+                        className={`py-2.5 px-1 border-b-2 font-medium text-sm transition-colors ${
                           activeTab === 'transcript'
                             ? 'border-blue-500 text-blue-600'
                             : 'border-transparent text-gray-500 hover:text-gray-700 hover:border-gray-300'
                         }`}
                       >
-                        <div className="flex items-center space-x-2">
+                        <div className="flex items-center space-x-1.5">
                           <FileText className="w-4 h-4" />
                           <span>Transcript</span>
                         </div>
                       </button>
 
-                      {(selectedProject.performance_level === 'pro' || selectedProject.performance_level === 'premium') && selectedProject.ai_summary && (
-                        <button
-                          onClick={() => setActiveTab('summary')}
-                          className={`py-3 px-1 border-b-2 font-medium text-sm transition-colors ${
-                            activeTab === 'summary'
-                              ? 'border-blue-500 text-blue-600'
-                              : 'border-transparent text-gray-500 hover:text-gray-700 hover:border-gray-300'
-                          }`}
-                        >
-                          <div className="flex items-center space-x-2">
-                            <Sparkles className="w-4 h-4" />
-                            <span>Summary</span>
-                          </div>
-                        </button>
-                      )}
-
-                      {selectedProject.performance_level === 'premium' && selectedProject.chapters && selectedProject.chapters.length > 0 && (
-                        <button
-                          onClick={() => setActiveTab('chapters')}
-                          className={`py-3 px-1 border-b-2 font-medium text-sm transition-colors ${
-                            activeTab === 'chapters'
-                              ? 'border-purple-500 text-purple-600'
-                              : 'border-transparent text-gray-500 hover:text-gray-700 hover:border-gray-300'
-                          }`}
-                        >
-                          <div className="flex items-center space-x-2">
-                            <BookOpen className="w-4 h-4" />
-                            <span>Chapters</span>
-                          </div>
-                        </button>
-                      )}
-
-                      {selectedProject.performance_level === 'premium' && selectedProject.key_takeaways && selectedProject.key_takeaways.length > 0 && (
-                        <button
-                          onClick={() => setActiveTab('takeaways')}
-                          className={`py-3 px-1 border-b-2 font-medium text-sm transition-colors ${
-                            activeTab === 'takeaways'
-                              ? 'border-purple-500 text-purple-600'
-                              : 'border-transparent text-gray-500 hover:text-gray-700 hover:border-gray-300'
-                          }`}
-                        >
-                          <div className="flex items-center space-x-2">
-                            <Lightbulb className="w-4 h-4" />
-                            <span>Takeaways</span>
-                          </div>
-                        </button>
-                      )}
-
-                      {selectedProject.performance_level === 'premium' && selectedProject.social_quotes && selectedProject.social_quotes.length > 0 && (
-                        <button
-                          onClick={() => setActiveTab('quotes')}
-                          className={`py-3 px-1 border-b-2 font-medium text-sm transition-colors ${
-                            activeTab === 'quotes'
-                              ? 'border-purple-500 text-purple-600'
-                              : 'border-transparent text-gray-500 hover:text-gray-700 hover:border-gray-300'
-                          }`}
-                        >
-                          <div className="flex items-center space-x-2">
-                            <MessageSquare className="w-4 h-4" />
-                            <span>Quotes</span>
-                          </div>
-                        </button>
-                      )}
+                      <button
+                        onClick={() => setActiveTab('conversation')}
+                        disabled={!parsedSpeakerData}
+                        className={`py-2.5 px-1 border-b-2 font-medium text-sm transition-colors ${
+                          activeTab === 'conversation'
+                            ? 'border-blue-500 text-blue-600'
+                            : !parsedSpeakerData
+                            ? 'border-transparent text-gray-300 cursor-not-allowed'
+                            : 'border-transparent text-gray-500 hover:text-gray-700 hover:border-gray-300'
+                        }`}
+                      >
+                        <div className="flex items-center space-x-1.5">
+                          <MessageCircle className="w-4 h-4" />
+                          <span>Conversation</span>
+                        </div>
+                      </button>
 
                       <button
                         onClick={() => setActiveTab('outputs')}
-                        className={`py-3 px-1 border-b-2 font-medium text-sm transition-colors ${
+                        className={`py-2.5 px-1 border-b-2 font-medium text-sm transition-colors ${
                           activeTab === 'outputs'
                             ? 'border-blue-500 text-blue-600'
                             : 'border-transparent text-gray-500 hover:text-gray-700 hover:border-gray-300'
                         }`}
                       >
-                        <div className="flex items-center space-x-2">
+                        <div className="flex items-center space-x-1.5">
                           <Zap className="w-4 h-4" />
-                          <span>Generated ({outputs.length})</span>
+                          <span>Generated Content</span>
+                          {outputs.length > 0 && (
+                            <span className="px-1.5 py-0.5 text-xs rounded-full bg-gray-100 text-gray-600">
+                              {outputs.length}
+                            </span>
+                          )}
                         </div>
                       </button>
                     </nav>
                   </div>
 
                   {/* Tab Content - Scrollable */}
-                  <div className="flex-1 overflow-hidden flex flex-col">
-                    {/* TRANSCRIPT TAB */}
+                  <div className="flex-1 overflow-y-auto bg-gray-50/50">
+                    {/* TRANSCRIPT TAB - Plain text only */}
                     {activeTab === 'transcript' && (
-                      <div className="h-full flex flex-col p-6">
+                      <div className="h-full flex flex-col">
                         {selectedProject.transcription_text ? (
-                          <div className="h-full flex flex-col">
-                            {/* Format Toggle */}
-                            <div className="flex items-center space-x-2 mb-4 flex-shrink-0">
-                              <button
-                                onClick={() => setShowConversationFormat(false)}
-                                className={`inline-flex items-center px-3 py-1.5 text-sm font-medium rounded-md transition-colors ${
-                                  !showConversationFormat
-                                    ? 'bg-blue-100 text-blue-700'
-                                    : 'text-gray-600 hover:bg-gray-100 border border-gray-200'
-                                }`}
-                              >
-                                <FileText className="w-4 h-4 mr-1.5" />
-                                Text
-                              </button>
-                              <button
-                                onClick={() => setShowConversationFormat(true)}
-                                disabled={!parsedSpeakerData}
-                                className={`inline-flex items-center px-3 py-1.5 text-sm font-medium rounded-md transition-colors ${
-                                  showConversationFormat && parsedSpeakerData
-                                    ? 'bg-blue-100 text-blue-700'
-                                    : parsedSpeakerData
-                                    ? 'text-gray-600 hover:bg-gray-100 border border-gray-200'
-                                    : 'text-gray-400 cursor-not-allowed border border-gray-200'
-                                }`}
-                                title={!parsedSpeakerData ? 'Speaker analysis in progress...' : 'Switch to conversation format'}
-                              >
-                                <MessageCircle className="w-4 h-4 mr-1.5" />
-                                Conversation
-                                {!parsedSpeakerData && <span className="ml-1">⏳</span>}
-                              </button>
+                          <div className="flex-1 overflow-y-auto px-2 py-2">
+                            <div className="max-w-3xl mx-auto">
+                              <div className="prose prose-sm max-w-none">
+                                <div className="text-[15px] text-gray-700 leading-relaxed whitespace-pre-wrap">
+                                  {parsedSpeakerData ? (
+                                    parsedSpeakerData.segments
+                                      .map((segment: any) => segment.text)
+                                      .join(' ')
+                                  ) : (
+                                    selectedProject.transcription_text
+                                  )}
+                                </div>
+                              </div>
                             </div>
+                          </div>
+                        ) : (
+                          <div className="flex-1 flex items-center justify-center">
+                            <div className="text-center py-12 text-gray-500">
+                              <Loader2 className="h-8 w-8 mx-auto mb-3 animate-spin text-gray-300" />
+                              <p className="text-sm">Processing transcription...</p>
+                            </div>
+                          </div>
+                        )}
+                      </div>
+                    )}
 
-                            {/* Transcription Content */}
-                            <div className="flex-1 overflow-hidden">
-                              {showConversationFormat && parsedSpeakerData ? (
+                    {/* CONVERSATION TAB - Speaker diarization view */}
+                    {activeTab === 'conversation' && (
+                      <div className="h-full flex flex-col">
+                        {parsedSpeakerData ? (
+                          <div className="h-full flex flex-col">
+                            {/* Status Notices */}
+                            {(isProjectRefreshing || (projectPreviousStatus === 'processing' && selectedProject.status === 'completed')) && (
+                              <div className="flex-shrink-0 px-2 py-1.5 bg-white border-b border-gray-100">
+                                <div className="max-w-3xl mx-auto">
+                                  {isProjectRefreshing && (
+                                    <div className="flex items-center gap-2 text-blue-600 text-sm">
+                                      <RefreshCw className="h-3.5 w-3.5 animate-spin" />
+                                      <span>Refreshing speaker data...</span>
+                                    </div>
+                                  )}
+                                  {projectPreviousStatus === 'processing' && selectedProject.status === 'completed' && (
+                                    <div className="flex items-center gap-2 text-green-600 text-sm">
+                                      <CheckCircle className="h-3.5 w-3.5" />
+                                      <span>Processing complete!</span>
+                                    </div>
+                                  )}
+                                </div>
+                              </div>
+                            )}
+
+                            {/* Audio Player for Speaker Samples */}
+                            {audioUrl && (
+                              <div className="flex-shrink-0 px-2 py-1.5 bg-white border-b border-gray-100">
+                                <div className="max-w-3xl mx-auto flex justify-end">
+                                  <audio
+                                    ref={audioElementRef}
+                                    src={audioUrl}
+                                    controls
+                                    className="h-8 w-48"
+                                    preload="metadata"
+                                  />
+                                </div>
+                              </div>
+                            )}
+
+                            {/* Conversation Content */}
+                            <div className="flex-1 overflow-y-auto px-2 py-2">
+                              <div className="max-w-3xl mx-auto">
                                 <ConversationView
                                   speakerData={parsedSpeakerData}
-                                  transcriptionText={selectedProject.transcription_text}
-                                  className="bg-gray-50 rounded-md"
+                                  transcriptionText={selectedProject.transcription_text || ''}
                                   projectId={selectedProject.id}
                                   userTier={selectedProject.performance_level || 'basic'}
                                   onSpeakerUpdate={(updatedSpeakerData) => {
@@ -1446,209 +1825,51 @@ export default function ProjectsPage() {
                                       speaker_data: updatedSpeakerData
                                     } : null);
                                   }}
+                                  insightsSidebarOpen={insightsSidebarOpen}
+                                  onInsightsSidebarChange={setInsightsSidebarOpen}
+                                  onInsightsStatusChange={setInsightsStatus}
+                                  onInsightsDataChange={setInsightsData}
+                                  triggerInsightGeneration={triggerInsightGeneration}
+                                  audioPlayerRef={audioPlayerRef}
                                 />
-                              ) : (
-                                <div className="text-sm text-gray-700 leading-relaxed whitespace-pre-wrap bg-gray-50 p-4 rounded-md overflow-y-auto h-full">
-                                  {parsedSpeakerData ? (
-                                    // Extract raw text from segments
-                                    parsedSpeakerData.segments
-                                      .map((segment: any) => segment.text)
-                                      .join(' ')
-                                  ) : (
-                                    selectedProject.transcription_text
-                                  )}
-                                </div>
-                              )}
+                              </div>
                             </div>
                           </div>
                         ) : (
-                          <div className="text-center py-12 text-gray-500">
-                            Processing transcription...
+                          <div className="flex-1 flex items-center justify-center">
+                            <div className="text-center py-12 text-gray-500">
+                              <MessageCircle className="h-8 w-8 mx-auto mb-3 text-gray-300" />
+                              <p className="text-sm">Speaker data not available</p>
+                              <p className="text-xs text-gray-400 mt-1">Use a Pro or Premium tier for speaker diarization</p>
+                            </div>
                           </div>
                         )}
                       </div>
                     )}
 
-                    {/* SUMMARY TAB */}
-                    {activeTab === 'summary' && selectedProject.ai_summary && (
-                      <div className="p-6 overflow-y-auto">
-                        <div className="mb-6">
-                          <h3 className="text-xl font-semibold text-gray-900 mb-1">Summary</h3>
-                          <p className="text-sm text-gray-500">Key insights and takeaways from the conversation</p>
-                        </div>
-
-                        {/* Main Summary Content with Interspersed Chapters */}
-                        <div className="prose prose-sm max-w-none">
-                          {(() => {
-                            const paragraphs = selectedProject.ai_summary.split('\n\n');
-                            const chapters = selectedProject.performance_level === 'premium' && selectedProject.chapters
-                              ? selectedProject.chapters
-                              : [];
-
-                            // Calculate which paragraph each chapter should appear before
-                            const chapterPositions = chapters.map((chapter, idx) => {
-                              // Distribute chapters evenly across paragraphs
-                              const position = Math.floor((idx / chapters.length) * paragraphs.length);
-                              return position;
-                            });
-
-                            return paragraphs.map((paragraph, pIdx) => {
-                              // Check if a chapter should appear before this paragraph
-                              const chapterIndex = chapterPositions.indexOf(pIdx);
-
-                              return (
-                                <div key={pIdx}>
-                                  {chapterIndex !== -1 && (
-                                    <div className="mb-5 mt-8 first:mt-0">
-                                      <div className="flex items-center gap-3 pb-3 border-b-2 border-indigo-200">
-                                        <span className="flex-shrink-0 inline-flex items-center justify-center w-6 h-6 rounded-full bg-gradient-to-br from-indigo-100 to-blue-100 text-indigo-700 text-xs font-semibold">
-                                          {chapterIndex + 1}
-                                        </span>
-                                        <div className="flex-1">
-                                          <h4 className="text-base font-semibold text-indigo-900">
-                                            {chapters[chapterIndex].title}
-                                          </h4>
-                                        </div>
-                                        <span className="text-xs font-medium text-indigo-600 bg-indigo-50 px-2 py-1 rounded">
-                                          {formatDuration(chapters[chapterIndex].start_time)}
-                                        </span>
-                                      </div>
-                                    </div>
-                                  )}
-                                  <p className="text-[15px] leading-relaxed text-gray-700 mb-4">
-                                    {paragraph}
-                                  </p>
-                                </div>
-                              );
-                            });
-                          })()}
-                        </div>
-                      </div>
-                    )}
-
-                    {/* CHAPTERS TAB */}
-                    {activeTab === 'chapters' && selectedProject.chapters && selectedProject.chapters.length > 0 && (
-                      <div className="p-6 overflow-y-auto">
-                        <div className="mb-6">
-                          <h3 className="text-xl font-semibold text-gray-900 mb-1">Chapters</h3>
-                          <p className="text-sm text-gray-500">Topic breakdowns and timestamps</p>
-                        </div>
-                        <div className="space-y-3">
-                          {selectedProject.chapters.map((chapter, idx) => (
-                            <div key={idx} className="group relative bg-white border border-gray-200 rounded-lg p-4 hover:border-indigo-300 hover:shadow-md transition-all">
-                              <div className="flex items-start justify-between gap-4 mb-2">
-                                <div className="flex items-start gap-3 flex-1">
-                                  <div className="flex-shrink-0 mt-0.5">
-                                    <span className="inline-flex items-center justify-center w-6 h-6 rounded-full bg-gradient-to-br from-indigo-100 to-blue-100 text-indigo-700 text-xs font-semibold">
-                                      {idx + 1}
-                                    </span>
-                                  </div>
-                                  <div className="flex-1 min-w-0">
-                                    <h4 className="text-[15px] font-semibold text-gray-900 mb-1 group-hover:text-indigo-700 transition-colors">{chapter.title}</h4>
-                                    {chapter.description && (
-                                      <p className="text-sm text-gray-600 leading-relaxed">{chapter.description}</p>
-                                    )}
-                                  </div>
-                                </div>
-                                <div className="flex-shrink-0">
-                                  <span className="text-xs font-medium text-indigo-700 bg-indigo-50 px-2 py-1 rounded">
-                                    {formatDuration(chapter.start_time)}
-                                  </span>
-                                </div>
-                              </div>
-                            </div>
-                          ))}
-                        </div>
-                      </div>
-                    )}
-
-                    {/* TAKEAWAYS TAB */}
-                    {activeTab === 'takeaways' && selectedProject.key_takeaways && selectedProject.key_takeaways.length > 0 && (
-                      <div className="p-6 overflow-y-auto">
-                        <div className="mb-6">
-                          <h3 className="text-xl font-semibold text-gray-900 mb-1">Key Takeaways</h3>
-                          <p className="text-sm text-gray-500">Main insights and actionable advice</p>
-                        </div>
-                        <div className="space-y-3">
-                          {selectedProject.key_takeaways.map((takeaway, idx) => (
-                            <div key={idx} className="group bg-white border border-gray-200 rounded-lg p-4 hover:border-emerald-300 hover:shadow-md transition-all">
-                              <div className="flex items-start gap-3">
-                                <div className="flex-shrink-0 mt-0.5">
-                                  <div className="w-5 h-5 rounded-full bg-gradient-to-br from-emerald-100 to-teal-100 flex items-center justify-center">
-                                    <CheckCircle className="w-3.5 h-3.5 text-emerald-600" />
-                                  </div>
-                                </div>
-                                <div className="flex-1 min-w-0">
-                                  <p className="text-[15px] leading-relaxed text-gray-900">{takeaway.takeaway}</p>
-                                  {takeaway.timestamp !== undefined && (
-                                    <span className="inline-block mt-2 text-xs font-medium text-emerald-700 bg-emerald-50 px-2 py-1 rounded">
-                                      {formatDuration(takeaway.timestamp)}
-                                    </span>
-                                  )}
-                                </div>
-                              </div>
-                            </div>
-                          ))}
-                        </div>
-                      </div>
-                    )}
-
-                    {/* QUOTES TAB */}
-                    {activeTab === 'quotes' && selectedProject.social_quotes && selectedProject.social_quotes.length > 0 && (
-                      <div className="p-6 overflow-y-auto">
-                        <div className="mb-6">
-                          <h3 className="text-xl font-semibold text-gray-900 mb-1">Quotes</h3>
-                          <p className="text-sm text-gray-500">Shareable moments and memorable insights</p>
-                        </div>
-                        <div className="space-y-4">
-                          {selectedProject.social_quotes.map((quote, idx) => (
-                            <div key={idx} className="group bg-gradient-to-br from-amber-50/50 to-orange-50/50 border border-amber-200 rounded-lg p-5 hover:border-amber-300 hover:shadow-md transition-all">
-                              <div className="flex gap-3 mb-3">
-                                <div className="text-amber-400 text-2xl leading-none font-serif">"</div>
-                                <blockquote className="flex-1">
-                                  <p className="text-[15px] leading-relaxed text-gray-900 italic">
-                                    {quote.quote}
-                                  </p>
-                                </blockquote>
-                              </div>
-                              <div className="flex items-center justify-between text-sm pl-7">
-                                {quote.speaker && (
-                                  <span className="text-amber-900 font-medium">— {quote.speaker}</span>
-                                )}
-                                {quote.timestamp !== undefined && (
-                                  <span className="text-xs font-medium text-amber-700 bg-amber-100 px-2 py-1 rounded ml-auto">
-                                    {formatDuration(quote.timestamp)}
-                                  </span>
-                                )}
-                              </div>
-                            </div>
-                          ))}
-                        </div>
-                      </div>
-                    )}
-
-                    {/* OUTPUTS TAB */}
+                    {/* GENERATED CONTENT TAB */}
                     {activeTab === 'outputs' && (
-                      <div className="p-6 overflow-y-auto bg-gray-50/50 h-full">
-                        {outputs.length === 0 ? (
-                          <div className="text-center py-12 bg-white rounded-lg shadow-sm border border-gray-100">
-                            <Clock className="mx-auto h-8 w-8 text-gray-400" />
-                            <p className="mt-2 text-sm text-gray-500">
-                              {selectedProject.status === 'processing'
-                                ? 'Content is being generated...'
-                                : selectedProject.transcription_text
-                                ? 'Ready to generate content - click the button above!'
-                                : 'No content generated yet'
-                              }
-                            </p>
-                          </div>
-                        ) : (
-                          <div className="space-y-6">
-                            {outputs.map((output) => (
-                              <div
-                                key={output.id}
-                                className="bg-white p-6 rounded-xl shadow-sm hover:shadow-md transition-shadow duration-200"
-                              >
+                      <div className="px-2 py-2">
+                        <div className="max-w-3xl mx-auto">
+                          {outputs.length === 0 ? (
+                            <div className="text-center py-16 bg-white rounded-lg shadow-sm border border-gray-100">
+                              <Clock className="mx-auto h-10 w-10 text-gray-300" />
+                              <p className="mt-3 text-sm text-gray-500">
+                                {selectedProject.status === 'processing'
+                                  ? 'Content is being generated...'
+                                  : selectedProject.transcription_text
+                                  ? 'Ready to generate content - click Generate above'
+                                  : 'No content generated yet'
+                                }
+                              </p>
+                            </div>
+                          ) : (
+                            <div className="space-y-4">
+                              {outputs.map((output) => (
+                                <div
+                                  key={output.id}
+                                  className="bg-white p-5 rounded-lg shadow-sm border border-gray-100 hover:shadow-md transition-shadow"
+                                >
                                 {/* Header: Badges & Title */}
                                 <div className="mb-4">
                                   <div className="flex flex-wrap gap-2 mb-2">
@@ -1709,49 +1930,86 @@ export default function ProjectsPage() {
                                   </div>
                                 </div>
                               </div>
-                            ))}
-                          </div>
-                        )}
+                              ))}
+                            </div>
+                          )}
+                        </div>
                       </div>
                     )}
                   </div>
                 </div>
               ) : (
-                <div className="bg-white rounded-lg border border-gray-200 shadow-sm h-[calc(100vh-12rem)] flex flex-col">
-                  {/* Header with toggle button even when no project selected */}
-                  <div className="px-6 py-4 border-b border-gray-200">
-                    <div className="flex items-center space-x-3 min-w-0">
-                      <button
-                        onClick={() => setProjectsSidebarOpen(!projectsSidebarOpen)}
-                        className="p-1.5 text-gray-500 hover:text-gray-700 hover:bg-gray-100 rounded-md transition-colors flex-shrink-0"
-                        title={projectsSidebarOpen ? 'Hide projects' : 'Show projects'}
-                      >
-                        {projectsSidebarOpen ? (
-                          <PanelLeftClose className="w-5 h-5" />
-                        ) : (
-                          <PanelLeftOpen className="w-5 h-5" />
-                        )}
-                      </button>
-                      <div className="h-6 w-px bg-gray-300 flex-shrink-0" />
-                      <h2 className="text-lg font-medium text-gray-900 truncate">Project Details</h2>
-                    </div>
-                  </div>
-
-                  {/* Empty state */}
-                  <div className="flex-1 flex items-center justify-center">
-                    <div className="text-center py-12">
-                      <FileText className="mx-auto h-12 w-12 text-gray-400" />
-                      <h3 className="mt-2 text-sm font-medium text-gray-900">
-                        Select a project
-                      </h3>
-                      <p className="mt-1 text-sm text-gray-500">
-                        Choose a project from the list to view details
-                      </p>
-                    </div>
+                /* Empty state when no project selected */
+                <div className="h-full flex items-center justify-center bg-gray-50/30">
+                  <div className="text-center py-12 px-6">
+                    <FileText className="mx-auto h-12 w-12 text-gray-300" />
+                    <h3 className="mt-3 text-sm font-medium text-gray-900">
+                      Select a project
+                    </h3>
+                    <p className="mt-1 text-sm text-gray-500 max-w-xs">
+                      Choose a project from the list on the left to view its details and content
+                    </p>
                   </div>
                 </div>
               )}
-            </div>
+            </main>
+
+            {/* RIGHT COLUMN: Context Sidebar (25% on desktop) */}
+            <ContextSidebar
+              speakers={parsedSpeakerData?.speakers}
+              onSpeakerClick={(speakerId) => setActiveSpeakerId(speakerId)}
+              activeSpeakerId={activeSpeakerId}
+              projectId={selectedProject?.id}
+              onSpeakerRename={async (speakerId, newName) => {
+                if (!selectedProject?.id || !parsedSpeakerData) return;
+
+                const updatedSpeakerData = {
+                  ...parsedSpeakerData,
+                  speakers: {
+                    ...parsedSpeakerData.speakers,
+                    [speakerId]: {
+                      ...parsedSpeakerData.speakers[speakerId],
+                      finalName: newName,
+                      customName: newName
+                    }
+                  }
+                };
+
+                // Save to backend
+                const response = await fetch(`/api/projects/${selectedProject.id}/speakers`, {
+                  method: 'PATCH',
+                  headers: { 'Content-Type': 'application/json' },
+                  body: JSON.stringify({
+                    speakerId,
+                    newName,
+                    speakerData: updatedSpeakerData
+                  })
+                });
+
+                if (response.ok) {
+                  setSelectedProject(prev => prev ? {
+                    ...prev,
+                    speaker_data: updatedSpeakerData
+                  } : null);
+                }
+              }}
+              insights={insightsData}
+              activeInsightId={activeInsightId}
+              onInsightClick={(insightId) => setActiveInsightId(prev => prev === insightId ? null : insightId)}
+              insightsLoading={insightsStatus.loading}
+              insightsGenerating={insightsStatus.generating}
+              onGenerateInsights={() => setTriggerInsightGeneration(prev => prev + 1)}
+              summary={selectedProject?.ai_summary}
+              chapters={selectedProject?.chapters || []}
+              takeaways={selectedProject?.key_takeaways || []}
+              quotes={selectedProject?.social_quotes || []}
+              tier={selectedProject?.performance_level || 'basic'}
+              isOpen={contextSidebarOpen}
+              onClose={() => setContextSidebarOpen(false)}
+              className={`flex-shrink-0 transition-all duration-300 ease-in-out ${
+                contextSidebarOpen ? 'w-72 lg:w-1/4' : 'w-0'
+              }`}
+            />
           </div>
         )}
 
@@ -1778,7 +2036,6 @@ export default function ProjectsPage() {
           projects={exportProjects}
           onExport={handleExport}
         />
-      </div>
     </div>
   );
 }

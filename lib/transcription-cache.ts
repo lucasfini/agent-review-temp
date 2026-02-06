@@ -139,14 +139,30 @@ export async function incrementReferenceCount(
 }
 
 /**
- * Decrement reference count and delete cache if count reaches 0
- * Called when a project is deleted
+ * Delete cache entry when a project is deleted
+ * This ensures re-uploads get fresh speaker detection
  */
 export async function decrementReferenceCount(
-  _fingerprint: string | undefined
+  fingerprint: string | undefined
 ): Promise<void> {
-  // Reference counting disabled until dedicated RPC/function exists.
-  return;
+  if (!fingerprint) return;
+
+  try {
+    const { error } = await supabaseAdmin
+      .from(TABLE_NAME)
+      .delete()
+      .eq('fingerprint', fingerprint);
+
+    if (error) {
+      if (!isTableMissingError(error)) {
+        console.warn('[TRANSCRIPTION CACHE] Delete failed:', error);
+      }
+    } else {
+      console.log(`[TRANSCRIPTION CACHE] Deleted cache entry for fingerprint: ${fingerprint.slice(0, 16)}...`);
+    }
+  } catch (error) {
+    console.warn('[TRANSCRIPTION CACHE] Delete error:', error);
+  }
 }
 
 /**

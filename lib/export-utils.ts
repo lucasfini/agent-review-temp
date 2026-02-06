@@ -174,7 +174,8 @@ ${project.transcription_text}
       if (speakerData.segments) {
         conversationText = speakerData.segments
           .map((seg: any) => {
-            const speakerName = speakerData.speakers?.[seg.speakerId]?.finalName || seg.speakerId;
+            const segmentSpeakerId = seg.finalSpeakerId || seg.speakerId;
+            const speakerName = speakerData.speakers?.[segmentSpeakerId]?.finalName || segmentSpeakerId;
             return `**${speakerName}:** ${seg.text}`;
           })
           .join('\n\n');
@@ -309,7 +310,8 @@ Exported from AudioRepurpose
       if (speakerData.segments) {
         conversationText = speakerData.segments
           .map((seg: any) => {
-            const speakerName = speakerData.speakers?.[seg.speakerId]?.finalName || seg.speakerId;
+            const segmentSpeakerId = seg.finalSpeakerId || seg.speakerId;
+            const speakerName = speakerData.speakers?.[segmentSpeakerId]?.finalName || segmentSpeakerId;
             return `${speakerName}: ${seg.text}`;
           })
           .join('\n\n');
@@ -773,7 +775,8 @@ function exportAsPDF(
             const sd = typeof project.speaker_data === 'string' ? JSON.parse(project.speaker_data) : project.speaker_data;
             if (sd.segments) {
               content = sd.segments.map((seg: any) => {
-                const name = sd.speakers?.[seg.speakerId]?.finalName || seg.speakerId;
+                const segmentSpeakerId = seg.finalSpeakerId || seg.speakerId;
+                const name = sd.speakers?.[segmentSpeakerId]?.finalName || segmentSpeakerId;
                 return `${name}: ${seg.text}`;
               }).join('\n\n');
             }

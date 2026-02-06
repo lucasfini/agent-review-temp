@@ -1,5 +1,6 @@
 // AI-powered key takeaways extraction using GPT-4o-mini
 import OpenAI from 'openai';
+import { trackOpenAIUsage } from '@/lib/billing/track-usage';
 
 export interface KeyTakeaway {
   takeaway: string;
@@ -25,6 +26,8 @@ export async function extractKeyTakeaways(
   options: {
     maxTakeaways?: number;
     speakerContext?: Record<string, { name: string; role?: string }>;
+    userId?: string;
+    projectId?: string;
   } = {}
 ): Promise<TakeawaysResult> {
   const apiKey = process.env.OPENAI_API_KEY;
@@ -35,7 +38,7 @@ export async function extractKeyTakeaways(
   // Adaptive takeaway count: reduce for shorter transcripts to avoid fluff
   const transcriptLength = transcriptionText.length;
   const defaultTakeawayCount = transcriptLength < 5000 ? 4 : 8;
-  const { maxTakeaways = defaultTakeawayCount, speakerContext } = options;
+  const { maxTakeaways = defaultTakeawayCount, speakerContext, userId, projectId } = options;
 
   console.log('[TAKEAWAYS] 💎 Extracting action-first takeaways with GPT-4o-mini...');
   console.log(`[TAKEAWAYS] 📏 Transcript length: ${transcriptLength} chars, requesting ${maxTakeaways} takeaways`);
@@ -103,6 +106,17 @@ ${transcriptionText.slice(0, 80000)}`;
         }
       ]
     });
+
+    if (userId) {
+      await trackOpenAIUsage({
+        userId,
+        projectId,
+        response,
+        modelName: 'gpt-4o-mini',
+        purpose: 'Key Takeaways',
+        shouldDebit: true
+      });
+    }
 
     const responseText = response.choices[0]?.message?.content || '{}';
 

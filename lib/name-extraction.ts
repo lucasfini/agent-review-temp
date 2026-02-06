@@ -1105,17 +1105,19 @@ function extractRoleFromSegments(speaker: DetectedSpeaker): string | null {
 }
 
 /**
- * Get display name for a speaker (prioritizes custom > extracted > final > fallback)
+ * Get display name for a speaker (prioritizes custom > final > extracted > fallback)
+ * Note: finalName takes precedence over extractedName because role classification
+ * and other processes update finalName without updating extractedName.
  */
 export function getSpeakerDisplayName(namedSpeaker: NamedSpeaker): string {
   if (namedSpeaker.customName && namedSpeaker.customName.trim().length > 0) {
     return namedSpeaker.customName.trim();
   }
-  if (namedSpeaker.extractedName) {
-    return namedSpeaker.extractedName.name;
-  }
   if (namedSpeaker.finalName) {
     return namedSpeaker.finalName;
+  }
+  if (namedSpeaker.extractedName) {
+    return namedSpeaker.extractedName.name;
   }
   // Fallback for edge cases where finalName is missing
   if (namedSpeaker.fallbackName) {

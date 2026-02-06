@@ -171,9 +171,14 @@ export default function BillingSection({ userId }: BillingSectionProps) {
                       return (
                         <tr key={transaction.id} className="hover:bg-gray-50">
                           <td className="px-6 py-4 whitespace-nowrap">
-                            <div className="text-sm font-medium text-gray-900 capitalize">
-                              {transaction.transactionType.replace('_', ' ')}
+                            <div className="text-sm font-medium text-gray-900">
+                              {transaction.reason || transaction.transactionType.replace('_', ' ')}
                             </div>
+                            {transaction.reason && (
+                              <div className="text-xs text-gray-500 capitalize">
+                                {transaction.transactionType.replace('_', ' ')}
+                              </div>
+                            )}
                           </td>
                           <td className="px-6 py-4 whitespace-nowrap">
                             <div className="text-sm text-gray-500">

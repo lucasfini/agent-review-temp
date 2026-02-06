@@ -1,20 +1,29 @@
 'use client';
 
-import { useState, useEffect, useMemo } from 'react';
+import { useState, useEffect, useMemo, useCallback } from 'react';
 import type { FormEvent } from 'react';
+import { useSearchParams, useRouter } from 'next/navigation';
 import {
-  BarChart3,
-  TrendingUp,
-  FileText,
-  Clock,
-  Zap,
+  ChevronDown,
+  X,
+  Target,
   Calendar,
-  Download,
-  Eye,
-  Users
+  Lightbulb,
+  BookOpen
 } from 'lucide-react';
 import { useAuth } from '@/lib/auth/context';
 import { supabase } from '@/lib/supabase/client';
+
+// New analytics components
+import { KPIGrid, generateSparklineData } from '@/components/analytics/KPIGrid';
+import { ContentMixSection } from '@/components/analytics/ContentCharts';
+import { GoalsSection } from '@/components/analytics/GoalsSection';
+import { InsightsGrid } from '@/components/analytics/InsightsGrid';
+import { InsightsHeader } from '@/components/analytics/InsightsHeader';
+
+// ============================================================================
+// TYPES
+// ============================================================================
 
 interface CoverageSnapshotRecord {
   id: string;
@@ -42,6 +51,7 @@ interface NarrativeGoalRecord {
   target_mentions?: number | null;
   cadence_days?: number | null;
   status: string;
+  updated_at: string;
 }
 
 interface CoverageSummary {
@@ -53,7 +63,7 @@ interface CoverageSummary {
     id: string;
     label: string;
     type: string;
-    severity: string;
+    severity: 'high' | 'medium' | 'low';
     summary: string;
     recommendedAction: string;
     projectTitle?: string | null;
@@ -122,37 +132,26 @@ interface AnalyticsData {
   };
 }
 
+interface TopicHeatEntry {
+  id: string;
+  label: string;
+  mentions: number;
+  avgShare: number;
+  goalAligned: boolean;
+  lastMention: string | null;
+  status: 'Under' | 'Balanced' | 'Over';
+}
+
+// ============================================================================
+// CONSTANTS
+// ============================================================================
+
 const EMPTY_COVERAGE_SUMMARY: CoverageSummary = {
   totalAnalyses: 0,
   spendLast30: 0,
   avgTopics: 0,
   goalsTracked: 0,
   latestOpportunities: []
-};
-
-const COVERAGE_FEATURE_ENABLED = true;
-
-const GOAL_TYPE_OPTIONS = [
-  { value: 'include', label: 'Recurring Topic', helper: 'Ensure this theme shows up regularly.' },
-  { value: 'cta', label: 'CTA Reminder', helper: 'Track mentions of offers or CTAs.' },
-  { value: 'avoid', label: 'Avoid / Limit', helper: 'Flag when this theme appears.' },
-  { value: 'mention', label: 'Awareness', helper: 'Lightweight monitoring of new ideas.' }
-] as const;
-
-const CURATED_GOAL_PRESETS = [
-  { label: 'Promote newsletter CTA', type: 'cta', target: 2, cadence: 7 },
-  { label: 'Mention sponsor name', type: 'cta', target: 1, cadence: 7 },
-  { label: 'AI safety', type: 'include', target: 1, cadence: 30 },
-  { label: 'Future of work', type: 'include', target: 1, cadence: 30 },
-  { label: 'Avoid off-topic politics', type: 'avoid', target: 0, cadence: null },
-  { label: 'Avoid price mentions', type: 'avoid', target: 0, cadence: null },
-  { label: 'Highlight guest brand', type: 'mention', target: 1, cadence: null }
-] as const;
-
-const GOAL_STATUS_CLASSES: Record<string, string> = {
-  active: 'bg-green-50 text-green-700',
-  paused: 'bg-yellow-50 text-yellow-700',
-  archived: 'bg-gray-100 text-gray-600'
 };
 
 const EXAMPLE_NARRATIVE_GOALS = [
@@ -163,7 +162,6 @@ const EXAMPLE_NARRATIVE_GOALS = [
       { label: 'Mention coaching program', type: 'cta', target: 2, cadence: 14, description: 'Promote coaching twice per bi-weekly episode' },
       { label: 'Book launch announcement', type: 'cta', target: 3, cadence: 7, description: 'Weekly mentions during launch period' },
       { label: 'Newsletter signup reminder', type: 'cta', target: 1, cadence: 30, description: 'Monthly reminder to join newsletter' },
-      { label: 'Course early-bird discount', type: 'cta', target: 2, cadence: 7, description: 'Push time-sensitive offers during launch' },
     ]
   },
   {
@@ -171,49 +169,31 @@ const EXAMPLE_NARRATIVE_GOALS = [
     description: 'Core themes you want to cover regularly',
     examples: [
       { label: 'AI and automation', type: 'include', target: 3, cadence: 30, description: 'Core theme - discuss monthly' },
-      { label: 'Productivity tips', type: 'include', target: 2, cadence: 14, description: 'Regular tactical advice for listeners' },
-      { label: 'Guest success stories', type: 'include', target: 1, cadence: 21, description: 'Case studies every 3 weeks' },
-      { label: 'Leadership principles', type: 'include', target: 2, cadence: 30, description: 'Management and leadership insights' },
+      { label: 'Productivity tips', type: 'include', target: 2, cadence: 14, description: 'Regular tactical advice' },
     ]
   },
   {
     category: 'Content Guardrails',
-    description: 'Topics to avoid or limit for brand safety',
+    description: 'Topics to avoid or limit',
     examples: [
       { label: 'Political discussions', type: 'avoid', target: 0, cadence: null, description: 'Keep podcast non-political' },
-      { label: 'Controversial opinions', type: 'avoid', target: 0, cadence: null, description: 'Maintain brand safety and inclusivity' },
-      { label: 'Competitor mentions', type: 'avoid', target: 1, cadence: 90, description: 'Limit competitive references to once per quarter' },
-    ]
-  },
-  {
-    category: 'Awareness Tracking',
-    description: 'Monitor emerging themes without strict targets',
-    examples: [
-      { label: 'Industry trends', type: 'mention', target: 1, cadence: 30, description: 'Stay current with trends and news' },
-      { label: 'Community shoutouts', type: 'mention', target: 2, cadence: 30, description: 'Engage with audience monthly' },
-      { label: 'Behind-the-scenes', type: 'mention', target: 1, cadence: 60, description: 'Share podcast creation process' },
-    ]
-  },
-  {
-    category: 'Brand Consistency',
-    description: 'Reinforce your brand values and messaging',
-    examples: [
-      { label: 'Company values', type: 'include', target: 1, cadence: 14, description: 'Reinforce mission and values regularly' },
-      { label: 'Customer testimonials', type: 'include', target: 2, cadence: 21, description: 'Social proof every 3 weeks' },
-      { label: 'Product roadmap updates', type: 'mention', target: 1, cadence: 45, description: 'Keep audience informed of developments' },
+      { label: 'Competitor mentions', type: 'avoid', target: 1, cadence: 90, description: 'Limit competitive references' },
     ]
   }
 ];
 
-interface TopicHeatEntry {
-  id: string;
-  label: string;
-  mentions: number;
-  avgShare: number;
-  goalAligned: boolean;
-  lastMention: string | null;
-  status: 'Under' | 'Balanced' | 'Over';
-}
+const CURATED_GOAL_PRESETS = [
+  { label: 'Promote newsletter CTA', type: 'cta', target: 2, cadence: 7 },
+  { label: 'Mention sponsor name', type: 'cta', target: 1, cadence: 7 },
+  { label: 'AI safety', type: 'include', target: 1, cadence: 30 },
+  { label: 'Future of work', type: 'include', target: 1, cadence: 30 },
+  { label: 'Avoid off-topic politics', type: 'avoid', target: 0, cadence: null },
+  { label: 'Highlight guest brand', type: 'mention', target: 1, cadence: null }
+] as const;
+
+// ============================================================================
+// HELPER FUNCTIONS
+// ============================================================================
 
 function summarizeInsights(insightRecords: InsightRecord[]): InsightsSummary {
   if (!insightRecords || insightRecords.length === 0) {
@@ -279,14 +259,14 @@ function summarizeCoverage(
       id: `${snapshot.id}-${index}`,
       label: op.label || 'Opportunity',
       type: op.type || 'balanced',
-      severity: op.severity || 'medium',
+      severity: (op.severity || 'medium') as 'high' | 'medium' | 'low',
       summary: op.summary || '',
       recommendedAction: op.recommendedAction || '',
       projectTitle: snapshot.project_title,
       created_at: snapshot.created_at
     })))
     .sort((a, b) => new Date(b.created_at).getTime() - new Date(a.created_at).getTime())
-    .slice(0, 5);
+    .slice(0, 10);
 
   return {
     totalAnalyses: filteredSnapshots.length,
@@ -373,48 +353,196 @@ function buildTopicHeat(
     .sort((a, b) => b.mentions - a.mentions);
 }
 
+// ============================================================================
+// SUB-COMPONENTS
+// ============================================================================
+
+/** Project Switcher Dropdown */
+function ProjectSwitcher({
+  projects,
+  selectedProjectId,
+  onSelect
+}: {
+  projects: ProjectSummary[];
+  selectedProjectId: string | null;
+  onSelect: (projectId: string | null) => void;
+}) {
+  const [isOpen, setIsOpen] = useState(false);
+
+  const selectedProject = selectedProjectId
+    ? projects.find(p => p.id === selectedProjectId)
+    : null;
+
+  return (
+    <div className="relative">
+      <button
+        type="button"
+        onClick={() => setIsOpen(!isOpen)}
+        className={`inline-flex items-center gap-2 px-4 py-2 text-sm font-medium rounded-lg transition-colors ${
+          selectedProject
+            ? 'bg-blue-50 text-blue-700'
+            : 'text-gray-600 hover:text-gray-900 hover:bg-gray-50'
+        }`}
+      >
+        <span className="max-w-[200px] truncate">
+          {selectedProject ? selectedProject.title : 'All Projects'}
+        </span>
+        <ChevronDown className={`h-4 w-4 transition-transform ${isOpen ? 'rotate-180' : ''}`} />
+      </button>
+
+      {isOpen && (
+        <>
+          <div className="fixed inset-0 z-10" onClick={() => setIsOpen(false)} />
+          <div className="absolute left-0 mt-2 w-64 bg-white border border-gray-200 rounded-lg shadow-lg z-20 max-h-80 overflow-y-auto">
+            <button
+              type="button"
+              onClick={() => {
+                onSelect(null);
+                setIsOpen(false);
+              }}
+              className={`w-full text-left px-4 py-2 text-sm hover:bg-gray-50 ${
+                !selectedProjectId ? 'bg-blue-50 text-blue-700 font-medium' : 'text-gray-700'
+              }`}
+            >
+              All Projects
+            </button>
+            <div className="border-t border-gray-100" />
+            {projects.map(project => (
+              <button
+                key={project.id}
+                type="button"
+                onClick={() => {
+                  onSelect(project.id);
+                  setIsOpen(false);
+                }}
+                className={`w-full text-left px-4 py-2 text-sm hover:bg-gray-50 ${
+                  selectedProjectId === project.id ? 'bg-blue-50 text-blue-700 font-medium' : 'text-gray-700'
+                }`}
+              >
+                <span className="block truncate">{project.title || 'Untitled'}</span>
+                <span className="text-xs text-gray-500">
+                  {new Date(project.created_at).toLocaleDateString()}
+                </span>
+              </button>
+            ))}
+          </div>
+        </>
+      )}
+    </div>
+  );
+}
+
+/** Example Goals Modal */
+function ExampleGoalsModal({
+  isOpen,
+  onClose,
+  onAddGoal
+}: {
+  isOpen: boolean;
+  onClose: () => void;
+  onAddGoal: (goal: { label: string; type: string; target: number; cadence: number | null }) => void;
+}) {
+  if (!isOpen) return null;
+
+  return (
+    <div className="fixed inset-0 z-50 overflow-y-auto">
+      <div className="flex min-h-full items-center justify-center p-4">
+        <div className="fixed inset-0 bg-black/30" onClick={onClose} />
+        <div className="relative bg-white rounded-xl shadow-2xl max-w-2xl w-full max-h-[80vh] overflow-hidden">
+          <div className="flex items-center justify-between p-4 border-b border-gray-200">
+            <div className="flex items-center gap-2">
+              <BookOpen className="h-5 w-5 text-indigo-600" />
+              <h2 className="text-lg font-semibold text-gray-900">Example Goals Library</h2>
+            </div>
+            <button
+              type="button"
+              onClick={onClose}
+              className="p-1 rounded-full hover:bg-gray-100"
+            >
+              <X className="h-5 w-5 text-gray-500" />
+            </button>
+          </div>
+          <div className="p-4 overflow-y-auto max-h-[calc(80vh-80px)] space-y-4">
+            {EXAMPLE_NARRATIVE_GOALS.map((category, idx) => (
+              <div key={idx} className="bg-gray-50 rounded-lg p-4">
+                <h3 className="font-semibold text-gray-900 mb-1">{category.category}</h3>
+                <p className="text-xs text-gray-600 mb-3">{category.description}</p>
+                <div className="space-y-2">
+                  {category.examples.map((example, exIdx) => (
+                    <div
+                      key={exIdx}
+                      className="bg-white rounded-lg border border-gray-200 p-3 hover:border-indigo-300 transition-colors"
+                    >
+                      <div className="flex items-start justify-between gap-2">
+                        <div className="min-w-0">
+                          <p className="text-sm font-medium text-gray-900">{example.label}</p>
+                          <p className="text-xs text-gray-500 mt-0.5">{example.description}</p>
+                          <div className="flex items-center gap-2 mt-2 text-xs text-gray-500">
+                            <span className="uppercase font-semibold text-indigo-600">{example.type}</span>
+                            <span>•</span>
+                            <span>{example.target} mention{example.target !== 1 ? 's' : ''}</span>
+                            {example.cadence && (
+                              <>
+                                <span>•</span>
+                                <span>every {example.cadence}d</span>
+                              </>
+                            )}
+                          </div>
+                        </div>
+                        <button
+                          type="button"
+                          onClick={() => {
+                            onAddGoal({
+                              label: example.label,
+                              type: example.type,
+                              target: example.target,
+                              cadence: example.cadence
+                            });
+                          }}
+                          className="flex-shrink-0 text-xs font-medium text-indigo-600 hover:text-indigo-800"
+                        >
+                          + Add
+                        </button>
+                      </div>
+                    </div>
+                  ))}
+                </div>
+              </div>
+            ))}
+          </div>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+// ============================================================================
+// MAIN COMPONENT
+// ============================================================================
+
 export default function AnalyticsPage() {
-  const getPlatformDisplayName = (platform: string) => {
-    switch (platform) {
-      case 'twitter':
-        return 'X';
-      case 'linkedin':
-        return 'LinkedIn';
-      case 'instagram':
-        return 'Instagram';
-      case 'email':
-        return 'Email';
-      case 'blog':
-        return 'Blog';
-      case 'general':
-        return 'General';
-      default:
-        return platform;
-    }
-  };
+  const router = useRouter();
+  const searchParams = useSearchParams();
+  const { user } = useAuth();
+
+  // URL-based project filter
+  const projectIdFromUrl = searchParams.get('projectId');
 
   const [analytics, setAnalytics] = useState<AnalyticsData | null>(null);
   const [loading, setLoading] = useState(true);
-  const [timeRange, setTimeRange] = useState<'7d' | '30d' | '90d' | 'all'>('30d');
-  const [activeTab, setActiveTab] = useState<'insights' | 'coverage'>('insights');
-  const [goalForm, setGoalForm] = useState({
-    label: '',
-    type: 'include',
-    target: 1,
-    cadence: 30
-  });
+  const [timeRange, setTimeRange] = useState<'7d' | '30d' | '90d'>('30d');
+
+  // Tab state
+  const [activeTab, setActiveTab] = useState<'insights' | 'goals'>('insights');
+
+  // Goal form state
   const [goalSaving, setGoalSaving] = useState(false);
   const [goalError, setGoalError] = useState('');
   const [archivingGoal, setArchivingGoal] = useState<string | null>(null);
-  const [goalFormOpen, setGoalFormOpen] = useState(true);
-  const [coverageRunner, setCoverageRunner] = useState<string | null>(null);
-  const [coverageRunError, setCoverageRunError] = useState('');
-  const [selectedSnapshots, setSelectedSnapshots] = useState<Set<string>>(new Set());
-  const [deleting, setDeleting] = useState(false);
-  const [selectedProjects, setSelectedProjects] = useState<Set<string>>(new Set());
-  const [projectFilterOpen, setProjectFilterOpen] = useState(false);
-  const { user } = useAuth();
-  const coverageFeatureEnabled = COVERAGE_FEATURE_ENABLED;
+  const [exampleGoalsModalOpen, setExampleGoalsModalOpen] = useState(false);
+  const [selectedSnapshotId, setSelectedSnapshotId] = useState<string | null>(null);
+
+
 
   useEffect(() => {
     if (user) {
@@ -422,28 +550,15 @@ export default function AnalyticsPage() {
     }
   }, [user, timeRange]);
 
-  useEffect(() => {
-    const handleClickOutside = (event: MouseEvent) => {
-      const target = event.target as HTMLElement;
-      if (projectFilterOpen && !target.closest('.project-filter-container')) {
-        setProjectFilterOpen(false);
-      }
-    };
-    document.addEventListener('mousedown', handleClickOutside);
-    return () => document.removeEventListener('mousedown', handleClickOutside);
-  }, [projectFilterOpen]);
-
   const fetchAnalytics = async () => {
     try {
       setLoading(true);
 
       if (!user?.id) {
-        console.error('No user ID available');
         setLoading(false);
         return;
       }
 
-      // Calculate date range
       const now = new Date();
       let startDate: Date | null = null;
 
@@ -457,8 +572,6 @@ export default function AnalyticsPage() {
         case '90d':
           startDate = new Date(now.getTime() - 90 * 24 * 60 * 60 * 1000);
           break;
-        default:
-          startDate = null;
       }
 
       // Fetch projects
@@ -521,7 +634,7 @@ export default function AnalyticsPage() {
         console.error('Error fetching coverage goals:', goalsError);
       }
 
-      // Fetch insights (only if we have projects)
+      // Fetch insights
       let insights: any[] | null = null;
       if (projects && projects.length > 0) {
         const projectIds = projects.map(p => p.id);
@@ -542,7 +655,7 @@ export default function AnalyticsPage() {
       const totalProjects = projects?.length || 0;
       const totalOutputs = outputs?.length || 0;
       const totalProcessingTime = projects?.reduce((sum, p) => sum + (p.processing_time_seconds || 0), 0) || 0;
-      const estimatedCosts = (outputs?.length || 0) * 0.05; // Rough estimate
+      const estimatedCosts = (outputs?.length || 0) * 0.05;
 
       // Content breakdown
       const contentBreakdown: Record<string, number> = {};
@@ -562,13 +675,12 @@ export default function AnalyticsPage() {
       const recentActivity = projects?.slice(0, 10).map(project => ({
         id: project.id,
         title: project.title,
-        action: project.status === 'completed' ? 'Completed transcription' : 
+        action: project.status === 'completed' ? 'Completed transcription' :
                 project.status === 'processing' ? 'Processing audio' : 'Uploaded',
         timestamp: project.created_at,
         status: project.status
       })) || [];
 
-      // Monthly stats (simplified for demo)
       const monthlyStats = [
         { month: 'Jan', projects: Math.floor(totalProjects * 0.1), outputs: Math.floor(totalOutputs * 0.1) },
         { month: 'Feb', projects: Math.floor(totalProjects * 0.15), outputs: Math.floor(totalOutputs * 0.15) },
@@ -614,7 +726,6 @@ export default function AnalyticsPage() {
           summary: insightsSummary
         }
       });
-
     } catch (error) {
       console.error('Error fetching analytics:', error);
     } finally {
@@ -622,196 +733,26 @@ export default function AnalyticsPage() {
     }
   };
 
-  const formatDuration = (seconds: number) => {
-    const hours = Math.floor(seconds / 3600);
-    const minutes = Math.floor((seconds % 3600) / 60);
-    
-    if (hours > 0) {
-      return `${hours}h ${minutes}m`;
-    }
-    return `${minutes}m`;
-  };
+  // ============================================================================
+  // COMPUTED VALUES
+  // ============================================================================
 
-  const formatCurrency = (amount: number) => {
-    return new Intl.NumberFormat('en-US', {
-      style: 'currency',
-      currency: 'USD'
-    }).format(amount);
-  };
+  const selectedProjectIds = useMemo(() => {
+    if (!projectIdFromUrl) return undefined;
+    return [projectIdFromUrl];
+  }, [projectIdFromUrl]);
 
-  const formatRelativeDate = (timestamp: string) => {
-    const date = new Date(timestamp);
-    const diffMs = Date.now() - date.getTime();
-    const diffDays = Math.floor(diffMs / (1000 * 60 * 60 * 24));
-    if (diffDays >= 1) {
-      return `${diffDays}d ago`;
-    }
-    const diffHours = Math.floor(diffMs / (1000 * 60 * 60));
-    if (diffHours >= 1) {
-      return `${diffHours}h ago`;
-    }
-    const diffMinutes = Math.max(1, Math.floor(diffMs / (1000 * 60)));
-    return `${diffMinutes}m ago`;
-  };
-
-  const topicHeat = useMemo(() => {
-    if (!analytics?.coverage) return [];
-    const projectIds = selectedProjects.size > 0 ? Array.from(selectedProjects) : undefined;
-    return buildTopicHeat(analytics.coverage.snapshots, analytics.coverage.goals, projectIds).slice(0, 6);
-  }, [analytics, selectedProjects]);
-
-  const projectsNeedingCoverage = useMemo(() => {
-    if (!analytics || !coverageFeatureEnabled) return [];
-    const coveredProjectIds = new Set(
-      analytics.coverage.snapshots.map(snapshot => snapshot.project_id)
-    );
-
-    return (analytics.projectsSummary || [])
-      .filter(project =>
-        project.status === 'completed' &&
-        project.transcription_text &&
-        !coveredProjectIds.has(project.id)
-      )
-      .sort((a, b) => new Date(b.created_at).getTime() - new Date(a.created_at).getTime())
-      .slice(0, 6);
-  }, [analytics, coverageFeatureEnabled]);
-
-  const saveGoal = async (params: { label: string; type: string; target: number; cadence: number | null }) => {
-    if (!user) return;
-    const trimmedLabel = (params.label || '').trim();
-    if (!trimmedLabel) {
-      setGoalError('Enter a topic or CTA label.');
-      setGoalFormOpen(true);
-      return;
-    }
-
-    try {
-      setGoalSaving(true);
-      setGoalError('');
-      const { error } = await supabase.from('narrative_goals').insert({
-        user_id: user.id,
-        topic_label: trimmedLabel,
-        goal_type: params.type,
-        target_mentions: Math.max(0, Number(params.target) || 0),
-        cadence_days: params.cadence ? Math.max(1, Number(params.cadence)) : null,
-        status: 'active'
-      } as any);
-
-      if (error) {
-        throw new Error(error.message);
-      }
-
-      setGoalForm(current => ({
-        ...current,
-        label: '',
-        type: params.type as any,
-        target: params.target,
-        cadence: params.cadence || 0
-      }));
-
-      await fetchAnalytics();
-    } catch (err: any) {
-      setGoalError(err.message || 'Failed to create goal.');
-      setGoalFormOpen(true);
-    } finally {
-      setGoalSaving(false);
-    }
-  };
-
-  const handleCreateGoal = async (e: FormEvent<HTMLFormElement>) => {
-    e.preventDefault();
-    await saveGoal({
-      label: goalForm.label,
-      type: goalForm.type,
-      target: goalForm.target,
-      cadence: goalForm.cadence || null
-    });
-  };
-
-  const handleQuickAddGoal = async (suggestion: { label: string; type: string; target: number; cadence: number | null }) => {
-    await saveGoal(suggestion);
-  };
-
-  const handleToggleGoalStatus = async (goalId: string, currentStatus: string) => {
-    if (!goalId) return;
-    const nextStatus = currentStatus === 'active' ? 'paused' : 'active';
-    try {
-      const { error } = await supabase
-        .from('narrative_goals')
-        // @ts-expect-error - Supabase types issue with update
-        .update({ status: nextStatus })
-        .eq('id', goalId);
-
-      if (error) {
-        throw new Error(error.message);
-      }
-
-      await fetchAnalytics();
-    } catch (err) {
-      console.error('Failed to update goal status:', err);
-    }
-  };
-
-  const handleArchiveGoal = async (goalId: string, goalLabel: string) => {
-    if (!user?.id) return;
-    if (!confirm(`Archive goal "${goalLabel}"? This will hide it from active tracking but keep historical data.`)) {
-      return;
-    }
-
-    setArchivingGoal(goalId);
-    try {
-      const { error } = await supabase
-        .from('narrative_goals')
-        // @ts-expect-error - Supabase types issue with update
-        .update({ status: 'archived' })
-        .eq('id', goalId)
-        .eq('user_id', user.id);
-
-      if (error) {
-        throw new Error(error.message);
-      }
-
-      await fetchAnalytics();
-    } catch (error: any) {
-      console.error('Failed to archive goal:', error);
-      alert(`Failed to archive goal: ${error.message}`);
-    } finally {
-      setArchivingGoal(null);
-    }
-  };
-
-  const coverageGoals = analytics?.coverage?.goals || [];
-  const coverageTimeline = useMemo(() => {
-    const snapshots = analytics?.coverage?.snapshots || [];
-    if (selectedProjects.size === 0) return snapshots.slice(0, 6);
-    return snapshots.filter(s => selectedProjects.has(s.project_id)).slice(0, 6);
-  }, [analytics, selectedProjects]);
   const filteredCoverageSummary = useMemo(() => {
     if (!analytics?.coverage) return analytics?.coverage?.summary;
-    const projectIds = selectedProjects.size > 0 ? Array.from(selectedProjects) : undefined;
-    return summarizeCoverage(analytics.coverage.snapshots, analytics.coverage.goals, projectIds);
-  }, [analytics, selectedProjects]);
-  const coverageLabelSet = useMemo(() => {
-    const set = new Set<string>();
-    const snapshots = analytics?.coverage?.snapshots || [];
-    const normalize = (val: any) => String(val || '').trim().toLowerCase();
-    const collect = (items: any[]) => {
-      items.forEach(item => {
-        const label = normalize(item?.label || item?.name || item?.title || item?.id);
-        if (label) set.add(label);
-      });
-    };
+    return summarizeCoverage(analytics.coverage.snapshots, analytics.coverage.goals, selectedProjectIds);
+  }, [analytics, selectedProjectIds]);
 
-    snapshots.forEach(snapshot => {
-      collect(snapshot.topics || []);
-      collect(snapshot.ctas || []);
-      if (snapshot.analytics) {
-        collect((snapshot.analytics as any).topics || []);
-        collect((snapshot.analytics as any).ctas || []);
-      }
-    });
-    return set;
-  }, [analytics]);
+  const allTopics = useMemo(() => {
+    if (!analytics?.coverage) return [];
+    return buildTopicHeat(analytics.coverage.snapshots, analytics.coverage.goals, selectedProjectIds);
+  }, [analytics, selectedProjectIds]);
+
+  const coverageGoals = analytics?.coverage?.goals || [];
 
   const suggestedGoals = useMemo(() => {
     const suggestions: { label: string; type: string; target: number; cadence: number | null }[] = [];
@@ -836,145 +777,212 @@ export default function AnalyticsPage() {
         seen.add(key);
         suggestions.push({ label, type: 'cta', target: 1, cadence: 7 });
       });
-
-      if (snapshot.analytics) {
-        ((snapshot.analytics as any).topics || []).forEach((topic: any) => {
-          const label = normalize(topic.label || topic.name || topic.title || topic.id);
-          if (!label) return;
-          const key = `include-${label.toLowerCase()}`;
-          if (seen.has(key)) return;
-          seen.add(key);
-          suggestions.push({ label, type: 'include', target: 1, cadence: 30 });
-        });
-        ((snapshot.analytics as any).ctas || []).forEach((cta: any) => {
-          const label = normalize(cta.label || cta.name || cta.title || cta.id);
-          if (!label) return;
-          const key = `cta-${label.toLowerCase()}`;
-          if (seen.has(key)) return;
-          seen.add(key);
-          suggestions.push({ label, type: 'cta', target: 1, cadence: 7 });
-        });
-      }
     });
 
     if (suggestions.length > 0) return suggestions.slice(0, 6);
-    return CURATED_GOAL_PRESETS.slice(0, 6);
+    return CURATED_GOAL_PRESETS.slice(0, 6) as { label: string; type: string; target: number; cadence: number | null }[];
   }, [analytics]);
 
-  const goalsNeedingMentions = useMemo(() => {
-    return coverageGoals.filter(goal => {
-      const label = (goal.topic_label || '').toLowerCase();
-      return goal.status === 'active' && label && !coverageLabelSet.has(label);
-    });
-  }, [coverageGoals, coverageLabelSet]);
+  const coverageTimeline = useMemo(() => {
+    const snapshots = analytics?.coverage?.snapshots || [];
+    if (!selectedProjectIds) return snapshots.slice(0, 10);
+    return snapshots.filter(s => selectedProjectIds.includes(s.project_id)).slice(0, 10);
+  }, [analytics, selectedProjectIds]);
 
-  const handleRunCoverage = async (projectId: string, force = false) => {
-    if (!coverageFeatureEnabled) {
-      setCoverageRunError('Narrative coverage radar is currently under construction.');
-      return;
+  // Stale detection logic
+  const isStale = useMemo(() => {
+    if (!analytics?.coverage?.snapshots?.length) return false;
+    
+    // Get latest analysis timestamp (respecting filter if active)
+    let snapshots = analytics.coverage.snapshots;
+    if (selectedProjectIds && selectedProjectIds.length > 0) {
+      snapshots = snapshots.filter(s => selectedProjectIds.includes(s.project_id));
     }
+    
+    if (!snapshots.length) return false;
+    
+    const lastAnalysisTime = Math.max(...snapshots.map(s => new Date(s.created_at).getTime()));
+    
+    // Get latest goal modification
+    if (!analytics.coverage.goals.length) return false;
+    const goalsLastModified = Math.max(...analytics.coverage.goals.map(g => new Date(g.updated_at).getTime()));
+    
+    return goalsLastModified > lastAnalysisTime;
+  }, [analytics, selectedProjectIds]);
 
-    if (!projectId || !user) return;
-    setCoverageRunner(projectId);
-    setCoverageRunError('');
-    try {
-      const response = await fetch(`/api/projects/${projectId}/run-coverage`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ userId: user.id, force })
-      });
+  const goalsLastModified = useMemo(() => {
+    if (!analytics?.coverage?.goals?.length) return null;
+    const timestamps = analytics.coverage.goals
+      .map(g => g.updated_at ? new Date(g.updated_at).getTime() : 0)
+      .filter(t => t > 0);
+    
+    if (timestamps.length === 0) return null;
+    return new Date(Math.max(...timestamps)).toISOString();
+  }, [analytics?.coverage?.goals]);
 
-      const result = await response.json();
-
-      if (!response.ok) {
-        setCoverageRunError(result.error || result.message || 'Failed to run coverage radar.');
-      } else {
-        await fetchAnalytics();
+  const displayedOpportunities = useMemo(() => {
+    if (selectedSnapshotId && analytics?.coverage?.snapshots) {
+      const snapshot = analytics.coverage.snapshots.find(s => s.id === selectedSnapshotId);
+      if (snapshot) {
+        return (snapshot.opportunities || []).map((op: any, index: number) => ({
+          id: `${snapshot.id}-${index}`,
+          label: op.label || 'Opportunity',
+          type: op.type || 'balanced',
+          severity: op.severity || 'medium',
+          summary: op.summary || '',
+          recommendedAction: op.recommendedAction || '',
+          projectTitle: snapshot.project_title,
+          created_at: snapshot.created_at,
+          topicId: op.topicId
+        }));
       }
-    } catch (error: any) {
-      setCoverageRunError(error.message || 'Unable to run coverage at this time.');
-    } finally {
-      setCoverageRunner(null);
     }
-  };
+    return filteredCoverageSummary?.latestOpportunities || [];
+  }, [selectedSnapshotId, analytics?.coverage?.snapshots, filteredCoverageSummary]);
 
-  const handleSelectSnapshot = (snapshotId: string) => {
-    const newSelected = new Set(selectedSnapshots);
-    if (newSelected.has(snapshotId)) {
-      newSelected.delete(snapshotId);
+  // ============================================================================
+  // HANDLERS
+  // ============================================================================
+
+  const handleProjectSelect = useCallback((projectId: string | null) => {
+    const params = new URLSearchParams(searchParams.toString());
+    if (projectId) {
+      params.set('projectId', projectId);
     } else {
-      newSelected.add(snapshotId);
+      params.delete('projectId');
     }
-    setSelectedSnapshots(newSelected);
+    router.push(`/dashboard/analytics?${params.toString()}`);
+  }, [router, searchParams]);
+
+  const formatDuration = (seconds: number) => {
+    const hours = Math.floor(seconds / 3600);
+    const minutes = Math.floor((seconds % 3600) / 60);
+    if (hours > 0) return `${hours}h ${minutes}m`;
+    return `${minutes}m`;
   };
 
-  const handleSelectAll = () => {
-    if (selectedSnapshots.size === coverageTimeline.length) {
-      setSelectedSnapshots(new Set());
-    } else {
-      setSelectedSnapshots(new Set(coverageTimeline.map(s => s.id)));
-    }
+  const formatCurrency = (amount: number) => {
+    return new Intl.NumberFormat('en-US', { style: 'currency', currency: 'USD' }).format(amount);
   };
 
-  const handleDeleteSelected = async () => {
-    if (!user?.id) return;
-    if (selectedSnapshots.size === 0) return;
+  const formatRelativeDate = (timestamp: string) => {
+    const date = new Date(timestamp);
+    const diffMs = Date.now() - date.getTime();
+    const diffDays = Math.floor(diffMs / (1000 * 60 * 60 * 24));
+    if (diffDays >= 1) return `${diffDays}d ago`;
+    const diffHours = Math.floor(diffMs / (1000 * 60 * 60));
+    if (diffHours >= 1) return `${diffHours}h ago`;
+    const diffMinutes = Math.max(1, Math.floor(diffMs / (1000 * 60)));
+    return `${diffMinutes}m ago`;
+  };
 
-    const count = selectedSnapshots.size;
-    if (!confirm(`Delete ${count} selected snapshot(s)? This cannot be undone.`)) {
+  const saveGoal = async (params: { label: string; type: string; target: number; cadence: number | null }) => {
+    if (!user) return;
+    const trimmedLabel = (params.label || '').trim();
+    if (!trimmedLabel) {
+      setGoalError('Enter a topic or CTA label.');
       return;
     }
 
-    setDeleting(true);
     try {
-      const response = await fetch('/api/narrative-coverage/delete', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          userId: user.id,
-          snapshotIds: Array.from(selectedSnapshots)
-        })
-      });
+      setGoalSaving(true);
+      setGoalError('');
+      const { error } = await supabase.from('narrative_goals').insert({
+        user_id: user.id,
+        topic_label: trimmedLabel,
+        goal_type: params.type,
+        target_mentions: Math.max(0, Number(params.target) || 0),
+        cadence_days: params.cadence ? Math.max(1, Number(params.cadence)) : null,
+        status: 'active'
+      } as any);
 
-      const result = await response.json();
-      if (!response.ok) throw new Error(result.error);
+      if (error) throw new Error(error.message);
+      await fetchAnalytics();
+    } catch (err: any) {
+      setGoalError(err.message || 'Failed to create goal.');
+    } finally {
+      setGoalSaving(false);
+    }
+  };
 
-      setSelectedSnapshots(new Set());
+  const handleToggleGoalStatus = async (goalId: string, currentStatus: string) => {
+    if (!goalId) return;
+    const nextStatus = currentStatus === 'active' ? 'paused' : 'active';
+    try {
+      const { error } = await supabase
+        .from('narrative_goals')
+        // @ts-expect-error - Supabase types issue
+        .update({ status: nextStatus })
+        .eq('id', goalId);
+
+      if (error) throw new Error(error.message);
+      await fetchAnalytics();
+    } catch (err) {
+      console.error('Failed to update goal status:', err);
+    }
+  };
+
+  const handleArchiveGoal = async (goalId: string, goalLabel: string) => {
+    if (!user?.id) return;
+    if (!confirm(`Archive goal "${goalLabel}"?`)) return;
+
+    setArchivingGoal(goalId);
+    try {
+      const { error } = await supabase
+        .from('narrative_goals')
+        // @ts-expect-error - Supabase types issue
+        .update({ status: 'archived' })
+        .eq('id', goalId)
+        .eq('user_id', user.id);
+
+      if (error) throw new Error(error.message);
       await fetchAnalytics();
     } catch (error: any) {
-      alert(`Failed to delete: ${error.message}`);
+      alert(`Failed to archive goal: ${error.message}`);
     } finally {
-      setDeleting(false);
+      setArchivingGoal(null);
     }
   };
 
-  const toggleProjectSelection = (projectId: string) => {
-    setSelectedProjects(current => {
-      const next = new Set(current);
-      if (next.has(projectId)) {
-        next.delete(projectId);
-      } else {
-        next.add(projectId);
+  const handleRunCoverage = async (projectId: string) => {
+    try {
+      // Optimistic update or loading state could be added here
+      const response = await fetch(`/api/projects/${projectId}/run-coverage`, {
+        method: 'POST'
+      });
+      
+      if (!response.ok) {
+        throw new Error('Failed to run coverage analysis');
       }
-      return next;
-    });
+      
+      // Refresh analytics data to show new snapshot
+      await fetchAnalytics();
+    } catch (error) {
+      console.error('Error running coverage:', error);
+      alert('Failed to run analysis. Please try again.');
+    }
   };
+
+  // ============================================================================
+  // LOADING STATE
+  // ============================================================================
 
   if (loading) {
     return (
-      <div className="py-6">
-        <div className="max-w-7xl mx-auto px-4 sm:px-6 md:px-8">
-          <div className="animate-pulse">
-            <div className="h-8 bg-gray-200 rounded w-1/4 mb-8"></div>
-            <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-6 mb-8">
+      <div className="p-6">
+        <div className="max-w-7xl mx-auto">
+          <div className="animate-pulse space-y-6">
+            <div className="h-8 bg-gray-200 rounded w-1/4" />
+            <div className="grid grid-cols-4 gap-4">
               {[1, 2, 3, 4].map(i => (
-                <div key={i} className="h-32 bg-gray-200 rounded-lg"></div>
+                <div key={i} className="h-28 bg-gray-200 rounded-xl" />
               ))}
             </div>
-            <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
-              <div className="h-64 bg-gray-200 rounded-lg"></div>
-              <div className="h-64 bg-gray-200 rounded-lg"></div>
+            <div className="grid grid-cols-2 gap-6">
+              <div className="h-64 bg-gray-200 rounded-xl" />
+              <div className="h-64 bg-gray-200 rounded-xl" />
             </div>
+            <div className="h-80 bg-gray-200 rounded-xl" />
           </div>
         </div>
       </div>
@@ -983,1019 +991,162 @@ export default function AnalyticsPage() {
 
   if (!analytics) {
     return (
-      <div className="py-6">
-        <div className="max-w-3xl mx-auto px-4 sm:px-6 md:px-8 text-center">
+      <div className="p-6">
+        <div className="max-w-3xl mx-auto text-center">
           <p className="text-gray-600">No analytics data available yet. Upload your first project to see insights.</p>
         </div>
       </div>
     );
   }
 
+  // ============================================================================
+  // RENDER
+  // ============================================================================
+
   return (
-    <div className="py-6">
-      <div className="max-w-7xl mx-auto px-4 sm:px-6 md:px-8">
-        {/* Header */}
-        <div className="mb-8">
-          <div className="flex items-center justify-between">
-            <div>
-              <h1 className="text-2xl font-bold leading-7 text-gray-900 sm:text-3xl">
-                Analytics
-              </h1>
-              <p className="mt-2 text-sm text-gray-600">
-                Track your podcast processing and content generation metrics
-              </p>
-            </div>
-            
-            {/* Time Range Selector */}
-            <div className="flex space-x-1 bg-gray-100 rounded-lg p-1">
-              {(['7d', '30d', '90d', 'all'] as const).map((range) => (
+    <div className="p-4 lg:p-6 bg-gray-50 min-h-screen">
+      <div className="max-w-7xl mx-auto space-y-6">
+
+        {/* ================================================================== */}
+        {/* HEADER: Title + Date Range */}
+        {/* ================================================================== */}
+        <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-4">
+          <div>
+            <h1 className="text-2xl font-bold text-gray-900">Analytics</h1>
+            <p className="text-sm text-gray-500 mt-0.5">Insights and trends from your content</p>
+          </div>
+
+          <div className="flex items-center gap-4">
+            <ProjectSwitcher
+              projects={analytics.projectsSummary}
+              selectedProjectId={projectIdFromUrl}
+              onSelect={handleProjectSelect}
+            />
+            <div className="flex items-center gap-1 bg-white rounded-lg p-1 shadow-sm border border-gray-100">
+              {(['7d', '30d', '90d'] as const).map((range) => (
                 <button
                   key={range}
                   onClick={() => setTimeRange(range)}
-                  className={`px-3 py-2 rounded-md text-sm font-medium transition-colors ${
+                  className={`px-3 py-1.5 rounded-md text-sm font-medium transition-colors ${
                     timeRange === range
-                      ? 'bg-white text-gray-900 shadow-sm'
+                      ? 'bg-gray-900 text-white'
                       : 'text-gray-600 hover:text-gray-900'
                   }`}
                 >
-                  {range === 'all' ? 'All Time' : range.toUpperCase()}
+                  {range.toUpperCase()}
                 </button>
               ))}
             </div>
           </div>
         </div>
 
-        {/* Overview Section - Always Visible */}
-        <section className="space-y-4 mb-8">
-          <div className="flex items-center justify-between">
-            <h2 className="text-lg font-semibold text-gray-900">Overview</h2>
-            <span className="text-xs text-gray-500">All metrics respect the selected time range</span>
-          </div>
-            <div className="grid grid-cols-1 sm:grid-cols-2 xl:grid-cols-4 gap-4">
-              <div className="bg-white overflow-hidden shadow rounded-lg">
-                <div className="p-5">
-                  <div className="flex items-center">
-                    <div className="flex-shrink-0">
-                      <FileText className="h-6 w-6 text-gray-400" />
-                    </div>
-                    <div className="ml-5 w-0 flex-1">
-                      <dl>
-                        <dt className="text-sm font-medium text-gray-500 truncate">
-                          Total Projects
-                        </dt>
-                        <dd className="text-lg font-semibold text-gray-900">
-                          {analytics?.totalProjects || 0}
-                        </dd>
-                      </dl>
-                    </div>
-                  </div>
-                </div>
-              </div>
+        {/* ================================================================== */}
+        {/* ROW 1: KPI Cards with Sparklines */}
+        {/* ================================================================== */}
+        <KPIGrid
+          totalProjects={analytics.totalProjects}
+          projectsTrend={{ value: 12, direction: 'up', label: 'vs last period' }}
+          projectsSparkline={generateSparklineData(analytics.totalProjects)}
+          totalOutputs={analytics.totalOutputs}
+          outputsTrend={{ value: 8, direction: 'up', label: 'vs last period' }}
+          outputsSparkline={generateSparklineData(analytics.totalOutputs)}
+          processingTime={formatDuration(analytics.totalProcessingTime)}
+          processingTrend={{ value: 5, direction: 'down', label: 'faster' }}
+          processingSparkline={generateSparklineData(analytics.totalProcessingTime / 60)}
+          aiSpend={formatCurrency(analytics.estimatedCosts)}
+          spendTrend={{ value: 3, direction: 'up', label: 'vs last period' }}
+          spendSparkline={generateSparklineData(analytics.estimatedCosts * 100)}
+        />
 
-              <div className="bg-white overflow-hidden shadow rounded-lg">
-                <div className="p-5">
-                  <div className="flex items-center">
-                    <div className="flex-shrink-0">
-                      <Zap className="h-6 w-6 text-blue-400" />
-                    </div>
-                    <div className="ml-5 w-0 flex-1">
-                      <dl>
-                        <dt className="text-sm font-medium text-gray-500 truncate">
-                          Content Pieces
-                        </dt>
-                        <dd className="text-lg font-semibold text-gray-900">
-                          {analytics?.totalOutputs || 0}
-                        </dd>
-                      </dl>
-                    </div>
-                  </div>
-                </div>
-              </div>
+        {/* ================================================================== */}
+        {/* ROW 2: Content Mix + Top Topics */}
+        {/* ================================================================== */}
+        <ContentMixSection
+          contentBreakdown={analytics.contentBreakdown}
+          topTopics={allTopics.map(t => ({ label: t.label, mentions: t.mentions }))}
+        />
 
-              <div className="bg-white overflow-hidden shadow rounded-lg">
-                <div className="p-5">
-                  <div className="flex items-center">
-                    <div className="flex-shrink-0">
-                      <Clock className="h-6 w-6 text-green-400" />
-                    </div>
-                    <div className="ml-5 w-0 flex-1">
-                      <dl>
-                        <dt className="text-sm font-medium text-gray-500 truncate">
-                          Processing Time
-                        </dt>
-                        <dd className="text-lg font-semibold text-gray-900">
-                          {formatDuration(analytics?.totalProcessingTime || 0)}
-                        </dd>
-                      </dl>
-                    </div>
-                  </div>
-                </div>
-              </div>
-
-              <div className="bg-white overflow-hidden shadow rounded-lg">
-                <div className="p-5">
-                  <div className="flex items-center">
-                    <div className="flex-shrink-0">
-                      <TrendingUp className="h-6 w-6 text-indigo-400" />
-                    </div>
-                    <div className="ml-5 w-0 flex-1">
-                      <dl>
-                        <dt className="text-sm font-medium text-gray-500 truncate">
-                          Est. AI Spend
-                        </dt>
-                        <dd className="text-lg font-semibold text-gray-900">
-                          {formatCurrency(analytics?.estimatedCosts || 0)}
-                        </dd>
-                      </dl>
-                    </div>
-                  </div>
-                </div>
-              </div>
-            </div>
-
-          {/* Content Mix */}
-          <section className="space-y-4">
-            <div className="flex items-center justify-between">
-              <h2 className="text-lg font-semibold text-gray-900">Content Mix</h2>
-            </div>
-            <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
-              {/* Content Breakdown */}
-              <div className="bg-white shadow rounded-lg">
-                <div className="px-4 py-5 sm:p-6">
-                  <div className="flex items-center space-x-2 mb-4">
-                    <h3 className="text-lg leading-6 font-medium text-gray-900">Content Type Breakdown</h3>
-                    <div className="relative group">
-                      <button
-                        type="button"
-                        aria-label="How content breakdown works"
-                        className="h-6 w-6 flex items-center justify-center rounded-full border border-gray-200 bg-white text-xs text-gray-600 hover:text-gray-800"
-                      >
-                        ?
-                      </button>
-                      <div className="pointer-events-none absolute left-0 mt-2 w-64 rounded-lg border border-gray-200 bg-white p-3 text-xs text-gray-700 shadow-lg opacity-0 transition-opacity duration-150 group-hover:opacity-100 group-focus-within:opacity-100 z-10">
-                        <p className="font-semibold text-gray-900 mb-1">What you see</p>
-                        <p>Counts of outputs by type, filtered by the selected time range.</p>
-                        <p>Use this to track which formats you’re producing most often.</p>
-                      </div>
-                    </div>
-                  </div>
-                  <div className="space-y-3">
-                    {Object.entries(analytics?.contentBreakdown || {}).map(([type, count]) => (
-                      <div key={type} className="flex items-center justify-between">
-                        <span className="text-sm text-gray-600 capitalize">
-                          {type.replace('_', ' ')}
-                        </span>
-                        <div className="flex items-center space-x-2">
-                          <div className="bg-blue-200 rounded-full h-2 w-20">
-                            <div 
-                              className="bg-blue-600 h-2 rounded-full"
-                              style={{ 
-                                width: `${Math.min(100, (count / (analytics?.totalOutputs || 1)) * 100)}%` 
-                              }}
-                            ></div>
-                          </div>
-                          <span className="text-sm font-medium text-gray-900">{count}</span>
-                        </div>
-                      </div>
-                    ))}
-                  </div>
-                </div>
-              </div>
-
-              {/* Platform Distribution */}
-              <div className="bg-white shadow rounded-lg">
-                <div className="px-4 py-5 sm:p-6">
-                  <div className="flex items-center space-x-2 mb-4">
-                    <h3 className="text-lg leading-6 font-medium text-gray-900">Platform Distribution</h3>
-                    <div className="relative group">
-                      <button
-                        type="button"
-                        aria-label="How platform distribution works"
-                        className="h-6 w-6 flex items-center justify-center rounded-full border border-gray-200 bg-white text-xs text-gray-600 hover:text-gray-800"
-                      >
-                        ?
-                      </button>
-                      <div className="pointer-events-none absolute left-0 mt-2 w-64 rounded-lg border border-gray-200 bg-white p-3 text-xs text-gray-700 shadow-lg opacity-0 transition-opacity duration-150 group-hover:opacity-100 group-focus-within:opacity-100 z-10">
-                        <p className="font-semibold text-gray-900 mb-1">What you see</p>
-                        <p>Output volume by platform within the chosen time range.</p>
-                        <p>Helps balance distribution across channels.</p>
-                      </div>
-                    </div>
-                  </div>
-                  <div className="space-y-3">
-                    {Object.entries(analytics?.platformStats || {}).map(([platform, count]) => (
-                      <div key={platform} className="flex items-center justify-between">
-                        <span className="text-sm text-gray-600">
-                          {getPlatformDisplayName(platform)}
-                        </span>
-                        <div className="flex items-center space-x-2">
-                          <div className="bg-green-200 rounded-full h-2 w-20">
-                            <div 
-                              className="bg-green-600 h-2 rounded-full"
-                              style={{ 
-                                width: `${Math.min(100, (count / (analytics?.totalOutputs || 1)) * 100)}%` 
-                              }}
-                            ></div>
-                          </div>
-                          <span className="text-sm font-medium text-gray-900">{count}</span>
-                        </div>
-                      </div>
-                    ))}
-                  </div>
-                </div>
-              </div>
-            </div>
-          </section>
-
-          {/* Recent Activity */}
-          <details className="bg-white shadow rounded-lg">
-            <summary className="px-4 py-5 sm:p-6 cursor-pointer">
-              <div className="flex items-center space-x-2">
-                <h3 className="text-lg leading-6 font-medium text-gray-900">Recent Activity</h3>
-                <div className="relative group">
-                  <button
-                    type="button"
-                    aria-label="How Recent Activity works"
-                    className="h-6 w-6 flex items-center justify-center rounded-full border border-gray-200 bg-white text-xs text-gray-600 hover:text-gray-800"
-                    onClick={(e) => e.stopPropagation()}
-                  >
-                    ?
-                  </button>
-                  <div className="pointer-events-none absolute left-0 mt-2 w-64 rounded-lg border border-gray-200 bg-white p-3 text-xs text-gray-700 shadow-lg opacity-0 transition-opacity duration-150 group-hover:opacity-100 group-focus-within:opacity-100 z-10">
-                    <p className="font-semibold text-gray-900 mb-1">What you see</p>
-                    <p>Latest projects within your selected time range, showing upload/processing/completion.</p>
-                    <p>Use it to confirm recent runs and spot items stuck in processing.</p>
-                  </div>
-                </div>
-              </div>
-            </summary>
-            <div className="px-4 pb-5 sm:px-6 sm:pb-6">
-              <div className="flow-root">
-                <ul className="-mb-8">
-                  {analytics?.recentActivity.map((activity, activityIdx) => (
-                    <li key={activity.id}>
-                      <div className="relative pb-8">
-                        {activityIdx !== analytics.recentActivity.length - 1 ? (
-                          <span
-                            className="absolute top-4 left-4 -ml-px h-full w-0.5 bg-gray-200"
-                            aria-hidden="true"
-                          />
-                        ) : null}
-                        <div className="relative flex space-x-3">
-                          <div>
-                            <span className={`h-8 w-8 rounded-full flex items-center justify-center ring-8 ring-white ${
-                              activity.status === 'completed' ? 'bg-green-500' :
-                              activity.status === 'processing' ? 'bg-yellow-500' :
-                              'bg-gray-500'
-                            }`}>
-                              <FileText className="h-4 w-4 text-white" />
-                            </span>
-                          </div>
-                          <div className="min-w-0 flex-1 pt-1.5 flex justify-between space-x-4">
-                            <div>
-                              <p className="text-sm text-gray-500">
-                                {activity.action}{' '}
-                                <span className="font-medium text-gray-900">
-                                  {activity.title}
-                                </span>
-                              </p>
-                            </div>
-                            <div className="text-right text-sm whitespace-nowrap text-gray-500">
-                              {new Date(activity.timestamp).toLocaleDateString()}
-                            </div>
-                          </div>
-                        </div>
-                      </div>
-                    </li>
-                  ))}
-                </ul>
-              </div>
-            </div>
-          </details>
-        </section>
-
-        {/* Tab Navigation */}
-        <div className="border-b border-gray-200 mb-8">
-          <nav className="-mb-px flex space-x-8" aria-label="Tabs">
-            <button
-              onClick={() => setActiveTab('insights')}
-              className={`${
-                activeTab === 'insights'
-                  ? 'border-blue-500 text-blue-600'
-                  : 'border-transparent text-gray-500 hover:text-gray-700 hover:border-gray-300'
-              } whitespace-nowrap py-4 px-1 border-b-2 font-medium text-sm`}
-            >
-              Educational Insights
-            </button>
-            {coverageFeatureEnabled && (
+        {/* ================================================================== */}
+        {/* ROW 3: Tab Section (Insights & Goals) */}
+        {/* ================================================================== */}
+        <div className="bg-white rounded-xl shadow-sm border border-gray-100">
+          {/* Tab Header */}
+          <div className="border-b border-gray-100 p-1">
+            <nav className="flex gap-1">
               <button
-                onClick={() => setActiveTab('coverage')}
-                className={`${
-                  activeTab === 'coverage'
-                    ? 'border-blue-500 text-blue-600'
-                    : 'border-transparent text-gray-500 hover:text-gray-700 hover:border-gray-300'
-                } whitespace-nowrap py-4 px-1 border-b-2 font-medium text-sm`}
+                onClick={() => setActiveTab('insights')}
+                className={`flex items-center gap-2 px-4 py-2.5 text-sm font-medium rounded-lg transition-colors ${
+                  activeTab === 'insights'
+                    ? 'bg-gray-900 text-white'
+                    : 'text-gray-600 hover:text-gray-900 hover:bg-gray-50'
+                }`}
               >
-                Narrative Coverage
+                <Lightbulb className="h-4 w-4" />
+                Insights & Gaps
               </button>
+              <button
+                onClick={() => setActiveTab('goals')}
+                className={`flex items-center gap-2 px-4 py-2.5 text-sm font-medium rounded-lg transition-colors ${
+                  activeTab === 'goals'
+                    ? 'bg-gray-900 text-white'
+                    : 'text-gray-600 hover:text-gray-900 hover:bg-gray-50'
+                }`}
+              >
+                <Target className="h-4 w-4" />
+                Goals
+              </button>
+            </nav>
+          </div>
+
+          {/* Tab Content */}
+          <div className="p-6">
+            {activeTab === 'insights' && (
+              <>
+                <InsightsHeader 
+                  snapshots={coverageTimeline}
+                  selectedSnapshotId={selectedSnapshotId}
+                  onSelectSnapshot={setSelectedSnapshotId}
+                  isStale={isStale}
+                  goalsLastModified={goalsLastModified}
+                  onRerunAnalysis={() => {
+                    const latest = coverageTimeline[0];
+                    if (latest) handleRunCoverage(latest.project_id);
+                  }}
+                />
+                <InsightsGrid
+                  opportunities={displayedOpportunities}
+                  projectIdFilter={projectIdFromUrl}
+                  formatRelativeDate={formatRelativeDate}
+                  goals={coverageGoals}
+                />
+              </>
             )}
-          </nav>
+
+            {activeTab === 'goals' && (
+              <GoalsSection
+                goals={coverageGoals}
+                goalProgress={[]}
+                onSaveGoal={saveGoal}
+                onToggleStatus={handleToggleGoalStatus}
+                onArchive={handleArchiveGoal}
+                onOpenExamples={() => setExampleGoalsModalOpen(true)}
+                suggestedGoals={suggestedGoals}
+                isSaving={goalSaving}
+                error={goalError}
+              />
+            )}
+          </div>
         </div>
 
-        <div className="space-y-8">
-          {/* Educational Insights Tab */}
-          {activeTab === 'insights' && (
-          <section className="space-y-4">
-                <div className="bg-white shadow rounded-lg">
-                  <div className="px-4 py-5 sm:p-6">
-                    <div className="flex items-center justify-between mb-4">
-                      <div>
-                        <div className="flex items-center space-x-2">
-                          <h2 className="text-lg font-medium text-gray-900">Educational Insights</h2>
-                          <div className="relative group">
-                            <button
-                              type="button"
-                              aria-label="How Educational Insights works"
-                              className="h-6 w-6 flex items-center justify-center rounded-full border border-gray-200 bg-white text-xs text-gray-600 hover:text-gray-800"
-                            >
-                              ?
-                            </button>
-                            <div className="pointer-events-none absolute left-0 mt-2 w-80 rounded-lg border border-gray-200 bg-white p-3 text-xs text-gray-700 shadow-lg opacity-0 transition-opacity duration-150 group-hover:opacity-100 group-focus-within:opacity-100 z-10">
-                              <p className="font-semibold text-gray-900 mb-1">How it works</p>
-                              <p>1) Upload and finish processing an episode to generate a transcript.</p>
-                              <p>2) AI extracts people and concepts; results respect your time range filter.</p>
-                              <p>3) Each row shows confidence and AI cost so you can track spend.</p>
-                            </div>
-                          </div>
-                        </div>
-                        <p className="text-sm text-gray-500">
-                          AI-powered insights about people and concepts in your podcasts
-                        </p>
-                      </div>
-                    </div>
-
-                    <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4 mb-6">
-                      <div className="bg-gray-50 border border-gray-200 rounded-lg p-4">
-                        <p className="text-xs uppercase text-gray-500">Total Insights</p>
-                        <p className="mt-2 text-2xl font-semibold text-gray-900">
-                          {analytics?.insights?.summary?.totalInsights || 0}
-                        </p>
-                        <p className="text-xs text-gray-500 mt-1">Entities extracted across all projects</p>
-                      </div>
-                      <div className="bg-gray-50 border border-gray-200 rounded-lg p-4">
-                        <p className="text-xs uppercase text-gray-500">People</p>
-                        <p className="mt-2 text-2xl font-semibold text-gray-900">
-                          {analytics?.insights?.summary?.insightsByCategory?.person || 0}
-                        </p>
-                        <p className="text-xs text-gray-500 mt-1">Individuals mentioned in podcasts</p>
-                      </div>
-                      <div className="bg-gray-50 border border-gray-200 rounded-lg p-4">
-                        <p className="text-xs uppercase text-gray-500">Concepts</p>
-                        <p className="mt-2 text-2xl font-semibold text-gray-900">
-                          {analytics?.insights?.summary?.insightsByCategory?.concept || 0}
-                        </p>
-                        <p className="text-xs text-gray-500 mt-1">Technical terms and ideas explained</p>
-                      </div>
-                      <div className="bg-gray-50 border border-gray-200 rounded-lg p-4">
-                        <p className="text-xs uppercase text-gray-500">Avg Confidence</p>
-                        <p className="mt-2 text-2xl font-semibold text-gray-900">
-                          {Math.round((analytics?.insights?.summary?.avgConfidence || 0) * 100)}%
-                        </p>
-                        <p className="text-xs text-gray-500 mt-1">AI extraction accuracy score</p>
-                      </div>
-                    </div>
-
-                    {analytics?.insights?.records && analytics.insights.records.length > 0 && (
-                      <div className="bg-white border border-gray-100 rounded-lg">
-                        <div className="px-4 py-5 sm:p-6">
-                          <h3 className="text-lg font-medium text-gray-900 mb-4">Recent Insights</h3>
-                          <div className="overflow-x-auto">
-                            <table className="min-w-full divide-y divide-gray-200 text-sm">
-                              <thead className="bg-gray-50">
-                                <tr>
-                                  <th className="px-4 py-2 text-left font-medium text-gray-500">Label</th>
-                                  <th className="px-4 py-2 text-left font-medium text-gray-500">Category</th>
-                                  <th className="px-4 py-2 text-left font-medium text-gray-500">Confidence</th>
-                                  <th className="px-4 py-2 text-left font-medium text-gray-500">AI Cost</th>
-                                  <th className="px-4 py-2 text-left font-medium text-gray-500">Created</th>
-                                </tr>
-                              </thead>
-                              <tbody className="divide-y divide-gray-100 bg-white">
-                                {analytics.insights.records.slice(0, 10).map(insight => (
-                                  <tr key={insight.id}>
-                                    <td className="px-4 py-3">
-                                      <div className="text-gray-900 font-medium">{insight.label}</div>
-                                      <div className="text-xs text-gray-500">{insight.entity_id}</div>
-                                    </td>
-                                    <td className="px-4 py-3">
-                                      <span className={`inline-flex items-center px-2 py-1 rounded-full text-xs font-medium ${
-                                        insight.category === 'person'
-                                          ? 'bg-blue-50 text-blue-700'
-                                          : 'bg-purple-50 text-purple-700'
-                                      }`}>
-                                        {insight.category}
-                                      </span>
-                                    </td>
-                                    <td className="px-4 py-3 text-gray-700">
-                                      {Math.round(insight.confidence * 100)}%
-                                    </td>
-                                    <td className="px-4 py-3 text-gray-900 font-medium">
-                                      {formatCurrency(Number(insight.cost_usd || 0))}
-                                    </td>
-                                    <td className="px-4 py-3 text-gray-500">
-                                      {new Date(insight.created_at).toLocaleDateString()}
-                                    </td>
-                                  </tr>
-                                ))}
-                              </tbody>
-                            </table>
-                          </div>
-                        </div>
-                      </div>
-                    )}
-
-                    {(!analytics.insights.records || analytics.insights.records.length === 0) && (
-                      <div className="bg-gray-50 border border-gray-200 rounded-lg p-4 text-sm text-gray-600">
-                        No insights yet. Run processing on an episode to generate transcripts, then revisit this tab to see AI-extracted entities and costs.
-                      </div>
-                    )}
-                  </div>
-                </div>
-          </section>
-          )}
-
-          {/* Narrative Coverage Tab */}
-          {activeTab === 'coverage' && coverageFeatureEnabled && (
-          <section className="space-y-6">
-            <div className="flex flex-col gap-3 md:flex-row md:items-start md:justify-between">
-              <div>
-                <div className="flex items-center gap-2">
-                  <h2 className="text-lg font-semibold text-gray-900">Narrative Coverage Radar</h2>
-                  <span className="text-xs text-gray-500">Topics • CTAs • Gaps</span>
-                </div>
-                <p className="text-sm text-gray-500">
-                  AI-driven visibility into topic mix, CTA cadence, and editorial gaps.
-                </p>
-                {coverageRunError && (
-                  <p className="text-xs text-red-600 mt-2">{coverageRunError}</p>
-                )}
-              </div>
-              <div className="flex items-center gap-3">
-                {selectedProjects.size > 0 && (
-                  <button
-                    type="button"
-                    onClick={() => setSelectedProjects(new Set())}
-                    className="text-xs font-medium text-gray-700 hover:text-gray-900"
-                  >
-                    Clear filters ({selectedProjects.size})
-                  </button>
-                )}
-                <div className="relative project-filter-container">
-                  <button
-                    type="button"
-                    onClick={() => setProjectFilterOpen(open => !open)}
-                    className="inline-flex items-center px-3 py-2 border border-gray-200 rounded-md bg-white text-sm font-medium text-gray-700 shadow-sm hover:bg-gray-50"
-                  >
-                    Filter projects
-                  </button>
-                  {projectFilterOpen && (
-                    <div className="absolute right-0 z-10 mt-2 w-72 rounded-lg border border-gray-200 bg-white shadow-lg p-4">
-                      <div className="flex items-center justify-between mb-3">
-                        <p className="text-sm font-semibold text-gray-900">Filter by episode</p>
-                        <button
-                          type="button"
-                          onClick={() => setProjectFilterOpen(false)}
-                          className="text-xs text-gray-500 hover:text-gray-700"
-                        >
-                          Close
-                        </button>
-                      </div>
-                      <div className="space-y-2 max-h-64 overflow-y-auto">
-                        {analytics.projectsSummary.length === 0 ? (
-                          <p className="text-xs text-gray-500">No projects yet.</p>
-                        ) : (
-                          analytics.projectsSummary.map(project => (
-                            <label
-                              key={project.id}
-                              className="flex items-center gap-2 text-sm text-gray-700"
-                            >
-                              <input
-                                type="checkbox"
-                                className="h-4 w-4 rounded border-gray-300 text-blue-600 focus:ring-blue-500"
-                                checked={selectedProjects.has(project.id)}
-                                onChange={() => toggleProjectSelection(project.id)}
-                              />
-                              <span className="truncate">{project.title || 'Untitled project'}</span>
-                            </label>
-                          ))
-                        )}
-                      </div>
-                      <button
-                        type="button"
-                        onClick={() => setSelectedProjects(new Set())}
-                        className="mt-3 text-xs text-blue-600 hover:text-blue-800"
-                      >
-                        Reset filters
-                      </button>
-                    </div>
-                  )}
-                </div>
-              </div>
-            </div>
-
-            {projectsNeedingCoverage.length > 0 && (
-              <div className="bg-amber-50 border border-amber-200 rounded-lg p-4">
-                <div className="flex items-start justify-between gap-3">
-                  <div>
-                    <h3 className="text-sm font-semibold text-amber-900">
-                      {projectsNeedingCoverage.length} episode{projectsNeedingCoverage.length === 1 ? '' : 's'} awaiting coverage
-                    </h3>
-                    <p className="text-xs text-amber-800">
-                      Run the radar only when needed to control AI spend.
-                    </p>
-                  </div>
-                </div>
-                <div className="mt-3 space-y-2">
-                  {projectsNeedingCoverage.map(project => (
-                    <div
-                      key={project.id}
-                      className="bg-white rounded-md px-3 py-2 flex items-center justify-between shadow-sm"
-                    >
-                      <div>
-                        <p className="text-sm font-medium text-gray-900">{project.title || 'Untitled Project'}</p>
-                        <p className="text-xs text-gray-500">
-                          Uploaded {new Date(project.created_at).toLocaleDateString()} • Tier {project.performance_level || 'basic'}
-                        </p>
-                      </div>
-                      <button
-                        type="button"
-                        onClick={() => handleRunCoverage(project.id)}
-                        disabled={coverageRunner === project.id}
-                        className="inline-flex items-center px-3 py-1.5 text-xs font-medium rounded-md border border-amber-300 text-amber-900 bg-amber-100 hover:bg-amber-200 disabled:opacity-60"
-                      >
-                        {coverageRunner === project.id ? 'Running…' : 'Run coverage'}
-                      </button>
-                    </div>
-                  ))}
-                </div>
-              </div>
-            )}
-
-            {goalsNeedingMentions.length > 0 && (
-              <div className="bg-blue-50 border border-blue-100 rounded-lg p-4">
-                <p className="text-sm font-semibold text-blue-900">Goals needing mentions</p>
-                <p className="text-xs text-blue-800 mt-1">
-                  These goals have no recent matches in the selected projects.
-                </p>
-                <div className="mt-2 flex flex-wrap gap-2">
-                  {goalsNeedingMentions.slice(0, 6).map(goal => (
-                    <span
-                      key={goal.id}
-                      className="px-2 py-1 rounded-full border border-blue-200 bg-white text-xs text-blue-800"
-                    >
-                      {goal.topic_label}
-                    </span>
-                  ))}
-                </div>
-              </div>
-            )}
-
-            <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
-              <div className="bg-white shadow rounded-lg p-4">
-                <p className="text-xs uppercase text-gray-500">Analyses Run</p>
-                <p className="mt-2 text-2xl font-semibold text-gray-900">
-                  {filteredCoverageSummary?.totalAnalyses || 0}
-                </p>
-                <p className="text-xs text-gray-500 mt-1">Snapshots saved across recent episodes</p>
-              </div>
-              <div className="bg-white shadow rounded-lg p-4">
-                <p className="text-xs uppercase text-gray-500">Avg Topics/Episode</p>
-                <p className="mt-2 text-2xl font-semibold text-gray-900">
-                  {filteredCoverageSummary?.avgTopics || 0}
-                </p>
-                <p className="text-xs text-gray-500 mt-1">Unique editorial themes surfaced</p>
-              </div>
-              <div className="bg-white shadow rounded-lg p-4">
-                <p className="text-xs uppercase text-gray-500">Goals Tracked</p>
-                <p className="mt-2 text-2xl font-semibold text-gray-900">
-                  {filteredCoverageSummary?.goalsTracked || 0}
-                </p>
-                <p className="text-xs text-gray-500 mt-1">Active narrative guardrails</p>
-              </div>
-              <div className="bg-white shadow rounded-lg p-4">
-                <p className="text-xs uppercase text-gray-500">Opportunities Logged</p>
-                <p className="mt-2 text-2xl font-semibold text-gray-900">
-                  {filteredCoverageSummary?.latestOpportunities?.length || 0}
-                </p>
-                <p className="text-xs text-gray-500 mt-1">Most recent AI recommendations</p>
-              </div>
-            </div>
-
-            <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
-              <div className="bg-white shadow rounded-lg">
-                <div className="px-4 py-5 sm:p-6">
-                  <div className="flex items-center justify-between mb-4">
-                    <h3 className="text-lg font-medium text-gray-900">Top Topics</h3>
-                    <span className="text-xs text-gray-500">
-                      {(coverageTimeline[0]?.coverage_window || 'full episode').replace('_', ' ')}
-                    </span>
-                  </div>
-                  {topicHeat.length === 0 ? (
-                    <p className="text-sm text-gray-500">Run a project to see coverage insights.</p>
-                  ) : (
-                    <div className="space-y-4">
-                      {topicHeat.map(topic => (
-                        <div key={topic.id} className="border border-gray-100 rounded-lg p-3">
-                          <div className="flex items-center justify-between">
-                            <div>
-                              <p className="text-sm font-semibold text-gray-900">{topic.label}</p>
-                              <p className="text-xs text-gray-500">
-                                {topic.mentions} mentions • {Math.round(topic.avgShare * 100)}% share of voice
-                              </p>
-                            </div>
-                            <span className={`text-xs font-medium px-2 py-1 rounded-full ${
-                              topic.status === 'Over'
-                                ? 'bg-purple-50 text-purple-700'
-                                : topic.status === 'Under'
-                                ? 'bg-amber-50 text-amber-700'
-                                : 'bg-emerald-50 text-emerald-700'
-                            }`}>
-                              {topic.status}
-                            </span>
-                          </div>
-                          <div className="mt-3">
-                            <div className="w-full bg-gray-100 rounded-full h-2">
-                              <div
-                                className="h-2 rounded-full bg-blue-500"
-                                style={{ width: `${Math.min(100, topic.avgShare * 100)}%` }}
-                              />
-                            </div>
-                            <div className="mt-2 flex items-center justify-between text-xs text-gray-500">
-                              <span>{topic.goalAligned ? '🎯 Matches goal' : 'Exploratory'}</span>
-                              <span>{topic.lastMention ? formatRelativeDate(topic.lastMention) : '—'}</span>
-                            </div>
-                          </div>
-                        </div>
-                      ))}
-                    </div>
-                  )}
-                </div>
-              </div>
-
-              <div className="bg-white shadow rounded-lg">
-                <div className="px-4 py-5 sm:p-6">
-                  <div className="flex items-center justify-between mb-4">
-                    <h3 className="text-lg font-medium text-gray-900">Opportunities & Gaps</h3>
-                    <span className="text-xs text-gray-500">
-                      Last {filteredCoverageSummary?.latestOpportunities?.length || 0} recommendations
-                    </span>
-                  </div>
-                  {filteredCoverageSummary?.latestOpportunities?.length === 0 ? (
-                    <p className="text-sm text-gray-500">No gaps detected yet.</p>
-                  ) : (
-                    <div className="space-y-4">
-                      {filteredCoverageSummary?.latestOpportunities?.map(opportunity => (
-                        <div key={opportunity.id} className="border border-gray-100 rounded-lg p-3">
-                          <div className="flex items-center justify-between mb-2">
-                            <div>
-                              <p className="text-sm font-semibold text-gray-900">{opportunity.label}</p>
-                              <p className="text-xs text-gray-500">
-                                {opportunity.projectTitle || 'Recent episode'} • {formatRelativeDate(opportunity.created_at)}
-                              </p>
-                            </div>
-                            <span className={`text-xs font-medium px-2 py-1 rounded-full ${
-                              opportunity.severity === 'high'
-                                ? 'bg-red-50 text-red-700'
-                                : opportunity.severity === 'medium'
-                                ? 'bg-yellow-50 text-yellow-700'
-                                : 'bg-slate-50 text-slate-700'
-                            }`}>
-                              {opportunity.type}
-                            </span>
-                          </div>
-                          <p className="text-sm text-gray-700">{opportunity.summary}</p>
-                          <p className="text-xs text-blue-600 mt-2">
-                            Next: {opportunity.recommendedAction || 'Review AI suggestion'}
-                          </p>
-                        </div>
-                      ))}
-                    </div>
-                  )}
-                </div>
-              </div>
-            </div>
-
-            <div className="bg-white shadow rounded-lg">
-              <div className="px-4 py-5 sm:p-6">
-                <div className="flex items-center justify-between mb-4">
-                  <h3 className="text-lg font-medium text-gray-900">Coverage Timeline</h3>
-                  <div className="flex items-center gap-3">
-                    <button
-                      type="button"
-                      onClick={handleDeleteSelected}
-                      disabled={selectedSnapshots.size === 0 || deleting}
-                      className="inline-flex items-center px-3 py-1.5 text-xs font-medium rounded-md border border-red-200 text-red-700 bg-red-50 hover:bg-red-100 disabled:opacity-60"
-                    >
-                      {deleting ? 'Deleting…' : `Delete selected (${selectedSnapshots.size})`}
-                    </button>
-                    <label className="flex items-center gap-2 text-sm text-gray-600">
-                      <input
-                        type="checkbox"
-                        className="h-4 w-4 rounded border-gray-300 text-blue-600 focus:ring-blue-500"
-                        checked={selectedSnapshots.size === coverageTimeline.length && coverageTimeline.length > 0}
-                        onChange={handleSelectAll}
-                      />
-                      <span>Select all</span>
-                    </label>
-                  </div>
-                </div>
-                {coverageTimeline.length === 0 ? (
-                  <p className="text-sm text-gray-500">No coverage snapshots recorded yet.</p>
-                ) : (
-                  <div className="overflow-x-auto">
-                    <table className="min-w-full divide-y divide-gray-200 text-sm">
-                      <thead className="bg-gray-50">
-                        <tr>
-                          <th className="px-4 py-2 text-left font-medium text-gray-500 w-10">
-                            <input
-                              type="checkbox"
-                              className="h-4 w-4 rounded border-gray-300 text-blue-600 focus:ring-blue-500"
-                              checked={selectedSnapshots.size === coverageTimeline.length && coverageTimeline.length > 0}
-                              onChange={handleSelectAll}
-                            />
-                          </th>
-                          <th className="px-4 py-2 text-left font-medium text-gray-500">Episode</th>
-                          <th className="px-4 py-2 text-left font-medium text-gray-500">Topics</th>
-                          <th className="px-4 py-2 text-left font-medium text-gray-500">CTA Mentions</th>
-                          <th className="px-4 py-2 text-left font-medium text-gray-500">AI Spend</th>
-                          <th className="px-4 py-2 text-left font-medium text-gray-500">Captured</th>
-                        </tr>
-                      </thead>
-                      <tbody className="divide-y divide-gray-100 bg-white">
-                        {coverageTimeline.map(snapshot => (
-                          <tr key={snapshot.id} className={selectedSnapshots.has(snapshot.id) ? 'bg-blue-50' : ''}>
-                            <td className="px-4 py-3">
-                              <input
-                                type="checkbox"
-                                className="h-4 w-4 rounded border-gray-300 text-blue-600 focus:ring-blue-500"
-                                checked={selectedSnapshots.has(snapshot.id)}
-                                onChange={() => handleSelectSnapshot(snapshot.id)}
-                              />
-                            </td>
-                            <td className="px-4 py-3">
-                              <div className="text-gray-900 font-medium">
-                                {snapshot.project_title || 'Untitled Project'}
-                              </div>
-                              <div className="text-xs text-gray-500">
-                                {snapshot.coverage_window || 'full episode'}
-                              </div>
-                            </td>
-                            <td className="px-4 py-3 text-gray-700">
-                              {(snapshot.topics || []).length}
-                            </td>
-                            <td className="px-4 py-3 text-gray-700">
-                              {(snapshot.ctas || []).length}
-                            </td>
-                            <td className="px-4 py-3 text-gray-900 font-medium">
-                              {formatCurrency(Number(snapshot.ai_cost_usd || 0))}
-                            </td>
-                            <td className="px-4 py-3 text-gray-500">
-                              {new Date(snapshot.created_at).toLocaleDateString()}
-                            </td>
-                          </tr>
-                        ))}
-                      </tbody>
-                    </table>
-                  </div>
-                )}
-              </div>
-            </div>
-
-            <div className="bg-white shadow rounded-lg">
-              <div className="px-4 py-5 sm:p-6">
-                <div className="flex flex-col lg:flex-row lg:items-start lg:space-x-8">
-                  <div className="flex-1">
-                    <div className="flex items-center justify-between mb-4">
-                      <div>
-                        <h3 className="text-lg font-medium text-gray-900">Narrative Goals</h3>
-                        <p className="text-sm text-gray-500">
-                          Set guardrails so the coverage radar knows what to watch for.
-                        </p>
-                      </div>
-                      <div className="text-right">
-                        <span className="text-xs text-gray-500 block">
-                          Tracking {coverageGoals.length} goal{coverageGoals.length === 1 ? '' : 's'}
-                        </span>
-                        {goalsNeedingMentions.length > 0 && (
-                          <span className="text-xs text-amber-600">Needs mentions: {goalsNeedingMentions.length}</span>
-                        )}
-                      </div>
-                    </div>
-
-                    {coverageGoals.length === 0 ? (
-                      <p className="text-sm text-gray-500">No goals yet. Add one using the form.</p>
-                    ) : (
-                      <div className="space-y-3">
-                        {coverageGoals.map(goal => (
-                          <div
-                            key={goal.id}
-                            className="border border-gray-100 rounded-lg p-3 flex flex-col sm:flex-row sm:items-center sm:justify-between"
-                          >
-                            <div>
-                              <p className="text-sm font-semibold text-gray-900">{goal.topic_label}</p>
-                              <p className="text-xs text-gray-500">
-                                {goal.goal_type.toUpperCase()} • Target {goal.target_mentions || 1}{' '}
-                                {goal.goal_type === 'cta' ? 'mentions per cadence' : 'mentions'}
-                                {goal.cadence_days ? ` • ${goal.cadence_days}d cadence` : ''}
-                              </p>
-                            </div>
-                            <div className="flex items-center space-x-2 mt-3 sm:mt-0">
-                              <span
-                                className={`text-xs font-medium px-2 py-1 rounded-full ${
-                                  GOAL_STATUS_CLASSES[goal.status] || 'bg-gray-100 text-gray-600'
-                                }`}
-                              >
-                                {goal.status}
-                              </span>
-                              {goal.status !== 'archived' && (
-                                <>
-                                  <button
-                                    type="button"
-                                    className="text-xs text-blue-600 hover:text-blue-800 font-medium"
-                                    onClick={() => handleToggleGoalStatus(goal.id, goal.status)}
-                                  >
-                                    {goal.status === 'active' ? 'Pause' : 'Activate'}
-                                  </button>
-                                  <button
-                                    type="button"
-                                    className="text-xs text-red-600 hover:text-red-800 font-medium disabled:opacity-50"
-                                    onClick={() => handleArchiveGoal(goal.id, goal.topic_label)}
-                                    disabled={archivingGoal === goal.id}
-                                  >
-                                    {archivingGoal === goal.id ? 'Archiving...' : 'Archive'}
-                                  </button>
-                                </>
-                              )}
-                            </div>
-                          </div>
-                        ))}
-                      </div>
-                    )}
-                  </div>
-
-                  <div className="mt-6 lg:mt-0 lg:w-80 space-y-4">
-                    <div className="mb-1">
-                      <details className="bg-gradient-to-br from-indigo-50 to-blue-50 border border-indigo-200 rounded-lg p-4">
-                        <summary className="cursor-pointer font-semibold text-sm text-indigo-900 mb-2 flex items-center gap-2">
-                          <span>📚 Example Goals Library</span>
-                          <span className="text-xs font-normal text-indigo-600">(Click to expand)</span>
-                        </summary>
-                        <div className="mt-4 space-y-5 text-xs">
-                          {EXAMPLE_NARRATIVE_GOALS.map((category, idx) => (
-                            <div key={idx} className="bg-white rounded-lg border border-indigo-100 p-4">
-                              <div className="mb-3">
-                                <h4 className="font-bold text-gray-900 text-sm">{category.category}</h4>
-                                <p className="text-gray-600 text-xs mt-1">{category.description}</p>
-                              </div>
-                              <div className="space-y-2">
-                                {category.examples.map((example, exIdx) => (
-                                  <div key={exIdx} className="bg-gray-50 rounded border border-gray-200 p-3 hover:border-indigo-300 transition-colors">
-                                    <div className="font-medium text-gray-900">{example.label}</div>
-                                    <div className="text-gray-600 mt-1">{example.description}</div>
-                                    <div className="mt-2 flex items-center gap-2 text-gray-500">
-                                      <span className="uppercase font-semibold text-indigo-600">{example.type}</span>
-                                      <span>•</span>
-                                      <span>{example.target} mention{example.target !== 1 ? 's' : ''}</span>
-                                      {example.cadence && (
-                                        <>
-                                          <span>•</span>
-                                          <span>every {example.cadence} days</span>
-                                        </>
-                                      )}
-                                    </div>
-                                  </div>
-                                ))}
-                              </div>
-                            </div>
-                          ))}
-                        </div>
-                      </details>
-                    </div>
-
-                    <div className="bg-white border border-gray-200 rounded-lg p-4">
-                      <h4 className="text-sm font-semibold text-gray-900 mb-2">Quick add from recent analysis</h4>
-                      <p className="text-xs text-gray-500 mb-3">
-                        One-click goals based on your latest topics and CTAs.
-                      </p>
-                      <div className="flex flex-wrap gap-2">
-                        {suggestedGoals.slice(0, 6).map((suggestion, idx) => (
-                          <button
-                            key={idx}
-                            type="button"
-                            onClick={() => handleQuickAddGoal(suggestion)}
-                            className="px-2 py-1 text-xs rounded-full border border-gray-200 bg-gray-50 text-gray-800 hover:border-blue-200 hover:text-blue-700"
-                          >
-                            {suggestion.label} • {suggestion.type}
-                          </button>
-                        ))}
-                      </div>
-                    </div>
-
-                    <div className="bg-gray-50 rounded-lg p-4 space-y-4">
-                      <div className="flex items-center justify-between">
-                        <h4 className="text-sm font-semibold text-gray-900">Create a goal</h4>
-                        <button
-                          type="button"
-                          onClick={() => setGoalFormOpen(open => !open)}
-                          className="text-xs text-blue-600 hover:text-blue-800"
-                        >
-                          {goalFormOpen ? 'Hide' : 'Show'}
-                        </button>
-                      </div>
-                      {goalFormOpen && (
-                        <form onSubmit={handleCreateGoal} className="space-y-4">
-                          <div>
-                            <label className="block text-sm font-medium text-gray-700">
-                              Topic / CTA label
-                            </label>
-                            <input
-                              type="text"
-                              value={goalForm.label}
-                              onChange={(e) => setGoalForm(current => ({ ...current, label: e.target.value.slice(0, 80) }))}
-                              className="mt-1 block w-full rounded-md border-gray-300 shadow-sm focus:border-blue-500 focus:ring-blue-500 text-sm"
-                              placeholder="Ex: Mention accelerator CTA"
-                            />
-                          </div>
-
-                          <div>
-                            <label className="block text-sm font-medium text-gray-700">
-                              Goal type
-                            </label>
-                            <select
-                              value={goalForm.type}
-                              onChange={(e) => setGoalForm(current => ({ ...current, type: e.target.value }))}
-                              className="mt-1 block w-full rounded-md border-gray-300 shadow-sm focus:border-blue-500 focus:ring-blue-500 text-sm"
-                            >
-                              {GOAL_TYPE_OPTIONS.map(option => (
-                                <option key={option.value} value={option.value}>
-                                  {option.label}
-                                </option>
-                              ))}
-                            </select>
-                            <p className="mt-1 text-xs text-gray-500">
-                              {GOAL_TYPE_OPTIONS.find(option => option.value === goalForm.type)?.helper}
-                            </p>
-                          </div>
-
-                          <div className="grid grid-cols-2 gap-4">
-                            <div>
-                              <label className="block text-sm font-medium text-gray-700">
-                                Target mentions
-                              </label>
-                              <input
-                                type="number"
-                                min={1}
-                                value={goalForm.target}
-                                onChange={(e) => setGoalForm(current => ({ ...current, target: Number(e.target.value) }))}
-                                className="mt-1 block w-full rounded-md border-gray-300 shadow-sm focus:border-blue-500 focus:ring-blue-500 text-sm"
-                              />
-                            </div>
-                            <div>
-                              <label className="block text-sm font-medium text-gray-700">
-                                Cadence (days)
-                              </label>
-                              <input
-                                type="number"
-                                min={1}
-                                value={goalForm.cadence}
-                                onChange={(e) => setGoalForm(current => ({ ...current, cadence: Number(e.target.value) }))}
-                                className="mt-1 block w-full rounded-md border-gray-300 shadow-sm focus:border-blue-500 focus:ring-blue-500 text-sm"
-                              />
-                            </div>
-                          </div>
-
-                          {goalError && (
-                            <div className="text-xs text-red-600">{goalError}</div>
-                          )}
-
-                          <button
-                            type="submit"
-                            disabled={goalSaving}
-                            className="w-full inline-flex justify-center items-center px-3 py-2 border border-transparent text-sm font-medium rounded-md shadow-sm text-white bg-blue-600 hover:bg-blue-700 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-blue-500 disabled:opacity-60"
-                          >
-                            {goalSaving ? 'Saving…' : 'Add goal'}
-                          </button>
-                        </form>
-                      )}
-                    </div>
-                  </div>
-                </div>
-              </div>
-            </div>
-          </section>
-          )}
-
-        </div>
+        {/* Example Goals Modal */}
+        <ExampleGoalsModal
+          isOpen={exampleGoalsModalOpen}
+          onClose={() => setExampleGoalsModalOpen(false)}
+          onAddGoal={(goal) => {
+            saveGoal(goal);
+            setExampleGoalsModalOpen(false);
+          }}
+        />
       </div>
     </div>
   );

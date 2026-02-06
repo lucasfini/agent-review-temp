@@ -1,5 +1,6 @@
 // AI-powered social media quote extraction using GPT-4o
 import OpenAI from 'openai';
+import { trackOpenAIUsage } from '@/lib/billing/track-usage';
 
 export interface SocialQuote {
   quote: string;
@@ -28,6 +29,8 @@ export async function extractSocialQuotes(
   options: {
     maxQuotes?: number;
     speakerContext?: Record<string, { name: string; role?: string }>;
+    userId?: string;
+    projectId?: string;
   } = {}
 ): Promise<QuotesResult> {
   const apiKey = process.env.OPENAI_API_KEY;
@@ -35,7 +38,7 @@ export async function extractSocialQuotes(
     throw new Error('OPENAI_API_KEY not configured');
   }
 
-  const { maxQuotes = 8, speakerContext } = options;
+  const { maxQuotes = 8, speakerContext, userId, projectId } = options;
 
   console.log('[QUOTES] 💬 Extracting high-impact social quotes with GPT-4o...');
 
@@ -107,6 +110,17 @@ ${transcriptionText.slice(0, 80000)}`;
         }
       ]
     });
+
+    if (userId) {
+      await trackOpenAIUsage({
+        userId,
+        projectId,
+        response,
+        modelName: 'gpt-4o',
+        purpose: 'Social Quotes',
+        shouldDebit: true
+      });
+    }
 
     const responseText = response.choices[0]?.message?.content || '[]';
 

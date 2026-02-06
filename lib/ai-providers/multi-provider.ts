@@ -17,6 +17,7 @@ export interface AICompletionOptions {
   temperature?: number;
   maxTokens?: number;
   topP?: number;
+  responseFormat?: { type: 'json_object' | 'text' };
 }
 
 export interface AICompletionResponse {
@@ -73,6 +74,7 @@ async function getOpenAICompletion(options: AICompletionOptions): Promise<AIComp
     temperature: options.temperature ?? 0.7,
     max_tokens: options.maxTokens ?? 4096,
     top_p: options.topP ?? 1,
+    response_format: options.responseFormat,
   });
 
   return {
@@ -153,13 +155,20 @@ async function getGoogleCompletion(options: AICompletionOptions): Promise<AIComp
     });
   }
 
+  const generationConfig: any = {
+    temperature: options.temperature ?? 0.7,
+    maxOutputTokens: options.maxTokens ?? 4096,
+    topP: options.topP ?? 1,
+  };
+
+  // Enable JSON mode if requested
+  if (options.responseFormat?.type === 'json_object') {
+    generationConfig.responseMimeType = 'application/json';
+  }
+
   const requestBody = {
     contents,
-    generationConfig: {
-      temperature: options.temperature ?? 0.7,
-      maxOutputTokens: options.maxTokens ?? 4096,
-      topP: options.topP ?? 1,
-    },
+    generationConfig,
   };
 
   const response = await fetch(

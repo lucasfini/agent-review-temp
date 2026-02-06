@@ -33,11 +33,12 @@ export default function TeamsStyleTranscript({ speakerData }: TeamsStyleTranscri
     <div className="flex flex-col h-full bg-gray-50 rounded-md overflow-hidden">
       <div className="flex-1 overflow-y-auto p-4 space-y-3">
         {validSegments.map((segment, index) => {
-        const speaker = speakers[segment.speakerId];
+        const segmentSpeakerId = segment.finalSpeakerId || segment.speakerId;
+        const speaker = speakers[segmentSpeakerId];
 
         // Safety check: skip segments with missing speaker data
         if (!speaker) {
-          console.warn(`Speaker ${segment.speakerId} not found in speakers record`);
+          console.warn(`Speaker ${segmentSpeakerId} not found in speakers record`);
           return null;
         }
 
@@ -46,7 +47,7 @@ export default function TeamsStyleTranscript({ speakerData }: TeamsStyleTranscri
         const timestamp = formatTimeHumanReadable(segment.startTime);
 
         return (
-          <div key={`segment-${index}-${segment.speakerId}`} className="text-sm">
+          <div key={`segment-${index}-${segmentSpeakerId}`} className="text-sm">
             {/* Speaker header line - Teams style */}
             <div className="font-medium text-gray-700 mb-0.5">
               {speakerName}{speakerRole} {timestamp}

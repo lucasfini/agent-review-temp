@@ -92,6 +92,9 @@ Return ONLY valid JSON. No markdown, no explanations.
 
 ACCURACY > COMPLETENESS. Do not guess. Fewer correct speakers is better than many incorrect ones.`;
 
+export type ProjectType = 'DEBATE' | 'INTERVIEW' | 'PODCAST' | 'MONOLOGUE' | 'MEETING' | 'OTHER';
+export type SanitizeMode = 'strict' | 'lenient';
+
 /**
  * Pass 1: Analyze transcript and identify true speakers
  * Uses GPT to consolidate speaker identities and assign accurate roles
@@ -102,6 +105,7 @@ export async function identifySpeakers(
     apiKey?: string;
     model?: string;
     projectTitle?: string;
+    projectType?: ProjectType;
   } = {}
 ): Promise<SpeakerIntelligenceResult> {
   const apiKey = options.apiKey || process.env.OPENAI_API_KEY;
@@ -167,8 +171,20 @@ Remember:
       }
     });
 
+    // Normalize speakers first
+    const normalizedSpeakers = speakers.map(normalizeSpeaker);
+
+    // Determine sanitize mode based on project type
+    // DEBATE mode: Strict deduplication (Highlander rules - aggressive merging)
+    // Other modes: Lenient deduplication (only exact matches)
+    const sanitizeMode: SanitizeMode = options.projectType === 'DEBATE' ? 'strict' : 'lenient';
+    console.log(`[SPEAKER INTELLIGENCE] Using ${sanitizeMode} sanitization mode for project type: ${options.projectType || 'unknown'}`);
+
+    // Sanitize roster: remove duplicates, merge substrings, handle typos
+    const sanitizedSpeakers = sanitizeRoster(normalizedSpeakers, { mode: sanitizeMode });
+
     return {
-      speakers: speakers.map(normalizeSpeaker),
+      speakers: sanitizedSpeakers,
       diagnostics,
       qualityChecks
     };
@@ -300,4 +316,236 @@ function normalizeSpeaker(speaker: any): IntelligentSpeaker {
     aliases: Array.isArray(speaker.aliases) ? speaker.aliases : [],
     evidence: Array.isArray(speaker.evidence) ? speaker.evidence : []
   };
+}
+
+/**
+ * Calculate Levenshtein distance between two strings
+ */
+function levenshteinDistance(a: string, b: string): number {
+  const matrix: number[][] = [];
+
+  for (let i = 0; i <= b.length; i++) {
+    matrix[i] = [i];
+  }
+  for (let j = 0; j <= a.length; j++) {
+    matrix[0][j] = j;
+  }
+
+  for (let i = 1; i <= b.length; i++) {
+    for (let j = 1; j <= a.length; j++) {
+      if (b.charAt(i - 1) === a.charAt(j - 1)) {
+        matrix[i][j] = matrix[i - 1][j - 1];
+      } else {
+        matrix[i][j] = Math.min(
+          matrix[i - 1][j - 1] + 1, // substitution
+          matrix[i][j - 1] + 1,     // insertion
+          matrix[i - 1][j] + 1      // deletion
+        );
+      }
+    }
+  }
+
+  return matrix[b.length][a.length];
+}
+
+/**
+ * Check if two names are fuzzy matches (typos, minor differences)
+ * Returns true if Levenshtein distance is small relative to string length
+ */
+function isFuzzyMatch(name1: string, name2: string, threshold: number = 0.2): boolean {
+  const a = name1.toLowerCase().trim();
+  const b = name2.toLowerCase().trim();
+
+  if (a === b) return true;
+
+  const maxLen = Math.max(a.length, b.length);
+  if (maxLen === 0) return true;
+
+  const distance = levenshteinDistance(a, b);
+  const similarity = 1 - (distance / maxLen);
+
+  // Consider fuzzy match if similarity > 80% (threshold 0.2)
+  return similarity >= (1 - threshold);
+}
+
+/**
+ * Check if one name is a substring of another (partial name match)
+ * "Christopher" is a substring of "Christopher Xenos"
+ */
+function isSubstringMatch(shorter: string, longer: string): boolean {
+  const a = shorter.toLowerCase().trim();
+  const b = longer.toLowerCase().trim();
+
+  // The shorter one must be contained in the longer one
+  if (b.includes(a)) return true;
+
+  // Also check if it matches any word in the longer name
+  const longerWords = b.split(/\s+/);
+  return longerWords.some(word => word === a);
+}
+
+export interface SanitizeRosterOptions {
+  /**
+   * Sanitization mode:
+   * - 'strict': Aggressive deduplication for debates (Highlander mode)
+   *   Applies: exact match, substring merge, fuzzy/typo merge
+   * - 'lenient': Basic cleanup for interviews/meetings
+   *   Applies: exact match only (preserves "John S." vs "John D.")
+   */
+  mode: SanitizeMode;
+  
+  /**
+   * Target speaker count (optional)
+   * If provided, aggressively merges most similar speakers until this count is reached.
+   */
+  targetCount?: number;
+}
+
+/**
+ * Sanitize speaker roster with robust deduplication and force-merge capability.
+ * 
+ * FEATURES:
+ * 1. Deep Cleaning: Trims and lowercases names for all comparisons.
+ * 2. Standard Deduplication: Removes exact duplicates and handles substrings/fuzzy matches based on mode.
+ * 3. Force-Merge Loop: If targetCount is provided, iteratively merges the most similar pairs until the count is met.
+ */
+export function sanitizeRoster(
+  speakers: IntelligentSpeaker[],
+  options: SanitizeRosterOptions = { mode: 'lenient' }
+): IntelligentSpeaker[] {
+  if (speakers.length <= 1) return speakers;
+
+  const { mode, targetCount } = options;
+  console.log(`[ROSTER SANITIZE] Mode: ${mode.toUpperCase()}${targetCount ? `, Target: ${targetCount}` : ''}`);
+  console.log(`[ROSTER SANITIZE] Input: ${speakers.length} speakers`);
+  speakers.forEach(s => console.log(`[ROSTER SANITIZE]   - "${s.name}" (${s.role})`));
+
+  // --- PHASE 1: Initial Cleaning & Standard Deduplication ---
+  
+  let currentRoster = [...speakers];
+  
+  // Helper to merge two speakers
+  const mergeSpeakers = (keeper: IntelligentSpeaker, discard: IntelligentSpeaker): IntelligentSpeaker => {
+    return {
+      ...keeper,
+      // Merge aliases
+      aliases: [...new Set([
+        ...(keeper.aliases || []), 
+        ...(discard.aliases || []), 
+        discard.name
+      ])].filter(a => a.toLowerCase() !== keeper.name.toLowerCase()),
+      // Merge evidence
+      evidence: [...(keeper.evidence || []), ...(discard.evidence || [])],
+      // Keep higher confidence
+      confidence: Math.max(keeper.confidence, discard.confidence)
+    };
+  };
+
+  // Iterative pass for standard duplicates (Exact, Substring, Fuzzy)
+  // We restart the loop after any merge to ensure cleanliness
+  let changed = true;
+  while (changed) {
+    changed = false;
+    
+    // Sort by name length descending to prioritize keeping longer names
+    currentRoster.sort((a, b) => b.name.length - a.name.length);
+
+    outerLoop:
+    for (let i = 0; i < currentRoster.length; i++) {
+      for (let j = i + 1; j < currentRoster.length; j++) {
+        const s1 = currentRoster[i];
+        const s2 = currentRoster[j];
+        const n1 = s1.name.toLowerCase().trim();
+        const n2 = s2.name.toLowerCase().trim();
+
+        let shouldMerge = false;
+        let reason = '';
+
+        // 1. Exact Match (Always)
+        if (n1 === n2) {
+          shouldMerge = true;
+          reason = 'Exact match';
+        }
+        // 2. Substring Match (Strict Mode)
+        else if (mode === 'strict' && (n1.includes(n2) || n2.includes(n1))) {
+          shouldMerge = true;
+          reason = 'Substring match';
+        }
+        // 3. Fuzzy Match (Strict Mode)
+        else if (mode === 'strict' && isFuzzyMatch(n1, n2, 0.15)) { // Tight threshold for initial pass
+          shouldMerge = true;
+          reason = 'Fuzzy match';
+        }
+
+        if (shouldMerge) {
+          console.log(`[ROSTER SANITIZE] Merging "${s2.name}" into "${s1.name}" (${reason})`);
+          currentRoster[i] = mergeSpeakers(s1, s2);
+          currentRoster.splice(j, 1);
+          changed = true;
+          break outerLoop; // Restart loop
+        }
+      }
+    }
+  }
+
+  console.log(`[ROSTER SANITIZE] Post-cleaning count: ${currentRoster.length}`);
+
+  // --- PHASE 2: Force-Merge Loop (Target Cap) ---
+  
+  if (targetCount && currentRoster.length > targetCount) {
+    console.log(`[ROSTER SANITIZE] ⚠️ Force-merging to reach target count of ${targetCount}`);
+
+    while (currentRoster.length > targetCount) {
+      let bestPair = { i: -1, j: -1, similarity: -1 };
+
+      // Find the most similar pair in the entire list
+      for (let i = 0; i < currentRoster.length; i++) {
+        for (let j = i + 1; j < currentRoster.length; j++) {
+          const s1 = currentRoster[i];
+          const s2 = currentRoster[j];
+          
+          const n1 = s1.name.toLowerCase().trim();
+          const n2 = s2.name.toLowerCase().trim();
+          
+          const maxLen = Math.max(n1.length, n2.length);
+          const distance = levenshteinDistance(n1, n2);
+          const similarity = 1 - (distance / maxLen);
+
+          if (similarity > bestPair.similarity) {
+            bestPair = { i, j, similarity };
+          }
+        }
+      }
+
+      if (bestPair.i !== -1) {
+        const keeperIdx = bestPair.i; // Usually longer name due to sort
+        const discardIdx = bestPair.j;
+        const keeper = currentRoster[keeperIdx];
+        const discard = currentRoster[discardIdx];
+
+        console.log(`[ROSTER SANITIZE] 🔽 Force-merge: "${discard.name}" into "${keeper.name}" (Similarity: ${(bestPair.similarity * 100).toFixed(1)}%)`);
+        
+        currentRoster[keeperIdx] = mergeSpeakers(keeper, discard);
+        currentRoster.splice(discardIdx, 1);
+      } else {
+        console.warn(`[ROSTER SANITIZE] Could not find any pairs to merge. Stopping at ${currentRoster.length} speakers.`);
+        break;
+      }
+    }
+  }
+
+  // Final cleanup of aliases
+  currentRoster.forEach(s => {
+    if (s.aliases) {
+      s.aliases = [...new Set(s.aliases)].filter(a => a.toLowerCase() !== s.name.toLowerCase());
+    }
+  });
+
+  console.log(`[ROSTER SANITIZE] Final Output: ${currentRoster.length} speakers`);
+  currentRoster.forEach(s => {
+    const aliasStr = s.aliases?.length ? ` (aliases: ${s.aliases.join(', ')})` : '';
+    console.log(`[ROSTER SANITIZE]   - "${s.name}"${aliasStr}`);
+  });
+
+  return currentRoster;
 }

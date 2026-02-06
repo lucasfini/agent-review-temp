@@ -1,6 +1,7 @@
 // AI-powered podcast summary generation using GPT-4o
 import OpenAI from 'openai';
 import type { NarrativeMetadata } from './pre-processor';
+import { trackOpenAIUsage } from '@/lib/billing/track-usage';
 
 export interface PodcastSummary {
   summary: string;
@@ -22,6 +23,8 @@ export async function generatePodcastSummary(
     maxWords?: number;
     speakerContext?: Record<string, { name: string; role?: string }>;
     narrativeMetadata?: NarrativeMetadata;
+    userId?: string;
+    projectId?: string;
   } = {}
 ): Promise<PodcastSummary> {
   const apiKey = process.env.OPENAI_API_KEY;
@@ -29,7 +32,7 @@ export async function generatePodcastSummary(
     throw new Error('OPENAI_API_KEY not configured');
   }
 
-  const { maxWords = 1000, speakerContext, narrativeMetadata } = options;
+  const { maxWords = 1000, speakerContext, narrativeMetadata, userId, projectId } = options;
 
   console.log('[SUMMARY] 📝 Generating podcast summary with GPT-4o...');
 
@@ -114,6 +117,17 @@ ${sourceText.slice(0, 80000)}`;
         }
       ]
     });
+
+    if (userId) {
+      await trackOpenAIUsage({
+        userId,
+        projectId,
+        response,
+        modelName: 'gpt-4o',
+        purpose: 'Podcast Summary',
+        shouldDebit: true
+      });
+    }
 
     const summaryText = response.choices[0]?.message?.content || '';
 

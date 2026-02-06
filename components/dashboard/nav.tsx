@@ -5,13 +5,10 @@ import Link from 'next/link';
 import { usePathname, useRouter } from 'next/navigation';
 import { useAuth } from '@/lib/auth/context';
 import {
-  Home,
+  LayoutGrid,
   Upload,
   FileText,
   BarChart3,
-  DollarSign,
-  Activity,
-  Receipt,
   Settings,
   LogOut,
   Menu,
@@ -21,13 +18,10 @@ import {
 } from 'lucide-react';
 
 const navigation = [
-  { name: 'Dashboard', href: '/dashboard', icon: Home },
-  { name: 'Projects', href: '/dashboard/projects', icon: FileText },
+  { name: 'Project Hub', href: '/dashboard/hub', icon: LayoutGrid },
+  { name: 'Content Library', href: '/dashboard/projects', icon: FileText },
   { name: 'Upload', href: '/dashboard/upload', icon: Upload },
   { name: 'Analytics', href: '/dashboard/analytics', icon: BarChart3 },
-  { name: 'Costs', href: '/dashboard/costs', icon: DollarSign },
-  { name: 'Usage', href: '/dashboard/usage', icon: Activity },
-  { name: 'Transactions', href: '/dashboard/transactions', icon: Receipt },
   { name: 'Settings', href: '/dashboard/settings', icon: Settings },
 ];
 
@@ -91,7 +85,10 @@ export default function DashboardNav() {
           <div className="mt-8 flex-grow flex flex-col">
             <nav className="flex-1 px-2 space-y-1">
               {navigation.map((item) => {
-                const isActive = pathname === item.href;
+                // Hub is active for both /dashboard and /dashboard/hub
+                const isActive = item.href === '/dashboard/hub'
+                  ? pathname === '/dashboard/hub' || pathname === '/dashboard'
+                  : pathname === item.href || pathname.startsWith(item.href + '/');
                 return (
                   <Link
                     key={item.name}
@@ -188,7 +185,9 @@ export default function DashboardNav() {
               </div>
               <nav className="mt-5 px-2 space-y-1">
                 {navigation.map((item) => {
-                  const isActive = pathname === item.href;
+                  const isActive = item.href === '/dashboard/hub'
+                    ? pathname === '/dashboard/hub' || pathname === '/dashboard'
+                    : pathname === item.href || pathname.startsWith(item.href + '/');
                   return (
                     <Link
                       key={item.name}

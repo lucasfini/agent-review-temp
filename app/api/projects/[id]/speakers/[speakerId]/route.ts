@@ -97,15 +97,16 @@ export async function DELETE(
     if (action === 'delete') {
       // Remove all segments belonging to this speaker
       updatedSegments = speakerData.segments.filter(
-        segment => segment.speakerId !== speakerId
+        segment => (segment.finalSpeakerId || segment.speakerId) !== speakerId
       );
     } else {
       // Reassign all segments to another speaker
       updatedSegments = speakerData.segments.map(segment => {
-        if (segment.speakerId === speakerId) {
+        if ((segment.finalSpeakerId || segment.speakerId) === speakerId) {
           return {
             ...segment,
-            speakerId: reassignToSpeakerId
+            speakerId: reassignToSpeakerId,
+            finalSpeakerId: reassignToSpeakerId
           };
         }
         return segment;
@@ -116,7 +117,7 @@ export async function DELETE(
       if (speakerData.speakers[reassignToSpeakerId]) {
         speakerData.speakers[reassignToSpeakerId].totalDuration += deletedSpeaker.totalDuration;
         speakerData.speakers[reassignToSpeakerId].segments = updatedSegments.filter(
-          s => s.speakerId === reassignToSpeakerId
+          s => (s.finalSpeakerId || s.speakerId) === reassignToSpeakerId
         );
       }
     }
@@ -161,8 +162,8 @@ export async function DELETE(
     return NextResponse.json({
       success: true,
       message: action === 'delete'
-        ? `Speaker ${speakerId} deleted and ${speakerData.segments.filter(s => s.speakerId === speakerId).length} segments removed`
-        : `Speaker ${speakerId} deleted and ${speakerData.segments.filter(s => s.speakerId === speakerId).length} segments reassigned to ${reassignToSpeakerId}`,
+        ? `Speaker ${speakerId} deleted and ${speakerData.segments.filter(s => (s.finalSpeakerId || s.speakerId) === speakerId).length} segments removed`
+        : `Speaker ${speakerId} deleted and ${speakerData.segments.filter(s => (s.finalSpeakerId || s.speakerId) === speakerId).length} segments reassigned to ${reassignToSpeakerId}`,
       deletedSpeaker: speakerId,
       action,
       remainingSpeakers: Object.keys(remainingSpeakers).length,

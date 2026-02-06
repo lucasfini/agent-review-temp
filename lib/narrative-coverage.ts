@@ -54,6 +54,7 @@ export interface NarrativeCoverageSnapshotInput {
   analyticsOverride?: Record<string, any>;
   aiUsage: AiUsageDetail;
   notes?: string;
+  activeGoals?: any[];
 }
 
 const DEFAULT_ANALYTICS = {
@@ -133,7 +134,8 @@ export async function saveNarrativeCoverageSnapshot(input: NarrativeCoverageSnap
     total_input_tokens: input.aiUsage.inputTokens,
     total_output_tokens: input.aiUsage.outputTokens,
     ai_cost_usd: input.aiUsage.costUsd,
-    notes: input.notes || null
+    notes: input.notes || null,
+    goals_snapshot: input.activeGoals || []
   };
 
   const { data, error } = await supabaseAdmin

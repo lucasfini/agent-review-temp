@@ -56,7 +56,7 @@ export interface ResearchLinksResult {
 export async function generateResearchLinks(
   insightLabel: string,
   insightContext: string,
-  category: 'person' | 'concept'
+  category: 'person' | 'concept' | 'tool'
 ): Promise<ResearchLinksResult> {
   const apiKey = process.env.PERPLEXITY_API_KEY;
 
@@ -70,7 +70,7 @@ export async function generateResearchLinks(
   }
 
   try {
-    // Get config based on category
+    // Get config based on category (tool uses concept prompt - looking for docs/official sites)
     const configKey = category === 'person' ? 'person' : 'concept';
     const config = prompts.audioRepurpose.researchLinks[configKey];
 
@@ -220,7 +220,7 @@ export async function generateResearchLinksForInsights(
   insights: Array<{
     label: string;
     context: string;
-    category: 'person' | 'concept';
+    category: 'person' | 'concept' | 'tool';
   }>,
   maxConcurrent: number = 3
 ): Promise<Map<string, ResearchLinksResult>> {

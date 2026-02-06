@@ -97,7 +97,10 @@ export async function POST(request: NextRequest) {
     const title = formData.get('title') as string;
     const performanceLevel = normalizePerformanceLevel(formData.get('performanceLevel'));
     const rosterSpeakersRaw = formData.get('rosterSpeakers');
+    const speakerCountRaw = formData.get('speakerCount');
+    const speakerCount = speakerCountRaw ? parseInt(speakerCountRaw as string, 10) : undefined;
     console.log(`[UPLOAD] Selected performance level: ${performanceLevel}`);
+    if (speakerCount) console.log(`[UPLOAD] Expected speaker count: ${speakerCount}`);
 
     console.log('File received:', file?.name, 'Size:', file?.size, 'Type:', file?.type);
     console.log('Title:', title);
@@ -640,8 +643,14 @@ export async function POST(request: NextRequest) {
         const diarizationProvider = (process.env.ASSEMBLYAI_API_KEY || process.env.ASSEMBLYAI_ACCESS_KEY) ? 'assemblyai' : 'deepgram';
         console.log(`[UPLOAD] Starting transcription with provider: ${diarizationProvider}`);
 
+        // Build the base URL, handling VERCEL_URL which may or may not include protocol
+        let baseUrl = process.env.VERCEL_URL || 'http://localhost:3000';
+        if (baseUrl && !baseUrl.startsWith('http://') && !baseUrl.startsWith('https://')) {
+          baseUrl = `https://${baseUrl}`;
+        }
+
         // Fire-and-forget background transcription job
-        fetch(`${process.env.VERCEL_URL || 'http://localhost:3000'}/api/transcribe`, {
+        fetch(`${baseUrl}/api/transcribe`, {
           method: 'POST',
           headers: {
             'Content-Type': 'application/json',
@@ -651,7 +660,8 @@ export async function POST(request: NextRequest) {
             fileName: fileName,
             fingerprint: audioFingerprint,
             performanceLevel,
-            diarizationProvider
+            diarizationProvider,
+            ...(speakerCount && { speakerCount })
           })
         })
           .then(response => {
@@ -659,12 +669,24 @@ export async function POST(request: NextRequest) {
             if (!response.ok) {
               return response.text().then(text => {
                 console.error('Transcription start failed:', response.status, text);
+                // Mark project as failed so UI stops showing "processing"
+                (supabaseAdmin
+                  .from('projects') as any)
+                  .update({ status: 'failed', processing_stage: 'failed', processing_message: `Transcription failed: ${response.status}` })
+                  .eq('id', project.id)
+                  .then(() => console.log(`[UPLOAD] Marked project ${project.id} as failed`));
               });
             }
             return response.json().catch(() => null);
           })
           .catch(error => {
             console.error('Failed to start transcription:', error);
+            // Mark project as failed so UI stops showing "uploading"
+            (supabaseAdmin
+              .from('projects') as any)
+              .update({ status: 'failed', processing_stage: 'failed', processing_message: `Failed to reach transcription service: ${error.message || error}` })
+              .eq('id', project.id)
+              .then(() => console.log(`[UPLOAD] Marked project ${project.id} as failed (fetch error)`));
           });
       } else {
         console.warn('OpenAI API key not found, transcription skipped');

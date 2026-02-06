@@ -1,0 +1,123 @@
+import { NextRequest, NextResponse } from 'next/server';
+import { supabaseAdmin } from '@/lib/supabase/server';
+
+// Force dynamic to prevent caching
+export const dynamic = 'force-dynamic';
+export const revalidate = 0;
+
+export async function PATCH(
+  request: NextRequest,
+  { params }: { params: Promise<{ id: string }> }
+) {
+  try {
+    const { id: projectId } = await params;
+    const { segmentIndices, newSpeakerId } = await request.json();
+
+    if (!projectId || !Array.isArray(segmentIndices) || !newSpeakerId) {
+      return NextResponse.json(
+        { error: 'Missing required fields: segmentIndices (array) and newSpeakerId' },
+        { status: 400 }
+      );
+    }
+
+    // Fetch current project data
+    const { data: project, error: fetchError } = await supabaseAdmin
+      .from('projects')
+      .select('speaker_data')
+      .eq('id', projectId)
+      .single();
+
+    if (fetchError || !project) {
+      console.error('Error fetching project:', fetchError);
+      return NextResponse.json(
+        { error: 'Project not found' },
+        { status: 404 }
+      );
+    }
+
+    const speakerData = (project as { speaker_data: any }).speaker_data;
+
+    if (!speakerData || !speakerData.segments || !speakerData.speakers) {
+      return NextResponse.json(
+        { error: 'Invalid speaker data structure' },
+        { status: 400 }
+      );
+    }
+
+    // Verify the target speaker exists
+    if (!speakerData.speakers[newSpeakerId]) {
+      return NextResponse.json(
+        { error: `Speaker ${newSpeakerId} not found` },
+        { status: 400 }
+      );
+    }
+
+    // Update the speakerId for each specified segment
+    const updatedSegments = [...speakerData.segments];
+    let reassignedCount = 0;
+
+    for (const index of segmentIndices) {
+      if (index >= 0 && index < updatedSegments.length) {
+        const oldSpeakerId = updatedSegments[index].speakerId;
+        if (oldSpeakerId !== newSpeakerId) {
+          updatedSegments[index] = {
+            ...updatedSegments[index],
+            speakerId: newSpeakerId,
+            finalSpeakerId: newSpeakerId
+          };
+          reassignedCount++;
+        }
+      }
+    }
+
+    if (reassignedCount === 0) {
+      return NextResponse.json({
+        success: true,
+        message: 'No segments were reassigned (already assigned to target speaker or invalid indices)',
+        reassignedCount: 0
+      });
+    }
+
+    // Update the speaker data with the modified segments
+    const updatedSpeakerData = {
+      ...speakerData,
+      segments: updatedSegments,
+      detectionMetadata: {
+        ...speakerData.detectionMetadata,
+        lastModified: new Date().toISOString(),
+        lastModificationType: 'segment_reassignment'
+      }
+    };
+
+    // Save to database
+    const { error: updateError } = await supabaseAdmin
+      .from('projects')
+      // @ts-expect-error - Supabase types issue with update
+      .update({
+        speaker_data: updatedSpeakerData
+      })
+      .eq('id', projectId);
+
+    if (updateError) {
+      console.error('Error updating speaker data:', updateError);
+      return NextResponse.json(
+        { error: 'Failed to save segment reassignment' },
+        { status: 500 }
+      );
+    }
+
+    return NextResponse.json({
+      success: true,
+      message: `Successfully reassigned ${reassignedCount} segment(s) to ${newSpeakerId}`,
+      reassignedCount,
+      updatedSpeakerData
+    });
+
+  } catch (error) {
+    console.error('Segment reassignment error:', error);
+    return NextResponse.json(
+      { error: 'Internal server error' },
+      { status: 500 }
+    );
+  }
+}

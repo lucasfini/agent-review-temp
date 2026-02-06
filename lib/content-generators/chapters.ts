@@ -1,6 +1,7 @@
 // AI-powered chapter detection for podcasts using GPT-4o-mini
 import OpenAI from 'openai';
 import { TranscriptionSegment } from '../types';
+import { trackOpenAIUsage } from '@/lib/billing/track-usage';
 
 export interface PodcastChapter {
   title: string;
@@ -27,6 +28,8 @@ export async function detectPodcastChapters(
   segments: TranscriptionSegment[],
   options: {
     speakerContext?: Record<string, { name: string; role?: string }>;
+    userId?: string;
+    projectId?: string;
   } = {}
 ): Promise<ChaptersResult> {
   const apiKey = process.env.OPENAI_API_KEY;
@@ -109,6 +112,17 @@ ${transcriptionText.slice(0, 80000)}`;
         }
       ]
     });
+
+    if (options.userId) {
+      await trackOpenAIUsage({
+        userId: options.userId,
+        projectId: options.projectId,
+        response,
+        modelName: 'gpt-4o-mini',
+        purpose: 'Chapter Detection',
+        shouldDebit: true
+      });
+    }
 
     const responseText = response.choices[0]?.message?.content || '{}';
 

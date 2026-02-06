@@ -1,6 +1,6 @@
 "use client";
 
-import { useState, useMemo, useEffect, type ReactNode } from 'react';
+import { useState, useMemo, useEffect, useCallback, useRef, type ReactNode, type RefObject } from 'react';
 import { getSpeakerColor, getSpeakerDisplayName } from '@/lib/name-extraction';
 import { SpeakerSegment } from '@/lib/types';
 import { formatTime } from '@/lib/time-utils';
@@ -13,9 +13,25 @@ import {
   X,
   Trash2,
   AlertTriangle,
+  PanelRightOpen,
+  PanelRightClose,
   Lightbulb,
-  ExternalLink
+  Sparkles,
+  RefreshCw,
+  ChevronDown,
+  ChevronUp,
+  Undo2
 } from 'lucide-react';
+import { shiftSpeakerLabels } from '@/lib/utils/shiftSpeakerLabels';
+import {
+  InsightsSidebar,
+  TranscriptHighlight,
+  scrollToHighlight,
+  type Insight,
+  type Category
+} from '@/components/insights';
+import { SpeakerManagerModal } from '@/components/SpeakerManagerModal';
+import type { AudioPlayerRef } from '@/lib/hooks/useSpeakerSample';
 
 interface ConversationViewProps {
   speakerData: {
@@ -39,12 +55,33 @@ interface ConversationViewProps {
     confidence: number;
     evidence: string;
   }>;
+  // External control for insights sidebar
+  insightsSidebarOpen?: boolean;
+  onInsightsSidebarChange?: (open: boolean) => void;
+  onInsightsStatusChange?: (status: {
+    count: number;
+    loading: boolean;
+    generating: boolean;
+  }) => void;
+  onInsightsDataChange?: (insights: Array<{
+    id: string;
+    title: string;
+    category: 'concept' | 'person' | 'tool';
+    definition: string;
+    significance: string;
+    sources: Array<{ title: string; url: string }>;
+    matchText?: string;
+    matchVariants?: string[];
+  }>) => void;
+  triggerInsightGeneration?: number;
+  // Audio player ref for speaker sample playback
+  audioPlayerRef?: RefObject<AudioPlayerRef | null>;
 }
 
 interface InsightCard {
   entityId: string;
   label: string;
-  category: 'person' | 'org' | 'concept' | 'product' | 'social';
+  category: 'person' | 'org' | 'concept' | 'product' | 'social' | 'tool';
   matchText: string;
   matchVariants?: string[];
   transcriptExcerpt: string;
@@ -61,6 +98,8 @@ interface InsightCard {
   relationships?: Array<{ type: string; entityId: string; description: string }>;
 }
 
+const resolveSpeakerId = (segment: SpeakerSegment) => segment.finalSpeakerId || segment.speakerId;
+
 export default function ConversationView({
   speakerData,
   transcriptionText,
@@ -68,7 +107,13 @@ export default function ConversationView({
   projectId,
   onSpeakerUpdate,
   userTier = 'basic',
-  filteredSpeakers = []
+  filteredSpeakers = [],
+  insightsSidebarOpen,
+  onInsightsSidebarChange,
+  onInsightsStatusChange,
+  onInsightsDataChange,
+  triggerInsightGeneration,
+  audioPlayerRef
 }: ConversationViewProps) {
   const [showTimestamps, setShowTimestamps] = useState(true);
   const [selectedSpeaker, setSelectedSpeaker] = useState<string | null>(null);
@@ -84,15 +129,22 @@ export default function ConversationView({
   const [bulkReassigning, setBulkReassigning] = useState(false);
   const [segmentReassigning, setSegmentReassigning] = useState<number | null>(null);
   const [activeInsightId, setActiveInsightId] = useState<string | null>(null);
-  const [showInlineInsights, setShowInlineInsights] = useState(false);
-  const [showSpeakerLegend, setShowSpeakerLegend] = useState(false);
-  const [researchingInsightId, setResearchingInsightId] = useState<string | null>(null);
+  const [internalShowInlineInsights, setInternalShowInlineInsights] = useState(false);
+
+  // Shift cascade state for fixing diarization drift
+  const [shiftHistory, setShiftHistory] = useState<SpeakerSegment[][]>([]);
+  const [lastShiftInfo, setLastShiftInfo] = useState<{ count: number; direction: string } | null>(null);
+
+  // Use external control if provided, otherwise internal state
+  const showInlineInsights = insightsSidebarOpen !== undefined ? insightsSidebarOpen : internalShowInlineInsights;
+  const setShowInlineInsights = onInsightsSidebarChange || setInternalShowInlineInsights;
 
   // New state for AI-powered insights from database
   const [inlineInsightPresets, setInlineInsightPresets] = useState<InsightCard[]>([]);
   const [insightsLoading, setInsightsLoading] = useState(true);
   const [insightsError, setInsightsError] = useState<string | null>(null);
   const [refreshingInsights, setRefreshingInsights] = useState(false);
+  const [generatingInsights, setGeneratingInsights] = useState(false);
 
   // Helper to check if a speaker is filtered
   const getFilterInfo = (speakerId: string) => {
@@ -278,6 +330,96 @@ export default function ConversationView({
     setSelectedSegments(newSelection);
   };
 
+  // Shift cascade handlers for fixing diarization drift
+  const handleShiftCascade = async (fromIndex: number, direction: 'forward' | 'backward') => {
+    if (!projectId || !speakerData?.segments) return;
+
+    const speakerOrder = Object.keys(speakerData.speakers);
+    if (speakerOrder.length < 2) return;
+
+    // Save current state for undo
+    setShiftHistory(prev => [...prev.slice(-9), speakerData.segments]);
+
+    // Create segment with ID for the shift function
+    const segmentsWithIds = speakerData.segments.map((seg: SpeakerSegment, i: number) => ({
+      ...seg,
+      id: `segment-${i}`,
+    }));
+
+    const result = shiftSpeakerLabels(
+      segmentsWithIds,
+      `segment-${fromIndex}`,
+      direction,
+      speakerOrder
+    );
+
+    if (result.affectedCount === 0) return;
+
+    // Build updated speaker data
+    const updatedSegments = result.segments.map(({ id, ...seg }) => seg);
+    const updatedSpeakerData = {
+      ...speakerData,
+      segments: updatedSegments,
+      detectionMetadata: {
+        ...speakerData.detectionMetadata,
+        lastModified: new Date().toISOString(),
+        lastModificationType: 'shift_cascade',
+      },
+    };
+
+    // Save to backend
+    try {
+      const response = await fetch(`/api/projects/${projectId}/speakers`, {
+        method: 'PATCH',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          speakerId: '_shift_cascade',
+          newName: '_shift_cascade',
+          speakerData: updatedSpeakerData,
+        }),
+      });
+
+      if (response.ok && onSpeakerUpdate) {
+        onSpeakerUpdate(updatedSpeakerData);
+        setLastShiftInfo({ count: result.affectedCount, direction });
+        setTimeout(() => setLastShiftInfo(null), 3000);
+      }
+    } catch (error) {
+      console.error('Shift cascade failed:', error);
+      // Revert on error
+      setShiftHistory(prev => prev.slice(0, -1));
+    }
+  };
+
+  const handleUndoShift = async () => {
+    if (!projectId || shiftHistory.length === 0) return;
+
+    const previousSegments = shiftHistory[shiftHistory.length - 1];
+    const updatedSpeakerData = {
+      ...speakerData,
+      segments: previousSegments,
+    };
+
+    try {
+      const response = await fetch(`/api/projects/${projectId}/speakers`, {
+        method: 'PATCH',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          speakerId: '_undo_shift',
+          newName: '_undo_shift',
+          speakerData: updatedSpeakerData,
+        }),
+      });
+
+      if (response.ok && onSpeakerUpdate) {
+        onSpeakerUpdate(updatedSpeakerData);
+        setShiftHistory(prev => prev.slice(0, -1));
+      }
+    } catch (error) {
+      console.error('Undo shift failed:', error);
+    }
+  };
+
   if (!speakerData || !speakerData.segments || speakerData.segments.length === 0) {
     return (
       <div className={`p-6 bg-yellow-50 border border-yellow-200 rounded-lg ${className}`}>
@@ -320,7 +462,7 @@ export default function ConversationView({
 
   const filteredSegments = useMemo(() => {
     if (selectedSpeaker) {
-      return segmentsWithIndex.filter(({ segment }) => segment.speakerId === selectedSpeaker);
+      return segmentsWithIndex.filter(({ segment }) => resolveSpeakerId(segment) === selectedSpeaker);
     }
     return segmentsWithIndex;
   }, [segmentsWithIndex, selectedSpeaker]);
@@ -421,6 +563,39 @@ export default function ConversationView({
     return inlineInsightPresets.find(card => card.entityId === activeInsightId) || null;
   }, [activeInsightId, inlineInsightPresets]);
 
+  // Transform old InsightCard format to new Insight format for the new components
+  const transformedInsights: Insight[] = useMemo(() => {
+    return activeInlineInsights.map((card): Insight => {
+      // Map categories to: person, concept, or tool
+      let category: Category = 'concept';
+      if (card.category === 'person') {
+        category = 'person';
+      } else if (card.category === 'tool' || card.category === 'org' || card.category === 'product') {
+        category = 'tool';
+      }
+      // 'concept' and 'social' both map to 'concept'
+
+      return {
+        id: card.entityId,
+        title: card.label,
+        category,
+        definition: card.summary || card.transcriptExcerpt || '',
+        significance: card.whyItMatters || '',
+        sources: (card.sources || []).map(s => ({
+          title: s.title,
+          url: s.url || '#',
+        })),
+        matchText: card.matchText,
+        matchVariants: card.matchVariants,
+      };
+    });
+  }, [activeInlineInsights]);
+
+  // Handler for insight clicks - syncs sidebar and transcript
+  const handleInsightClick = useCallback((insightId: string) => {
+    setActiveInsightId((prev) => (prev === insightId ? null : insightId));
+  }, []);
+
   const togglePresetInsight = (entityId: string) => {
     setActiveInsightIds((prev) => {
       const next = new Set(prev);
@@ -477,17 +652,6 @@ export default function ConversationView({
       document.removeEventListener('keydown', handleKey);
     };
   }, [showInlineInsights]);
-
-  const handleRunDeepResearch = (card: InsightCard) => {
-    const query = card.summary || card.label || card.matchText;
-    if (!query) return;
-    setResearchingInsightId(card.entityId);
-    const url = `https://www.google.com/search?q=${encodeURIComponent(query)}`;
-    window.open(url, '_blank', 'noopener,noreferrer');
-    setTimeout(() => {
-      setResearchingInsightId(prev => (prev === card.entityId ? null : prev));
-    }, 800);
-  };
 
   const handleRefreshInsights = async () => {
     if (!projectId || userTier !== 'premium' || refreshingInsights) {
@@ -547,30 +711,159 @@ export default function ConversationView({
     }
   };
 
-  const highlightSegmentText = (text: string) => {
+  // Track previous trigger value to detect changes
+  const prevTriggerRef = useRef<number | undefined>(undefined);
+
+  // Trigger generation from external control
+  useEffect(() => {
+    // Only trigger if the value actually changed (and is greater than 0)
+    if (
+      triggerInsightGeneration !== undefined &&
+      triggerInsightGeneration > 0 &&
+      triggerInsightGeneration !== prevTriggerRef.current &&
+      !generatingInsights &&
+      !insightsLoading &&
+      inlineInsightPresets.length === 0
+    ) {
+      handleGenerateInsights();
+    }
+    prevTriggerRef.current = triggerInsightGeneration;
+  }, [triggerInsightGeneration, generatingInsights, insightsLoading, inlineInsightPresets.length]);
+
+  // Report status changes to parent
+  useEffect(() => {
+    if (onInsightsStatusChange) {
+      onInsightsStatusChange({
+        count: inlineInsightPresets.length,
+        loading: insightsLoading,
+        generating: generatingInsights,
+      });
+    }
+  }, [inlineInsightPresets.length, insightsLoading, generatingInsights, onInsightsStatusChange]);
+
+  // Report insights data changes to parent (for ContextSidebar)
+  useEffect(() => {
+    if (onInsightsDataChange) {
+      // Map InsightCard to Insight format expected by ContextSidebar
+      const mappedInsights = inlineInsightPresets.map(card => {
+        // Map category to allowed types
+        let category: 'concept' | 'person' | 'tool' = 'concept';
+        if (card.category === 'person') category = 'person';
+        else if (card.category === 'tool') category = 'tool';
+
+        return {
+          id: card.entityId,
+          title: card.label,
+          category,
+          definition: card.summary,
+          significance: card.whyItMatters || card.transcriptExcerpt || '',
+          sources: (card.sources || []).map(s => ({
+            title: s.title,
+            url: s.url || '',
+          })),
+          matchText: card.matchText,
+          matchVariants: card.matchVariants,
+        };
+      });
+      onInsightsDataChange(mappedInsights);
+    }
+  }, [inlineInsightPresets, onInsightsDataChange]);
+
+  // Generate insights for the first time
+  const handleGenerateInsights = async () => {
+    if (!projectId || generatingInsights) {
+      return;
+    }
+
+    try {
+      setGeneratingInsights(true);
+
+      // Call the refresh endpoint which also handles initial generation
+      const response = await fetch(`/api/insights/${projectId}/refresh`, {
+        method: 'POST',
+      });
+
+      const data = await response.json();
+
+      if (!response.ok) {
+        throw new Error(data.error || 'Failed to generate insights');
+      }
+
+      // Fetch the newly generated insights
+      const fetchResponse = await fetch(`/api/insights/${projectId}?tier=${userTier}`);
+      const fetchData = await fetchResponse.json();
+
+      if (fetchResponse.ok) {
+        const transformedInsights: InsightCard[] = (fetchData.insights || []).map((insight: any) => ({
+          entityId: insight.entity_id,
+          label: insight.label,
+          category: insight.category as 'person' | 'concept' | 'tool',
+          matchText: insight.match_text,
+          matchVariants: insight.match_variants || [],
+          transcriptExcerpt: insight.transcript_excerpts?.[0]?.text || '',
+          summary: userTier === 'premium'
+            ? insight.full_explanation
+            : userTier === 'pro'
+            ? insight.simple_definition
+            : '',
+          confidence: insight.confidence || 0.8,
+          sources: insight.external_sources || [],
+          updatedAt: insight.updated_at || new Date().toISOString(),
+          status: insight.status || 'auto_detected',
+          origin: 'entity' as const,
+          relatedConcepts: userTier === 'premium' ? insight.related_concepts : undefined,
+          whyItMatters: userTier === 'premium' ? insight.why_it_matters : undefined,
+          relationships: userTier === 'premium' ? insight.relationships : undefined
+        }));
+
+        setInlineInsightPresets(transformedInsights);
+        // Auto-open sidebar after generation
+        setShowInlineInsights(true);
+      }
+
+      console.log(`[Insights] Generated: ${data.insight_count} insights`);
+    } catch (error) {
+      console.error('[Insights] Generation failed:', error);
+      alert('Failed to generate insights. Please try again.');
+    } finally {
+      setGeneratingInsights(false);
+    }
+  };
+
+  // New highlight function using the redesigned TranscriptHighlight component
+  const highlightSegmentText = (text: string): ReactNode => {
+    if (!transformedInsights.length) {
+      return text;
+    }
+
+    // Build matches
     const matches: Array<{
       start: number;
       end: number;
-      card: InsightCard;
+      insight: Insight;
       matchText: string;
     }> = [];
 
-    activeInlineInsights.forEach(card => {
-      getInsightTargets(card).forEach((target, variantIndex) => {
+    transformedInsights.forEach((insight) => {
+      const targets = [insight.matchText || insight.title];
+      if (insight.matchVariants) {
+        targets.push(...insight.matchVariants);
+      }
+
+      targets.forEach((target) => {
+        if (!target) return;
         const escaped = target.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
-        if (!escaped) {
-          return;
-        }
         const regex = new RegExp(escaped, 'gi');
         let match: RegExpExecArray | null;
+
         while ((match = regex.exec(text)) !== null) {
           matches.push({
             start: match.index,
             end: match.index + match[0].length,
-            card,
-            matchText: match[0]
+            insight,
+            matchText: match[0],
           });
-          // Prevent infinite loops for zero-width matches
+
           if (match.index === regex.lastIndex) {
             regex.lastIndex++;
           }
@@ -582,11 +875,22 @@ export default function ConversationView({
       return text;
     }
 
-    const ordered = matches.sort((a, b) => a.start - b.start);
+    // Sort and remove overlaps
+    const sorted = matches.sort((a, b) => a.start - b.start);
+    const nonOverlapping: typeof matches = [];
+
+    for (const match of sorted) {
+      const last = nonOverlapping[nonOverlapping.length - 1];
+      if (!last || match.start >= last.end) {
+        nonOverlapping.push(match);
+      }
+    }
+
+    // Build nodes
     const nodes: ReactNode[] = [];
     let cursor = 0;
 
-    ordered.forEach((match, index) => {
+    nonOverlapping.forEach((match, index) => {
       if (match.start > cursor) {
         nodes.push(
           <span key={`text-${index}-${cursor}`}>
@@ -596,23 +900,13 @@ export default function ConversationView({
       }
 
       nodes.push(
-        <span
-          key={`insight-${match.card.entityId}-${index}`}
-          className="relative inline-block"
-          data-insight-trigger="true"
-        >
-          <button
-            type="button"
-            onClick={(e) => {
-              e.stopPropagation();
-              setActiveInsightId(prev => prev === match.card.entityId ? null : match.card.entityId);
-            }}
-            className="inline-flex items-center gap-1 px-1 rounded-sm bg-amber-50 text-amber-900 underline decoration-dotted decoration-amber-500 hover:bg-amber-100 focus:outline-none focus:ring-2 focus:ring-amber-400 text-sm"
-          >
-            <span>{match.matchText}</span>
-            <Lightbulb className="h-3 w-3" />
-          </button>
-        </span>
+        <TranscriptHighlight
+          key={`insight-${match.insight.id}-${index}`}
+          text={match.matchText}
+          insight={match.insight}
+          isActive={activeInsightId === match.insight.id}
+          onClick={handleInsightClick}
+        />
       );
 
       cursor = match.end;
@@ -631,16 +925,80 @@ export default function ConversationView({
     <div className={`h-full flex flex-col ${className}`}>
       {/* Conversation Header */}
       <div className="flex-shrink-0 p-4 pb-3 flex flex-col gap-3 lg:flex-row lg:items-center lg:justify-between">
-        <div className="flex items-center gap-3">
-          <div className="flex items-center justify-center h-9 w-9 rounded-full bg-blue-50 text-blue-600">
-            <MessageCircle className="h-4 w-4" />
+        <div className="flex items-center gap-4">
+          {/* Conversation Info */}
+          <div className="flex items-center gap-3">
+            <div className="flex items-center justify-center h-9 w-9 rounded-full bg-blue-50 text-blue-600">
+              <MessageCircle className="h-4 w-4" />
+            </div>
+            <div>
+              <h4 className="text-sm font-semibold text-gray-900">Conversation</h4>
+              <p className="text-xs text-gray-500">
+                {detectionMetadata.totalSpeakers} speaker{detectionMetadata.totalSpeakers !== 1 ? 's' : ''} • {detectionMetadata.totalSegments} segments
+              </p>
+            </div>
           </div>
-          <div>
-            <h4 className="text-sm font-semibold text-gray-900">Conversation Format</h4>
-            <p className="text-xs text-gray-500">
-              {detectionMetadata.totalSpeakers} speaker{detectionMetadata.totalSpeakers !== 1 ? 's' : ''} • {detectionMetadata.totalSegments} segments
-            </p>
-          </div>
+
+          {/* Only show internal Insights button when NOT controlled externally */}
+          {insightsSidebarOpen === undefined && (
+            <>
+              {/* Divider */}
+              <div className="h-8 w-px bg-gray-200 hidden sm:block" />
+
+              {/* Insights Button - Only shown when not externally controlled */}
+              <button
+                type="button"
+                onClick={() => {
+                  if (inlineInsightPresets.length === 0 && !insightsLoading && !generatingInsights) {
+                    handleGenerateInsights();
+                  } else {
+                    setShowInlineInsights(!showInlineInsights);
+                  }
+                }}
+                disabled={generatingInsights || insightsLoading}
+                className={`flex items-center gap-2 px-3 py-2 rounded-lg transition-all ${
+                  showInlineInsights
+                    ? 'bg-amber-50 text-amber-700 ring-1 ring-amber-200'
+                    : generatingInsights || insightsLoading
+                    ? 'bg-gray-50 text-gray-400 cursor-wait'
+                    : inlineInsightPresets.length === 0
+                    ? 'bg-gray-50 text-gray-600 hover:bg-amber-50 hover:text-amber-700'
+                    : 'bg-gray-50 text-gray-600 hover:bg-gray-100'
+                }`}
+              >
+                <div className={`flex items-center justify-center h-7 w-7 rounded-full ${
+                  showInlineInsights ? 'bg-amber-100' : 'bg-white border border-gray-200'
+                }`}>
+                  {generatingInsights ? (
+                    <RefreshCw className="h-3.5 w-3.5 animate-spin text-amber-600" />
+                  ) : insightsLoading ? (
+                    <div className="h-3 w-3 border-2 border-gray-300 border-t-gray-600 rounded-full animate-spin" />
+                  ) : inlineInsightPresets.length === 0 ? (
+                    <Sparkles className="h-3.5 w-3.5 text-amber-500" />
+                  ) : (
+                    <Lightbulb className={`h-3.5 w-3.5 ${showInlineInsights ? 'text-amber-600' : 'text-gray-500'}`} />
+                  )}
+                </div>
+                <div className="text-left">
+                  <p className="text-sm font-medium">
+                    {generatingInsights
+                      ? 'Generating...'
+                      : insightsLoading
+                      ? 'Loading...'
+                      : inlineInsightPresets.length === 0
+                      ? 'Generate Insights'
+                      : 'Insights'}
+                  </p>
+                  {!generatingInsights && !insightsLoading && inlineInsightPresets.length > 0 && (
+                    <p className="text-xs text-gray-500">{transformedInsights.length} found</p>
+                  )}
+                </div>
+                {showInlineInsights && inlineInsightPresets.length > 0 && (
+                  <PanelRightClose className="h-4 w-4 ml-1 text-amber-500" />
+                )}
+              </button>
+            </>
+          )}
         </div>
 
         <div className="flex flex-wrap items-center gap-2">
@@ -668,232 +1026,69 @@ export default function ConversationView({
             ))}
           </select>
 
-          {inlineInsightPresets.length > 0 && (
-            <button
-              type="button"
-              onClick={() => setShowInlineInsights(prev => !prev)}
-              className={`inline-flex items-center gap-1 text-xs font-semibold rounded-full px-3 py-1.5 border ${
-                showInlineInsights ? 'border-amber-400 bg-amber-50 text-amber-900' : 'border-amber-200 text-amber-700 bg-white'
-              }`}
-            >
-              <Lightbulb className="h-3 w-3" />
-              Inline insights ({activeInlineInsights.length}/{inlineInsightPresets.length})
-            </button>
-          )}
-
-          {userTier === 'premium' && inlineInsightPresets.length > 0 && (
-            <button
-              type="button"
-              onClick={handleRefreshInsights}
-              disabled={refreshingInsights}
-              className={`inline-flex items-center gap-1 text-xs font-semibold rounded-full px-3 py-1.5 border ${
-                refreshingInsights
-                  ? 'border-gray-300 bg-gray-100 text-gray-500 cursor-not-allowed'
-                  : 'border-blue-200 text-blue-700 bg-white hover:bg-blue-50'
-              }`}
-              title="Regenerate insights with latest AI models"
-            >
-              {refreshingInsights ? (
-                <>
-                  <span className="animate-spin h-3 w-3 border-2 border-blue-500 border-t-transparent rounded-full" />
-                  Refreshing...
-                </>
-              ) : (
-                <>
-                  <svg className="h-3 w-3" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15" />
-                  </svg>
-                  Refresh insights
-                </>
-              )}
-            </button>
-          )}
-
-          {insightsLoading && (
-            <span className="text-xs text-gray-500 px-2">Loading insights...</span>
-          )}
-
           {speakerList.length > 1 && (
-            <button
-              type="button"
-              onClick={() => setShowSpeakerLegend(prev => !prev)}
-              className={`inline-flex items-center gap-1 text-xs font-semibold rounded-full px-3 py-1.5 border ${
-                showSpeakerLegend ? 'border-gray-400 bg-gray-100 text-gray-800' : 'border-gray-200 text-gray-600 bg-white'
-              }`}
-            >
-              <User className="h-3 w-3" />
-              Speakers ({speakerList.length})
-            </button>
+            <>
+              {/* Undo Shift Button */}
+              {shiftHistory.length > 0 && (
+                <button
+                  type="button"
+                  onClick={handleUndoShift}
+                  className="inline-flex items-center gap-1 text-xs font-semibold rounded-full px-3 py-1.5 border border-amber-200 bg-amber-50 text-amber-700 hover:bg-amber-100 transition-colors"
+                >
+                  <Undo2 className="h-3 w-3" />
+                  Undo Shift
+                </button>
+              )}
+
+              {/* Shift Feedback Toast */}
+              {lastShiftInfo && (
+                <span className="inline-flex items-center gap-1 text-xs font-medium text-green-700 bg-green-50 px-2 py-1 rounded-full border border-green-200 animate-pulse">
+                  Shifted {lastShiftInfo.count} segments {lastShiftInfo.direction === 'forward' ? 'down' : 'up'}
+                </span>
+              )}
+
+              {/* Speaker Manager Modal with Play Sample */}
+              {audioPlayerRef && (
+                <SpeakerManagerModal
+                  speakerData={speakerData}
+                  audioPlayerRef={audioPlayerRef}
+                  onRename={(speakerId, newName) => {
+                    // Reuse existing rename logic
+                    if (!projectId) return;
+
+                    const updatedSpeakerData = {
+                      ...speakerData,
+                      speakers: {
+                        ...speakerData.speakers,
+                        [speakerId]: {
+                          ...speakerData.speakers[speakerId],
+                          finalName: newName,
+                          customName: newName
+                        }
+                      }
+                    };
+
+                    // Save to backend
+                    fetch(`/api/projects/${projectId}/speakers`, {
+                      method: 'PATCH',
+                      headers: { 'Content-Type': 'application/json' },
+                      body: JSON.stringify({
+                        speakerId,
+                        newName,
+                        speakerData: updatedSpeakerData
+                      })
+                    }).then(response => {
+                      if (response.ok && onSpeakerUpdate) {
+                        onSpeakerUpdate(updatedSpeakerData);
+                      }
+                    }).catch(console.error);
+                  }}
+                />
+              )}
+            </>
           )}
         </div>
       </div>
-
-      {/* Inline Insight Presets */}
-      {/* Speaker Legend */}
-      {showSpeakerLegend && !selectedSpeaker && speakerList.length > 1 && (
-        <div className="flex-shrink-0 flex flex-wrap gap-3 p-4 mx-4 mb-3 bg-gray-50 border border-gray-200 rounded-lg">
-          <span className="text-xs font-medium text-gray-700 self-center">Speakers:</span>
-          {speakerList.map(speakerId => {
-            const speaker = speakers[speakerId];
-            const colorClass = getSpeakerColor(speakerId);
-            const currentName = getSpeakerDisplayName(speaker);
-            const isEditing = editingSpeaker === speakerId;
-            const isSaving = savingSpeaker === speakerId;
-            
-            return (
-              <div
-                key={speakerId}
-                className={`inline-flex items-center px-3 py-1.5 rounded-full text-xs font-medium ${colorClass} border border-gray-300 group relative`}
-              >
-                <User className="h-3 w-3 mr-1.5" />
-                
-                {isEditing ? (
-                  <div className="flex items-center space-x-1">
-                    <input
-                      type="text"
-                      value={editingName}
-                      onChange={(e) => setEditingName(e.target.value)}
-                      onKeyDown={(e) => {
-                        if (e.key === 'Enter') {
-                          handleSaveSpeaker(speakerId);
-                        } else if (e.key === 'Escape') {
-                          handleCancelEdit();
-                        }
-                      }}
-                      className="w-20 px-1 py-0.5 text-xs border border-gray-300 rounded bg-white text-gray-900"
-                      autoFocus
-                      disabled={isSaving}
-                    />
-                    <button
-                      onClick={() => handleSaveSpeaker(speakerId)}
-                      disabled={isSaving || !editingName.trim()}
-                      className="p-0.5 text-green-600 hover:text-green-800 disabled:opacity-50"
-                      title="Save"
-                    >
-                      {isSaving ? (
-                        <div className="h-3 w-3 animate-spin rounded-full border border-green-600 border-t-transparent" />
-                      ) : (
-                        <Check className="h-3 w-3" />
-                      )}
-                    </button>
-                    <button
-                      onClick={handleCancelEdit}
-                      disabled={isSaving}
-                      className="p-0.5 text-red-600 hover:text-red-800 disabled:opacity-50"
-                      title="Cancel"
-                    >
-                      <X className="h-3 w-3" />
-                    </button>
-                  </div>
-                ) : (
-                  <div className="flex items-center space-x-1">
-                    <span>{currentName}</span>
-
-                    {/* Roster match indicator */}
-                    {speaker.rosterMatched && (
-                      <span
-                        className="ml-1.5 px-2 py-0.5 rounded-full text-[10px] font-semibold bg-blue-100 text-blue-700 border border-blue-200"
-                        title={`Matched via ${(speaker.rosterMatchMethod || 'roster').replace(/_/g, ' ')} (${Math.round((speaker.rosterMatchConfidence || 0) * 100)}% confidence)`}
-                      >
-                        ROSTER
-                      </span>
-                    )}
-
-                    {projectId && (
-                      <div className="flex items-center space-x-1 opacity-0 group-hover:opacity-100 transition-opacity">
-                        <button
-                          onClick={() => handleEditSpeaker(speakerId, currentName)}
-                          className="p-0.5 text-gray-500 hover:text-gray-700"
-                          title="Edit speaker name"
-                        >
-                          <Edit2 className="h-3 w-3" />
-                        </button>
-                        <button
-                          onClick={() => handleDeleteSpeakerClick(speakerId)}
-                          className="p-0.5 text-red-500 hover:text-red-700"
-                          title="Delete speaker"
-                        >
-                          <Trash2 className="h-3 w-3" />
-                        </button>
-                      </div>
-                    )}
-                  </div>
-                )}
-                {pendingDeleteSpeaker === speakerId && (
-                  <div className="absolute left-0 top-full mt-2 w-64 rounded-lg border border-gray-200 bg-white p-3 shadow-lg space-y-3 text-xs text-gray-600 z-10">
-                    <div className="flex items-center space-x-2 text-red-600 font-semibold">
-                      <AlertTriangle className="h-4 w-4" />
-                      <span>Delete {currentName}?</span>
-                    </div>
-                    <div className="flex items-center space-x-3 text-[11px] uppercase tracking-wide text-gray-400">
-                      {Object.keys(speakers).length > 1 && (
-                        <label className="flex items-center space-x-1">
-                          <input
-                            type="radio"
-                            name={`delete-action-${speakerId}`}
-                            value="reassign"
-                            checked={deleteAction === 'reassign'}
-                            onChange={() => setDeleteAction('reassign')}
-                          />
-                          <span>Reassign</span>
-                        </label>
-                      )}
-                      <label className="flex items-center space-x-1">
-                        <input
-                          type="radio"
-                          name={`delete-action-${speakerId}`}
-                          value="delete"
-                          checked={deleteAction === 'delete'}
-                          onChange={() => setDeleteAction('delete')}
-                        />
-                        <span>Remove Segments</span>
-                      </label>
-                    </div>
-                    {deleteAction === 'reassign' && Object.keys(speakers).length > 1 ? (
-                      <select
-                        value={reassignToSpeaker}
-                        onChange={(e) => setReassignToSpeaker(e.target.value)}
-                        className="w-full border border-gray-200 rounded px-2 py-1.5 text-gray-800 bg-white"
-                      >
-                        {Object.keys(speakers)
-                          .filter(id => id !== speakerId)
-                          .map(id => (
-                            <option key={id} value={id}>
-                              {getSpeakerDisplayName(speakers[id])}
-                            </option>
-                          ))}
-                      </select>
-                    ) : (
-                      <p className="text-gray-500">
-                        Segments assigned to this speaker will be removed.
-                      </p>
-                    )}
-                    <div className="flex justify-end space-x-2">
-                      <button
-                        onClick={() => setPendingDeleteSpeaker(null)}
-                        className="px-2 py-1 text-gray-400 hover:text-gray-600"
-                      >
-                        Cancel
-                      </button>
-                      <button
-                        onClick={handleConfirmDelete}
-                        disabled={deletingSpeaker === speakerId}
-                        className="inline-flex items-center px-3 py-1.5 rounded bg-red-600 text-white font-semibold disabled:opacity-50"
-                      >
-                        {deletingSpeaker === speakerId ? (
-                          <span className="h-3 w-3 border border-white border-t-transparent rounded-full animate-spin" />
-                        ) : (
-                          'Delete'
-                        )}
-                      </button>
-                    </div>
-                  </div>
-                )}
-              </div>
-            );
-          })}
-        </div>
-      )}
 
       {/* Bulk Selection Controls */}
       {projectId && selectedSegments.size > 0 && (
@@ -956,20 +1151,21 @@ export default function ConversationView({
       <div className="flex-1 overflow-y-auto px-4 pb-4">
         <div className="space-y-4">
         {filteredSegments.map(({ segment, index: segmentIndex }) => {
-          const speaker = speakers[segment.speakerId];
+          const segmentSpeakerId = resolveSpeakerId(segment);
+          const speaker = speakers[segmentSpeakerId];
 
           // Safety check: skip segments with missing speaker data (can happen during reassignment)
           if (!speaker) {
-            console.warn(`Speaker ${segment.speakerId} not found in speakers record`);
+            console.warn(`Speaker ${segmentSpeakerId} not found in speakers record`);
             return null;
           }
 
           const speakerName = getSpeakerDisplayName(speaker) || 'Unknown Speaker';
           const speakerRoleLabel = formatRoleLabel(speaker.role);
           const roleTooltip = speaker.roleSummary || (speaker.autoRoleAssigned ? 'Automatically assigned role' : '');
-          const filterInfo = getFilterInfo(segment.speakerId);
+          const filterInfo = getFilterInfo(segmentSpeakerId);
           const isFiltered = !!filterInfo;
-          const colorClass = getSpeakerColor(segment.speakerId);
+          const colorClass = getSpeakerColor(segmentSpeakerId);
           const duration = segment.endTime - segment.startTime;
           const isSelected = selectedSegments.has(segmentIndex);
 
@@ -981,7 +1177,7 @@ export default function ConversationView({
 
           return (
             <div
-              key={`${segment.speakerId}-${segmentIndex}`}
+              key={`${segmentSpeakerId}-${segmentIndex}`}
               className="flex space-x-3 p-4 rounded-lg hover:bg-gray-50 transition-colors border border-gray-100"
             >
               {projectId && (
@@ -1050,24 +1246,47 @@ export default function ConversationView({
                 </div>
                 {projectId && (
                   <div className="flex items-center justify-between mb-2 flex-wrap gap-2">
-                    <label className="text-[11px] uppercase tracking-wide text-gray-400">
-                      Reassign
-                    </label>
-                    <select
-                      value={segment.speakerId}
-                      onChange={(e) => {
-                        if (e.target.value === segment.speakerId) return;
-                        handleSegmentReassign(segmentIndex, e.target.value);
-                      }}
-                      disabled={segmentReassigning === segmentIndex || bulkReassigning}
-                      className="text-xs border border-gray-200 rounded px-2 py-1 bg-white text-gray-700"
-                    >
-                      {speakerList.map((speakerId) => (
-                        <option key={speakerId} value={speakerId}>
-                          {getSpeakerDisplayName(speakers[speakerId])}
-                        </option>
-                      ))}
-                    </select>
+                    <div className="flex items-center gap-2">
+                      <label className="text-[11px] uppercase tracking-wide text-gray-400">
+                        Reassign
+                      </label>
+                      <select
+                        value={segmentSpeakerId}
+                        onChange={(e) => {
+                          if (e.target.value === segmentSpeakerId) return;
+                          handleSegmentReassign(segmentIndex, e.target.value);
+                        }}
+                        disabled={segmentReassigning === segmentIndex || bulkReassigning}
+                        className="text-xs border border-gray-200 rounded px-2 py-1 bg-white text-gray-700"
+                      >
+                        {speakerList.map((speakerId) => (
+                          <option key={speakerId} value={speakerId}>
+                            {getSpeakerDisplayName(speakers[speakerId])}
+                          </option>
+                        ))}
+                      </select>
+                    </div>
+
+                    {/* Shift Cascade Buttons */}
+                    <div className="flex items-center gap-1">
+                      <span className="text-[11px] uppercase tracking-wide text-gray-400 mr-1">
+                        Shift
+                      </span>
+                      <button
+                        onClick={() => handleShiftCascade(segmentIndex, 'backward')}
+                        className="p-1 rounded hover:bg-purple-100 text-purple-600 transition-colors"
+                        title="Shift labels up from here (C→B, B→A)"
+                      >
+                        <ChevronUp className="w-4 h-4" />
+                      </button>
+                      <button
+                        onClick={() => handleShiftCascade(segmentIndex, 'forward')}
+                        className="p-1 rounded hover:bg-blue-100 text-blue-600 transition-colors"
+                        title="Shift labels down from here (A→B, B→C)"
+                      >
+                        <ChevronDown className="w-4 h-4" />
+                      </button>
+                    </div>
                   </div>
                 )}
 
@@ -1096,24 +1315,16 @@ export default function ConversationView({
         )}
       </div>
 
-      {activeInsightCard && (
-        <InsightDetailPanel
-          card={activeInsightCard}
-          onClose={() => setActiveInsightId(null)}
-          onRunResearch={() => handleRunDeepResearch(activeInsightCard)}
-          isResearching={researchingInsightId === activeInsightCard.entityId}
-        />
-      )}
-
-      {showInlineInsights && inlineInsightPresets.length > 0 && (
-        <InlineInsightsDrawer
-          cards={inlineInsightPresets}
-          activeInsightIds={activeInsightIds}
-          togglePreset={togglePresetInsight}
-          activeCount={activeInlineInsights.length}
-          totalCount={inlineInsightPresets.length}
-          onClose={() => setShowInlineInsights(false)}
-        />
+      {/* Insights Sidebar */}
+      {showInlineInsights && transformedInsights.length > 0 && (
+        <div className="fixed top-0 right-0 h-full w-80 z-40 shadow-xl">
+          <InsightsSidebar
+            insights={transformedInsights}
+            activeInsightId={activeInsightId}
+            onInsightClick={handleInsightClick}
+            onClose={() => setShowInlineInsights(false)}
+          />
+        </div>
       )}
     </div>
   );
@@ -1193,7 +1404,7 @@ function deriveSpeakerInsightCards(speakerData: any): InsightCard[] {
         .filter(value => value.length > 1 && value !== matchText);
 
       const firstSegment =
-        segments.find(segment => segment.speakerId === speakerId && segment.text?.trim()) ||
+        segments.find(segment => resolveSpeakerId(segment) === speakerId && segment.text?.trim()) ||
         segments.find(segment => segment.text?.toLowerCase().includes(matchText.toLowerCase()));
 
       const transcriptExcerpt = trimExcerpt(firstSegment?.text || '');
@@ -1297,9 +1508,9 @@ function deriveEntityInsightCards(transcriptionText?: string, speakerData?: any)
       // Prioritize by relevance: companies/products first, then by count
       const catA = guessEntityCategory(a.phrase);
       const catB = guessEntityCategory(b.phrase);
-      const priority = { org: 3, product: 2, concept: 1, person: 0, social: 0 };
-      const prioA = priority[catA] || 0;
-      const prioB = priority[catB] || 0;
+      const priority: Record<string, number> = { org: 3, product: 2, tool: 3, concept: 1, person: 0, social: 0 };
+      const prioA = priority[catA] ?? 0;
+      const prioB = priority[catB] ?? 0;
 
       if (prioA !== prioB) return prioB - prioA;
       return b.count - a.count;
@@ -1479,204 +1690,4 @@ function getInsightTargets(card: InsightCard): string[] {
     });
 }
 
-function InsightDetailPanel({
-  card,
-  onClose,
-  onRunResearch,
-  isResearching
-}: {
-  card: InsightCard;
-  onClose: () => void;
-  onRunResearch: () => void;
-  isResearching: boolean;
-}) {
-  return (
-    <div
-      className="fixed bottom-4 right-4 z-30 w-full max-w-lg bg-white border border-gray-200 shadow-2xl rounded-2xl p-5 space-y-4"
-      data-insight-panel="true"
-    >
-      <div className="flex items-start justify-between gap-3">
-        <div className="flex flex-col gap-1">
-          <span className="text-[11px] uppercase tracking-wide text-amber-600 font-semibold">
-            Insight • {card.category.toUpperCase()}
-          </span>
-          {card.status && (
-            <span className="text-[11px] uppercase tracking-wide text-gray-400">
-              {card.status.replace('_', ' ')}
-            </span>
-          )}
-        </div>
-        <button
-          type="button"
-          onClick={onClose}
-          className="text-gray-400 hover:text-gray-600"
-          aria-label="Close insight details"
-        >
-          <X className="h-4 w-4" />
-        </button>
-      </div>
-      <p className="text-base font-semibold text-gray-900 leading-relaxed">
-        {card.summary || card.transcriptExcerpt}
-      </p>
-
-      {card.whyItMatters && (
-        <div className="space-y-2">
-          <p className="text-[11px] uppercase tracking-wide text-amber-600 font-semibold">Why it matters</p>
-          <p className="text-sm text-gray-700 leading-relaxed">
-            {card.whyItMatters}
-          </p>
-        </div>
-      )}
-
-      {card.relatedConcepts && card.relatedConcepts.length > 0 && (
-        <div className="space-y-2">
-          <p className="text-[11px] uppercase tracking-wide text-amber-600 font-semibold">Related concepts</p>
-          <div className="flex flex-wrap gap-2">
-            {card.relatedConcepts.map((concept, idx) => (
-              <span
-                key={idx}
-                className="inline-block px-2 py-1 text-xs bg-amber-50 text-amber-800 rounded-md border border-amber-200"
-              >
-                {concept}
-              </span>
-            ))}
-          </div>
-        </div>
-      )}
-
-      <div className="space-y-2">
-        <p className="text-[11px] uppercase tracking-wide text-gray-400 font-semibold">Transcript context</p>
-        <div className="rounded-lg bg-gray-50 p-3 text-sm text-gray-800 leading-relaxed">
-          "{card.transcriptExcerpt}"
-        </div>
-      </div>
-      {card.sources && card.sources.length > 0 && (
-        <div className="space-y-2">
-          <p className="text-[11px] uppercase tracking-wide text-gray-400 font-semibold">Sources</p>
-          <div className="space-y-1.5 max-h-48 overflow-y-auto pr-1">
-            {card.sources.map((source, idx) => (
-              <div key={`${source.title}-${idx}`} className="space-y-1 border border-gray-100 rounded-lg p-2">
-                <span className="text-sm text-gray-800 leading-relaxed block">
-                  {source.title}
-                </span>
-                <div className="flex items-center justify-between text-xs text-gray-500">
-                  <span className="uppercase tracking-wide text-gray-400">
-                    {source.type || 'note'}
-                  </span>
-                  {source.url && (
-                    <a
-                      href={source.url}
-                      target="_blank"
-                      rel="noreferrer"
-                      className="inline-flex items-center text-blue-600 hover:text-blue-800"
-                    >
-                      View <ExternalLink className="h-3 w-3 ml-1" />
-                    </a>
-                  )}
-                </div>
-              </div>
-            ))}
-          </div>
-        </div>
-      )}
-      <div className="flex items-center justify-between text-xs text-gray-500">
-        <span>Updated {new Date(card.updatedAt).toLocaleDateString()}</span>
-        {card.origin && <span className="capitalize">{card.origin} insight</span>}
-      </div>
-      <button
-        type="button"
-        onClick={onRunResearch}
-        disabled={isResearching}
-        className="w-full inline-flex items-center justify-center px-4 py-2 text-sm font-semibold text-white bg-amber-500 hover:bg-amber-600 rounded-lg transition disabled:opacity-60"
-      >
-        {isResearching ? 'Opening research...' : 'Run deeper research'}
-      </button>
-    </div>
-  );
-}
-
-function InlineInsightsDrawer({
-  cards,
-  activeInsightIds,
-  togglePreset,
-  activeCount,
-  totalCount,
-  onClose
-}: {
-  cards: InsightCard[];
-  activeInsightIds: Set<string>;
-  togglePreset: (id: string) => void;
-  activeCount: number;
-  totalCount: number;
-  onClose: () => void;
-}) {
-  return (
-    <div className="fixed inset-0 z-40 flex">
-      <button
-        type="button"
-        className="hidden md:block flex-1 bg-black/30 backdrop-blur-sm"
-        aria-label="Close inline insights overlay"
-        onClick={onClose}
-      />
-      <div className="ml-auto flex h-full w-full max-w-full md:max-w-md bg-white shadow-2xl ring-1 ring-black/10 flex-col">
-        <div className="px-4 py-4 border-b border-gray-200 flex items-start justify-between">
-          <div>
-            <p className="text-xs uppercase tracking-wide text-amber-600 font-semibold">Inline Insights</p>
-            <p className="text-sm text-gray-600">
-              Toggle highlights to surface takeaways directly inside the transcript.
-            </p>
-          </div>
-          <button
-            type="button"
-            onClick={onClose}
-            className="text-gray-400 hover:text-gray-600"
-            aria-label="Close"
-          >
-            <X className="h-4 w-4" />
-          </button>
-        </div>
-        <div className="px-4 py-2 text-xs text-gray-500 border-b border-gray-100">
-          {activeCount}/{totalCount} active
-        </div>
-        <div className="flex-1 overflow-y-auto p-4 space-y-3">
-          {cards.map((card) => {
-            const isActive = activeInsightIds.has(card.entityId);
-            const subtitleParts: string[] = [];
-            if (card.category) subtitleParts.push(card.category);
-            if (card.origin === 'speaker') subtitleParts.push('speaker');
-            if (card.origin === 'entity') subtitleParts.push('entity');
-
-            return (
-              <button
-                key={card.entityId}
-                type="button"
-                onClick={() => togglePreset(card.entityId)}
-                className={`w-full text-left rounded-xl border p-4 transition shadow-sm ${
-                  isActive ? 'border-amber-400 bg-amber-50/80' : 'border-gray-200 hover:border-amber-200 hover:bg-amber-50/40'
-                }`}
-              >
-                <div className="flex items-center justify-between gap-3">
-                  <div>
-                    <p className="text-sm font-semibold text-gray-900">{card.label}</p>
-                    <p className="text-[11px] uppercase tracking-wide text-gray-400">
-                      {subtitleParts.join(' • ')}
-                    </p>
-                  </div>
-                  <span
-                    className={`inline-flex items-center rounded-full px-2 py-0.5 text-[11px] font-semibold ${
-                      isActive ? 'bg-amber-200 text-amber-900' : 'bg-gray-100 text-gray-500'
-                    }`}
-                  >
-                    {isActive ? 'Active' : 'Enable'}
-                  </span>
-                </div>
-                <p className="mt-2 text-xs text-gray-600 line-clamp-3">{card.summary}</p>
-                <div className="mt-2 text-[11px] text-gray-500 line-clamp-2">{card.transcriptExcerpt}</div>
-              </button>
-            );
-          })}
-        </div>
-      </div>
-    </div>
-  );
-}
+// Old InsightDetailPanel and InlineInsightsDrawer removed - now using components/insights

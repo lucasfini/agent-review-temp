@@ -20,10 +20,15 @@ export interface TranscriptionSegment {
 
 export interface SpeakerSegment {
   speakerId: string;
+  // Authoritative assignment after attribution pipeline
+  finalSpeakerId?: string;
+  // Original diarization cluster ID (pre-attribution)
+  initialSpeakerId?: string;
   startTime: number;
   endTime: number;
   text: string;
   confidence?: number;
+  status?: 'confirmed' | 'tentative' | 'uncertain';
 }
 
 export interface DetectedSpeaker {
