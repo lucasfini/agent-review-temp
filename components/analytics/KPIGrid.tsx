@@ -95,7 +95,7 @@ export function KPIGrid({
       trend: projectsTrend,
       sparkline: projectsSparkline,
       icon: <FileText className="h-5 w-5" />,
-      iconBg: 'bg-slate-100 text-slate-600',
+      iconBg: 'bg-slate-800 text-slate-400',
       sparklineColor: '#64748b'
     },
     {
@@ -104,7 +104,7 @@ export function KPIGrid({
       trend: outputsTrend,
       sparkline: outputsSparkline,
       icon: <Zap className="h-5 w-5" />,
-      iconBg: 'bg-blue-50 text-blue-600',
+      iconBg: 'bg-blue-900/20 text-blue-400',
       sparklineColor: '#3b82f6'
     },
     {
@@ -113,7 +113,7 @@ export function KPIGrid({
       trend: processingTrend,
       sparkline: processingSparkline,
       icon: <Clock className="h-5 w-5" />,
-      iconBg: 'bg-emerald-50 text-emerald-600',
+      iconBg: 'bg-emerald-900/20 text-emerald-400',
       sparklineColor: '#10b981'
     },
     {
@@ -122,7 +122,7 @@ export function KPIGrid({
       trend: spendTrend,
       sparkline: spendSparkline,
       icon: <DollarSign className="h-5 w-5" />,
-      iconBg: 'bg-violet-50 text-violet-600',
+      iconBg: 'bg-violet-900/20 text-violet-400',
       sparklineColor: '#8b5cf6'
     }
   ]
@@ -134,7 +134,7 @@ export function KPIGrid({
           key={idx}
           role="group"
           aria-label={`${card.title}: ${card.value}`}
-          className="relative overflow-hidden rounded-xl border border-gray-100 bg-white p-4 shadow-sm hover:shadow-md transition-shadow"
+          className="relative overflow-hidden rounded-xl border border-slate-800 bg-slate-900 p-4 shadow-sm hover:shadow-md transition-shadow"
         >
           {/* Header with icon */}
           <div className="flex items-start justify-between mb-3">
@@ -146,10 +146,10 @@ export function KPIGrid({
 
           {/* Metric */}
           <div className="space-y-1">
-            <p className="text-xs font-medium text-gray-500 uppercase tracking-wide">
+            <p className="text-xs font-medium text-slate-400 uppercase tracking-wide">
               {card.title}
             </p>
-            <p className="text-2xl font-semibold text-gray-900 tracking-tight">
+            <p className="text-2xl font-semibold text-slate-50 tracking-tight">
               {card.value}
             </p>
           </div>
@@ -159,9 +159,9 @@ export function KPIGrid({
             <span
               className={cn(
                 "inline-flex items-center gap-1 rounded-full px-2 py-0.5 text-xs font-medium",
-                card.trend.direction === "up" && "bg-green-50 text-green-700",
-                card.trend.direction === "down" && "bg-red-50 text-red-700",
-                card.trend.direction === "neutral" && "bg-gray-100 text-gray-600"
+                card.trend.direction === "up" && "bg-green-900/20 text-green-400",
+                card.trend.direction === "down" && "bg-red-900/20 text-red-400",
+                card.trend.direction === "neutral" && "bg-slate-800 text-slate-400"
               )}
             >
               {card.trend.direction === "up" && <TrendingUp className="h-3 w-3" />}
@@ -169,7 +169,7 @@ export function KPIGrid({
               {card.trend.direction === "neutral" && <Minus className="h-3 w-3" />}
               {card.trend.value > 0 ? "+" : ""}{card.trend.value}%
             </span>
-            <span className="text-xs text-gray-400">{card.trend.label}</span>
+            <span className="text-xs text-slate-500">{card.trend.label}</span>
             <span className="sr-only">
               {card.trend.direction === "up" ? "Increased" : card.trend.direction === "down" ? "Decreased" : "No change"} by {card.trend.value}% {card.trend.label}
             </span>

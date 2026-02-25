@@ -378,14 +378,14 @@ export default function ExportModal({
 
   return (
     <div className="fixed inset-0 z-[60] bg-black/30 flex items-center justify-center px-4 py-6">
-      <div className="relative w-full max-w-5xl bg-white rounded-xl shadow-2xl max-h-[90vh] flex flex-col overflow-hidden">
+      <div className="relative w-full max-w-5xl bg-slate-900 rounded-xl shadow-2xl max-h-[90vh] flex flex-col overflow-hidden">
         {/* Header */}
-        <div className="flex items-center justify-between px-6 py-4 border-b border-gray-200">
+        <div className="flex items-center justify-between px-6 py-4 border-b border-slate-700">
           <div>
-            <h2 className="text-lg font-semibold text-gray-900">
+            <h2 className="text-lg font-semibold text-slate-50">
               Export Content
             </h2>
-            <p className="text-sm text-gray-500 mt-0.5">
+            <p className="text-sm text-slate-400 mt-0.5">
               {isBulkExport
                 ? `${projects.length} projects selected`
                 : projects[0]?.title || 'Export content'
@@ -395,7 +395,7 @@ export default function ExportModal({
           <button
             onClick={onClose}
             disabled={isExporting}
-            className="p-2 text-gray-400 hover:text-gray-600 hover:bg-gray-100 rounded-lg transition-colors"
+            className="p-2 text-slate-500 hover:text-slate-400 hover:bg-slate-800 rounded-lg transition-colors"
           >
             <X className="w-5 h-5" />
           </button>
@@ -405,15 +405,15 @@ export default function ExportModal({
         <div className="flex-1 overflow-hidden flex">
           {/* Left Rail: Project List (only for bulk export) */}
           {isBulkExport && (
-            <div className="w-64 border-r border-gray-200 flex flex-col bg-gray-50">
-              <div className="px-4 py-3 border-b border-gray-200">
+            <div className="w-64 border-r border-slate-700 flex flex-col bg-slate-800/50">
+              <div className="px-4 py-3 border-b border-slate-700">
                 <div className="flex items-center justify-between">
-                  <span className="text-xs font-medium text-gray-500 uppercase tracking-wide">
+                  <span className="text-xs font-medium text-slate-400 uppercase tracking-wide">
                     Projects
                   </span>
                   <button
                     onClick={toggleAllProjects}
-                    className="text-xs text-blue-600 hover:text-blue-800 font-medium"
+                    className="text-xs text-blue-600 hover:text-blue-300 font-medium"
                   >
                     {allProjectsFullySelected ? 'Deselect All' : 'Select All'}
                   </button>
@@ -432,8 +432,8 @@ export default function ExportModal({
                       onClick={() => setSelectedProjectId(project.id)}
                       className={`p-3 rounded-lg cursor-pointer transition-all ${
                         isActive
-                          ? 'bg-white shadow-sm border border-blue-200'
-                          : 'hover:bg-white hover:shadow-sm border border-transparent'
+                          ? 'bg-slate-900 shadow-sm border border-blue-800/30'
+                          : 'hover:bg-slate-900 hover:shadow-sm border border-transparent'
                       }`}
                     >
                       <div className="flex items-start gap-3">
@@ -449,14 +449,14 @@ export default function ExportModal({
                           ) : isPartiallySelected ? (
                             <div className="w-4 h-4 border-2 border-blue-600 rounded bg-blue-600/20" />
                           ) : (
-                            <Square className="w-4 h-4 text-gray-400" />
+                            <Square className="w-4 h-4 text-slate-500" />
                           )}
                         </button>
                         <div className="flex-1 min-w-0">
-                          <p className={`text-sm truncate ${isActive ? 'font-medium text-gray-900' : 'text-gray-700'}`}>
+                          <p className={`text-sm truncate ${isActive ? 'font-medium text-slate-50' : 'text-slate-300'}`}>
                             {project.title}
                           </p>
-                          <p className="text-xs text-gray-500 mt-0.5">
+                          <p className="text-xs text-slate-400 mt-0.5">
                             {selectedCount} / {project.outputs.length} selected
                           </p>
                         </div>
@@ -472,19 +472,19 @@ export default function ExportModal({
           <div className="flex-1 flex flex-col overflow-hidden">
             {/* Active Project Header */}
             {activeProject && (
-              <div className="px-6 py-3 border-b border-gray-200 bg-gray-50/50">
+              <div className="px-6 py-3 border-b border-slate-700 bg-slate-800/30">
                 <div className="flex items-center justify-between">
                   <div>
-                    <h3 className="text-sm font-medium text-gray-900">
+                    <h3 className="text-sm font-medium text-slate-50">
                       {activeProject.title}
                     </h3>
-                    <p className="text-xs text-gray-500">
+                    <p className="text-xs text-slate-400">
                       {activeProject.outputs.length} content blocks available
                     </p>
                   </div>
                   <button
                     onClick={() => toggleAllForProject(activeProject.id)}
-                    className="text-xs text-blue-600 hover:text-blue-800 font-medium"
+                    className="text-xs text-blue-600 hover:text-blue-300 font-medium"
                   >
                     {isProjectFullySelected(activeProject.id) ? 'Deselect All' : 'Select All'}
                   </button>
@@ -496,8 +496,8 @@ export default function ExportModal({
             <div className="flex-1 overflow-y-auto p-4 space-y-3">
               {/* Core Content Section */}
               {activeProject && getAvailableCoreContent(activeProject).length > 0 && (
-                <div className="border border-indigo-200 rounded-lg overflow-hidden bg-indigo-50/30">
-                  <div className="flex items-center justify-between px-4 py-3 bg-indigo-50">
+                <div className="border border-indigo-800/30 rounded-lg overflow-hidden bg-indigo-900/20/30">
+                  <div className="flex items-center justify-between px-4 py-3 bg-indigo-900/20">
                     <div className="flex items-center gap-3">
                       <button
                         onClick={() => toggleAllCoreForProject(activeProject.id)}
@@ -541,7 +541,7 @@ export default function ExportModal({
                           key={contentType}
                           onClick={() => toggleCoreContent(activeProject.id, contentType)}
                           className={`flex items-center gap-3 px-4 py-3 cursor-pointer transition-colors ${
-                            isSelected ? 'bg-indigo-100/50' : 'hover:bg-indigo-50'
+                            isSelected ? 'bg-indigo-100/50' : 'hover:bg-indigo-900/20'
                           }`}
                         >
                           <div className="flex-shrink-0">
@@ -566,16 +566,16 @@ export default function ExportModal({
               {/* Generated Content Section */}
               {activeProject && activeProject.outputs.length === 0 && getAvailableCoreContent(activeProject).length === 0 ? (
                 <div className="text-center py-12">
-                  <FileText className="w-12 h-12 text-gray-300 mx-auto mb-3" />
-                  <p className="text-sm text-gray-500">No content available</p>
-                  <p className="text-xs text-gray-400 mt-1">Generate content first to export</p>
+                  <FileText className="w-12 h-12 text-slate-500 mx-auto mb-3" />
+                  <p className="text-sm text-slate-400">No content available</p>
+                  <p className="text-xs text-slate-500 mt-1">Generate content first to export</p>
                 </div>
               ) : activeProject && activeProject.outputs.length > 0 ? (
                 <>
                   {/* Section header for generated content */}
                   <div className="flex items-center gap-2 pt-2">
-                    <span className="text-xs font-medium text-gray-500 uppercase tracking-wide">Generated Content</span>
-                    <div className="flex-1 h-px bg-gray-200"></div>
+                    <span className="text-xs font-medium text-slate-400 uppercase tracking-wide">Generated Content</span>
+                    <div className="flex-1 h-px bg-slate-700"></div>
                   </div>
                   {Object.entries(groupedOutputs).map(([groupName, outputs]) => {
                   const isExpanded = expandedGroups.has(groupName) || Object.keys(groupedOutputs).length <= 3;
@@ -583,10 +583,10 @@ export default function ExportModal({
                   const someSelected = outputs.some(o => selectedBlocks[activeProject?.id || '']?.has(o.id));
 
                   return (
-                    <div key={groupName} className="border border-gray-200 rounded-lg overflow-hidden">
+                    <div key={groupName} className="border border-slate-700 rounded-lg overflow-hidden">
                       {/* Group Header */}
                       <div
-                        className="flex items-center justify-between px-4 py-3 bg-gray-50 cursor-pointer hover:bg-gray-100 transition-colors"
+                        className="flex items-center justify-between px-4 py-3 bg-slate-800/50 cursor-pointer hover:bg-slate-800 transition-colors"
                         onClick={() => toggleGroupExpansion(groupName)}
                       >
                         <div className="flex items-center gap-3">
@@ -602,24 +602,24 @@ export default function ExportModal({
                             ) : someSelected ? (
                               <div className="w-4 h-4 border-2 border-blue-600 rounded bg-blue-600/20" />
                             ) : (
-                              <Square className="w-4 h-4 text-gray-400" />
+                              <Square className="w-4 h-4 text-slate-500" />
                             )}
                           </button>
-                          <span className="text-sm font-medium text-gray-900">{groupName}</span>
-                          <span className="text-xs text-gray-500 bg-gray-200 px-2 py-0.5 rounded-full">
+                          <span className="text-sm font-medium text-slate-50">{groupName}</span>
+                          <span className="text-xs text-slate-400 bg-slate-700 px-2 py-0.5 rounded-full">
                             {outputs.length}
                           </span>
                         </div>
                         {isExpanded ? (
-                          <ChevronDown className="w-4 h-4 text-gray-400" />
+                          <ChevronDown className="w-4 h-4 text-slate-500" />
                         ) : (
-                          <ChevronRight className="w-4 h-4 text-gray-400" />
+                          <ChevronRight className="w-4 h-4 text-slate-500" />
                         )}
                       </div>
 
                       {/* Group Items */}
                       {isExpanded && (
-                        <div className="divide-y divide-gray-100">
+                        <div className="divide-y divide-slate-800">
                           {outputs.map(output => {
                             const isSelected = selectedBlocks[activeProject?.id || '']?.has(output.id);
                             return (
@@ -627,21 +627,21 @@ export default function ExportModal({
                                 key={output.id}
                                 onClick={() => activeProject && toggleBlock(activeProject.id, output.id)}
                                 className={`flex items-start gap-3 px-4 py-3 cursor-pointer transition-colors ${
-                                  isSelected ? 'bg-blue-50/50' : 'hover:bg-gray-50'
+                                  isSelected ? 'bg-blue-900/20/50' : 'hover:bg-slate-800/50'
                                 }`}
                               >
                                 <div className="mt-0.5 flex-shrink-0">
                                   {isSelected ? (
                                     <CheckSquare className="w-4 h-4 text-blue-600" />
                                   ) : (
-                                    <Square className="w-4 h-4 text-gray-400" />
+                                    <Square className="w-4 h-4 text-slate-500" />
                                   )}
                                 </div>
                                 <div className="flex-1 min-w-0">
-                                  <p className="text-sm font-medium text-gray-900 truncate">
+                                  <p className="text-sm font-medium text-slate-50 truncate">
                                     {output.title}
                                   </p>
-                                  <p className="text-xs text-gray-500 mt-0.5 line-clamp-2">
+                                  <p className="text-xs text-slate-400 mt-0.5 line-clamp-2">
                                     {output.content.slice(0, 120)}...
                                   </p>
                                 </div>
@@ -660,16 +660,16 @@ export default function ExportModal({
         </div>
 
         {/* Footer */}
-        <div className="px-6 py-4 border-t border-gray-200 bg-gray-50">
+        <div className="px-6 py-4 border-t border-slate-700 bg-slate-800/50">
           <div className="flex items-center justify-between">
             {/* Format Selection */}
             <div className="flex items-center gap-4">
-              <label className="text-sm font-medium text-gray-700">Format:</label>
+              <label className="text-sm font-medium text-slate-300">Format:</label>
               <div className="relative">
                 <select
                   value={selectedFormat}
                   onChange={(e) => setSelectedFormat(e.target.value as ExportPayload['format'])}
-                  className="appearance-none bg-white border border-gray-300 rounded-lg px-4 py-2 pr-10 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-transparent"
+                  className="appearance-none bg-slate-900 border border-slate-600 rounded-lg px-4 py-2 pr-10 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-transparent"
                 >
                   {FORMAT_OPTIONS.map(opt => (
                     <option key={opt.value} value={opt.value}>
@@ -677,13 +677,13 @@ export default function ExportModal({
                     </option>
                   ))}
                 </select>
-                <ChevronDown className="absolute right-3 top-1/2 -translate-y-1/2 w-4 h-4 text-gray-400 pointer-events-none" />
+                <ChevronDown className="absolute right-3 top-1/2 -translate-y-1/2 w-4 h-4 text-slate-500 pointer-events-none" />
               </div>
             </div>
 
             {/* Selection Stats & Actions */}
             <div className="flex items-center gap-4">
-              <span className="text-sm text-gray-500">
+              <span className="text-sm text-slate-400">
                 {selectionStats.totalCoreSelected > 0 && (
                   <span className="text-indigo-600">{selectionStats.totalCoreSelected} core</span>
                 )}
@@ -697,7 +697,7 @@ export default function ExportModal({
                 <button
                   onClick={onClose}
                   disabled={isExporting}
-                  className="px-4 py-2 text-sm font-medium text-gray-700 bg-white border border-gray-300 rounded-lg hover:bg-gray-50 disabled:opacity-50 transition-colors"
+                  className="px-4 py-2 text-sm font-medium text-slate-300 bg-slate-900 border border-slate-600 rounded-lg hover:bg-slate-800/50 disabled:opacity-50 transition-colors"
                 >
                   Cancel
                 </button>

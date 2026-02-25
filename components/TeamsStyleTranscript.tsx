@@ -23,15 +23,15 @@ export default function TeamsStyleTranscript({ speakerData }: TeamsStyleTranscri
 
   if (!validSegments.length) {
     return (
-      <div className="text-sm text-gray-500 bg-gray-50 p-4 rounded-md text-center">
+      <div className="text-sm text-slate-400 bg-slate-800/50 p-4 rounded-md text-center">
         No transcript segments available
       </div>
     );
   }
 
   return (
-    <div className="flex flex-col h-full bg-gray-50 rounded-md overflow-hidden">
-      <div className="flex-1 overflow-y-auto p-4 space-y-3">
+    <div className="flex flex-col h-full overflow-hidden">
+      <div className="flex-1 overflow-y-auto p-4 space-y-4">
         {validSegments.map((segment, index) => {
         const segmentSpeakerId = segment.finalSpeakerId || segment.speakerId;
         const speaker = speakers[segmentSpeakerId];
@@ -43,17 +43,17 @@ export default function TeamsStyleTranscript({ speakerData }: TeamsStyleTranscri
         }
 
         const speakerName = getSpeakerDisplayName(speaker) || 'Unknown Speaker';
-        const speakerRole = speaker?.role ? `, ${speaker.role}` : '';
+        const speakerRole = speaker?.role ? ` · ${speaker.role}` : '';
         const timestamp = formatTimeHumanReadable(segment.startTime);
 
         return (
-          <div key={`segment-${index}-${segmentSpeakerId}`} className="text-sm">
+          <div key={`segment-${index}-${segmentSpeakerId}`} className="bg-slate-900 border border-slate-800 rounded-2xl p-5 shadow-sm">
             {/* Speaker header line - Teams style */}
-            <div className="font-medium text-gray-700 mb-0.5">
-              {speakerName}{speakerRole} {timestamp}
+            <div className="font-medium text-slate-400 text-xs mb-1.5">
+              {speakerName}{speakerRole} · {timestamp}
             </div>
             {/* Segment text */}
-            <div className="text-gray-800 leading-relaxed">
+            <div className="text-slate-100 text-sm leading-relaxed">
               {segment.text}
             </div>
           </div>

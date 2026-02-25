@@ -8,7 +8,7 @@ import { Insight, Category, CATEGORY_CONFIG } from './types';
 // Color-coded icons based on category
 const CategoryIcon = ({ category, colored = false }: { category: Category; colored?: boolean }) => {
   const config = CATEGORY_CONFIG[category];
-  const colorClass = colored ? config.iconColor : 'text-gray-400';
+  const colorClass = colored ? config.iconColor : 'text-slate-500';
 
   switch (category) {
     case 'concept':
@@ -47,7 +47,7 @@ export const InsightCard = forwardRef<HTMLDivElement, InsightCardProps>(
         className={cn(
           'group cursor-pointer transition-all duration-200',
           // Active card gets colored left border
-          isExpanded && 'border-l-4 rounded-r-lg bg-gray-50/50',
+          isExpanded && 'border-l-4 rounded-r-lg bg-slate-800/30',
           isExpanded && config.borderColor
         )}
       >
@@ -55,7 +55,7 @@ export const InsightCard = forwardRef<HTMLDivElement, InsightCardProps>(
         <div
           className={cn(
             'px-3 py-2.5 rounded-lg transition-colors duration-150',
-            'hover:bg-gray-50',
+            'hover:bg-slate-800/50',
             isExpanded && 'bg-transparent hover:bg-transparent'
           )}
         >
@@ -74,7 +74,7 @@ export const InsightCard = forwardRef<HTMLDivElement, InsightCardProps>(
                 {/* Title */}
                 <h3 className={cn(
                   'font-medium text-sm truncate',
-                  isExpanded ? 'text-gray-900' : 'text-gray-700'
+                  isExpanded ? 'text-slate-50' : 'text-slate-300'
                 )}>
                   {insight.title}
                 </h3>
@@ -82,7 +82,7 @@ export const InsightCard = forwardRef<HTMLDivElement, InsightCardProps>(
 
               {/* Definition - truncated to one line when collapsed */}
               {!isExpanded && (
-                <p className="text-sm text-gray-500 mt-0.5 line-clamp-1">
+                <p className="text-sm text-slate-400 mt-0.5 line-clamp-1">
                   {insight.definition}
                 </p>
               )}
@@ -92,7 +92,7 @@ export const InsightCard = forwardRef<HTMLDivElement, InsightCardProps>(
             <ChevronRight
               className={cn(
                 'h-4 w-4 flex-shrink-0 mt-0.5 transition-transform duration-200',
-                isExpanded ? 'rotate-90 text-gray-500' : 'text-gray-300'
+                isExpanded ? 'rotate-90 text-slate-400' : 'text-slate-500'
               )}
             />
           </div>
@@ -108,17 +108,17 @@ export const InsightCard = forwardRef<HTMLDivElement, InsightCardProps>(
           <div className="overflow-hidden">
             <div className="px-3 pb-4 ml-7 space-y-4">
               {/* Full Definition - with breathing room */}
-              <p className="text-sm text-gray-600 leading-relaxed">
+              <p className="text-sm text-slate-400 leading-relaxed">
                 {insight.definition}
               </p>
 
               {/* Significance / Why it matters - separated with margin */}
               {insight.significance && (
                 <div className={cn('rounded-lg p-3', config.hoverBg)}>
-                  <p className="text-xs font-medium text-gray-500 uppercase tracking-wide mb-1.5">
+                  <p className="text-xs font-medium text-slate-400 uppercase tracking-wide mb-1.5">
                     Why it matters
                   </p>
-                  <p className="text-sm text-gray-700 leading-relaxed">
+                  <p className="text-sm text-slate-300 leading-relaxed">
                     {insight.significance}
                   </p>
                 </div>
@@ -127,7 +127,7 @@ export const InsightCard = forwardRef<HTMLDivElement, InsightCardProps>(
               {/* Sources */}
               {insight.sources && insight.sources.length > 0 && (
                 <div className="pt-1">
-                  <p className="text-xs font-medium text-gray-400 uppercase tracking-wide mb-2">
+                  <p className="text-xs font-medium text-slate-500 uppercase tracking-wide mb-2">
                     Sources
                   </p>
                   <div className="space-y-1.5">
@@ -138,7 +138,7 @@ export const InsightCard = forwardRef<HTMLDivElement, InsightCardProps>(
                         target="_blank"
                         rel="noopener noreferrer"
                         onClick={(e) => e.stopPropagation()}
-                        className="group/link flex items-center gap-2 text-sm text-gray-500 hover:text-blue-600 transition-colors"
+                        className="group/link flex items-center gap-2 text-sm text-slate-400 hover:text-blue-600 transition-colors"
                       >
                         <ExternalLink className="h-3 w-3 flex-shrink-0" />
                         <span className="truncate">{source.title}</span>

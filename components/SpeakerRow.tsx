@@ -78,7 +78,7 @@ export function SpeakerRow({
             transition-all duration-200
             ${hasSegments
               ? 'bg-blue-500 hover:bg-blue-600 text-white cursor-pointer'
-              : 'bg-gray-200 text-gray-400 cursor-not-allowed'
+              : 'bg-slate-700 text-slate-500 cursor-not-allowed'
             }
             ${isPlaying ? 'animate-pulse' : ''}
           `}
@@ -109,14 +109,14 @@ export function SpeakerRow({
             />
             <button
               onClick={handleSave}
-              className="p-1 text-green-600 hover:text-green-800"
+              className="p-1 text-green-600 hover:text-green-300"
               title="Save"
             >
               <Check className="w-4 h-4" />
             </button>
             <button
               onClick={handleCancel}
-              className="p-1 text-gray-400 hover:text-gray-600"
+              className="p-1 text-slate-500 hover:text-slate-400"
               title="Cancel"
             >
               <X className="w-4 h-4" />
@@ -128,19 +128,19 @@ export function SpeakerRow({
             <div className="relative">
               <button
                 onClick={() => setMenuOpen((prev) => !prev)}
-                className="p-1 opacity-0 group-hover:opacity-100 text-gray-400 hover:text-gray-600 transition-opacity"
+                className="p-1 opacity-0 group-hover:opacity-100 text-slate-500 hover:text-slate-400 transition-opacity"
                 title="More actions"
               >
                 <MoreHorizontal className="w-3.5 h-3.5" />
               </button>
               {menuOpen && (
-                <div className="absolute right-0 mt-1 w-28 rounded-md border bg-white shadow-md z-10">
+                <div className="absolute right-0 mt-1 w-28 rounded-md border bg-slate-900 shadow-md z-10">
                   <button
                     onClick={() => {
                       setMenuOpen(false);
                       setIsEditing(true);
                     }}
-                    className="w-full text-left px-3 py-2 text-xs hover:bg-gray-50"
+                    className="w-full text-left px-3 py-2 text-xs hover:bg-slate-800/50"
                   >
                     Rename
                   </button>
@@ -149,7 +149,7 @@ export function SpeakerRow({
                       setMenuOpen(false);
                       onMergeRequest(speaker.id);
                     }}
-                    className="w-full text-left px-3 py-2 text-xs hover:bg-gray-50"
+                    className="w-full text-left px-3 py-2 text-xs hover:bg-slate-800/50"
                   >
                     Merge
                   </button>
@@ -157,7 +157,7 @@ export function SpeakerRow({
               )}
             </div>
             {speaker.role && (
-              <span className="text-xs px-2 py-0.5 bg-blue-50 text-blue-600 rounded-full">
+              <span className="text-xs px-2 py-0.5 bg-blue-900/20 text-blue-600 rounded-full">
                 {speaker.role}
               </span>
             )}
@@ -166,12 +166,12 @@ export function SpeakerRow({
       </TableCell>
 
       {/* Segment Count */}
-      <TableCell className="text-right text-gray-600">
+      <TableCell className="text-right text-slate-400">
         {speaker.segmentCount}
       </TableCell>
 
       {/* Duration */}
-      <TableCell className="text-right text-gray-600 font-mono text-sm">
+      <TableCell className="text-right text-slate-400 font-mono text-sm">
         {formatDuration(speaker.totalDuration)}
       </TableCell>
     </TableRow>

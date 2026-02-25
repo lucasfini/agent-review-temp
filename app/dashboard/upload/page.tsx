@@ -133,6 +133,7 @@ export default function UploadPage() {
   const [urlTitle, setUrlTitle] = useState('');
   const [urlError, setUrlError] = useState<string | null>(null);
   const [isUrlSubmitting, setIsUrlSubmitting] = useState(false);
+  const lastActiveProjectCountRef = useRef<number | null>(null);
 
   // Fix: drag counter prevents isDragActive flickering when cursor passes over child elements
   const dragCounterRef = useRef(0);
@@ -316,10 +317,13 @@ export default function UploadPage() {
         return;
       }
 
+      const activeCount = (data || []).length;
       setActiveProjects((data || []) as ActiveProject[]);
-      if ((data || []).length === 0) {
+      const previousCount = lastActiveProjectCountRef.current;
+      if (activeCount === 0 && previousCount && previousCount > 0) {
         fetchUploadHistory();
       }
+      lastActiveProjectCountRef.current = activeCount;
     } catch (error) {
       console.error('Failed to fetch active projects:', error);
     } finally {
@@ -393,7 +397,7 @@ export default function UploadPage() {
       case 'failed':
         return <AlertCircle className="h-5 w-5 text-red-500" />;
       default:
-        return <Clock className="h-5 w-5 text-gray-400" />;
+        return <Clock className="h-5 w-5 text-slate-500" />;
     }
   };
 
@@ -851,17 +855,17 @@ export default function UploadPage() {
 
         {/* Header */}
         <div className="mb-6">
-          <h1 className="text-2xl font-bold leading-7 text-gray-900 sm:text-3xl">
+          <h1 className="text-2xl font-bold leading-7 text-slate-50 sm:text-3xl">
             Upload Audio
           </h1>
-          <p className="mt-1 text-sm text-gray-500">
+          <p className="mt-1 text-sm text-slate-400">
             Drop in an episode or clip — we'll handle transcription, speaker identification, and content generation.
           </p>
         </div>
 
         {/* Processing Quality — compact tab toggle, always visible above drop zone */}
         <div className="mb-5">
-          <p className="text-sm font-semibold text-gray-800 mb-2">Processing quality</p>
+          <p className="text-sm font-semibold text-slate-100 mb-2">Processing quality</p>
           <div className="grid grid-cols-3 gap-2">
             {TIER_OPTIONS.map((option) => (
               <button
@@ -870,18 +874,18 @@ export default function UploadPage() {
                 onClick={() => handlePerformanceChange(option.id)}
                 className={`border rounded-lg p-3 text-left transition-all ${
                   performanceLevel === option.id
-                    ? 'border-blue-500 bg-blue-50 shadow-sm'
-                    : 'border-gray-200 bg-white hover:border-gray-300'
+                    ? 'border-blue-500 bg-blue-900/20 shadow-sm'
+                    : 'border-slate-700 bg-slate-900 hover:border-slate-600'
                 }`}
               >
                 <div className="flex items-center justify-between mb-1">
-                  <p className="text-sm font-semibold text-gray-900">{option.label}</p>
-                  <p className="text-xs font-medium text-gray-400">{option.cost}</p>
+                  <p className="text-sm font-semibold text-slate-50">{option.label}</p>
+                  <p className="text-xs font-medium text-slate-500">{option.cost}</p>
                 </div>
-                <p className={`text-xs font-medium mb-0.5 ${performanceLevel === option.id ? 'text-blue-600' : 'text-gray-500'}`}>
+                <p className={`text-xs font-medium mb-0.5 ${performanceLevel === option.id ? 'text-blue-600' : 'text-slate-400'}`}>
                   {option.accuracy}
                 </p>
-                <p className="text-[11px] text-gray-500 leading-snug">{option.description}</p>
+                <p className="text-[11px] text-slate-400 leading-snug">{option.description}</p>
               </button>
             ))}
           </div>
@@ -889,7 +893,7 @@ export default function UploadPage() {
 
         {/* Upload methods */}
         <div className="mb-6">
-          <div className="inline-flex items-center rounded-lg border border-gray-200 bg-white p-1 shadow-sm">
+          <div className="inline-flex items-center rounded-lg border border-slate-700 bg-slate-900 p-1 shadow-sm">
             {([
               { id: 'local', label: 'Local upload' },
               { id: 'url', label: 'URL import' },
@@ -901,8 +905,8 @@ export default function UploadPage() {
                 onClick={() => setActiveTab(tab.id)}
                 className={`px-3 py-1.5 text-sm font-medium rounded-md transition-colors ${
                   activeTab === tab.id
-                    ? 'bg-gray-900 text-white'
-                    : 'text-gray-600 hover:text-gray-900 hover:bg-gray-100'
+                    ? 'bg-slate-700 text-white'
+                    : 'text-slate-400 hover:text-slate-50 hover:bg-slate-800'
                 }`}
               >
                 {tab.label}
@@ -916,8 +920,8 @@ export default function UploadPage() {
             <div
               className={`relative border-2 border-dashed rounded-xl transition-all ${
                 isDragActive
-                  ? 'border-blue-400 bg-blue-50 scale-[1.005]'
-                  : 'border-gray-300 bg-white hover:border-gray-400 hover:bg-gray-50'
+                  ? 'border-blue-400 bg-blue-900/20 scale-[1.005]'
+                  : 'border-slate-600 bg-slate-900 hover:border-slate-500 hover:bg-slate-800/50'
               }`}
               onDragEnter={onDragEnter}
               onDragLeave={onDragLeave}
@@ -926,17 +930,17 @@ export default function UploadPage() {
             >
               <label htmlFor="file-upload" className="flex flex-col items-center justify-center py-14 px-6 cursor-pointer">
                 <div className={`w-14 h-14 rounded-full flex items-center justify-center mb-4 transition-colors ${
-                  isDragActive ? 'bg-blue-100' : 'bg-gray-100'
+                  isDragActive ? 'bg-blue-900/20' : 'bg-slate-800'
                 }`}>
-                  <Upload className={`w-6 h-6 transition-colors ${isDragActive ? 'text-blue-500' : 'text-gray-400'}`} />
+                  <Upload className={`w-6 h-6 transition-colors ${isDragActive ? 'text-blue-500' : 'text-slate-500'}`} />
                 </div>
-                <p className="text-base font-semibold text-gray-700">
+                <p className="text-base font-semibold text-slate-300">
                   {isDragActive ? 'Drop to upload' : 'Drop audio or video here'}
                 </p>
-                <p className="mt-1 text-sm text-gray-500">
+                <p className="mt-1 text-sm text-slate-400">
                   or <span className="text-blue-600 hover:text-blue-500 font-medium">browse files</span>
                 </p>
-                <p className="mt-3 text-xs text-gray-400 text-center">
+                <p className="mt-3 text-xs text-slate-500 text-center">
                   MP3, WAV, M4A, FLAC, OGG, MP4, MOV · up to 500 MB · video is converted to audio automatically
                 </p>
                 <input
@@ -954,16 +958,16 @@ export default function UploadPage() {
         )}
 
         {activeTab === 'url' && (
-          <div className="mb-6 border border-gray-200 bg-white rounded-xl p-5 space-y-4">
+          <div className="mb-6 border border-slate-700 bg-slate-900 rounded-xl p-5 space-y-4">
             <div>
-              <h2 className="text-lg font-semibold text-gray-900">Import from URL</h2>
-              <p className="text-sm text-gray-500">
+              <h2 className="text-lg font-semibold text-slate-50">Import from URL</h2>
+              <p className="text-sm text-slate-400">
                 Paste a YouTube link or a direct media URL (audio or video).
               </p>
             </div>
             <div className="grid gap-3">
               <div>
-                <label htmlFor="url-input" className="block text-sm font-medium text-gray-700">
+                <label htmlFor="url-input" className="block text-sm font-medium text-slate-300">
                   Media URL
                 </label>
                 <input
@@ -972,11 +976,11 @@ export default function UploadPage() {
                   placeholder="https://www.youtube.com/watch?v=..."
                   value={urlInput}
                   onChange={(e) => setUrlInput(e.target.value)}
-                  className="mt-1 w-full rounded-md border border-gray-300 px-3 py-2 text-sm shadow-sm focus:outline-none focus:ring-1 focus:ring-blue-500 focus:border-blue-500"
+                  className="mt-1 w-full rounded-md border border-slate-600 bg-slate-800 text-slate-200 px-3 py-2 text-sm shadow-sm focus:outline-none focus:ring-1 focus:ring-blue-500 focus:border-blue-500 placeholder:text-slate-500"
                 />
               </div>
               <div>
-                <label htmlFor="url-title" className="block text-sm font-medium text-gray-700">
+                <label htmlFor="url-title" className="block text-sm font-medium text-slate-300">
                   Title (optional)
                 </label>
                 <input
@@ -985,7 +989,7 @@ export default function UploadPage() {
                   placeholder="Episode title"
                   value={urlTitle}
                   onChange={(e) => setUrlTitle(e.target.value)}
-                  className="mt-1 w-full rounded-md border border-gray-300 px-3 py-2 text-sm shadow-sm focus:outline-none focus:ring-1 focus:ring-blue-500 focus:border-blue-500"
+                  className="mt-1 w-full rounded-md border border-slate-600 bg-slate-800 text-slate-200 px-3 py-2 text-sm shadow-sm focus:outline-none focus:ring-1 focus:ring-blue-500 focus:border-blue-500 placeholder:text-slate-500"
                 />
               </div>
               {urlError && (
@@ -1000,7 +1004,7 @@ export default function UploadPage() {
                 >
                   {isUrlSubmitting ? 'Importing...' : 'Import URL'}
                 </button>
-                <p className="text-xs text-gray-500">
+                <p className="text-xs text-slate-400">
                   Supports YouTube and direct audio/video links. Max 500 MB.
                 </p>
               </div>
@@ -1012,8 +1016,8 @@ export default function UploadPage() {
           <div className="mb-8">
             <div className="flex items-center justify-between mb-4">
               <div>
-                <h2 className="text-lg font-semibold text-gray-900">Import from apps</h2>
-                <p className="text-sm text-gray-500">Pull recordings directly from connected tools</p>
+                <h2 className="text-lg font-semibold text-slate-50">Import from apps</h2>
+                <p className="text-sm text-slate-400">Pull recordings directly from connected tools</p>
               </div>
             </div>
             <div className="grid gap-4 md:grid-cols-2">
@@ -1021,19 +1025,19 @@ export default function UploadPage() {
                 const status = integrations.find(i => i.provider === provider);
                 const connected = status?.connected;
                 return (
-                  <div key={provider} className="border border-gray-200 bg-white rounded-xl p-4">
+                  <div key={provider} className="border border-slate-700 bg-slate-900 rounded-xl p-4">
                     <div className="flex items-start justify-between">
                       <div>
-                        <h3 className="text-base font-semibold text-gray-900">
+                        <h3 className="text-base font-semibold text-slate-50">
                           {provider === 'zoom' ? 'Zoom' : 'Microsoft Teams'}
                         </h3>
-                        <p className="text-xs text-gray-500 mt-1">
+                        <p className="text-xs text-slate-400 mt-1">
                           {connected
                             ? `Connected${status?.metadata?.email ? ` • ${status.metadata.email}` : ''}`
                             : 'Not connected'}
                         </p>
                       </div>
-                      <span className={`text-xs px-2 py-1 rounded-full ${connected ? 'bg-green-50 text-green-700' : 'bg-gray-100 text-gray-600'}`}>
+                      <span className={`text-xs px-2 py-1 rounded-full ${connected ? 'bg-green-900/20 text-green-400' : 'bg-slate-800 text-slate-400'}`}>
                         {connected ? 'Connected' : 'Disconnected'}
                       </span>
                     </div>
@@ -1051,7 +1055,7 @@ export default function UploadPage() {
                         <button
                           type="button"
                           onClick={() => openImportDialog(provider)}
-                          className="px-3 py-2 text-sm font-medium bg-gray-900 text-white rounded-lg hover:bg-gray-800 transition-colors"
+                          className="px-3 py-2 text-sm font-medium bg-slate-700 text-white rounded-lg hover:bg-slate-600 transition-colors"
                         >
                           Select recording
                         </button>
@@ -1067,7 +1071,7 @@ export default function UploadPage() {
         {/* Active File List */}
         {uploadedFiles.length > 0 && (
           <div className="mb-6 space-y-3">
-            <h3 className="text-sm font-semibold text-gray-700">Files</h3>
+            <h3 className="text-sm font-semibold text-slate-300">Files</h3>
 
             {uploadedFiles.map((uploadedFile, _idx) => {
               const isActive = ['queued', 'pending', 'extracting', 'uploading', 'processing'].includes(uploadedFile.status);
@@ -1083,7 +1087,7 @@ export default function UploadPage() {
               return (
                 <div
                   key={uploadedFile.id}
-                  className="bg-white p-4 rounded-lg border border-gray-200 shadow-sm"
+                  className="bg-slate-900 p-4 rounded-lg border border-slate-700 shadow-sm"
                 >
                   <div className="flex items-center justify-between">
                     <div className="flex items-center space-x-3 flex-1 min-w-0">
@@ -1098,12 +1102,12 @@ export default function UploadPage() {
                       </div>
                       <div className="flex-1 min-w-0 max-w-xs sm:max-w-sm md:max-w-md lg:max-w-lg">
                         <p
-                          className="text-sm font-medium text-gray-900 truncate"
+                          className="text-sm font-medium text-slate-50 truncate"
                           title={displayName}
                         >
                           {displayName}
                         </p>
-                        <p className="text-xs text-gray-500">
+                        <p className="text-xs text-slate-400">
                           {typeof fileSize === 'number' && fileSize > 0
                             ? formatFileSize(fileSize)
                             : uploadedFile.sourceType === 'youtube'
@@ -1121,69 +1125,69 @@ export default function UploadPage() {
                         {uploadedFile.status === 'queued' && (
                           <div className="flex items-center space-x-1">
                             <Clock className="h-3.5 w-3.5 text-amber-500" />
-                            <span className="text-xs px-2 py-1 rounded-full bg-amber-50 text-amber-700 font-medium">
+                            <span className="text-xs px-2 py-1 rounded-full bg-amber-900/20 text-amber-400 font-medium">
                               {queueTotal > 1 ? `Queued (${queuePosition} of ${queueTotal})` : 'Queued'}
                             </span>
                           </div>
                         )}
                         {uploadedFile.status === 'pending' && (
-                          <span className="text-xs px-2 py-1 rounded-full bg-gray-100 text-gray-600 font-medium">Starting...</span>
+                          <span className="text-xs px-2 py-1 rounded-full bg-slate-800 text-slate-400 font-medium">Starting...</span>
                         )}
                         {uploadedFile.status === 'extracting' && (
-                          <span className="text-xs px-2 py-1 rounded-full bg-purple-100 text-purple-700 font-medium">Extracting</span>
+                          <span className="text-xs px-2 py-1 rounded-full bg-purple-900/20 text-purple-400 font-medium">Extracting</span>
                         )}
                         {uploadedFile.status === 'uploading' && (
-                          <span className="text-xs px-2 py-1 rounded-full bg-blue-100 text-blue-700 font-medium">Uploading</span>
+                          <span className="text-xs px-2 py-1 rounded-full bg-blue-900/20 text-blue-400 font-medium">Uploading</span>
                         )}
                         {uploadedFile.status === 'processing' && uploadedFile.processingStage && (
                           <>
                             {uploadedFile.processingStage === 'transcribing' && (
-                              <span className="text-xs px-2 py-1 rounded-full bg-indigo-100 text-indigo-700 font-medium">Transcribing</span>
+                              <span className="text-xs px-2 py-1 rounded-full bg-indigo-900/20 text-indigo-400 font-medium">Transcribing</span>
                             )}
                             {uploadedFile.processingStage === 'diarization' && (
-                              <span className="text-xs px-2 py-1 rounded-full bg-purple-100 text-purple-700 font-medium">Analyzing</span>
+                              <span className="text-xs px-2 py-1 rounded-full bg-purple-900/20 text-purple-400 font-medium">Analyzing</span>
                             )}
                             {uploadedFile.processingStage === 'name_extraction' && (
-                              <span className="text-xs px-2 py-1 rounded-full bg-cyan-100 text-cyan-700 font-medium">Naming</span>
+                              <span className="text-xs px-2 py-1 rounded-full bg-cyan-900/20 text-cyan-300 font-medium">Naming</span>
                             )}
                             {uploadedFile.processingStage === 'summary' && (
-                              <span className="text-xs px-2 py-1 rounded-full bg-teal-100 text-teal-700 font-medium">Summarizing</span>
+                              <span className="text-xs px-2 py-1 rounded-full bg-teal-900/20 text-teal-300 font-medium">Summarizing</span>
                             )}
                             {uploadedFile.processingStage === 'role_classification' && (
-                              <span className="text-xs px-2 py-1 rounded-full bg-violet-100 text-violet-700 font-medium">Classifying</span>
+                              <span className="text-xs px-2 py-1 rounded-full bg-violet-900/20 text-violet-300 font-medium">Classifying</span>
                             )}
                             {uploadedFile.processingStage === 'chapters' && (
-                              <span className="text-xs px-2 py-1 rounded-full bg-fuchsia-100 text-fuchsia-700 font-medium">Chaptering</span>
+                              <span className="text-xs px-2 py-1 rounded-full bg-fuchsia-900/20 text-fuchsia-300 font-medium">Chaptering</span>
                             )}
                             {uploadedFile.processingStage === 'takeaways' && (
-                              <span className="text-xs px-2 py-1 rounded-full bg-rose-100 text-rose-700 font-medium">Extracting</span>
+                              <span className="text-xs px-2 py-1 rounded-full bg-rose-900/20 text-rose-300 font-medium">Extracting</span>
                             )}
                             {uploadedFile.processingStage === 'quotes' && (
-                              <span className="text-xs px-2 py-1 rounded-full bg-pink-100 text-pink-700 font-medium">Quoting</span>
+                              <span className="text-xs px-2 py-1 rounded-full bg-pink-900/20 text-pink-300 font-medium">Quoting</span>
                             )}
                             {uploadedFile.processingStage === 'finalizing' && (
-                              <span className="text-xs px-2 py-1 rounded-full bg-sky-100 text-sky-700 font-medium">Finalizing</span>
+                              <span className="text-xs px-2 py-1 rounded-full bg-sky-900/20 text-sky-300 font-medium">Finalizing</span>
                             )}
                             {!['transcribing', 'diarization', 'name_extraction', 'summary', 'role_classification', 'chapters', 'takeaways', 'quotes', 'finalizing'].includes(uploadedFile.processingStage) && (
-                              <span className="text-xs px-2 py-1 rounded-full bg-yellow-100 text-yellow-700 font-medium">Processing</span>
+                              <span className="text-xs px-2 py-1 rounded-full bg-amber-900/20 text-amber-300 font-medium">Processing</span>
                             )}
                           </>
                         )}
                         {uploadedFile.status === 'completed' && (
                           <div className="flex items-center space-x-1">
                             <CheckCircle className="h-4 w-4 text-green-500" />
-                            <span className="text-xs px-2 py-1 rounded-full bg-green-100 text-green-700 font-medium hidden sm:inline">Complete</span>
+                            <span className="text-xs px-2 py-1 rounded-full bg-emerald-900/20 text-emerald-300 font-medium hidden sm:inline">Complete</span>
                           </div>
                         )}
                         {uploadedFile.status === 'error' && (
                           <div className="flex items-center space-x-1">
                             <AlertCircle className="h-4 w-4 text-red-500" />
-                            <span className="text-xs px-2 py-1 rounded-full bg-red-100 text-red-700 font-medium hidden sm:inline">Error</span>
+                            <span className="text-xs px-2 py-1 rounded-full bg-red-900/20 text-red-300 font-medium hidden sm:inline">Error</span>
                           </div>
                         )}
                       </div>
 
-                      <span className="text-[10px] uppercase tracking-wide text-gray-400 border border-gray-200 px-2 py-0.5 rounded">
+                      <span className="text-[10px] uppercase tracking-wide text-slate-300 border border-slate-700/70 bg-slate-800/60 px-2 py-0.5 rounded">
                         {uploadedFile.performanceLevel}
                       </span>
 
@@ -1191,7 +1195,7 @@ export default function UploadPage() {
                       {uploadedFile.status === 'completed' && uploadedFile.projectId && (
                         <a
                           href={`/dashboard/projects?id=${uploadedFile.projectId}`}
-                          className="p-1.5 text-blue-600 hover:text-blue-700 hover:bg-blue-50 rounded flex-shrink-0 transition-colors"
+                          className="p-1.5 text-blue-600 hover:text-blue-400 hover:bg-blue-900/20 rounded flex-shrink-0 transition-colors"
                           title="View project"
                         >
                           <Eye className="h-4 w-4" />
@@ -1204,8 +1208,8 @@ export default function UploadPage() {
                         disabled={isProcessing}
                         className={`p-1 flex-shrink-0 rounded transition-colors ${
                           isProcessing
-                            ? 'text-gray-200 cursor-not-allowed'
-                            : 'text-gray-400 hover:text-gray-600 hover:bg-gray-100'
+                            ? 'text-slate-300 cursor-not-allowed'
+                            : 'text-slate-500 hover:text-slate-400 hover:bg-slate-800'
                         }`}
                         title={isProcessing ? 'Cannot remove while processing' : uploadedFile.status === 'queued' ? 'Remove from queue' : 'Remove file'}
                       >
@@ -1218,7 +1222,7 @@ export default function UploadPage() {
                   {isActive && uploadedFile.status !== 'queued' && (
                     <>
                       <div className="mt-3">
-                        <div className="w-full bg-gray-200 rounded-full h-1.5">
+                        <div className="w-full bg-slate-700 rounded-full h-1.5">
                           <div
                             className={`h-1.5 rounded-full transition-all duration-300 ${uploadedFile.status === 'extracting' ? 'bg-purple-500' : 'bg-blue-600'}`}
                             style={{ width: `${uploadedFile.status === 'extracting' ? uploadedFile.extractionProgress : uploadedFile.progress}%` }}
@@ -1226,14 +1230,14 @@ export default function UploadPage() {
                         </div>
                       </div>
                       {(uploadedFile.processingStage || uploadedFile.processingMessage) && (
-                        <div className="mt-2 flex flex-col gap-1 text-xs text-gray-500 sm:flex-row sm:items-center sm:justify-between">
+                        <div className="mt-2 flex flex-col gap-1 text-xs text-slate-400 sm:flex-row sm:items-center sm:justify-between">
                           {uploadedFile.processingStage && (
-                            <span className="font-medium text-gray-600">
+                            <span className="font-medium text-slate-400">
                               {uploadedFile.status === 'extracting' ? 'Extracting audio' : getStageDisplayName(uploadedFile.performanceLevel, uploadedFile.processingStage)}
                             </span>
                           )}
                           {uploadedFile.processingMessage && (
-                            <span className="text-gray-400 sm:text-right">
+                            <span className="text-slate-500 sm:text-right">
                               {uploadedFile.processingMessage}
                             </span>
                           )}
@@ -1244,8 +1248,8 @@ export default function UploadPage() {
 
                   {/* Error message */}
                   {uploadedFile.status === 'error' && uploadedFile.error && (
-                    <div className="mt-3 p-3 bg-red-50 border border-red-200 rounded-md">
-                      <p className="text-xs text-red-800 break-words">{uploadedFile.error}</p>
+                    <div className="mt-3 p-3 bg-red-900/20 border border-red-800/30 rounded-md">
+                      <p className="text-xs text-red-300 break-words">{uploadedFile.error}</p>
                     </div>
                   )}
                 </div>
@@ -1255,16 +1259,16 @@ export default function UploadPage() {
         )}
 
         {/* Advanced Options — collapsible, out of the critical path */}
-        <div className="mb-8 border border-gray-200 rounded-lg overflow-hidden">
+        <div className="mb-8 border border-slate-700 rounded-lg overflow-hidden">
           <button
             type="button"
             onClick={() => setShowAdvancedOptions(!showAdvancedOptions)}
-            className="w-full flex items-center justify-between px-4 py-3 bg-gray-50 hover:bg-gray-100 transition-colors text-left"
+            className="w-full flex items-center justify-between px-4 py-3 bg-slate-800/50 hover:bg-slate-800 transition-colors text-left"
           >
             <div className="flex items-center gap-2">
-              <span className="text-sm font-semibold text-gray-700">Advanced Options</span>
+              <span className="text-sm font-semibold text-slate-300">Advanced Options</span>
               {(speakerCount || rosterSpeakers.length > 0) && (
-                <span className="text-xs font-medium text-blue-600 bg-blue-50 px-2 py-0.5 rounded-full border border-blue-100">
+                <span className="text-xs font-medium text-blue-600 bg-blue-900/20 px-2 py-0.5 rounded-full border border-blue-100">
                   {[
                     speakerCount ? `${speakerCount} speakers` : null,
                     rosterSpeakers.length > 0 ? `${rosterSpeakers.length} roster` : null,
@@ -1273,19 +1277,19 @@ export default function UploadPage() {
               )}
             </div>
             {showAdvancedOptions
-              ? <ChevronUp className="h-4 w-4 text-gray-400" />
-              : <ChevronDown className="h-4 w-4 text-gray-400" />
+              ? <ChevronUp className="h-4 w-4 text-slate-500" />
+              : <ChevronDown className="h-4 w-4 text-slate-500" />
             }
           </button>
 
           {showAdvancedOptions && (
-            <div className="px-4 py-5 space-y-6 bg-white">
+            <div className="px-4 py-5 space-y-6 bg-slate-900">
               {/* Expected Speaker Count */}
               <div>
-                <label htmlFor="speaker-count" className="block text-sm font-semibold text-gray-800">
+                <label htmlFor="speaker-count" className="block text-sm font-semibold text-slate-100">
                   Number of Speakers
                 </label>
-                <p className="text-xs text-gray-500 mt-0.5 mb-2">
+                <p className="text-xs text-slate-400 mt-0.5 mb-2">
                   If you know how many speakers are in your audio, set it here (2–12). Leave on auto-detect if unsure.
                 </p>
                 <div className="flex items-center gap-3 flex-wrap">
@@ -1296,7 +1300,7 @@ export default function UploadPage() {
                       const value = e.target.value;
                       setSpeakerCount(value === '' ? undefined : parseInt(value, 10));
                     }}
-                    className="block w-36 rounded-md border border-gray-300 px-3 py-2 text-sm shadow-sm focus:outline-none focus:ring-1 focus:ring-blue-500 focus:border-blue-500 bg-white"
+                    className="block w-36 rounded-md border border-slate-600 px-3 py-2 text-sm shadow-sm focus:outline-none focus:ring-1 focus:ring-blue-500 focus:border-blue-500 bg-slate-900"
                   >
                     <option value="">Auto-detect</option>
                     {[2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12].map((num) => (
@@ -1308,7 +1312,7 @@ export default function UploadPage() {
                     <button
                       type="button"
                       onClick={() => setSpeakerCount(recommendedSpeakerCount)}
-                      className="text-xs font-medium text-blue-600 bg-blue-50 hover:bg-blue-100 px-3 py-1.5 rounded-full border border-blue-200 transition-colors"
+                      className="text-xs font-medium text-blue-600 bg-blue-900/20 hover:bg-blue-100 px-3 py-1.5 rounded-full border border-blue-800/30 transition-colors"
                     >
                       Use suggested: {recommendedSpeakerCount} (from filename)
                     </button>
@@ -1329,9 +1333,9 @@ export default function UploadPage() {
         {filteredActiveProjects.length > 0 && (
           <div className="mt-6">
             <div className="flex items-center justify-between mb-3">
-              <h3 className="text-sm font-semibold text-gray-700">Active Processing</h3>
+              <h3 className="text-sm font-semibold text-slate-300">Active Processing</h3>
               {activeProjectsLoading && (
-                <span className="text-xs text-gray-400">Refreshing...</span>
+                <span className="text-xs text-slate-500">Refreshing...</span>
               )}
             </div>
             <div className="space-y-3">
@@ -1341,7 +1345,7 @@ export default function UploadPage() {
                   ? project.processing_progress
                   : 0;
                 return (
-                  <div key={project.id} className="bg-white p-4 rounded-lg border border-gray-200 shadow-sm">
+                  <div key={project.id} className="bg-slate-900 p-4 rounded-lg border border-slate-700 shadow-sm">
                     <div className="flex items-center justify-between">
                       <div className="flex items-center space-x-3 flex-1 min-w-0">
                         <div className="flex-shrink-0">
@@ -1352,26 +1356,26 @@ export default function UploadPage() {
                           )}
                         </div>
                         <div className="flex-1 min-w-0 max-w-xs sm:max-w-sm md:max-w-md lg:max-w-lg">
-                          <p className="text-sm font-medium text-gray-900 truncate" title={project.title}>
+                          <p className="text-sm font-medium text-slate-50 truncate" title={project.title}>
                             {project.title}
                           </p>
-                          <p className="text-xs text-gray-500">
+                          <p className="text-xs text-slate-400">
                             {project.audio_file_size ? formatFileSize(project.audio_file_size) : 'Processing'}
                           </p>
                         </div>
                       </div>
                       <div className="flex items-center space-x-2 flex-shrink-0">
-                        <span className="text-xs px-2 py-1 rounded-full bg-yellow-100 text-yellow-700 font-medium">
+                        <span className="text-xs px-2 py-1 rounded-full bg-amber-900/20 text-amber-300 font-medium">
                           {getStageDisplayName(project.performance_level || 'premium', stage as ProcessingStage)}
                         </span>
                         {project.performance_level && (
-                          <span className="text-[10px] uppercase tracking-wide text-gray-400 border border-gray-200 px-2 py-0.5 rounded">
+                          <span className="text-[10px] uppercase tracking-wide text-slate-300 border border-slate-700/70 bg-slate-800/60 px-2 py-0.5 rounded">
                             {project.performance_level}
                           </span>
                         )}
                         <a
                           href={`/dashboard/projects?id=${project.id}`}
-                          className="p-1.5 text-blue-600 hover:text-blue-700 hover:bg-blue-50 rounded transition-colors"
+                          className="p-1.5 text-blue-600 hover:text-blue-400 hover:bg-blue-900/20 rounded transition-colors"
                           title="View project"
                         >
                           <Eye className="h-4 w-4" />
@@ -1379,7 +1383,7 @@ export default function UploadPage() {
                       </div>
                     </div>
                     <div className="mt-3">
-                      <div className="w-full bg-gray-200 rounded-full h-1.5">
+                      <div className="w-full bg-slate-700 rounded-full h-1.5">
                         <div
                           className="h-1.5 rounded-full bg-blue-600 transition-all duration-300"
                           style={{ width: `${Math.min(100, Math.max(0, progress))}%` }}
@@ -1387,7 +1391,7 @@ export default function UploadPage() {
                       </div>
                     </div>
                     {project.processing_message && (
-                      <div className="mt-2 text-xs text-gray-500">
+                      <div className="mt-2 text-xs text-slate-400">
                         {project.processing_message}
                       </div>
                     )}
@@ -1402,28 +1406,28 @@ export default function UploadPage() {
         <div className="mt-8">
           <div className="flex items-center justify-between mb-4">
             <div className="flex items-center space-x-2">
-              <History className="h-5 w-5 text-gray-400" />
-              <h3 className="text-base font-semibold text-gray-900">Upload History</h3>
+              <History className="h-5 w-5 text-slate-500" />
+              <h3 className="text-base font-semibold text-slate-50">Upload History</h3>
             </div>
             <button
               onClick={() => setShowHistory(!showHistory)}
-              className="text-sm text-blue-600 hover:text-blue-700"
+              className="text-sm text-blue-600 hover:text-blue-400"
             >
               {showHistory ? 'Hide' : 'Show'}
             </button>
           </div>
 
           {showHistory && (
-            <div className="bg-white shadow-sm rounded-lg border border-gray-200">
+            <div className="bg-slate-900 shadow-sm rounded-lg border border-slate-700">
               {historyLoading ? (
                 <div className="p-6">
                   <div className="animate-pulse space-y-4">
                     {[1, 2, 3].map(i => (
                       <div key={i} className="flex items-center space-x-4">
-                        <div className="w-10 h-10 bg-gray-200 rounded"></div>
+                        <div className="w-10 h-10 bg-slate-700 rounded"></div>
                         <div className="flex-1 space-y-2">
-                          <div className="h-4 bg-gray-200 rounded w-3/4"></div>
-                          <div className="h-3 bg-gray-200 rounded w-1/2"></div>
+                          <div className="h-4 bg-slate-700 rounded w-3/4"></div>
+                          <div className="h-3 bg-slate-700 rounded w-1/2"></div>
                         </div>
                       </div>
                     ))}
@@ -1431,16 +1435,16 @@ export default function UploadPage() {
                 </div>
               ) : uploadHistory.length === 0 ? (
                 <div className="p-8 text-center">
-                  <FileAudio className="mx-auto h-10 w-10 text-gray-300" />
-                  <h3 className="mt-2 text-sm font-medium text-gray-900">No uploads yet</h3>
-                  <p className="mt-1 text-sm text-gray-500">
+                  <FileAudio className="mx-auto h-10 w-10 text-slate-500" />
+                  <h3 className="mt-2 text-sm font-medium text-slate-50">No uploads yet</h3>
+                  <p className="mt-1 text-sm text-slate-400">
                     Your upload history will appear here once you start uploading.
                   </p>
                 </div>
               ) : (
-                <div className="divide-y divide-gray-100">
+                <div className="divide-y divide-slate-800">
                   {uploadHistory.map((item) => (
-                    <div key={item.id} className="p-4 hover:bg-gray-50 transition-colors">
+                    <div key={item.id} className="p-4 hover:bg-slate-800/50 transition-colors">
                       <div className="flex items-center justify-between">
                         <div className="flex items-center space-x-3 flex-1 min-w-0">
                           <div className="flex-shrink-0">
@@ -1449,12 +1453,12 @@ export default function UploadPage() {
 
                           <div className="flex-1 min-w-0">
                             <h4
-                              className="text-sm font-medium text-gray-900 truncate"
+                              className="text-sm font-medium text-slate-50 truncate"
                               title={item.title}
                             >
                               {item.title}
                             </h4>
-                            <div className="mt-0.5 flex items-center flex-wrap gap-x-2 gap-y-0.5 text-xs text-gray-400">
+                            <div className="mt-0.5 flex items-center flex-wrap gap-x-2 gap-y-0.5 text-xs text-slate-500">
                               <span>{formatFileSize(item.audio_file_size)}</span>
                               {item.audio_duration && (
                                 <span>{formatDuration(item.audio_duration)}</span>
@@ -1466,17 +1470,17 @@ export default function UploadPage() {
 
                         <div className="flex items-center space-x-2 flex-shrink-0 ml-3">
                           <span className={`hidden sm:inline-flex items-center px-2 py-0.5 rounded-full text-xs font-medium ${
-                            item.status === 'completed' ? 'bg-green-100 text-green-700' :
-                            item.status === 'processing' ? 'bg-yellow-100 text-yellow-700' :
-                            item.status === 'failed' ? 'bg-red-100 text-red-700' :
-                            'bg-gray-100 text-gray-600'
+                            item.status === 'completed' ? 'bg-emerald-900/20 text-emerald-300' :
+                            item.status === 'processing' ? 'bg-amber-900/20 text-amber-300' :
+                            item.status === 'failed' ? 'bg-red-900/20 text-red-300' :
+                            'bg-slate-800/60 text-slate-300'
                           }`}>
                             {item.status.charAt(0).toUpperCase() + item.status.slice(1)}
                           </span>
 
                           <a
                             href={`/dashboard/projects?id=${item.id}`}
-                            className="p-1.5 text-blue-600 hover:text-blue-700 hover:bg-blue-50 rounded transition-colors"
+                            className="p-1.5 text-blue-600 hover:text-blue-400 hover:bg-blue-900/20 rounded transition-colors"
                             title="View project"
                           >
                             <Eye className="h-4 w-4" />
@@ -1493,7 +1497,7 @@ export default function UploadPage() {
                               </button>
                               <button
                                 onClick={() => setConfirmDeleteId(null)}
-                                className="px-2 py-1 text-xs font-medium text-gray-600 bg-gray-100 hover:bg-gray-200 rounded transition-colors"
+                                className="px-2 py-1 text-xs font-medium text-slate-400 bg-slate-800 hover:bg-slate-700 rounded transition-colors"
                               >
                                 Cancel
                               </button>
@@ -1504,8 +1508,8 @@ export default function UploadPage() {
                               disabled={item.status === 'processing'}
                               className={`p-1.5 rounded transition-colors ${
                                 item.status === 'processing'
-                                  ? 'text-gray-200 cursor-not-allowed'
-                                  : 'text-gray-400 hover:text-red-500 hover:bg-red-50'
+                                  ? 'text-slate-300 cursor-not-allowed'
+                                  : 'text-slate-500 hover:text-red-500 hover:bg-red-900/20'
                               }`}
                               title={item.status === 'processing' ? 'Cannot delete while processing' : 'Delete upload'}
                             >
@@ -1534,20 +1538,20 @@ export default function UploadPage() {
             </DialogHeader>
             <div className="space-y-3 max-h-[60vh] overflow-auto">
               {recordingsLoading && (
-                <div className="text-sm text-gray-500">Loading recordings...</div>
+                <div className="text-sm text-slate-400">Loading recordings...</div>
               )}
               {!recordingsLoading && recordingsError && (
                 <div className="text-sm text-red-600">{recordingsError}</div>
               )}
               {!recordingsLoading && !recordingsError && recordings.length === 0 && (
-                <div className="text-sm text-gray-500">No recordings found.</div>
+                <div className="text-sm text-slate-400">No recordings found.</div>
               )}
               {!recordingsLoading && activeProvider === 'zoom' && (recordings as ZoomRecording[]).map((rec) => (
-                <div key={rec.meetingId} className="border border-gray-200 rounded-lg p-3">
+                <div key={rec.meetingId} className="border border-slate-700 rounded-lg p-3">
                   <div className="flex items-start justify-between gap-3">
                     <div>
-                      <div className="text-sm font-medium text-gray-900">{rec.topic || 'Zoom Meeting'}</div>
-                      <div className="text-xs text-gray-500">
+                      <div className="text-sm font-medium text-slate-50">{rec.topic || 'Zoom Meeting'}</div>
+                      <div className="text-xs text-slate-400">
                         {new Date(rec.startTime).toLocaleString()} • {rec.duration} mins
                       </div>
                     </div>
@@ -1567,10 +1571,10 @@ export default function UploadPage() {
                 </div>
               ))}
               {!recordingsLoading && activeProvider === 'microsoft' && (recordings as MicrosoftRecording[]).map((rec) => (
-                <div key={rec.id} className="border border-gray-200 rounded-lg p-3 flex items-center justify-between">
+                <div key={rec.id} className="border border-slate-700 rounded-lg p-3 flex items-center justify-between">
                   <div>
-                    <div className="text-sm font-medium text-gray-900">{rec.name}</div>
-                    <div className="text-xs text-gray-500">
+                    <div className="text-sm font-medium text-slate-50">{rec.name}</div>
+                    <div className="text-xs text-slate-400">
                       {new Date(rec.createdAt).toLocaleString()} • {formatFileSize(rec.size)}
                     </div>
                   </div>

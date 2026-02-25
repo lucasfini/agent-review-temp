@@ -115,8 +115,8 @@ export default function ProgressTracker({
 
   if (error) {
     return (
-      <div className={`p-4 bg-red-50 border border-red-200 rounded-lg ${className}`}>
-        <div className="flex items-center space-x-2 text-red-800">
+      <div className={`p-4 bg-red-900/20 border border-red-800/30 rounded-lg ${className}`}>
+        <div className="flex items-center space-x-2 text-red-300">
           <AlertCircle className="h-5 w-5" />
           <span className="text-sm font-medium">{error}</span>
         </div>
@@ -126,8 +126,8 @@ export default function ProgressTracker({
 
   if (!progressData) {
     return (
-      <div className={`p-4 bg-gray-50 border border-gray-200 rounded-lg ${className}`}>
-        <div className="flex items-center space-x-2 text-gray-600">
+      <div className={`p-4 bg-slate-800/50 border border-slate-700 rounded-lg ${className}`}>
+        <div className="flex items-center space-x-2 text-slate-400">
           <Loader2 className="h-5 w-5 animate-spin" />
           <span className="text-sm">Loading progress...</span>
         </div>
@@ -147,13 +147,13 @@ export default function ProgressTracker({
 
   if (status === 'failed') {
     return (
-      <div className={`p-4 bg-red-50 border border-red-200 rounded-lg ${className}`}>
-        <div className="flex items-center space-x-2 text-red-800">
+      <div className={`p-4 bg-red-900/20 border border-red-800/30 rounded-lg ${className}`}>
+        <div className="flex items-center space-x-2 text-red-300">
           <AlertCircle className="h-5 w-5" />
           <div className="flex-1">
             <p className="text-sm font-medium">Processing Failed</p>
             {progressData.processing_message && (
-              <p className="text-xs text-red-700 mt-1">{progressData.processing_message}</p>
+              <p className="text-xs text-red-400 mt-1">{progressData.processing_message}</p>
             )}
           </div>
         </div>
@@ -163,12 +163,12 @@ export default function ProgressTracker({
 
   if (status === 'completed') {
     return (
-      <div className={`p-4 bg-green-50 border border-green-200 rounded-lg ${className}`}>
-        <div className="flex items-center space-x-2 text-green-800">
+      <div className={`p-4 bg-green-900/20 border border-green-800/30 rounded-lg ${className}`}>
+        <div className="flex items-center space-x-2 text-green-300">
           <CheckCircle2 className="h-5 w-5" />
           <div className="flex-1">
             <p className="text-sm font-medium">Processing Complete!</p>
-            <p className="text-xs text-green-700 mt-1">
+            <p className="text-xs text-green-400 mt-1">
               {tier === 'premium' ? 'All premium features ready' :
                tier === 'pro' ? 'Enhanced content ready' :
                'Transcription ready'}
@@ -180,16 +180,16 @@ export default function ProgressTracker({
   }
 
   return (
-    <div className={`p-4 bg-white border border-gray-200 rounded-lg ${className}`}>
+    <div className={`p-4 bg-slate-900 border border-slate-700 rounded-lg ${className}`}>
       {/* Header with tier badge and overall progress */}
       <div className="flex items-center justify-between mb-4">
         <div className="flex items-center space-x-2">
           <Loader2 className="h-5 w-5 animate-spin text-blue-600" />
-          <span className="text-sm font-medium text-gray-900">Processing Audio</span>
+          <span className="text-sm font-medium text-slate-50">Processing Audio</span>
           <span className={`text-xs px-2 py-0.5 rounded-full font-medium ${
-            tier === 'premium' ? 'bg-purple-100 text-purple-700' :
-            tier === 'pro' ? 'bg-blue-100 text-blue-700' :
-            'bg-gray-100 text-gray-700'
+            tier === 'premium' ? 'bg-purple-100 text-purple-400' :
+            tier === 'pro' ? 'bg-blue-100 text-blue-400' :
+            'bg-slate-800 text-slate-300'
           }`}>
             {tier.toUpperCase()}
           </span>
@@ -199,7 +199,7 @@ export default function ProgressTracker({
 
       {/* Progress bar */}
       <div className="mb-4">
-        <div className="w-full bg-gray-200 rounded-full h-2">
+        <div className="w-full bg-slate-700 rounded-full h-2">
           <div
             className="bg-blue-600 h-2 rounded-full transition-all duration-500 ease-out"
             style={{ width: `${overallProgress}%` }}
@@ -221,11 +221,11 @@ export default function ProgressTracker({
             <div
               key={stageDef.id}
               className={`flex items-center space-x-3 p-2 rounded transition-colors ${
-                isActive ? 'bg-blue-50' : isCompleted ? 'bg-green-50' : 'bg-gray-50'
+                isActive ? 'bg-blue-900/20' : isCompleted ? 'bg-green-900/20' : 'bg-slate-800/50'
               }`}
             >
               <div className={`flex-shrink-0 ${
-                isCompleted ? 'text-green-600' : isActive ? 'text-blue-600' : 'text-gray-400'
+                isCompleted ? 'text-green-600' : isActive ? 'text-blue-600' : 'text-slate-500'
               }`}>
                 {isCompleted ? (
                   <Check className="h-4 w-4" />
@@ -237,12 +237,12 @@ export default function ProgressTracker({
               </div>
               <div className="flex-1 min-w-0">
                 <p className={`text-xs font-medium ${
-                  isCompleted ? 'text-green-800' : isActive ? 'text-blue-800' : 'text-gray-600'
+                  isCompleted ? 'text-green-300' : isActive ? 'text-blue-300' : 'text-slate-400'
                 }`}>
                   {stageDef.displayName}
                 </p>
                 {isActive && progressData.processing_message && (
-                  <p className="text-xs text-gray-500 mt-0.5 truncate">
+                  <p className="text-xs text-slate-400 mt-0.5 truncate">
                     {progressData.processing_message}
                   </p>
                 )}

@@ -53,17 +53,17 @@ function InsightCard({ opportunity, showProject, formatRelativeDate, status }: I
     <div
       className={cn(
         "rounded-xl p-4 transition-all hover:shadow-md relative",
-        isPaused ? "opacity-50 bg-gray-50 border border-gray-200" :
+        isPaused ? "opacity-50 bg-slate-800/50 border border-slate-700" :
         isGap
-          ? "bg-red-50 border border-red-100"
+          ? "bg-red-900/20 border border-red-100"
           : isMedium
-          ? "bg-amber-50 border border-amber-100"
-          : "bg-green-50 border border-green-100"
+          ? "bg-amber-900/20 border border-amber-100"
+          : "bg-green-900/20 border border-green-100"
       )}
     >
       {isPaused && (
         <div className="absolute top-2 right-2 z-10">
-           <span className="inline-flex items-center gap-1 bg-gray-200/80 backdrop-blur-sm text-gray-600 text-[10px] font-semibold px-2 py-0.5 rounded-full border border-gray-300">
+           <span className="inline-flex items-center gap-1 bg-slate-700/80 backdrop-blur-sm text-slate-400 text-[10px] font-semibold px-2 py-0.5 rounded-full border border-slate-600">
              <PauseCircle className="h-3 w-3" />
              Goal Paused
            </span>
@@ -74,7 +74,7 @@ function InsightCard({ opportunity, showProject, formatRelativeDate, status }: I
       <div className="flex items-start gap-3 mb-3">
         <div className={cn(
           "flex-shrink-0 p-2 rounded-lg",
-          isPaused ? "bg-gray-200 text-gray-500" :
+          isPaused ? "bg-slate-700 text-slate-400" :
           isGap
             ? "bg-red-100 text-red-600"
             : isMedium
@@ -91,25 +91,25 @@ function InsightCard({ opportunity, showProject, formatRelativeDate, status }: I
           <div className="flex items-center gap-2 flex-wrap pr-16">
             <h4 className={cn(
               "text-sm font-semibold",
-              isPaused ? "text-gray-700" :
+              isPaused ? "text-slate-300" :
               isGap ? "text-red-900" : isMedium ? "text-amber-900" : "text-green-900"
             )}>
               {opportunity.label}
             </h4>
             <span className={cn(
               "text-xs px-2 py-0.5 rounded-full font-medium",
-              isPaused ? "bg-gray-200 text-gray-600" :
+              isPaused ? "bg-slate-700 text-slate-400" :
               isGap
-                ? "bg-red-100 text-red-700"
+                ? "bg-red-100 text-red-400"
                 : isMedium
-                ? "bg-amber-100 text-amber-700"
-                : "bg-green-100 text-green-700"
+                ? "bg-amber-100 text-amber-400"
+                : "bg-green-100 text-green-400"
             )}>
               {opportunity.type}
               <span className="sr-only"> — severity: {opportunity.severity}</span>
             </span>
           </div>
-          <p className="text-xs text-gray-500 mt-0.5">
+          <p className="text-xs text-slate-400 mt-0.5">
             {formatRelativeDate(opportunity.created_at)}
           </p>
         </div>
@@ -126,8 +126,8 @@ function InsightCard({ opportunity, showProject, formatRelativeDate, status }: I
       {/* Summary */}
       <p className={cn(
         "text-sm mb-3 leading-relaxed",
-        isPaused ? "text-gray-500" :
-        isGap ? "text-red-800" : isMedium ? "text-amber-800" : "text-green-800"
+        isPaused ? "text-slate-400" :
+        isGap ? "text-red-300" : isMedium ? "text-amber-300" : "text-green-300"
       )}>
         {opportunity.summary}
       </p>
@@ -135,7 +135,7 @@ function InsightCard({ opportunity, showProject, formatRelativeDate, status }: I
       {/* Action */}
       <div className={cn(
         "flex items-start gap-2 p-2.5 rounded-lg",
-        isPaused ? "bg-gray-100" :
+        isPaused ? "bg-slate-800" :
         isGap
           ? "bg-red-100/50"
           : isMedium
@@ -144,13 +144,13 @@ function InsightCard({ opportunity, showProject, formatRelativeDate, status }: I
       )}>
         <ArrowRight className={cn(
           "h-4 w-4 flex-shrink-0 mt-0.5",
-          isPaused ? "text-gray-400" :
+          isPaused ? "text-slate-500" :
           isGap ? "text-red-600" : isMedium ? "text-amber-600" : "text-green-600"
         )} />
         <p className={cn(
           "text-xs font-medium",
-          isPaused ? "text-gray-500" :
-          isGap ? "text-red-700" : isMedium ? "text-amber-700" : "text-green-700"
+          isPaused ? "text-slate-400" :
+          isGap ? "text-red-400" : isMedium ? "text-amber-400" : "text-green-400"
         )}>
           {opportunity.recommendedAction || 'Review AI suggestion'}
         </p>
@@ -173,10 +173,10 @@ export function InsightsGrid({
 
   if (opportunities.length === 0) {
     return (
-      <div className="bg-gray-50 rounded-xl border border-dashed border-gray-300 p-8 text-center">
-        <TrendingUp className="h-10 w-10 text-gray-400 mx-auto mb-3" />
-        <h4 className="text-sm font-medium text-gray-900 mb-1">No insights yet</h4>
-        <p className="text-sm text-gray-500">
+      <div className="bg-slate-800/50 rounded-xl border border-dashed border-slate-600 p-8 text-center">
+        <TrendingUp className="h-10 w-10 text-slate-500 mx-auto mb-3" />
+        <h4 className="text-sm font-medium text-slate-50 mb-1">No insights yet</h4>
+        <p className="text-sm text-slate-400">
           Run analytics on your projects to discover opportunities and gaps.
         </p>
       </div>
@@ -215,8 +215,8 @@ export function InsightsGrid({
       {/* Section Header */}
       <div className="flex items-center justify-between">
         <div>
-          <h3 className="text-base font-semibold text-gray-900">Opportunities & Gaps</h3>
-          <p className="text-sm text-gray-500">
+          <h3 className="text-base font-semibold text-slate-50">Opportunities & Gaps</h3>
+          <p className="text-sm text-slate-400">
             {opportunities.length} insight{opportunities.length !== 1 ? 's' : ''} detected
             {projectIdFilter && <span className="text-blue-600 ml-1">(filtered)</span>}
           </p>
@@ -224,16 +224,16 @@ export function InsightsGrid({
         <div className="flex items-center gap-3 text-xs">
           <span className="flex items-center gap-1.5">
             <span className="w-2.5 h-2.5 rounded-full bg-red-500" aria-hidden="true" />
-            <span className="text-gray-600">Gaps ({gaps.length})</span>
+            <span className="text-slate-400">Gaps ({gaps.length})</span>
           </span>
           <span className="flex items-center gap-1.5">
             <span className="w-2.5 h-2.5 rounded-full bg-amber-500" aria-hidden="true" />
-            <span className="text-gray-600">Needs attention ({mediumItems.length})</span>
+            <span className="text-slate-400">Needs attention ({mediumItems.length})</span>
           </span>
           {pausedOps.length > 0 && (
              <span className="flex items-center gap-1.5">
-               <span className="w-2.5 h-2.5 rounded-full bg-gray-400" aria-hidden="true" />
-               <span className="text-gray-600">Paused ({pausedOps.length})</span>
+               <span className="w-2.5 h-2.5 rounded-full bg-slate-500" aria-hidden="true" />
+               <span className="text-slate-400">Paused ({pausedOps.length})</span>
              </span>
           )}
         </div>

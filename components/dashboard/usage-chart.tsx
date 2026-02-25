@@ -36,7 +36,7 @@ export function UsageChart({ data, metric, label }: UsageChartProps) {
 
   if (data.length === 0) {
     return (
-      <div className="flex items-center justify-center h-64 text-gray-500">
+      <div className="flex items-center justify-center h-64 text-slate-400">
         No usage data available
       </div>
     );
@@ -50,24 +50,24 @@ export function UsageChart({ data, metric, label }: UsageChartProps) {
     <div className="space-y-4">
       {/* Chart Header */}
       <div className="flex justify-between items-center text-sm">
-        <span className="text-gray-600">{label || metric}</span>
-        <div className="text-gray-500">
-          <span className="text-gray-400">Min: </span>
+        <span className="text-slate-400">{label || metric}</span>
+        <div className="text-slate-400">
+          <span className="text-slate-500">Min: </span>
           {minValue.toFixed(1)}
-          <span className="mx-2 text-gray-400">Max: </span>
+          <span className="mx-2 text-slate-500">Max: </span>
           {maxValue.toFixed(1)}
         </div>
       </div>
 
       {/* SVG Chart */}
-      <div className="relative h-64 bg-gray-50 rounded-lg p-4">
+      <div className="relative h-64 bg-slate-800/50 rounded-lg p-4">
         <svg
           viewBox="0 0 100 100"
           preserveAspectRatio="none"
           className="w-full h-full"
         >
           {/* Grid lines */}
-          <g className="text-gray-300" strokeDasharray="1,2">
+          <g className="text-slate-500" strokeDasharray="1,2">
             <line x1="0" y1="25" x2="100" y2="25" stroke="currentColor" strokeWidth="0.2" />
             <line x1="0" y1="50" x2="100" y2="50" stroke="currentColor" strokeWidth="0.2" />
             <line x1="0" y1="75" x2="100" y2="75" stroke="currentColor" strokeWidth="0.2" />

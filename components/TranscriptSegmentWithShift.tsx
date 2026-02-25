@@ -101,9 +101,9 @@ export function TranscriptSegmentWithShift({
   const speakerColor = speaker.color || '#3B82F6';
 
   return (
-    <div className="group relative flex gap-3 py-3 px-4 hover:bg-gray-50 rounded-lg transition-colors">
+    <div className="group relative flex gap-3 py-3 px-4 hover:bg-slate-800/50 rounded-lg transition-colors">
       {/* Segment Number */}
-      <div className="flex-shrink-0 w-8 text-xs text-gray-400 pt-1 text-right">
+      <div className="flex-shrink-0 w-8 text-xs text-slate-500 pt-1 text-right">
         #{index + 1}
       </div>
 
@@ -129,13 +129,13 @@ export function TranscriptSegmentWithShift({
 
         {/* Dropdown Menu */}
         {showMenu && (
-          <div className="absolute left-0 top-full mt-1 z-50 w-56 bg-white rounded-lg shadow-xl border border-gray-200 py-1 animate-in fade-in slide-in-from-top-2 duration-150">
+          <div className="absolute left-0 top-full mt-1 z-50 w-56 bg-slate-900 rounded-lg shadow-xl border border-slate-700 py-1 animate-in fade-in slide-in-from-top-2 duration-150">
             {/* Header */}
-            <div className="px-3 py-2 border-b border-gray-100">
-              <p className="text-xs font-medium text-gray-500 uppercase tracking-wide">
+            <div className="px-3 py-2 border-b border-slate-800">
+              <p className="text-xs font-medium text-slate-400 uppercase tracking-wide">
                 Fix Speaker Drift
               </p>
-              <p className="text-xs text-gray-400 mt-0.5">
+              <p className="text-xs text-slate-500 mt-0.5">
                 Shift all labels from here onwards
               </p>
             </div>
@@ -143,58 +143,58 @@ export function TranscriptSegmentWithShift({
             {/* Shift Down */}
             <button
               onClick={handleShiftDown}
-              className="w-full flex items-center gap-3 px-3 py-2.5 text-sm text-gray-700 hover:bg-blue-50 hover:text-blue-700 transition-colors"
+              className="w-full flex items-center gap-3 px-3 py-2.5 text-sm text-slate-300 hover:bg-blue-900/20 hover:text-blue-400 transition-colors"
             >
               <div className="flex items-center justify-center w-7 h-7 rounded-md bg-blue-100 text-blue-600">
                 <ChevronDown className="w-4 h-4" />
               </div>
               <div className="text-left">
                 <p className="font-medium">Shift Labels Down</p>
-                <p className="text-xs text-gray-400">A→B, B→C, C→A...</p>
+                <p className="text-xs text-slate-500">A→B, B→C, C→A...</p>
               </div>
             </button>
 
             {/* Shift Up */}
             <button
               onClick={handleShiftUp}
-              className="w-full flex items-center gap-3 px-3 py-2.5 text-sm text-gray-700 hover:bg-purple-50 hover:text-purple-700 transition-colors"
+              className="w-full flex items-center gap-3 px-3 py-2.5 text-sm text-slate-300 hover:bg-purple-900/20 hover:text-purple-400 transition-colors"
             >
               <div className="flex items-center justify-center w-7 h-7 rounded-md bg-purple-100 text-purple-600">
                 <ChevronUp className="w-4 h-4" />
               </div>
               <div className="text-left">
                 <p className="font-medium">Shift Labels Up</p>
-                <p className="text-xs text-gray-400">C→B, B→A, A→C...</p>
+                <p className="text-xs text-slate-500">C→B, B→A, A→C...</p>
               </div>
             </button>
 
-            <div className="border-t border-gray-100 my-1" />
+            <div className="border-t border-slate-800 my-1" />
 
             {/* Reassign to Specific Speaker */}
             <div className="relative">
               <button
                 onClick={() => setShowReassignSubmenu(!showReassignSubmenu)}
-                className="w-full flex items-center justify-between gap-3 px-3 py-2.5 text-sm text-gray-700 hover:bg-gray-50 transition-colors"
+                className="w-full flex items-center justify-between gap-3 px-3 py-2.5 text-sm text-slate-300 hover:bg-slate-800/50 transition-colors"
               >
                 <div className="flex items-center gap-3">
-                  <div className="flex items-center justify-center w-7 h-7 rounded-md bg-gray-100 text-gray-600">
+                  <div className="flex items-center justify-center w-7 h-7 rounded-md bg-slate-800 text-slate-400">
                     <UserCheck className="w-4 h-4" />
                   </div>
                   <span className="font-medium">This should be...</span>
                 </div>
-                <ChevronDown className={`w-4 h-4 text-gray-400 transition-transform ${showReassignSubmenu ? 'rotate-180' : ''}`} />
+                <ChevronDown className={`w-4 h-4 text-slate-500 transition-transform ${showReassignSubmenu ? 'rotate-180' : ''}`} />
               </button>
 
               {/* Reassign Submenu */}
               {showReassignSubmenu && (
-                <div className="border-t border-gray-100 bg-gray-50 py-1">
+                <div className="border-t border-slate-800 bg-slate-800/50 py-1">
                   {speakers
                     .filter(s => s.id !== (segment.finalSpeakerId || segment.speakerId))
                     .map(s => (
                       <button
                         key={s.id}
                         onClick={() => handleReassign(s.id)}
-                        className="w-full flex items-center gap-2 px-6 py-2 text-sm text-gray-700 hover:bg-white transition-colors"
+                        className="w-full flex items-center gap-2 px-6 py-2 text-sm text-slate-300 hover:bg-slate-900 transition-colors"
                       >
                         <span
                           className="w-2.5 h-2.5 rounded-full"
@@ -211,12 +211,12 @@ export function TranscriptSegmentWithShift({
       </div>
 
       {/* Timestamp */}
-      <div className="flex-shrink-0 w-14 text-xs text-gray-400 pt-1 font-mono">
+      <div className="flex-shrink-0 w-14 text-xs text-slate-500 pt-1 font-mono">
         {formatTime(segment.startTime)}
       </div>
 
       {/* Segment Text */}
-      <p className="flex-1 text-sm text-gray-800 leading-relaxed">
+      <p className="flex-1 text-sm text-slate-100 leading-relaxed">
         {segment.text}
       </p>
 
@@ -281,7 +281,7 @@ function TranscriptEditor() {
         </button>
       )}
 
-      <div className="divide-y divide-gray-100">
+      <div className="divide-y divide-slate-800">
         {segments.map((segment, index) => (
           <TranscriptSegmentWithShift
             key={segment.id}

@@ -79,20 +79,20 @@ export function SpeakerManagerModal({
           <DialogTitle>Manage Speakers</DialogTitle>
         </DialogHeader>
 
-        <p className="text-sm text-gray-500 mb-4">
+        <p className="text-sm text-slate-400 mb-4">
           Click the play button to hear a sample of each speaker. Click a name to edit it.
         </p>
 
         {mergeSourceId && (
-          <div className="mb-4 rounded-md border border-blue-100 bg-blue-50 p-3">
-            <p className="text-xs text-blue-700 font-medium mb-2">
+          <div className="mb-4 rounded-md border border-blue-100 bg-blue-900/20 p-3">
+            <p className="text-xs text-blue-400 font-medium mb-2">
               Merge "{speakerMap[mergeSourceId]?.name || speakerMap[mergeSourceId]?.fallbackName || mergeSourceId}" into:
             </p>
             <div className="flex items-center gap-2">
               <select
                 value={mergeTargetId}
                 onChange={(e) => setMergeTargetId(e.target.value)}
-                className="text-xs border border-blue-200 rounded px-2 py-1 bg-white text-blue-800"
+                className="text-xs border border-blue-800/30 rounded px-2 py-1 bg-slate-900 text-blue-300"
               >
                 <option value="">Select speaker</option>
                 {speakerProfiles
@@ -158,7 +158,7 @@ export function SpeakerManagerModal({
         </div>
 
         {speakerCount === 0 && (
-          <div className="text-center py-8 text-gray-500">
+          <div className="text-center py-8 text-slate-400">
             No speakers detected in this transcript.
           </div>
         )}

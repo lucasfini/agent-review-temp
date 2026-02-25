@@ -110,8 +110,8 @@ export default function CreditPackages({ onSuccess }: CreditPackagesProps) {
             onClick={() => setSelectedPackage(pkg.id)}
             className={`relative p-5 rounded-xl border-2 transition-all text-left ${
               selectedPackage === pkg.id
-                ? 'border-blue-500 bg-blue-50/50 shadow-sm'
-                : 'border-gray-200 hover:border-gray-300 hover:shadow-sm'
+                ? 'border-blue-500 bg-blue-900/20/50 shadow-sm'
+                : 'border-slate-700 hover:border-slate-600 hover:shadow-sm'
             } ${pkg.popular ? 'ring-2 ring-blue-500 ring-offset-1' : ''}`}
           >
             {pkg.popular && (
@@ -127,22 +127,22 @@ export default function CreditPackages({ onSuccess }: CreditPackagesProps) {
               </div>
             )}
 
-            <div className="text-3xl font-bold text-gray-900 mb-1">
+            <div className="text-3xl font-bold text-slate-50 mb-1">
               ${pkg.price}
             </div>
 
-            <div className="text-sm text-gray-900 font-medium mb-1">
+            <div className="text-sm text-slate-50 font-medium mb-1">
               ${pkg.amount} credits
               {pkg.bonus ? (
                 <span className="text-green-600 ml-1">+${pkg.bonus} bonus</span>
               ) : null}
             </div>
 
-            <div className="text-xs text-gray-500 mb-3">
+            <div className="text-xs text-slate-400 mb-3">
               {pkg.episodes}
             </div>
 
-            <div className="flex items-center gap-1 text-xs text-gray-400">
+            <div className="flex items-center gap-1 text-xs text-slate-500">
               <Check className="h-3 w-3" />
               No expiration
             </div>
@@ -159,10 +159,10 @@ export default function CreditPackages({ onSuccess }: CreditPackagesProps) {
       </div>
 
       <div className="flex items-center justify-between mb-4">
-        <p className="text-xs text-gray-500">
+        <p className="text-xs text-slate-400">
           Pay as you go — no subscriptions, credits never expire
         </p>
-        <p className="text-xs text-gray-400">
+        <p className="text-xs text-slate-500">
           Secure payment via Stripe
         </p>
       </div>

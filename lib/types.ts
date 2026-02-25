@@ -58,6 +58,19 @@ export type SpeakerRole =
   | 'quoted_audio'
   | 'unknown';
 
+export const SPEAKER_ROLE_LABELS: Record<SpeakerRole, string> = {
+  host: 'Host',
+  co_host: 'Co-host',
+  candidate: 'Candidate',
+  guest: 'Guest',
+  advertiser: 'Advertiser',
+  narrator: 'Narrator',
+  quoted_audio: 'Quoted Audio',
+  unknown: 'Unknown',
+};
+
+export const SPEAKER_ROLES = Object.keys(SPEAKER_ROLE_LABELS) as SpeakerRole[];
+
 export type SpeakerIdentityProfile = {
   acoustic?: {
     centrdEmbedding: number[];    // mean embedding

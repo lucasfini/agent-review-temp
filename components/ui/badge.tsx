@@ -3,27 +3,27 @@ import { cva, type VariantProps } from "class-variance-authority"
 import { cn } from "@/lib/utils"
 
 const badgeVariants = cva(
-  "inline-flex items-center rounded-full border px-2.5 py-0.5 text-xs font-semibold transition-colors focus:outline-none focus:ring-2 focus:ring-gray-950 focus:ring-offset-2",
+  "inline-flex items-center rounded-full border px-2.5 py-0.5 text-xs font-semibold transition-colors focus:outline-none focus:ring-2 focus:ring-blue-500 focus:ring-offset-2",
   {
     variants: {
       variant: {
         default:
-          "border-transparent bg-gray-900 text-gray-50 hover:bg-gray-800",
+          "border-transparent bg-blue-600 text-white hover:bg-blue-700",
         secondary:
-          "border-transparent bg-gray-100 text-gray-900 hover:bg-gray-200",
+          "border-transparent bg-slate-700 text-slate-200 hover:bg-slate-600",
         success:
-          "border-transparent bg-green-100 text-green-800 hover:bg-green-200",
+          "border-transparent bg-green-900/40 text-green-400 hover:bg-green-900/60",
         warning:
-          "border-transparent bg-yellow-100 text-yellow-800 hover:bg-yellow-200",
+          "border-transparent bg-yellow-900/40 text-yellow-400 hover:bg-yellow-900/60",
         destructive:
-          "border-transparent bg-red-100 text-red-800 hover:bg-red-200",
+          "border-transparent bg-red-900/40 text-red-400 hover:bg-red-900/60",
         info:
-          "border-transparent bg-blue-100 text-blue-800 hover:bg-blue-200",
-        outline: "text-gray-950 border-gray-200",
+          "border-transparent bg-blue-900/40 text-blue-400 hover:bg-blue-900/60",
+        outline: "text-slate-200 border-slate-700",
         premium:
-          "border-transparent bg-purple-100 text-purple-800 hover:bg-purple-200",
+          "border-transparent bg-purple-900/40 text-purple-400 hover:bg-purple-900/60",
         pro:
-          "border-transparent bg-indigo-100 text-indigo-800 hover:bg-indigo-200",
+          "border-transparent bg-indigo-900/40 text-indigo-400 hover:bg-indigo-900/60",
       },
     },
     defaultVariants: {

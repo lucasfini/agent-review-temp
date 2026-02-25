@@ -11,11 +11,18 @@ export async function PATCH(
 ) {
   try {
     const { id: projectId } = await params;
-    const { segmentIndices, newSpeakerId } = await request.json();
+    const { segmentIndices, newSpeakerId, confirmOnly } = await request.json();
 
-    if (!projectId || !Array.isArray(segmentIndices) || !newSpeakerId) {
+    if (!projectId || !Array.isArray(segmentIndices)) {
       return NextResponse.json(
-        { error: 'Missing required fields: segmentIndices (array) and newSpeakerId' },
+        { error: 'Missing required fields: segmentIndices (array)' },
+        { status: 400 }
+      );
+    }
+
+    if (!confirmOnly && !newSpeakerId) {
+      return NextResponse.json(
+        { error: 'Missing required field: newSpeakerId' },
         { status: 400 }
       );
     }
@@ -42,6 +49,47 @@ export async function PATCH(
         { error: 'Invalid speaker data structure' },
         { status: 400 }
       );
+    }
+
+    // ─── Confirm-only mode: mark segments as confirmed without changing speaker ───
+    if (confirmOnly) {
+      const updatedSegments = [...speakerData.segments];
+      let confirmedCount = 0;
+      for (const index of segmentIndices) {
+        if (index >= 0 && index < updatedSegments.length) {
+          updatedSegments[index] = {
+            ...updatedSegments[index],
+            status: 'confirmed' as const,
+            confidence: 1.0,
+          };
+          confirmedCount++;
+        }
+      }
+
+      const updatedSpeakerData = {
+        ...speakerData,
+        segments: updatedSegments,
+        detectionMetadata: {
+          ...speakerData.detectionMetadata,
+          lastModified: new Date().toISOString(),
+          lastModificationType: 'segment_confirm',
+        }
+      };
+
+      const { data: savedConfirm, error: updateError } = await supabaseAdmin
+        .from('projects')
+        // @ts-expect-error - Supabase types issue with update
+        .update({ speaker_data: updatedSpeakerData })
+        .eq('id', projectId)
+        .select('speaker_data')
+        .single();
+
+      if (updateError || !savedConfirm) {
+        console.error('Error saving confirmations (0 rows matched or DB error):', updateError);
+        return NextResponse.json({ error: 'Failed to save confirmations' }, { status: 500 });
+      }
+
+      return NextResponse.json({ success: true, confirmedCount, updatedSpeakerData: savedConfirm.speaker_data });
     }
 
     // Verify the target speaker exists
@@ -112,16 +160,16 @@ export async function PATCH(
     };
 
     // Save to database
-    const { error: updateError } = await supabaseAdmin
+    const { data: saved, error: updateError } = await supabaseAdmin
       .from('projects')
       // @ts-expect-error - Supabase types issue with update
-      .update({
-        speaker_data: updatedSpeakerData
-      })
-      .eq('id', projectId);
+      .update({ speaker_data: updatedSpeakerData })
+      .eq('id', projectId)
+      .select('speaker_data')
+      .single();
 
-    if (updateError) {
-      console.error('Error updating speaker data:', updateError);
+    if (updateError || !saved) {
+      console.error('Error saving segment reassignment (0 rows matched or DB error):', updateError);
       return NextResponse.json(
         { error: 'Failed to save segment reassignment' },
         { status: 500 }
@@ -132,7 +180,7 @@ export async function PATCH(
       success: true,
       message: `Successfully reassigned ${reassignedCount} segment(s) to ${newSpeakerId}`,
       reassignedCount,
-      updatedSpeakerData
+      updatedSpeakerData: saved.speaker_data
     });
 
   } catch (error) {

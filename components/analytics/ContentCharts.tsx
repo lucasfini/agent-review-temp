@@ -25,7 +25,7 @@ export function DonutChart({ data, className, showLegend = true }: DonutChartPro
 
   if (total === 0) {
     return (
-      <div className={cn("flex items-center justify-center h-48 text-gray-400 text-sm", className)}>
+      <div className={cn("flex items-center justify-center h-48 text-slate-500 text-sm", className)}>
         No data available
       </div>
     )
@@ -55,9 +55,9 @@ export function DonutChart({ data, className, showLegend = true }: DonutChartPro
                 const item = payload[0].payload
                 const percentage = ((item.value / total) * 100).toFixed(1)
                 return (
-                  <div className="bg-white rounded-lg shadow-lg border border-gray-100 px-3 py-2">
-                    <p className="text-sm font-medium text-gray-900">{item.name}</p>
-                    <p className="text-sm text-gray-600">
+                  <div className="bg-slate-900 rounded-lg shadow-lg border border-slate-700 px-3 py-2">
+                    <p className="text-sm font-medium text-slate-200">{item.name}</p>
+                    <p className="text-sm text-slate-400">
                       {item.value} ({percentage}%)
                     </p>
                   </div>
@@ -78,7 +78,7 @@ export function DonutChart({ data, className, showLegend = true }: DonutChartPro
                         className="w-2.5 h-2.5 rounded-full"
                         style={{ backgroundColor: entry.color }}
                       />
-                      <span className="text-xs text-gray-600">{entry.value}</span>
+                      <span className="text-xs text-slate-400">{entry.value}</span>
                     </div>
                   ))}
                 </div>
@@ -117,7 +117,7 @@ export function BarList({
 
   if (data.length === 0) {
     return (
-      <div className={cn("flex items-center justify-center h-32 text-gray-400 text-sm", className)}>
+      <div className={cn("flex items-center justify-center h-32 text-slate-500 text-sm", className)}>
         No data available
       </div>
     )
@@ -130,19 +130,19 @@ export function BarList({
           <div className="flex items-center justify-between">
             <div className="flex items-center gap-2 min-w-0">
               {item.icon && (
-                <span className="flex-shrink-0 text-gray-400">
+                <span className="flex-shrink-0 text-slate-500">
                   {item.icon}
                 </span>
               )}
-              <span className="text-sm font-medium text-gray-900 truncate">
+              <span className="text-sm font-medium text-slate-50 truncate">
                 {item.name}
               </span>
             </div>
-            <span className="text-sm font-semibold text-gray-900 ml-2 tabular-nums">
+            <span className="text-sm font-semibold text-slate-50 ml-2 tabular-nums">
               {valueFormatter(item.value)}
             </span>
           </div>
-          <div className="h-2 w-full bg-gray-100 rounded-full overflow-hidden">
+          <div className="h-2 w-full bg-slate-800 rounded-full overflow-hidden">
             <div
               className="h-full rounded-full transition-all duration-500 ease-out"
               style={{
@@ -232,21 +232,21 @@ export function ContentMixSection({ contentBreakdown, topTopics }: ContentMixDat
   return (
     <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
       {/* Donut Chart - Content Mix */}
-      <div className="bg-white rounded-xl border border-gray-100 p-5" role="region" aria-label="Content mix breakdown">
-        <h3 className="text-sm font-semibold text-gray-900 mb-4">Content Mix</h3>
+      <div className="bg-slate-900 rounded-xl border border-slate-800 p-5" role="region" aria-label="Content mix breakdown">
+        <h3 className="text-sm font-semibold text-slate-50 mb-4">Content Mix</h3>
         <div role="img" aria-label={donutSummary}>
           <DonutChart data={donutData} />
         </div>
         {totalContent === 0 && (
-          <p className="text-sm text-gray-500 text-center py-4">
+          <p className="text-sm text-slate-400 text-center py-4">
             No content generated yet. Generate content from your transcribed projects to see a breakdown here.
           </p>
         )}
       </div>
 
       {/* Bar List - Top Topics */}
-      <div className="bg-white rounded-xl border border-gray-100 p-5" role="region" aria-label="Top performing topics">
-        <h3 className="text-sm font-semibold text-gray-900 mb-4">Top Performing Topics</h3>
+      <div className="bg-slate-900 rounded-xl border border-slate-800 p-5" role="region" aria-label="Top performing topics">
+        <h3 className="text-sm font-semibold text-slate-50 mb-4">Top Performing Topics</h3>
         <div role="img" aria-label={topicSummary}>
           <BarList
             data={barListData}
@@ -254,7 +254,7 @@ export function ContentMixSection({ contentBreakdown, topTopics }: ContentMixDat
           />
         </div>
         {topTopics.length === 0 && (
-          <p className="text-sm text-gray-500 text-center py-8">
+          <p className="text-sm text-slate-400 text-center py-8">
             No topics detected yet. Run analytics on your transcribed projects to discover topic performance.
           </p>
         )}

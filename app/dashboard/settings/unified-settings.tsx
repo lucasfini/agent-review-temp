@@ -1,6 +1,7 @@
 "use client";
 
 import { useState, useEffect, useMemo } from 'react';
+import { useSearchParams } from 'next/navigation';
 import {
   User,
   CreditCard,
@@ -26,7 +27,6 @@ import {
   Tooltip,
   ResponsiveContainer,
 } from 'recharts';
-import { Tabs, TabsList, TabsTrigger, TabsContent } from '@/components/ui/tabs';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
 import { Badge } from '@/components/ui/badge';
 import { cn } from '@/lib/utils';
@@ -123,23 +123,23 @@ function BalanceBanner({ balance }: { balance: Balance | null }) {
   return (
     <div className={cn(
       "rounded-xl border p-6",
-      isLow ? "border-amber-200 bg-amber-50/50" : "border-gray-200 bg-white"
+      isLow ? "border-amber-800/30 bg-amber-900/20" : "border-slate-700 bg-slate-900"
     )}>
       <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-4">
         <div>
-          <p className="text-sm font-medium text-gray-500 mb-1">Credit Balance</p>
-          <p className="text-4xl font-bold text-gray-900">{formatAmount(current)}</p>
-          <p className="text-sm text-gray-500 mt-1">
+          <p className="text-sm font-medium text-slate-400 mb-1">Credit Balance</p>
+          <p className="text-4xl font-bold text-slate-50">{formatAmount(current)}</p>
+          <p className="text-sm text-slate-400 mt-1">
             {formatAmount(spent)} spent of {formatAmount(total)} total
           </p>
         </div>
 
         <div className="flex-1 max-w-xs">
-          <div className="flex items-center justify-between text-xs text-gray-500 mb-1.5">
+          <div className="flex items-center justify-between text-xs text-slate-400 mb-1.5">
             <span>{pctRemaining}% remaining</span>
             <span>{formatAmount(current)} left</span>
           </div>
-          <div className="h-2.5 bg-gray-200 rounded-full overflow-hidden">
+          <div className="h-2.5 bg-slate-700 rounded-full overflow-hidden">
             <div
               className={cn(
                 "h-full rounded-full transition-all duration-500",
@@ -152,7 +152,7 @@ function BalanceBanner({ balance }: { balance: Balance | null }) {
       </div>
 
       {isLow && (
-        <div className="mt-4 flex items-center gap-2 text-sm text-amber-700">
+        <div className="mt-4 flex items-center gap-2 text-sm text-amber-400">
           <AlertTriangle className="h-4 w-4 flex-shrink-0" />
           <span>Low balance — add credits to keep processing projects.</span>
         </div>
@@ -164,7 +164,7 @@ function BalanceBanner({ balance }: { balance: Balance | null }) {
 function UsageAreaChart({ data }: { data: Array<{ date: string; cost: number; events: number }> }) {
   if (data.length === 0) {
     return (
-      <div className="flex items-center justify-center h-64 text-gray-500">
+      <div className="flex items-center justify-center h-64 text-slate-400">
         No usage data available yet
       </div>
     );
@@ -179,26 +179,26 @@ function UsageAreaChart({ data }: { data: Array<{ date: string; cost: number; ev
             <stop offset="95%" stopColor="#3b82f6" stopOpacity={0} />
           </linearGradient>
         </defs>
-        <CartesianGrid strokeDasharray="3 3" stroke="#e5e7eb" vertical={false} />
+        <CartesianGrid strokeDasharray="3 3" stroke="#334155" vertical={false} />
         <XAxis
           dataKey="date"
-          tick={{ fill: '#6b7280', fontSize: 11 }}
+          tick={{ fill: '#94a3b8', fontSize: 11 }}
           tickLine={false}
-          axisLine={{ stroke: '#e5e7eb' }}
+          axisLine={{ stroke: '#334155' }}
         />
         <YAxis
-          tick={{ fill: '#6b7280', fontSize: 11 }}
+          tick={{ fill: '#94a3b8', fontSize: 11 }}
           tickLine={false}
           axisLine={false}
           tickFormatter={(value) => `$${value}`}
         />
         <Tooltip
           contentStyle={{
-            backgroundColor: '#fff',
-            border: '1px solid #e5e7eb',
+            backgroundColor: '#1e293b',
+            border: '1px solid #334155',
             borderRadius: '8px',
             padding: '8px 12px',
-            boxShadow: '0 4px 6px -1px rgb(0 0 0 / 0.1)',
+            boxShadow: '0 4px 6px -1px rgb(0 0 0 / 0.3)',
           }}
           formatter={(value: number, name: string) => [
             name === 'cost' ? formatAmount(value) : value,
@@ -224,6 +224,8 @@ function UsageAreaChart({ data }: { data: Array<{ date: string; cost: number; ev
 
 export default function UnifiedSettings({ userId, userEmail }: UnifiedSettingsProps) {
   const { session } = useAuth();
+  const searchParams = useSearchParams();
+  const section = searchParams.get('section') || 'general';
 
   // General tab state
   const [displayName, setDisplayName] = useState('');
@@ -503,26 +505,10 @@ export default function UnifiedSettings({ userId, userEmail }: UnifiedSettingsPr
 
   return (
     <div className="max-w-5xl mx-auto">
-      <Tabs defaultValue="general" className="w-full">
-        <TabsList className="mb-6">
-          <TabsTrigger value="general" className="gap-2">
-            <User className="h-4 w-4" />
-            General
-          </TabsTrigger>
-          <TabsTrigger value="billing" className="gap-2">
-            <CreditCard className="h-4 w-4" />
-            Billing
-          </TabsTrigger>
-          <TabsTrigger value="usage" className="gap-2">
-            <BarChart3 className="h-4 w-4" />
-            Usage
-          </TabsTrigger>
-        </TabsList>
-
         {/* ================================================================ */}
-        {/* GENERAL TAB */}
+        {/* GENERAL */}
         {/* ================================================================ */}
-        <TabsContent value="general">
+        {section === 'general' && (
           <div className="space-y-6">
             {/* Profile Section */}
             <Card>
@@ -535,7 +521,7 @@ export default function UnifiedSettings({ userId, userEmail }: UnifiedSettingsPr
               <CardContent className="space-y-4">
                 <div className="grid gap-4 md:grid-cols-2">
                   <div>
-                    <label className="block text-sm font-medium text-gray-700 mb-1">
+                    <label className="block text-sm font-medium text-slate-300 mb-1">
                       Display Name
                     </label>
                     <input
@@ -543,20 +529,20 @@ export default function UnifiedSettings({ userId, userEmail }: UnifiedSettingsPr
                       value={displayName}
                       onChange={(e) => setDisplayName(e.target.value)}
                       placeholder="Your name"
-                      className="w-full px-3 py-2 border border-gray-200 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-transparent"
+                      className="w-full px-3 py-2 border border-slate-700 bg-slate-800 text-slate-200 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-transparent"
                     />
                   </div>
                   <div>
-                    <label className="block text-sm font-medium text-gray-700 mb-1">
+                    <label className="block text-sm font-medium text-slate-300 mb-1">
                       Email Address
                     </label>
                     <div className="relative">
-                      <Mail className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-gray-400" />
+                      <Mail className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-slate-500" />
                       <input
                         type="email"
                         value={email}
                         onChange={(e) => setEmail(e.target.value)}
-                        className="w-full pl-10 pr-3 py-2 border border-gray-200 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-transparent"
+                        className="w-full pl-10 pr-3 py-2 border border-slate-700 bg-slate-800 text-slate-200 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-transparent"
                       />
                     </div>
                   </div>
@@ -575,32 +561,32 @@ export default function UnifiedSettings({ userId, userEmail }: UnifiedSettingsPr
               <CardContent className="space-y-4">
                 <div className="grid gap-4 md:grid-cols-2">
                   <div>
-                    <label className="block text-sm font-medium text-gray-700 mb-1">
+                    <label className="block text-sm font-medium text-slate-300 mb-1">
                       Current Password
                     </label>
                     <div className="relative">
-                      <Lock className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-gray-400" />
+                      <Lock className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-slate-500" />
                       <input
                         type="password"
                         value={currentPassword}
                         onChange={(e) => setCurrentPassword(e.target.value)}
                         placeholder="Enter current password"
-                        className="w-full pl-10 pr-3 py-2 border border-gray-200 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-transparent"
+                        className="w-full pl-10 pr-3 py-2 border border-slate-700 bg-slate-800 text-slate-200 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-transparent"
                       />
                     </div>
                   </div>
                   <div>
-                    <label className="block text-sm font-medium text-gray-700 mb-1">
+                    <label className="block text-sm font-medium text-slate-300 mb-1">
                       New Password
                     </label>
                     <div className="relative">
-                      <Lock className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-gray-400" />
+                      <Lock className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-slate-500" />
                       <input
                         type="password"
                         value={newPassword}
                         onChange={(e) => setNewPassword(e.target.value)}
                         placeholder="Enter new password"
-                        className="w-full pl-10 pr-3 py-2 border border-gray-200 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-transparent"
+                        className="w-full pl-10 pr-3 py-2 border border-slate-700 bg-slate-800 text-slate-200 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-transparent"
                       />
                     </div>
                   </div>
@@ -609,7 +595,7 @@ export default function UnifiedSettings({ userId, userEmail }: UnifiedSettingsPr
                 {profileMessage && (
                   <div className={cn(
                     "p-3 rounded-lg text-sm",
-                    profileMessage.type === 'success' ? "bg-green-50 text-green-700" : "bg-red-50 text-red-700"
+                    profileMessage.type === 'success' ? "bg-green-900/20 text-green-400" : "bg-red-900/20 text-red-400"
                   )}>
                     {profileMessage.text}
                   </div>
@@ -643,10 +629,10 @@ export default function UnifiedSettings({ userId, userEmail }: UnifiedSettingsPr
               </CardHeader>
               <CardContent className="space-y-4">
                 {integrationsLoading && (
-                  <div className="text-sm text-gray-500">Loading integrations...</div>
+                  <div className="text-sm text-slate-400">Loading integrations...</div>
                 )}
                 {!integrationsLoading && integrationsError && (
-                  <div className="text-sm text-red-600">{integrationsError}</div>
+                  <div className="text-sm text-red-400">{integrationsError}</div>
                 )}
                 {!integrationsLoading && !integrationsError && (
                   <div className="grid gap-3 md:grid-cols-2">
@@ -654,19 +640,19 @@ export default function UnifiedSettings({ userId, userEmail }: UnifiedSettingsPr
                       const status = integrations.find(i => i.provider === provider);
                       const connected = status?.connected;
                       return (
-                        <div key={provider} className="border border-gray-200 rounded-lg p-4">
+                        <div key={provider} className="border border-slate-700 rounded-lg p-4">
                           <div className="flex items-start justify-between">
                             <div>
-                              <p className="text-sm font-semibold text-gray-900">
+                              <p className="text-sm font-semibold text-slate-50">
                                 {provider === 'zoom' ? 'Zoom' : 'Microsoft Teams'}
                               </p>
-                              <p className="text-xs text-gray-500 mt-1">
+                              <p className="text-xs text-slate-400 mt-1">
                                 {connected
                                   ? `Connected${status?.metadata?.email ? ` • ${status.metadata.email}` : ''}`
                                   : 'Not connected'}
                               </p>
                             </div>
-                            <span className={`text-xs px-2 py-1 rounded-full ${connected ? 'bg-green-50 text-green-700' : 'bg-gray-100 text-gray-600'}`}>
+                            <span className={`text-xs px-2 py-1 rounded-full ${connected ? 'bg-green-900/20 text-green-400' : 'bg-slate-800 text-slate-400'}`}>
                               {connected ? 'Connected' : 'Disconnected'}
                             </span>
                           </div>
@@ -683,7 +669,7 @@ export default function UnifiedSettings({ userId, userEmail }: UnifiedSettingsPr
                               <button
                                 type="button"
                                 onClick={() => disconnectProvider(provider)}
-                                className="px-3 py-2 text-sm font-medium bg-gray-100 text-gray-700 rounded-lg hover:bg-gray-200 transition-colors"
+                                className="px-3 py-2 text-sm font-medium bg-slate-800 text-slate-300 rounded-lg hover:bg-slate-700 transition-colors"
                               >
                                 Disconnect
                               </button>
@@ -697,17 +683,17 @@ export default function UnifiedSettings({ userId, userEmail }: UnifiedSettingsPr
               </CardContent>
             </Card>
           </div>
-        </TabsContent>
+        )}
 
         {/* ================================================================ */}
-        {/* BILLING TAB */}
+        {/* BILLING */}
         {/* ================================================================ */}
-        <TabsContent value="billing">
-          {loadingBilling ? (
+        {section === 'billing' && (
+          loadingBilling ? (
             <div className="animate-pulse space-y-6">
-              <div className="h-32 bg-gray-200 rounded-lg" />
-              <div className="h-48 bg-gray-200 rounded-lg" />
-              <div className="h-64 bg-gray-200 rounded-lg" />
+              <div className="h-32 bg-slate-700 rounded-lg" />
+              <div className="h-48 bg-slate-700 rounded-lg" />
+              <div className="h-64 bg-slate-700 rounded-lg" />
             </div>
           ) : (
             <div className="space-y-6">
@@ -731,24 +717,24 @@ export default function UnifiedSettings({ userId, userEmail }: UnifiedSettingsPr
                       <div className="grid grid-cols-1 sm:grid-cols-3 gap-6">
                         <div className="flex flex-col gap-1">
                           <div className="flex items-baseline gap-2">
-                            <span className="text-2xl font-semibold text-gray-900">~${basic.total.toFixed(2)}</span>
-                            <span className="text-xs font-medium text-gray-500 uppercase tracking-wide">Basic</span>
+                            <span className="text-2xl font-semibold text-slate-50">~${basic.total.toFixed(2)}</span>
+                            <span className="text-xs font-medium text-slate-400 uppercase tracking-wide">Basic</span>
                           </div>
-                          <p className="text-sm text-gray-500">Transcription + speaker labels</p>
+                          <p className="text-sm text-slate-400">Transcription + speaker labels</p>
                         </div>
                         <div className="flex flex-col gap-1">
                           <div className="flex items-baseline gap-2">
-                            <span className="text-2xl font-semibold text-gray-900">~${pro.total.toFixed(2)}</span>
+                            <span className="text-2xl font-semibold text-slate-50">~${pro.total.toFixed(2)}</span>
                             <span className="text-xs font-medium text-blue-600 uppercase tracking-wide">Pro</span>
                           </div>
-                          <p className="text-sm text-gray-500">+ Speaker names, AI summary</p>
+                          <p className="text-sm text-slate-400">+ Speaker names, AI summary</p>
                         </div>
                         <div className="flex flex-col gap-1">
                           <div className="flex items-baseline gap-2">
-                            <span className="text-2xl font-semibold text-gray-900">~${premium.total.toFixed(2)}</span>
+                            <span className="text-2xl font-semibold text-slate-50">~${premium.total.toFixed(2)}</span>
                             <span className="text-xs font-medium text-purple-600 uppercase tracking-wide">Premium</span>
                           </div>
-                          <p className="text-sm text-gray-500">+ Chapters, takeaways, quotes, insights</p>
+                          <p className="text-sm text-slate-400">+ Chapters, takeaways, quotes, insights</p>
                         </div>
                       </div>
                     </CardContent>
@@ -777,19 +763,19 @@ export default function UnifiedSettings({ userId, userEmail }: UnifiedSettingsPr
                     </div>
                     <div className="flex items-center gap-2">
                       <div className="relative">
-                        <Search className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-gray-400" />
+                        <Search className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-slate-500" />
                         <input
                           type="text"
                           placeholder="Search..."
                           value={transactionSearch}
                           onChange={(e) => setTransactionSearch(e.target.value)}
-                          className="pl-9 pr-3 py-1.5 text-sm border border-gray-200 rounded-lg w-40 focus:outline-none focus:ring-2 focus:ring-blue-500"
+                          className="pl-9 pr-3 py-1.5 text-sm border border-slate-700 bg-slate-800 text-slate-200 rounded-lg w-40 focus:outline-none focus:ring-2 focus:ring-blue-500"
                         />
                       </div>
                       <button
                         type="button"
                         onClick={handleExportTransactions}
-                        className="inline-flex items-center gap-1 px-3 py-1.5 text-sm font-medium text-gray-700 bg-white border border-gray-200 rounded-lg hover:bg-gray-50"
+                        className="inline-flex items-center gap-1 px-3 py-1.5 text-sm font-medium text-slate-300 bg-slate-900 border border-slate-700 rounded-lg hover:bg-slate-800/50"
                       >
                         <Download className="h-4 w-4" />
                         Export
@@ -799,7 +785,7 @@ export default function UnifiedSettings({ userId, userEmail }: UnifiedSettingsPr
                 </CardHeader>
                 <CardContent className="p-0">
                   {filteredTransactions.length === 0 ? (
-                    <div className="py-12 text-center text-gray-500">
+                    <div className="py-12 text-center text-slate-400">
                       No transactions found
                     </div>
                   ) : (
@@ -807,15 +793,15 @@ export default function UnifiedSettings({ userId, userEmail }: UnifiedSettingsPr
                       <div className="overflow-x-auto">
                         <table className="w-full text-sm">
                           <thead>
-                            <tr className="border-b border-gray-100 bg-gray-50/50">
-                              <th className="text-left font-medium text-gray-500 px-6 py-3 w-8"></th>
-                              <th className="text-left font-medium text-gray-500 px-6 py-3">Date</th>
-                              <th className="text-left font-medium text-gray-500 px-6 py-3">Type</th>
-                              <th className="text-left font-medium text-gray-500 px-6 py-3">Description</th>
-                              <th className="text-right font-medium text-gray-500 px-6 py-3">Amount</th>
+                            <tr className="border-b border-slate-800 bg-slate-800/30">
+                              <th className="text-left font-medium text-slate-400 px-6 py-3 w-8"></th>
+                              <th className="text-left font-medium text-slate-400 px-6 py-3">Date</th>
+                              <th className="text-left font-medium text-slate-400 px-6 py-3">Type</th>
+                              <th className="text-left font-medium text-slate-400 px-6 py-3">Description</th>
+                              <th className="text-right font-medium text-slate-400 px-6 py-3">Amount</th>
                             </tr>
                           </thead>
-                          <tbody className="divide-y divide-gray-100">
+                          <tbody className="divide-y divide-slate-800">
                             {filteredTransactions.map((transaction) => {
                               const isGrouped = transaction.type === 'grouped';
                               const isExpanded = expandedGroups.has(transaction.id);
@@ -825,7 +811,7 @@ export default function UnifiedSettings({ userId, userEmail }: UnifiedSettingsPr
                                   <tr
                                     key={transaction.id}
                                     className={cn(
-                                      "hover:bg-gray-50/50",
+                                      "hover:bg-slate-800/30",
                                       isGrouped && "cursor-pointer"
                                     )}
                                     onClick={isGrouped ? () => toggleGroup(transaction.id) : undefined}
@@ -833,11 +819,11 @@ export default function UnifiedSettings({ userId, userEmail }: UnifiedSettingsPr
                                     <td className="px-6 py-3 w-8">
                                       {isGrouped && (
                                         isExpanded
-                                          ? <ChevronUp className="h-4 w-4 text-gray-400" />
-                                          : <ChevronDown className="h-4 w-4 text-gray-400" />
+                                          ? <ChevronUp className="h-4 w-4 text-slate-500" />
+                                          : <ChevronDown className="h-4 w-4 text-slate-500" />
                                       )}
                                     </td>
-                                    <td className="px-6 py-3 text-gray-500">
+                                    <td className="px-6 py-3 text-slate-400">
                                       {new Date(transaction.createdAt).toLocaleDateString('en-US', {
                                         month: 'short',
                                         day: 'numeric',
@@ -847,36 +833,36 @@ export default function UnifiedSettings({ userId, userEmail }: UnifiedSettingsPr
                                     <td className="px-6 py-3">
                                       <TransactionTypeBadge type={transaction.transactionType} />
                                     </td>
-                                    <td className="px-6 py-3 text-gray-700 max-w-xs truncate">
+                                    <td className="px-6 py-3 text-slate-300 max-w-xs truncate">
                                       {transaction.reason || '-'}
                                       {isGrouped && transaction.childCount && (
-                                        <span className="ml-2 text-xs text-gray-400">
+                                        <span className="ml-2 text-xs text-slate-500">
                                           ({transaction.childCount} items)
                                         </span>
                                       )}
                                     </td>
                                     <td className={cn(
                                       "px-6 py-3 text-right font-semibold",
-                                      transaction.amount > 0 ? "text-green-600" : "text-gray-900"
+                                      transaction.amount > 0 ? "text-green-600" : "text-slate-50"
                                     )}>
                                       {transaction.amount > 0 ? '+' : ''}{formatAmount(transaction.amount)}
                                     </td>
                                   </tr>
                                   {/* Expanded children */}
                                   {isGrouped && isExpanded && transaction.children?.map((child, idx) => (
-                                    <tr key={`${transaction.id}-child-${idx}`} className="bg-gray-50/80">
+                                    <tr key={`${transaction.id}-child-${idx}`} className="bg-slate-800/50/80">
                                       <td className="px-6 py-2"></td>
-                                      <td className="px-6 py-2 text-xs text-gray-400">
+                                      <td className="px-6 py-2 text-xs text-slate-500">
                                         {new Date(child.createdAt).toLocaleTimeString('en-US', {
                                           hour: 'numeric',
                                           minute: '2-digit',
                                         })}
                                       </td>
                                       <td className="px-6 py-2"></td>
-                                      <td className="pl-12 pr-6 py-2 text-xs text-gray-500">
+                                      <td className="pl-12 pr-6 py-2 text-xs text-slate-400">
                                         {child.reason}
                                       </td>
-                                      <td className="px-6 py-2 text-right text-xs text-gray-500">
+                                      <td className="px-6 py-2 text-right text-xs text-slate-400">
                                         {formatAmount(child.amount)}
                                       </td>
                                     </tr>
@@ -889,8 +875,8 @@ export default function UnifiedSettings({ userId, userEmail }: UnifiedSettingsPr
                       </div>
 
                       {/* Pagination */}
-                      <div className="flex items-center justify-between px-6 py-3 border-t border-gray-100 bg-gray-50/50">
-                        <span className="text-sm text-gray-500">
+                      <div className="flex items-center justify-between px-6 py-3 border-t border-slate-800 bg-slate-800/30">
+                        <span className="text-sm text-slate-400">
                           Showing {((transactionPage - 1) * TRANSACTIONS_PER_PAGE) + 1} to {Math.min(transactionPage * TRANSACTIONS_PER_PAGE, transactionTotal)} of {transactionTotal}
                         </span>
                         <div className="flex items-center gap-1">
@@ -898,7 +884,7 @@ export default function UnifiedSettings({ userId, userEmail }: UnifiedSettingsPr
                             type="button"
                             onClick={() => setTransactionPage(p => Math.max(1, p - 1))}
                             disabled={transactionPage === 1}
-                            className="p-1 rounded hover:bg-gray-200 disabled:opacity-50 disabled:cursor-not-allowed"
+                            className="p-1 rounded hover:bg-slate-700 disabled:opacity-50 disabled:cursor-not-allowed"
                           >
                             <ChevronLeft className="h-5 w-5" />
                           </button>
@@ -906,7 +892,7 @@ export default function UnifiedSettings({ userId, userEmail }: UnifiedSettingsPr
                             type="button"
                             onClick={() => setTransactionPage(p => p + 1)}
                             disabled={transactionPage * TRANSACTIONS_PER_PAGE >= transactionTotal}
-                            className="p-1 rounded hover:bg-gray-200 disabled:opacity-50 disabled:cursor-not-allowed"
+                            className="p-1 rounded hover:bg-slate-700 disabled:opacity-50 disabled:cursor-not-allowed"
                           >
                             <ChevronRight className="h-5 w-5" />
                           </button>
@@ -917,29 +903,29 @@ export default function UnifiedSettings({ userId, userEmail }: UnifiedSettingsPr
                 </CardContent>
               </Card>
             </div>
-          )}
-        </TabsContent>
+          )
+        )}
 
         {/* ================================================================ */}
-        {/* USAGE TAB */}
+        {/* USAGE */}
         {/* ================================================================ */}
-        <TabsContent value="usage">
-          {loadingUsage ? (
+        {section === 'usage' && (
+          loadingUsage ? (
             <div className="animate-pulse space-y-6">
               <div className="grid grid-cols-3 gap-4">
                 {[1, 2, 3].map(i => (
-                  <div key={i} className="h-24 bg-gray-200 rounded-lg" />
+                  <div key={i} className="h-24 bg-slate-700 rounded-lg" />
                 ))}
               </div>
-              <div className="h-80 bg-gray-200 rounded-lg" />
+              <div className="h-80 bg-slate-700 rounded-lg" />
             </div>
           ) : usageEvents.length === 0 ? (
             <Card>
               <CardContent className="py-16">
                 <div className="text-center">
-                  <BarChart3 className="h-12 w-12 mx-auto mb-4 text-gray-300" />
-                  <h3 className="text-lg font-medium text-gray-900 mb-1">No usage data yet</h3>
-                  <p className="text-sm text-gray-500 max-w-sm mx-auto">
+                  <BarChart3 className="h-12 w-12 mx-auto mb-4 text-slate-500" />
+                  <h3 className="text-lg font-medium text-slate-50 mb-1">No usage data yet</h3>
+                  <p className="text-sm text-slate-400 max-w-sm mx-auto">
                     Start processing podcasts and generating content to see your usage statistics and trends here.
                   </p>
                 </div>
@@ -951,27 +937,27 @@ export default function UnifiedSettings({ userId, userEmail }: UnifiedSettingsPr
               <div className="grid gap-4 md:grid-cols-3">
                 <Card>
                   <CardContent className="pt-6">
-                    <p className="text-sm font-medium text-gray-500">Total Cost</p>
-                    <p className="text-2xl font-bold text-gray-900 mt-1">{formatAmount(usageStats.totalCost)}</p>
-                    <p className="text-xs text-gray-400 mt-1">{usageStats.totalEvents} API calls</p>
+                    <p className="text-sm font-medium text-slate-400">Total Cost</p>
+                    <p className="text-2xl font-bold text-slate-50 mt-1">{formatAmount(usageStats.totalCost)}</p>
+                    <p className="text-xs text-slate-500 mt-1">{usageStats.totalEvents} API calls</p>
                   </CardContent>
                 </Card>
                 <Card>
                   <CardContent className="pt-6">
-                    <p className="text-sm font-medium text-gray-500">Projects Processed</p>
-                    <p className="text-2xl font-bold text-gray-900 mt-1">{usageStats.projectCount}</p>
-                    <p className="text-xs text-gray-400 mt-1">Unique projects</p>
+                    <p className="text-sm font-medium text-slate-400">Projects Processed</p>
+                    <p className="text-2xl font-bold text-slate-50 mt-1">{usageStats.projectCount}</p>
+                    <p className="text-xs text-slate-500 mt-1">Unique projects</p>
                   </CardContent>
                 </Card>
                 <Card>
                   <CardContent className="pt-6">
-                    <p className="text-sm font-medium text-gray-500">Avg Cost / Project</p>
-                    <p className="text-2xl font-bold text-gray-900 mt-1">
+                    <p className="text-sm font-medium text-slate-400">Avg Cost / Project</p>
+                    <p className="text-2xl font-bold text-slate-50 mt-1">
                       {usageStats.projectCount > 0
                         ? formatAmount(usageStats.totalCost / usageStats.projectCount)
                         : '$0.00'}
                     </p>
-                    <p className="text-xs text-gray-400 mt-1">Per project average</p>
+                    <p className="text-xs text-slate-500 mt-1">Per project average</p>
                   </CardContent>
                 </Card>
               </div>
@@ -995,12 +981,12 @@ export default function UnifiedSettings({ userId, userEmail }: UnifiedSettingsPr
                 </CardHeader>
                 <CardContent>
                   {usageByProject.length === 0 ? (
-                    <div className="py-8 text-center text-gray-500">
-                      <BarChart3 className="h-10 w-10 mx-auto mb-3 text-gray-300" />
+                    <div className="py-8 text-center text-slate-400">
+                      <BarChart3 className="h-10 w-10 mx-auto mb-3 text-slate-500" />
                       <p className="text-sm">No project usage data available</p>
                     </div>
                   ) : (
-                    <div className="divide-y divide-gray-100">
+                    <div className="divide-y divide-slate-800">
                       {(() => {
                         const maxCost = Math.max(...usageByProject.map(p => p.cost));
                         const colors = ['#3b82f6', '#10b981', '#f59e0b', '#8b5cf6', '#ec4899', '#06b6d4'];
@@ -1016,18 +1002,18 @@ export default function UnifiedSettings({ userId, userEmail }: UnifiedSettingsPr
                                     className="w-3 h-3 rounded-full flex-shrink-0"
                                     style={{ backgroundColor: colors[index % colors.length] }}
                                   />
-                                  <span className="text-sm font-medium text-gray-900">
+                                  <span className="text-sm font-medium text-slate-50">
                                     {project.title}
                                   </span>
-                                  <span className="text-xs text-gray-400">
+                                  <span className="text-xs text-slate-500">
                                     {project.events} calls, {project.serviceCount} services
                                   </span>
                                 </div>
-                                <span className="text-sm font-semibold text-gray-900">
+                                <span className="text-sm font-semibold text-slate-50">
                                   {formatAmount(project.cost)}
                                 </span>
                               </div>
-                              <div className="h-1.5 bg-gray-100 rounded-full overflow-hidden">
+                              <div className="h-1.5 bg-slate-800 rounded-full overflow-hidden">
                                 <div
                                   className="h-full rounded-full transition-all duration-500"
                                   style={{
@@ -1045,9 +1031,8 @@ export default function UnifiedSettings({ userId, userEmail }: UnifiedSettingsPr
                 </CardContent>
               </Card>
             </div>
-          )}
-        </TabsContent>
-      </Tabs>
+          )
+        )}
     </div>
   );
 }

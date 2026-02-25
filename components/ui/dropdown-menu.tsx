@@ -49,7 +49,7 @@ export function DropdownMenu({ trigger, children, align = 'right', className }: 
       {isOpen && (
         <div
           className={cn(
-            "absolute z-50 mt-1 min-w-[180px] rounded-md bg-white py-1 shadow-lg ring-1 ring-black ring-opacity-5 focus:outline-none",
+            "absolute z-50 mt-1 min-w-[180px] rounded-md bg-slate-900 py-1 shadow-lg ring-1 ring-slate-700 focus:outline-none",
             align === 'right' ? 'right-0' : 'left-0'
           )}
           onClick={() => setIsOpen(false)}
@@ -84,10 +84,10 @@ export function DropdownMenuItem({
       className={cn(
         "w-full flex items-center gap-2 px-4 py-2 text-left text-sm transition-colors",
         disabled
-          ? "text-gray-400 cursor-not-allowed"
+          ? "text-slate-600 cursor-not-allowed"
           : destructive
-          ? "text-red-600 hover:bg-red-50"
-          : "text-gray-700 hover:bg-gray-100",
+          ? "text-red-400 hover:bg-red-900/20"
+          : "text-slate-300 hover:bg-slate-800",
         className
       )}
     >
@@ -97,12 +97,12 @@ export function DropdownMenuItem({
 }
 
 export function DropdownMenuSeparator() {
-  return <div className="my-1 h-px bg-gray-200" />
+  return <div className="my-1 h-px bg-slate-800" />
 }
 
 export function DropdownMenuLabel({ children }: { children: React.ReactNode }) {
   return (
-    <div className="px-4 py-2 text-xs font-semibold text-gray-500 uppercase tracking-wider">
+    <div className="px-4 py-2 text-xs font-semibold text-slate-500 uppercase tracking-wider">
       {children}
     </div>
   )

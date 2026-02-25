@@ -48,7 +48,7 @@ export default function WaitlistForm({ variant = "light" }: WaitlistFormProps) {
       <div className={`inline-flex items-center rounded-lg px-6 py-3 ${
         variant === "dark" 
           ? "bg-green-900/20 text-green-300 border border-green-800" 
-          : "bg-green-50 text-green-800 border border-green-200"
+          : "bg-green-900/20 text-green-300 border border-green-800/30"
       }`}>
         <CheckCircle className="mr-2 h-5 w-5" />
         <span className="font-medium">Welcome to the waitlist! Check your email.</span>
@@ -67,8 +67,8 @@ export default function WaitlistForm({ variant = "light" }: WaitlistFormProps) {
             onChange={(e) => setName(e.target.value)}
             className={`w-full rounded-lg px-4 py-3 text-sm border focus:outline-none focus:ring-2 focus:ring-blue-500 ${
               variant === "dark"
-                ? "bg-white/10 border-white/20 text-white placeholder-white/60"
-                : "bg-white border-gray-300 text-gray-900 placeholder-gray-500"
+                ? "bg-slate-900/10 border-white/20 text-white placeholder-white/60"
+                : "bg-slate-900 border-slate-600 text-slate-50 placeholder-gray-500"
             }`}
           />
         </div>
@@ -81,8 +81,8 @@ export default function WaitlistForm({ variant = "light" }: WaitlistFormProps) {
             required
             className={`w-full rounded-lg px-4 py-3 text-sm border focus:outline-none focus:ring-2 focus:ring-blue-500 ${
               variant === "dark"
-                ? "bg-white/10 border-white/20 text-white placeholder-white/60"
-                : "bg-white border-gray-300 text-gray-900 placeholder-gray-500"
+                ? "bg-slate-900/10 border-white/20 text-white placeholder-white/60"
+                : "bg-slate-900 border-slate-600 text-slate-50 placeholder-gray-500"
             }`}
           />
         </div>
@@ -91,7 +91,7 @@ export default function WaitlistForm({ variant = "light" }: WaitlistFormProps) {
           disabled={isLoading || !email}
           className={`inline-flex items-center justify-center rounded-lg px-6 py-3 text-sm font-semibold transition-colors disabled:opacity-50 disabled:cursor-not-allowed ${
             variant === "dark"
-              ? "bg-white text-gray-900 hover:bg-gray-100"
+              ? "bg-slate-900 text-slate-50 hover:bg-slate-800"
               : "bg-blue-600 text-white hover:bg-blue-700"
           }`}
         >

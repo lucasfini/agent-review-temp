@@ -155,31 +155,31 @@ function ProjectTypeBadge({ type }: { type?: ProjectType }) {
     DEBATE: {
       icon: Users,
       label: 'Debate',
-      className: 'bg-amber-50 text-amber-700 border-amber-200',
+      className: 'bg-amber-900/20 text-amber-400 border-amber-800/30',
       description: 'Panel discussion with moderator',
     },
     INTERVIEW: {
       icon: Mic,
       label: 'Interview',
-      className: 'bg-green-50 text-green-700 border-green-200',
+      className: 'bg-green-900/20 text-green-400 border-green-800/30',
       description: '1-on-1 Q&A format',
     },
     PODCAST: {
       icon: Radio,
       label: 'Podcast',
-      className: 'bg-indigo-50 text-indigo-700 border-indigo-200',
+      className: 'bg-indigo-900/20 text-indigo-400 border-indigo-800/30',
       description: 'Conversational show',
     },
     MONOLOGUE: {
       icon: User,
       label: 'Solo',
-      className: 'bg-slate-50 text-slate-700 border-slate-200',
+      className: 'bg-slate-800 text-slate-300 border-slate-700',
       description: 'Single speaker',
     },
     OTHER: {
       icon: HelpCircle,
       label: 'Other',
-      className: 'bg-gray-50 text-gray-600 border-gray-200',
+      className: 'bg-slate-800 text-slate-400 border-slate-700',
       description: 'Unclassified format',
     },
   };
@@ -203,11 +203,11 @@ function ProjectTypeBadge({ type }: { type?: ProjectType }) {
 function EmptyState() {
   return (
     <div className="flex flex-col items-center justify-center py-16 px-4 text-center">
-      <div className="rounded-full bg-gray-100 p-4 mb-4">
-        <FolderOpen className="h-8 w-8 text-gray-400" />
+      <div className="rounded-full bg-slate-800 p-4 mb-4">
+        <FolderOpen className="h-8 w-8 text-slate-500" />
       </div>
-      <h3 className="text-lg font-semibold text-gray-900 mb-1">No projects yet</h3>
-      <p className="text-sm text-gray-500 mb-6 max-w-sm">
+      <h3 className="text-lg font-semibold text-slate-100 mb-1">No projects yet</h3>
+      <p className="text-sm text-slate-400 mb-6 max-w-sm">
         Upload your first audio file to start generating content automatically.
       </p>
       <Link
@@ -369,13 +369,13 @@ export default function ProjectHubPage() {
       <div className="p-6">
         <div className="max-w-7xl mx-auto">
           <div className="animate-pulse space-y-6">
-            <div className="h-8 bg-gray-200 rounded w-48" />
+            <div className="h-8 bg-slate-800 rounded w-48" />
             <div className="grid grid-cols-4 gap-4">
               {[1, 2, 3, 4].map(i => (
-                <div key={i} className="h-24 bg-gray-200 rounded-lg" />
+                <div key={i} className="h-24 bg-slate-800 rounded-lg" />
               ))}
             </div>
-            <div className="h-96 bg-gray-200 rounded-lg" />
+            <div className="h-96 bg-slate-800 rounded-lg" />
           </div>
         </div>
       </div>
@@ -388,8 +388,8 @@ export default function ProjectHubPage() {
         {/* Header */}
         <div className="flex items-center justify-between">
           <div>
-            <h1 className="text-2xl font-bold text-gray-900">Project Hub</h1>
-            <p className="text-sm text-gray-500 mt-1">
+            <h1 className="text-2xl font-bold text-slate-50">Project Hub</h1>
+            <p className="text-sm text-slate-400 mt-1">
               Manage your audio projects and generated content
             </p>
           </div>
@@ -437,18 +437,18 @@ export default function ProjectHubPage() {
         </CollapsibleStatsRow>
 
         {/* Filters & Search Bar */}
-        <div className="bg-white rounded-lg border border-gray-200 shadow-sm">
-          <div className="p-4 border-b border-gray-100">
+        <div className="bg-slate-900 rounded-lg border border-slate-800 shadow-sm">
+          <div className="p-4 border-b border-slate-800">
             <div className="flex flex-col sm:flex-row gap-3">
               {/* Search */}
               <div className="relative flex-1">
-                <Search className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-gray-400" />
+                <Search className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-slate-500" />
                 <input
                   type="text"
                   placeholder="Search projects..."
                   value={searchTerm}
                   onChange={(e) => setSearchTerm(e.target.value)}
-                  className="w-full pl-10 pr-4 py-2 text-sm border border-gray-200 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-transparent"
+                  className="w-full pl-10 pr-4 py-2 text-sm border border-slate-700 bg-slate-800 text-slate-200 placeholder:text-slate-500 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-transparent"
                 />
               </div>
 
@@ -459,8 +459,8 @@ export default function ProjectHubPage() {
                 className={cn(
                   "inline-flex items-center gap-2 px-3 py-2 text-sm font-medium rounded-lg border transition-colors",
                   showFilters
-                    ? "bg-blue-50 border-blue-200 text-blue-700"
-                    : "bg-white border-gray-200 text-gray-700 hover:bg-gray-50"
+                    ? "bg-blue-900/20 border-blue-700 text-blue-400"
+                    : "bg-slate-800 border-slate-700 text-slate-300 hover:bg-slate-700"
                 )}
               >
                 <Filter className="h-4 w-4" />
@@ -472,7 +472,7 @@ export default function ProjectHubPage() {
               <select
                 value={sortBy}
                 onChange={(e) => setSortBy(e.target.value as any)}
-                className="px-3 py-2 text-sm border border-gray-200 rounded-lg bg-white focus:outline-none focus:ring-2 focus:ring-blue-500"
+                className="px-3 py-2 text-sm border border-slate-700 rounded-lg bg-slate-800 text-slate-200 focus:outline-none focus:ring-2 focus:ring-blue-500"
               >
                 <option value="recent">Newest first</option>
                 <option value="oldest">Oldest first</option>
@@ -482,13 +482,13 @@ export default function ProjectHubPage() {
 
             {/* Expanded Filters */}
             {showFilters && (
-              <div className="mt-3 pt-3 border-t border-gray-100 flex flex-wrap gap-3">
+              <div className="mt-3 pt-3 border-t border-slate-800 flex flex-wrap gap-3">
                 <div className="flex items-center gap-2">
-                  <span className="text-xs font-medium text-gray-500">Status:</span>
+                  <span className="text-xs font-medium text-slate-400">Status:</span>
                   <select
                     value={statusFilter}
                     onChange={(e) => setStatusFilter(e.target.value as any)}
-                    className="px-2 py-1 text-sm border border-gray-200 rounded bg-white"
+                    className="px-2 py-1 text-sm border border-slate-700 rounded bg-slate-800 text-slate-200"
                   >
                     <option value="all">All</option>
                     <option value="completed">Completed</option>
@@ -497,11 +497,11 @@ export default function ProjectHubPage() {
                   </select>
                 </div>
                 <div className="flex items-center gap-2">
-                  <span className="text-xs font-medium text-gray-500">Tier:</span>
+                  <span className="text-xs font-medium text-slate-400">Tier:</span>
                   <select
                     value={tierFilter}
                     onChange={(e) => setTierFilter(e.target.value as any)}
-                    className="px-2 py-1 text-sm border border-gray-200 rounded bg-white"
+                    className="px-2 py-1 text-sm border border-slate-700 rounded bg-slate-800 text-slate-200"
                   >
                     <option value="all">All</option>
                     <option value="basic">Basic</option>
@@ -516,7 +516,7 @@ export default function ProjectHubPage() {
                       setStatusFilter('all');
                       setTierFilter('all');
                     }}
-                    className="text-xs text-blue-600 hover:text-blue-800"
+                    className="text-xs text-blue-600 hover:text-blue-300"
                   >
                     Clear filters
                   </button>
@@ -530,7 +530,7 @@ export default function ProjectHubPage() {
             projects.length === 0 ? (
               <EmptyState />
             ) : (
-              <div className="py-12 text-center text-gray-500">
+              <div className="py-12 text-center text-slate-400">
                 No projects match your filters
               </div>
             )
@@ -538,32 +538,32 @@ export default function ProjectHubPage() {
             <div className="overflow-x-auto">
               <table className="w-full text-sm">
                 <thead>
-                  <tr className="border-b border-gray-100 bg-gray-50/50">
-                    <th className="text-left font-medium text-gray-500 px-4 py-3">Project</th>
-                    <th className="text-left font-medium text-gray-500 px-4 py-3">Status</th>
-                    <th className="text-left font-medium text-gray-500 px-4 py-3">Tier</th>
-                    <th className="text-left font-medium text-gray-500 px-4 py-3">Duration</th>
-                    <th className="text-left font-medium text-gray-500 px-4 py-3">Content</th>
-                    <th className="text-left font-medium text-gray-500 px-4 py-3">Created</th>
-                    <th className="text-right font-medium text-gray-500 px-4 py-3">Actions</th>
+                  <tr className="border-b border-slate-800 bg-slate-800/40">
+                    <th className="text-left font-medium text-slate-400 px-4 py-3">Project</th>
+                    <th className="text-left font-medium text-slate-400 px-4 py-3">Status</th>
+                    <th className="text-left font-medium text-slate-400 px-4 py-3">Tier</th>
+                    <th className="text-left font-medium text-slate-400 px-4 py-3">Duration</th>
+                    <th className="text-left font-medium text-slate-400 px-4 py-3">Content</th>
+                    <th className="text-left font-medium text-slate-400 px-4 py-3">Created</th>
+                    <th className="text-right font-medium text-slate-400 px-4 py-3">Actions</th>
                   </tr>
                 </thead>
-                <tbody className="divide-y divide-gray-100">
+                <tbody className="divide-y divide-slate-800">
                   {filteredProjects.map((project) => (
                     <tr
                       key={project.id}
-                      className="hover:bg-gray-50/50 transition-colors group"
+                      className="hover:bg-slate-800/50 transition-colors group"
                     >
                       <td className="px-4 py-3">
                         <Link
                           href={`/dashboard/projects?id=${project.id}`}
                           className="block"
                         >
-                          <div className="font-medium text-gray-900 group-hover:text-blue-600 transition-colors">
+                          <div className="font-medium text-slate-200 group-hover:text-blue-400 transition-colors">
                             {project.title || 'Untitled'}
                           </div>
                           {project.audio_file_name && (
-                            <div className="text-xs text-gray-400 truncate max-w-[200px]">
+                            <div className="text-xs text-slate-500 truncate max-w-[200px]">
                               {project.audio_file_name}
                             </div>
                           )}
@@ -578,25 +578,25 @@ export default function ProjectHubPage() {
                           <ProjectTypeBadge type={project.project_type} />
                         </div>
                       </td>
-                      <td className="px-4 py-3 text-gray-600">
+                      <td className="px-4 py-3 text-slate-400">
                         {project.audio_duration
                           ? formatDuration(project.audio_duration)
                           : '—'}
                       </td>
                       <td className="px-4 py-3">
-                        <span className="inline-flex items-center gap-1 text-gray-600">
+                        <span className="inline-flex items-center gap-1 text-slate-400">
                           <FileText className="h-3.5 w-3.5" />
                           {outputCountByProject[project.id] || 0}
                         </span>
                       </td>
-                      <td className="px-4 py-3 text-gray-500">
+                      <td className="px-4 py-3 text-slate-400">
                         {formatRelativeDate(project.created_at)}
                       </td>
                       <td className="px-4 py-3">
                         <div className="flex items-center justify-end gap-1">
                           <Link
                             href={`/dashboard/projects?id=${project.id}`}
-                            className="p-1.5 text-gray-400 hover:text-blue-600 hover:bg-blue-50 rounded transition-colors"
+                            className="p-1.5 text-slate-500 hover:text-blue-400 hover:bg-blue-900/20 rounded transition-colors"
                             title="View"
                           >
                             <Eye className="h-4 w-4" />
@@ -604,7 +604,7 @@ export default function ProjectHubPage() {
                           {project.status === 'completed' && (
                             <Link
                               href={`/dashboard/projects?id=${project.id}&generate=true`}
-                              className="p-1.5 text-gray-400 hover:text-green-600 hover:bg-green-50 rounded transition-colors"
+                              className="p-1.5 text-slate-500 hover:text-green-400 hover:bg-green-900/20 rounded transition-colors"
                               title="Generate Content"
                             >
                               <Sparkles className="h-4 w-4" />
@@ -614,7 +614,7 @@ export default function ProjectHubPage() {
                             type="button"
                             onClick={() => handleDelete(project.id)}
                             disabled={deletingId === project.id}
-                            className="p-1.5 text-gray-400 hover:text-red-600 hover:bg-red-50 rounded transition-colors disabled:opacity-50"
+                            className="p-1.5 text-slate-500 hover:text-red-400 hover:bg-red-900/20 rounded transition-colors disabled:opacity-50"
                             title="Delete"
                           >
                             {deletingId === project.id ? (
@@ -634,7 +634,7 @@ export default function ProjectHubPage() {
 
           {/* Footer with count */}
           {filteredProjects.length > 0 && (
-            <div className="px-4 py-3 border-t border-gray-100 bg-gray-50/50 text-xs text-gray-500">
+            <div className="px-4 py-3 border-t border-slate-800 bg-slate-800/30 text-xs text-slate-500">
               Showing {filteredProjects.length} of {projects.length} projects
             </div>
           )}

@@ -3,7 +3,7 @@
 import { useState, useEffect, useMemo, useRef, useCallback } from 'react';
 import Link from 'next/link';
 import { useSearchParams, useRouter } from 'next/navigation';
-import { FileText, Clock, CheckCircle, AlertCircle, Eye, Download, Share2, RefreshCw, Trash2, Zap, Play, MessageCircle, Crown, Star, Sparkles, BookOpen, Lightbulb, MessageSquare, PanelLeftClose, PanelLeftOpen, Search, Filter, Loader2, CheckSquare, Square, ListChecks, X, PanelRightOpen, PanelRightClose, ScanSearch, MoreHorizontal, Users, Mic, Radio, User, HelpCircle, Copy, Pencil } from 'lucide-react';
+import { FileText, Clock, CheckCircle, AlertCircle, Eye, Download, Share2, RefreshCw, Trash2, Zap, Play, MessageCircle, Crown, Star, Sparkles, BookOpen, Lightbulb, MessageSquare, PanelLeftClose, PanelLeftOpen, Search, Filter, Loader2, CheckSquare, Square, ListChecks, X, PanelRightOpen, PanelRightClose, ScanSearch, MoreHorizontal, Users, Mic, Radio, User, HelpCircle, Copy, Pencil, BarChart2 } from 'lucide-react';
 import { DropdownMenu, DropdownMenuItem, DropdownMenuSeparator } from '@/components/ui/dropdown-menu';
 import { useAuth } from '@/lib/auth/context';
 import { supabase } from '@/lib/supabase/client';
@@ -39,6 +39,7 @@ interface Project {
   speaker_data?: any;
   performance_level?: 'basic' | 'pro' | 'premium';
   project_type?: ProjectType;
+  processing_stage?: string;
   ai_summary?: string;
   chapters?: Array<{
     title: string;
@@ -86,7 +87,6 @@ export default function ProjectsPage() {
   const [generatingProjects, setGeneratingProjects] = useState<Set<string>>(new Set());
   const [showFullTranscription, setShowFullTranscription] = useState(false);
   const [expandedOutputs, setExpandedOutputs] = useState<Set<string>>(new Set());
-  const [activeTab, setActiveTab] = useState<'transcript' | 'outputs'>('transcript');
   const [readerView, setReaderView] = useState(false);
   const [showTimestamps, setShowTimestamps] = useState(true);
   const [selectedSpeaker, setSelectedSpeaker] = useState<string | null>(null);
@@ -142,6 +142,23 @@ export default function ProjectsPage() {
 
   // Per-output delete tracking
   const [deletingOutput, setDeletingOutput] = useState<string | null>(null);
+
+  // ─── Segment review / selection state (lifted from ConversationView) ───
+  interface TouchupPreviewItem {
+    index: number;
+    oldSpeakerId: string;
+    newSpeakerId: string;
+    reason: string;
+    confidence: number | null;
+    segmentText: string;
+    accepted: boolean;
+  }
+  const [selectedSegments, setSelectedSegments] = useState<Set<number>>(new Set());
+  const [aiTouchupLoading, setAiTouchupLoading] = useState(false);
+  const [aiTouchupResult, setAiTouchupResult] = useState<string | null>(null);
+  const [touchupPreview, setTouchupPreview] = useState<TouchupPreviewItem[] | null>(null);
+  const [applyingTouchup, setApplyingTouchup] = useState(false);
+  const [scrollToSegmentIndex, setScrollToSegmentIndex] = useState<number | null>(null);
 
   const { user } = useAuth();
   const searchParams = useSearchParams();
@@ -276,7 +293,6 @@ export default function ProjectsPage() {
       if (projectToSelect && selectedProject?.id !== projectId) {
         setSelectedProject(projectToSelect);
         setShowFullTranscription(false);
-        setActiveTab('transcript');
         fetchProjectOutputs(projectId);
         // Reset insights state — ConversationView will fetch and report back
         setInsightsData([]);
@@ -308,6 +324,40 @@ export default function ProjectsPage() {
     () => parseSpeakerData(selectedProject?.speaker_data),
     [selectedProject?.speaker_data]
   );
+
+  const accuracyPercent = useMemo(() => {
+    if (!parsedSpeakerData) return null;
+    const metaConfidence = parsedSpeakerData?.detectionMetadata?.confidence;
+    if (typeof metaConfidence === 'number' && metaConfidence > 0) {
+      return Math.max(0, Math.min(1, metaConfidence)) * 100;
+    }
+    const segments = parsedSpeakerData?.segments ?? [];
+    const confidences = segments
+      .map((s: any) => s?.confidence)
+      .filter((c: any) => typeof c === 'number');
+    if (confidences.length === 0) return null;
+    const avg = confidences.reduce((sum: number, c: number) => sum + c, 0) / confidences.length;
+    return Math.max(0, Math.min(1, avg)) * 100;
+  }, [parsedSpeakerData]);
+
+  const hasUncertainSegments = useMemo(
+    () => (parsedSpeakerData?.segments ?? []).some((s: any) =>
+      s.status === 'uncertain' && (
+        s.confidenceReason === 'acoustic_only' ||
+        s.confidenceReason === 'transition_short' ||
+        s.confidenceReason === 'role_mismatch'
+      )
+    ),
+    [parsedSpeakerData?.segments]
+  );
+
+  // Reset segment selection when project changes
+  useEffect(() => {
+    setSelectedSegments(new Set());
+    setTouchupPreview(null);
+    setAiTouchupResult(null);
+    setScrollToSegmentIndex(null);
+  }, [selectedProject?.id]);
 
   useEffect(() => {
     setSelectedSpeaker(null);
@@ -343,6 +393,164 @@ export default function ProjectsPage() {
     const t = setTimeout(() => setToast(null), 3500);
     return () => clearTimeout(t);
   }, [toast]);
+
+  // ─── Segment review handlers ───────────────────────────────────────────────
+  const handleSelectAllUncertain = useCallback(() => {
+    if (!parsedSpeakerData?.segments) return;
+    const uncertainIndices = (parsedSpeakerData.segments as any[])
+      .map((s, i) => ({ s, i }))
+      .filter(({ s }) =>
+        s.status === 'uncertain' && (
+          s.confidenceReason === 'acoustic_only' ||
+          s.confidenceReason === 'transition_short' ||
+          s.confidenceReason === 'role_mismatch'
+        )
+      )
+      .map(({ i }) => i);
+    setSelectedSegments(new Set(uncertainIndices));
+  }, [parsedSpeakerData?.segments]);
+
+  const handleToggleSegmentSelection = useCallback((index: number) => {
+    setSelectedSegments(prev => {
+      const next = new Set(prev);
+      if (next.has(index)) next.delete(index);
+      else next.add(index);
+      return next;
+    });
+  }, []);
+
+  const handleAiTouchup = useCallback(async () => {
+    if (!selectedProject?.id || selectedSegments.size === 0) return;
+    setAiTouchupLoading(true);
+    setAiTouchupResult(null);
+    setTouchupPreview(null);
+    try {
+      const response = await fetch(`/api/projects/${selectedProject.id}/segments/touchup`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ segmentIndices: Array.from(selectedSegments), dryRun: true }),
+      });
+      const data = await response.json();
+      if (!response.ok) throw new Error(data.error || 'Touch-up failed');
+      const changed = (data.reassignments || []).filter((r: any) => r.oldSpeakerId !== r.newSpeakerId);
+      if (changed.length === 0) {
+        setAiTouchupResult(`AI found no changes needed for ${selectedSegments.size} segment${selectedSegments.size !== 1 ? 's' : ''}`);
+        return;
+      }
+      setTouchupPreview(changed.map((r: any) => ({ ...r, accepted: true })));
+    } catch (err) {
+      setAiTouchupResult('Touch-up failed — try again');
+    } finally {
+      setAiTouchupLoading(false);
+    }
+  }, [selectedProject?.id, selectedSegments]);
+
+  const handleApplyTouchup = useCallback(async () => {
+    if (!selectedProject?.id || !touchupPreview) return;
+    const approved = touchupPreview.filter(item => item.accepted);
+    if (approved.length === 0) { setTouchupPreview(null); return; }
+    setApplyingTouchup(true);
+    try {
+      const response = await fetch(`/api/projects/${selectedProject.id}/segments/touchup`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ approvedReassignments: approved }),
+      });
+      const data = await response.json();
+      if (!response.ok) throw new Error(data.error || 'Apply failed');
+      if (data.updatedSpeakerData) {
+        setSelectedProject(prev => prev ? { ...prev, speaker_data: data.updatedSpeakerData } : null);
+        setProjects(prev => prev.map(p => p.id === selectedProject.id ? { ...p, speaker_data: data.updatedSpeakerData } : p));
+      }
+      setAiTouchupResult(`AI reassigned ${approved.length} segment${approved.length !== 1 ? 's' : ''}`);
+      setTouchupPreview(null);
+      setSelectedSegments(new Set());
+    } catch (err) {
+      setAiTouchupResult('Apply failed — try again');
+    } finally {
+      setApplyingTouchup(false);
+    }
+  }, [selectedProject?.id, touchupPreview]);
+
+  const handleTogglePreviewItem = useCallback((index: number) => {
+    setTouchupPreview(prev =>
+      prev ? prev.map(item => item.index === index ? { ...item, accepted: !item.accepted } : item) : null
+    );
+  }, []);
+
+  const handleConfirmSegment = useCallback(async (segmentIndex: number) => {
+    if (!selectedProject?.id) return;
+    try {
+      const response = await fetch(`/api/projects/${selectedProject.id}/segments/reassign`, {
+        method: 'PATCH',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ segmentIndices: [segmentIndex], confirmOnly: true }),
+      });
+      if (!response.ok) throw new Error('Failed to confirm segment');
+      const data = await response.json();
+      if (data.updatedSpeakerData) {
+        setSelectedProject(prev => prev ? { ...prev, speaker_data: data.updatedSpeakerData } : null);
+        setProjects(prev => prev.map(p => p.id === selectedProject.id ? { ...p, speaker_data: data.updatedSpeakerData } : p));
+      }
+      setSelectedSegments(prev => {
+        const next = new Set(prev);
+        next.delete(segmentIndex);
+        return next;
+      });
+    } catch (error) {
+      console.error('Error confirming segment:', error);
+    }
+  }, [selectedProject?.id]);
+
+  const handleSidebarSegmentReassign = useCallback(async (segmentIndex: number, newSpeakerId: string) => {
+    if (!selectedProject?.id || !newSpeakerId) return;
+    try {
+      const response = await fetch(`/api/projects/${selectedProject.id}/segments/reassign`, {
+        method: 'PATCH',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ segmentIndices: [segmentIndex], newSpeakerId }),
+      });
+      if (!response.ok) throw new Error('Failed to reassign segment');
+      const data = await response.json();
+      if (data.updatedSpeakerData) {
+        setSelectedProject(prev => prev ? { ...prev, speaker_data: data.updatedSpeakerData } : null);
+        setProjects(prev => prev.map(p => p.id === selectedProject.id ? { ...p, speaker_data: data.updatedSpeakerData } : p));
+      }
+    } catch (error) {
+      console.error('Error reassigning segment from sidebar:', error);
+    }
+  }, [selectedProject?.id]);
+
+  const handleAddSpeaker = useCallback(async (name: string, role: string) => {
+    if (!selectedProject?.id) return;
+    const res = await fetch(`/api/projects/${selectedProject.id}/speakers`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ name, role }),
+    });
+    if (!res.ok) return;
+    const data = await res.json();
+    if (data.updatedSpeakerData) {
+      setSelectedProject(prev => prev ? { ...prev, speaker_data: data.updatedSpeakerData } : null);
+      setProjects(prev => prev.map(p => p.id === selectedProject.id ? { ...p, speaker_data: data.updatedSpeakerData } : p));
+    }
+  }, [selectedProject?.id]);
+
+  const handleDeleteSpeaker = useCallback(async (speakerId: string, action: 'reassign' | 'delete', targetId?: string) => {
+    if (!selectedProject?.id) return;
+    const res = await fetch(`/api/projects/${selectedProject.id}/speakers/${speakerId}`, {
+      method: 'DELETE',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ action, reassignToSpeakerId: targetId }),
+    });
+    if (!res.ok) return;
+    const data = await res.json();
+    if (data.updatedSpeakerData) {
+      setSelectedProject(prev => prev ? { ...prev, speaker_data: data.updatedSpeakerData } : null);
+      setProjects(prev => prev.map(p => p.id === selectedProject.id ? { ...p, speaker_data: data.updatedSpeakerData } : p));
+    }
+  }, [selectedProject?.id]);
+  // ─────────────────────────────────────────────────────────────────────────────
 
   // Filter and sort projects
   const filteredAndSortedProjects = useMemo(() => {
@@ -841,10 +1049,7 @@ export default function ProjectsPage() {
                     console.log('[REALTIME] Refreshing outputs for selected project...');
                     fetchProjectOutputs(data.project_id);
 
-                    // Switch to outputs tab on successful completion
-                    if (data.status === 'completed') {
-                      setActiveTab('outputs');
-                    }
+                    // Content panel now always visible (no tab to switch)
                   }
                 }
               }
@@ -957,7 +1162,6 @@ export default function ProjectsPage() {
           if (selectedId && completedProjects.includes(selectedId)) {
             console.log('[POLL] Refreshing outputs for completed project:', selectedId);
             fetchProjectOutputs(selectedId);
-            setActiveTab('outputs');
           }
         }
       } catch (error) {
@@ -1057,6 +1261,11 @@ export default function ProjectsPage() {
     return parseFloat((bytes / Math.pow(k, i)).toFixed(2)) + ' ' + sizes[i];
   };
 
+  const getProcessingStage = (project: Project): string => {
+    if (project.processing_stage) return project.processing_stage;
+    return 'Processing...';
+  };
+
   const getStatusIcon = (status: string) => {
     switch (status) {
       case 'completed':
@@ -1066,7 +1275,7 @@ export default function ProjectsPage() {
       case 'failed':
         return <AlertCircle className="h-5 w-5 text-red-500" />;
       default:
-        return <Clock className="h-5 w-5 text-gray-400" />;
+        return <Clock className="h-5 w-5 text-slate-500" />;
     }
   };
 
@@ -1087,24 +1296,59 @@ export default function ProjectsPage() {
     
     // Check metadata for specific platform types
     if (output.metadata?.platform) {
-       if (output.metadata.platform === 'Show Notes') return 'bg-indigo-100 text-indigo-800';
-       if (output.metadata.platform === 'Quote Graphic') return 'bg-amber-100 text-amber-800';
+       if (output.metadata.platform === 'Show Notes') return 'bg-indigo-100 text-indigo-300';
+       if (output.metadata.platform === 'Quote Graphic') return 'bg-amber-100 text-amber-300';
        if (output.metadata.platform === 'Blog Post') return 'bg-emerald-100 text-emerald-800';
        if (output.metadata.platform === 'Email Newsletter') return 'bg-orange-100 text-orange-800';
     }
 
     switch (platform) {
       case 'twitter':
-        return 'bg-blue-100 text-blue-800';
+        return 'bg-blue-100 text-blue-300';
       case 'linkedin':
-        return 'bg-blue-100 text-blue-700';
+        return 'bg-blue-100 text-blue-400';
       case 'instagram':
         return 'bg-pink-100 text-pink-800';
       case 'general':
-        return 'bg-gray-100 text-gray-800';
+        return 'bg-slate-800 text-slate-100';
       default:
-        return 'bg-gray-100 text-gray-800';
+        return 'bg-slate-800 text-slate-100';
     }
+  };
+
+  // Returns icon letter + style for the output card platform icon
+  const getOutputPlatformMeta = (output: Output): { letter: string; iconStyle: string } => {
+    const rawPlatform = (output.metadata?.platform || output.platform || '').toLowerCase();
+    if (rawPlatform.includes('twitter') || rawPlatform.includes('x thread') || rawPlatform === 'x') {
+      return { letter: 'X', iconStyle: 'bg-slate-950 text-white border-slate-700' };
+    }
+    if (rawPlatform.includes('linkedin')) {
+      return { letter: 'in', iconStyle: 'bg-blue-600 text-white border-blue-500' };
+    }
+    if (rawPlatform.includes('instagram')) {
+      return { letter: 'IG', iconStyle: 'bg-pink-600 text-white border-pink-500' };
+    }
+    if (rawPlatform.includes('blog')) {
+      return { letter: 'B', iconStyle: 'bg-green-700 text-white border-green-600' };
+    }
+    if (rawPlatform.includes('newsletter') || rawPlatform.includes('email')) {
+      return { letter: '✉', iconStyle: 'bg-orange-600 text-white border-orange-500' };
+    }
+    if (rawPlatform.includes('show notes')) {
+      return { letter: '♪', iconStyle: 'bg-indigo-600 text-white border-indigo-500' };
+    }
+    const displayName = output.metadata?.platform || output.platform || 'G';
+    return { letter: displayName.charAt(0).toUpperCase(), iconStyle: 'bg-slate-700 text-white border-slate-600' };
+  };
+
+  const getOutputSubtitle = (output: Output): string => {
+    const rawPlatform = (output.metadata?.platform || output.platform || '').toLowerCase();
+    const charCount = output.content.length;
+    if (rawPlatform.includes('twitter') || rawPlatform.includes('x thread')) {
+      const posts = output.content.split(/\n\n+/).filter(p => p.trim().length > 0);
+      return `${posts.length} posts • 280 chars each`;
+    }
+    return `${charCount.toLocaleString()} characters`;
   };
 
   const getPlatformDisplayName = (output: Output) => {
@@ -1147,20 +1391,20 @@ export default function ProjectsPage() {
       basic: {
         icon: FileText,
         label: 'Basic',
-        color: 'bg-gray-100 text-gray-700',
-        iconColor: 'text-gray-500'
+        color: 'bg-slate-800/70 text-slate-300 border border-slate-700/60',
+        iconColor: 'text-slate-400'
       },
       pro: {
         icon: Star,
         label: 'Pro',
-        color: 'bg-blue-100 text-blue-700',
-        iconColor: 'text-blue-600'
+        color: 'bg-blue-900/30 text-blue-300 border border-blue-800/40',
+        iconColor: 'text-blue-300'
       },
       premium: {
         icon: Crown,
         label: 'Premium',
-        color: 'bg-purple-100 text-purple-700',
-        iconColor: 'text-purple-600'
+        color: 'bg-violet-900/30 text-violet-300 border border-violet-800/40',
+        iconColor: 'text-violet-300'
       }
     };
 
@@ -1194,36 +1438,36 @@ export default function ProjectsPage() {
       DEBATE: {
         icon: Users,
         label: 'Debate',
-        color: 'bg-amber-50 text-amber-700 border border-amber-200',
+        color: 'bg-amber-900/20 text-amber-400 border border-amber-800/30',
         iconColor: 'text-amber-600',
         description: 'Panel discussion with moderator',
       },
       INTERVIEW: {
         icon: Mic,
         label: 'Interview',
-        color: 'bg-green-50 text-green-700 border border-green-200',
+        color: 'bg-green-900/20 text-green-400 border border-green-800/30',
         iconColor: 'text-green-600',
         description: '1-on-1 Q&A format',
       },
       PODCAST: {
         icon: Radio,
         label: 'Podcast',
-        color: 'bg-indigo-50 text-indigo-700 border border-indigo-200',
+        color: 'bg-indigo-900/20 text-indigo-400 border border-indigo-800/30',
         iconColor: 'text-indigo-600',
         description: 'Conversational show',
       },
       MONOLOGUE: {
         icon: User,
         label: 'Monologue',
-        color: 'bg-slate-50 text-slate-700 border border-slate-200',
-        iconColor: 'text-slate-600',
+        color: 'bg-slate-800/50 text-slate-300 border border-slate-700',
+        iconColor: 'text-slate-300',
         description: 'Single speaker',
       },
       OTHER: {
         icon: HelpCircle,
         label: 'Other',
-        color: 'bg-gray-50 text-gray-600 border border-gray-200',
-        iconColor: 'text-gray-500',
+        color: 'bg-slate-800/50 text-slate-400 border border-slate-700',
+        iconColor: 'text-slate-400',
         description: 'Unclassified format',
       },
     };
@@ -1314,10 +1558,10 @@ export default function ProjectsPage() {
       <div className="py-6">
         <div className="max-w-7xl mx-auto px-4 sm:px-6 md:px-8">
           <div className="animate-pulse">
-            <div className="h-8 bg-gray-200 rounded w-1/4 mb-4"></div>
+            <div className="h-8 bg-slate-700 rounded w-1/4 mb-4"></div>
             <div className="space-y-4">
               {[1, 2, 3].map(i => (
-                <div key={i} className="h-24 bg-gray-200 rounded"></div>
+                <div key={i} className="h-24 bg-slate-700 rounded"></div>
               ))}
             </div>
           </div>
@@ -1327,12 +1571,12 @@ export default function ProjectsPage() {
   }
 
   return (
-    <div className="flex flex-col h-screen w-full overflow-hidden bg-gray-50">
+    <div className="dashboard-page flex flex-col h-screen w-full overflow-hidden bg-slate-950">
       {/* Sticky Header Bar */}
-      <header className="flex-shrink-0 h-12 bg-white border-b border-gray-200 px-6 flex items-center justify-between">
+      <header className="flex-shrink-0 h-12 bg-slate-900 border-b border-slate-700 px-6 flex items-center justify-between">
         <div className="flex items-center gap-3">
-          <h1 className="text-base font-semibold text-gray-900">Content Library</h1>
-          <span className="text-xs text-gray-400 hidden sm:inline">
+          <h1 className="text-base font-semibold text-slate-50">Content Library</h1>
+          <span className="text-xs text-slate-500 hidden sm:inline">
             {projects.length} project{projects.length !== 1 ? 's' : ''}
           </span>
         </div>
@@ -1340,14 +1584,14 @@ export default function ProjectsPage() {
           {/* Mobile sidebar toggles */}
           <button
             onClick={() => setProjectsSidebarOpen(!projectsSidebarOpen)}
-            className="lg:hidden p-2 text-gray-500 hover:text-gray-700 hover:bg-gray-100 rounded-md"
+            className="lg:hidden p-2 text-slate-400 hover:text-slate-300 hover:bg-slate-800 rounded-md"
             title={projectsSidebarOpen ? 'Hide projects' : 'Show projects'}
           >
             {projectsSidebarOpen ? <PanelLeftClose className="w-5 h-5" /> : <PanelLeftOpen className="w-5 h-5" />}
           </button>
           <button
             onClick={() => setContextSidebarOpen(!contextSidebarOpen)}
-            className="lg:hidden p-2 text-gray-500 hover:text-gray-700 hover:bg-gray-100 rounded-md"
+            className="lg:hidden p-2 text-slate-400 hover:text-slate-300 hover:bg-slate-800 rounded-md"
             title={contextSidebarOpen ? 'Hide details' : 'Show details'}
           >
             {contextSidebarOpen ? <PanelRightClose className="w-5 h-5" /> : <PanelRightOpen className="w-5 h-5" />}
@@ -1358,10 +1602,10 @@ export default function ProjectsPage() {
       {projects.length === 0 ? (
         // Empty state - full width centered
         <div className="flex-1 flex items-center justify-center p-8">
-          <div className="text-center py-12 px-8 bg-white rounded-lg shadow max-w-md">
-            <FileText className="mx-auto h-12 w-12 text-gray-400" />
-            <h3 className="mt-2 text-sm font-medium text-gray-900">Your library is empty</h3>
-            <p className="mt-1 text-sm text-gray-500">
+          <div className="text-center py-12 px-8 bg-slate-900 rounded-lg shadow max-w-md">
+            <FileText className="mx-auto h-12 w-12 text-slate-500" />
+            <h3 className="mt-2 text-sm font-medium text-slate-50">Your library is empty</h3>
+            <p className="mt-1 text-sm text-slate-400">
               Get started by uploading your first podcast episode.
             </p>
             <div className="mt-6">
@@ -1379,7 +1623,7 @@ export default function ProjectsPage() {
         <div className="flex flex-1 overflow-hidden">
             {/* LEFT COLUMN: Projects List (25% on desktop) - Collapsible */}
             <aside
-              className={`flex-shrink-0 transition-all duration-300 ease-in-out border-r border-gray-200 bg-gray-50/30 flex flex-col overflow-hidden ${
+              className={`flex-shrink-0 transition-all duration-300 ease-in-out border-r border-slate-800 bg-slate-900 flex flex-col overflow-hidden ${
                 projectsSidebarOpen
                   ? 'w-80 lg:w-1/4 min-w-[280px] opacity-100'
                   : 'w-0 opacity-0'
@@ -1388,7 +1632,7 @@ export default function ProjectsPage() {
               <div className="flex-shrink-0 p-5 pb-0 space-y-4">
                 {/* Header with Select Toggle */}
                 <div className="flex items-center justify-between">
-                  <h2 className="text-lg font-medium text-gray-900">Projects</h2>
+                  <h2 className="text-lg font-medium text-slate-50">Projects</h2>
                   <button
                     onClick={() => {
                       if (selectionMode) {
@@ -1399,8 +1643,8 @@ export default function ProjectsPage() {
                     }}
                     className={`inline-flex items-center px-3 py-1.5 text-sm font-medium rounded-md transition-colors ${
                       selectionMode
-                        ? 'bg-blue-100 text-blue-700 hover:bg-blue-200'
-                        : 'text-gray-600 hover:bg-gray-100'
+                        ? 'bg-blue-900/40 text-blue-400 hover:bg-blue-900/60'
+                        : 'text-slate-400 hover:bg-slate-800'
                     }`}
                   >
                     {selectionMode ? (
@@ -1420,11 +1664,11 @@ export default function ProjectsPage() {
                 {/* Selection Mode Header */}
                 {selectionMode && (
                   <div className="space-y-2">
-                    <div className="flex items-center justify-between bg-blue-50 px-3 py-2 rounded-lg border border-blue-200">
+                    <div className="flex items-center justify-between bg-blue-900/20 px-3 py-2 rounded-lg border border-blue-500/30">
                       <div className="flex items-center gap-2">
                         <button
                           onClick={toggleAllProjectSelection}
-                          className="p-1 hover:bg-blue-100 rounded transition-colors"
+                          className="p-1 hover:bg-blue-900/40 rounded transition-colors"
                         >
                           {selectedProjectIds.size === filteredAndSortedProjects.length && filteredAndSortedProjects.length > 0 ? (
                             <CheckSquare className="w-4 h-4 text-blue-600" />
@@ -1434,14 +1678,14 @@ export default function ProjectsPage() {
                             <Square className="w-4 h-4 text-blue-600" />
                           )}
                         </button>
-                        <span className="text-sm text-blue-700 font-medium">
+                        <span className="text-sm text-blue-400 font-medium">
                           {selectedProjectIds.size} selected
                         </span>
                       </div>
                       {selectedProjectIds.size > 0 && (
                         <button
                           onClick={() => setSelectedProjectIds(new Set())}
-                          className="text-xs text-blue-600 hover:text-blue-800"
+                          className="text-xs text-blue-400 hover:text-blue-300"
                         >
                           Clear
                         </button>
@@ -1462,13 +1706,13 @@ export default function ProjectsPage() {
 
                 {/* Search Bar */}
                 <div className="relative">
-                  <Search className="absolute left-3 top-1/2 transform -translate-y-1/2 h-4 w-4 text-gray-400" />
+                  <Search className="absolute left-3 top-1/2 transform -translate-y-1/2 h-4 w-4 text-slate-500" />
                   <input
                     type="text"
                     placeholder="Search projects..."
                     value={searchTerm}
                     onChange={(e) => setSearchTerm(e.target.value)}
-                    className="w-full pl-10 pr-4 py-2 border border-gray-300 rounded-md text-sm focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-transparent"
+                    className="w-full pl-10 pr-4 py-2 border border-slate-700 bg-slate-800 text-slate-200 placeholder:text-slate-500 rounded-md text-sm focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-transparent"
                   />
                 </div>
 
@@ -1479,7 +1723,7 @@ export default function ProjectsPage() {
                     <select
                       value={tierFilter}
                       onChange={(e) => setTierFilter(e.target.value as 'all' | 'basic' | 'pro' | 'premium')}
-                      className="w-full px-3 py-2 border border-gray-300 rounded-md text-sm focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-transparent"
+                      className="w-full px-3 py-2 bg-slate-800 border border-slate-700 text-slate-200 rounded-md text-sm focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-transparent"
                     >
                       <option value="all">All Tiers</option>
                       <option value="basic">Basic</option>
@@ -1493,7 +1737,7 @@ export default function ProjectsPage() {
                     <select
                       value={sortBy}
                       onChange={(e) => setSortBy(e.target.value as 'recent' | 'oldest' | 'name-asc' | 'name-desc')}
-                      className="w-full px-3 py-2 border border-gray-300 rounded-md text-sm focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-transparent"
+                      className="w-full px-3 py-2 bg-slate-800 border border-slate-700 text-slate-200 rounded-md text-sm focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-transparent"
                     >
                       <option value="recent">Recently Uploaded</option>
                       <option value="oldest">Oldest First</option>
@@ -1507,7 +1751,7 @@ export default function ProjectsPage() {
                     <select
                       value={typeFilter}
                       onChange={(e) => setTypeFilter(e.target.value as 'all' | ProjectType)}
-                      className="w-full px-3 py-2 border border-gray-300 rounded-md text-sm focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-transparent"
+                      className="w-full px-3 py-2 border border-slate-600 rounded-md text-sm focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-transparent"
                     >
                       <option value="all">All Types</option>
                       <option value="DEBATE">Debate</option>
@@ -1520,7 +1764,7 @@ export default function ProjectsPage() {
                 </div>
 
                 {/* Results count */}
-                <div className="text-xs text-gray-500">
+                <div className="text-xs text-slate-400">
                   {filteredAndSortedProjects.length} {filteredAndSortedProjects.length === 1 ? 'project' : 'projects'}
                   {(searchTerm || tierFilter !== 'all' || typeFilter !== 'all') && ` (filtered from ${projects.length})`}
                 </div>
@@ -1529,8 +1773,8 @@ export default function ProjectsPage() {
               {/* Scrollable Projects List */}
               <div className="flex-1 overflow-y-auto px-5 pb-5 space-y-3">
                 {filteredAndSortedProjects.length === 0 ? (
-                  <div className="text-center py-8 text-gray-500">
-                    <FileText className="mx-auto h-8 w-8 text-gray-400 mb-2" />
+                  <div className="text-center py-8 text-slate-400">
+                    <FileText className="mx-auto h-8 w-8 text-slate-500 mb-2" />
                     <p className="text-sm">No projects found</p>
                     {(searchTerm || tierFilter !== 'all' || typeFilter !== 'all') && (
                       <button
@@ -1539,7 +1783,7 @@ export default function ProjectsPage() {
                           setTierFilter('all');
                           setTypeFilter('all');
                         }}
-                        className="mt-2 text-xs text-blue-600 hover:text-blue-800"
+                        className="mt-2 text-xs text-blue-600 hover:text-blue-300"
                       >
                         Clear filters
                       </button>
@@ -1552,12 +1796,12 @@ export default function ProjectsPage() {
                     return (
                     <div
                       key={project.id}
-                      className={`group p-4 rounded-xl transition-all cursor-pointer border-2 overflow-hidden shadow-sm ${
+                      className={`group p-4 rounded-xl transition-colors cursor-pointer border overflow-hidden ${
                         selectionMode && isProjectSelected
-                          ? 'bg-blue-50 border-blue-400 shadow-blue-100'
+                          ? 'bg-blue-900/20 border-blue-400'
                           : isActive
-                          ? 'bg-white border-blue-500 shadow-md ring-2 ring-blue-100'
-                          : 'bg-white border-transparent hover:border-gray-200 hover:shadow-md'
+                          ? 'bg-slate-800 border-blue-500 ring-1 ring-blue-500/50'
+                          : 'bg-slate-800/50 border-slate-800 hover:bg-slate-800 hover:border-slate-700'
                       }`}
                       onClick={() => {
                         if (selectionMode) {
@@ -1568,7 +1812,6 @@ export default function ProjectsPage() {
                         router.push(`/dashboard/projects?id=${project.id}`);
                         setSelectedProject(project);
                         setShowFullTranscription(false);
-                        setActiveTab('transcript');
                         setInsightsSidebarOpen(false);
                         setInsightsStatus({ count: 0, loading: true, generating: false });
                         setInsightsData([]);
@@ -1591,11 +1834,11 @@ export default function ProjectsPage() {
                               {isProjectSelected ? (
                                 <CheckSquare className="w-4 h-4 text-blue-600" />
                               ) : (
-                                <Square className="w-4 h-4 text-gray-400" />
+                                <Square className="w-4 h-4 text-slate-500" />
                               )}
                             </div>
                           )}
-                          <h3 className={`text-sm leading-snug text-gray-900 truncate ${
+                          <h3 className={`text-sm leading-snug text-slate-50 truncate ${
                             selectedProject?.id === project.id ? 'font-semibold' : 'font-medium'
                           }`} title={project.title}>
                             {project.title}
@@ -1612,15 +1855,15 @@ export default function ProjectsPage() {
                         
                         {/* Compact Content Indicators */}
                         {project.status === 'completed' && (
-                          <div className="flex items-center gap-1.5 text-xs text-gray-500">
+                          <div className="flex items-center gap-1.5 text-xs text-slate-400">
                             {availableCount > 0 && (
-                              <span className="flex items-center px-1.5 py-0.5 bg-green-50 text-green-700 rounded text-[10px] font-medium">
+                              <span className="flex items-center px-1.5 py-0.5 bg-green-900/20 text-green-400 rounded text-[10px] font-medium">
                                 {availableCount} Assets
                               </span>
                             )}
                             {pendingFeatures.length > 0 && (
                               <span
-                                className="flex items-center px-1.5 py-0.5 bg-amber-50 text-amber-700 rounded text-[10px] font-medium"
+                                className="flex items-center px-1.5 py-0.5 bg-amber-900/20 text-amber-400 rounded text-[10px] font-medium"
                                 title={`Generating: ${pendingLabel}`}
                               >
                                 Generating {pendingFeatures.length}
@@ -1631,9 +1874,9 @@ export default function ProjectsPage() {
                       </div>
 
                       {/* Bottom Row: Metadata & Actions */}
-                      <div className="flex items-end justify-between pt-2 border-t border-gray-100">
+                      <div className="flex items-end justify-between pt-2 border-t border-slate-800">
                         {/* Metadata */}
-                        <div className="flex flex-wrap items-center gap-x-3 gap-y-1 text-[11px] text-gray-500">
+                        <div className="flex flex-wrap items-center gap-x-3 gap-y-1 text-[11px] text-slate-400">
                           <span>{new Date(project.created_at).toLocaleDateString()}</span>
                           {project.audio_duration && (
                             <span>{formatDuration(project.audio_duration)}</span>
@@ -1650,7 +1893,7 @@ export default function ProjectsPage() {
                                 handleGenerateContent(project);
                               }}
                               disabled={generatingProjects.has(project.id)}
-                              className="p-1 text-gray-400 hover:text-blue-600 transition-colors rounded hover:bg-blue-50"
+                              className="p-1 text-slate-500 hover:text-blue-600 transition-colors rounded hover:bg-blue-900/20"
                               title={generatingProjects.has(project.id) ? "Generating..." : "Generate content"}
                             >
                               {generatingProjects.has(project.id) ? (
@@ -1666,7 +1909,7 @@ export default function ProjectsPage() {
                               handleDeleteProject(project.id);
                             }}
                             disabled={deletingProject === project.id}
-                            className="p-1 text-gray-400 hover:text-red-600 transition-colors rounded hover:bg-red-50"
+                            className="p-1 text-slate-500 hover:text-red-600 transition-colors rounded hover:bg-red-900/20"
                             title="Delete project"
                           >
                             {deletingProject === project.id ? (
@@ -1688,30 +1931,34 @@ export default function ProjectsPage() {
 
             </aside>
 
-            {/* MIDDLE COLUMN: Main Content Stage (50% on desktop) */}
+            {/* MIDDLE COLUMN: Main Content Stage */}
             <main
-              className={`flex-1 min-w-0 overflow-y-auto transition-all duration-300 ease-in-out ${
+              className={`flex-1 min-w-0 flex flex-col overflow-hidden transition-all duration-300 ease-in-out ${
                 !projectsSidebarOpen && !contextSidebarOpen ? 'lg:w-full' : 'lg:w-1/2'
               }`}
             >
               {selectedProject ? (
-                <div className="h-full flex flex-col bg-white">
-                  {/* Header with Tier Badge and Actions */}
-                  <div className="flex-shrink-0 px-4 py-3 border-b border-gray-200 bg-white">
+                <div className="h-full flex flex-col bg-[#0F172A]">
+                  {/* Global Project Header */}
+                  <div className="flex-shrink-0 px-4 py-2.5 border-b border-slate-800 bg-slate-900/80">
                     <div className="flex items-center justify-between gap-3">
-                      <div className="flex items-center space-x-2 min-w-0 flex-1">
-                        {/* Toggle Projects Sidebar Button - desktop only */}
+                      {/* Left: sidebar toggle + badges */}
+                      <div className="flex items-center gap-2 flex-shrink-0">
                         <button
                           onClick={() => setProjectsSidebarOpen(!projectsSidebarOpen)}
-                          className="hidden lg:flex p-1.5 text-gray-500 hover:text-gray-700 hover:bg-gray-100 rounded-md transition-colors flex-shrink-0"
+                          className="hidden lg:flex p-1.5 text-slate-400 hover:text-slate-300 hover:bg-slate-800 rounded-md transition-colors"
                           title={projectsSidebarOpen ? 'Hide projects' : 'Show projects'}
                         >
-                          {projectsSidebarOpen ? (
-                            <PanelLeftClose className="w-4 h-4" />
-                          ) : (
-                            <PanelLeftOpen className="w-4 h-4" />
-                          )}
+                          {projectsSidebarOpen ? <PanelLeftClose className="w-4 h-4" /> : <PanelLeftOpen className="w-4 h-4" />}
                         </button>
+                        <div className="hidden sm:flex items-center gap-1.5">
+                          {getTierBadge(selectedProject.performance_level)}
+                          {selectedProject.project_type && getProjectTypeBadge(selectedProject.project_type)}
+                        </div>
+                      </div>
+
+                      {/* Center: Project title pill */}
+                      <div className="flex-1 flex justify-center min-w-0 px-2">
                         {editingProjectTitle ? (
                           <input
                             type="text"
@@ -1724,34 +1971,60 @@ export default function ProjectsPage() {
                             onBlur={handleSaveProjectTitle}
                             disabled={savingTitle}
                             autoFocus
-                            className="text-base font-medium text-gray-900 truncate border-b-2 border-blue-400 outline-none bg-transparent min-w-0 flex-1"
+                            className="bg-slate-800/50 text-slate-300 px-4 py-1.5 rounded-lg text-sm border border-blue-500/50 outline-none max-w-2xl w-full text-center"
                           />
                         ) : (
                           <button
-                            className="group flex items-center gap-1.5 min-w-0 text-left"
-                            onClick={() => {
-                              setEditingTitleValue(selectedProject.title);
-                              setEditingProjectTitle(true);
-                            }}
+                            className="group flex items-center gap-2 bg-slate-800/50 text-slate-300 px-4 py-1.5 rounded-lg text-sm hover:bg-slate-800 transition-colors max-w-2xl truncate border border-transparent hover:border-slate-700"
+                            onClick={() => { setEditingTitleValue(selectedProject.title); setEditingProjectTitle(true); }}
                             title="Click to rename"
                           >
-                            <h2 className="text-base font-medium text-gray-900 truncate">{selectedProject.title}</h2>
-                            <Pencil className="w-3.5 h-3.5 text-gray-400 opacity-0 group-hover:opacity-100 flex-shrink-0 transition-opacity" />
+                            <span className="truncate">{selectedProject.title}</span>
+                            <Pencil className="w-3 h-3 text-slate-500 opacity-0 group-hover:opacity-100 flex-shrink-0 transition-opacity" />
                           </button>
                         )}
-                        <div className="flex items-center gap-1.5 flex-shrink-0">
-                          {getTierBadge(selectedProject.performance_level)}
-                          {selectedProject.project_type && getProjectTypeBadge(selectedProject.project_type)}
-                        </div>
                       </div>
+
+                      {/* Right: Status + actions */}
                       <div className="flex items-center gap-2 flex-shrink-0">
-                        {/* More Actions Dropdown */}
+                        {selectedProject.status === 'completed' && (
+                          <div className="hidden sm:flex relative group">
+                            <div className="flex items-center gap-1.5 px-2.5 py-1 rounded-full bg-emerald-500/10 text-emerald-400 border border-emerald-500/20 text-xs font-medium cursor-default whitespace-nowrap">
+                              <CheckCircle className="w-3 h-3 flex-shrink-0" />
+                              <span>Processing complete</span>
+                            </div>
+                            {/* Tooltip on hover */}
+                            <div className="absolute bottom-full mb-2 left-1/2 -translate-x-1/2 opacity-0 group-hover:opacity-100 transition-opacity pointer-events-none z-50 bg-slate-800 border border-slate-700 rounded-xl shadow-xl p-3 w-56">
+                              <p className="text-[10px] font-semibold text-slate-500 uppercase tracking-widest mb-2">Completed Tasks</p>
+                              <div className="space-y-1.5 text-xs text-slate-300">
+                                <div className="flex items-center gap-2">
+                                  <CheckCircle className="w-3 h-3 text-emerald-400 flex-shrink-0" />
+                                  <span>Transcription (AssemblyAI)</span>
+                                </div>
+                                <div className="flex items-center gap-2">
+                                  <CheckCircle className="w-3 h-3 text-emerald-400 flex-shrink-0" />
+                                  <span>Speaker Attribution (AI Enhanced)</span>
+                                </div>
+                                <div className="flex items-center gap-2">
+                                  <CheckCircle className="w-3 h-3 text-emerald-400 flex-shrink-0" />
+                                  <span>Insight Extraction</span>
+                                </div>
+                              </div>
+                            </div>
+                          </div>
+                        )}
+                        {selectedProject.status === 'processing' && (
+                          <div className="hidden sm:flex items-center gap-1.5 px-2.5 py-1 rounded-full bg-amber-500/10 text-amber-400 border border-amber-500/20 text-xs font-medium whitespace-nowrap">
+                            <Loader2 className="w-3 h-3 animate-spin flex-shrink-0" />
+                            <span>{getProcessingStage(selectedProject)}</span>
+                          </div>
+                        )}
                         <DropdownMenu
                           align="right"
                           trigger={
                             <button
                               type="button"
-                              className="p-1.5 text-gray-400 hover:text-gray-600 hover:bg-gray-100 rounded-lg transition-colors"
+                              className="p-1.5 text-slate-500 hover:text-slate-400 hover:bg-slate-800 rounded-lg transition-colors"
                             >
                               <MoreHorizontal className="w-4 h-4" />
                               <span className="sr-only">More actions</span>
@@ -1779,368 +2052,196 @@ export default function ProjectsPage() {
                             {refreshing ? 'Refreshing...' : 'Refresh'}
                           </DropdownMenuItem>
                         </DropdownMenu>
-
-                        {/* Generate Content Button (Primary) */}
                         <button
                           onClick={() => handleGenerateContent(selectedProject)}
                           disabled={generatingProjects.has(selectedProject.id)}
                           className={`inline-flex items-center gap-1.5 px-3.5 py-1.5 text-sm font-medium rounded-lg transition-colors disabled:opacity-60 disabled:cursor-not-allowed ${
                             generatingProjects.has(selectedProject.id)
-                              ? 'bg-blue-50 text-blue-600'
+                              ? 'bg-blue-900/20 text-blue-400'
                               : 'bg-blue-600 text-white hover:bg-blue-700'
                           }`}
                         >
                           {generatingProjects.has(selectedProject.id) ? (
-                            <>
-                              <Loader2 className="w-4 h-4 animate-spin" />
-                              Generating...
-                            </>
+                            <><Loader2 className="w-4 h-4 animate-spin" />Generating...</>
                           ) : (
-                            <>
-                              <Zap className="w-4 h-4" />
-                              Generate
-                            </>
+                            <><Zap className="w-4 h-4" />Generate</>
                           )}
                         </button>
-
-                        {/* Toggle Context Sidebar Button - desktop only */}
                         <button
                           onClick={() => setContextSidebarOpen(!contextSidebarOpen)}
-                          className="hidden lg:flex p-1.5 text-gray-500 hover:text-gray-700 hover:bg-gray-100 rounded-md transition-colors flex-shrink-0"
+                          className="hidden lg:flex p-1.5 text-slate-400 hover:text-slate-300 hover:bg-slate-800 rounded-md transition-colors"
                           title={contextSidebarOpen ? 'Hide details panel' : 'Show details panel'}
                         >
-                          {contextSidebarOpen ? (
-                            <PanelRightClose className="w-4 h-4" />
-                          ) : (
-                            <PanelRightOpen className="w-4 h-4" />
-                          )}
+                          {contextSidebarOpen ? <PanelRightClose className="w-4 h-4" /> : <PanelRightOpen className="w-4 h-4" />}
                         </button>
                       </div>
                     </div>
                   </div>
 
-                  {/* Tab Navigation */}
-                  <div className="flex-shrink-0 border-b border-gray-200 px-4">
-                    <nav className="flex items-center justify-between" aria-label="Tabs">
-                      <div className="flex space-x-4">
-                        <button
-                          onClick={() => setActiveTab('transcript')}
-                          className={`py-2.5 px-1 border-b-2 font-medium text-sm transition-colors ${
-                            activeTab === 'transcript'
-                              ? 'border-blue-500 text-blue-600'
-                              : 'border-transparent text-gray-500 hover:text-gray-700 hover:border-gray-300'
-                          }`}
-                        >
-                          <div className="flex items-center space-x-1.5">
-                            <FileText className="w-4 h-4" />
-                            <span>Transcript</span>
-                          </div>
-                        </button>
+                  {/* Transcript panel (full width) */}
+                  <div className="flex flex-col min-h-0 flex-1 overflow-hidden">
 
-                        <button
-                          onClick={() => setActiveTab('outputs')}
-                          className={`py-2.5 px-1 border-b-2 font-medium text-sm transition-colors ${
-                            activeTab === 'outputs'
-                              ? 'border-blue-500 text-blue-600'
-                              : 'border-transparent text-gray-500 hover:text-gray-700 hover:border-gray-300'
-                          }`}
-                        >
-                          <div className="flex items-center space-x-1.5">
-                            <Zap className="w-4 h-4" />
-                            <span>Generated Content</span>
-                            {outputs.length > 0 && (
-                              <span className="px-1.5 py-0.5 text-xs rounded-full bg-gray-100 text-gray-600">
-                                {outputs.length}
-                              </span>
-                            )}
-                          </div>
-                        </button>
+                    {/* Transcript Panel */}
+                    <div className="flex flex-col min-h-0 overflow-hidden">
+                      {/* Panel Header */}
+                      <div className="flex-shrink-0 flex items-center justify-between px-4 py-3 border-b border-slate-800 bg-slate-900/50">
+                        <div className="flex items-center gap-2">
+                          <BarChart2 className="w-4 h-4 text-blue-400" />
+                          <span className="text-slate-100 font-semibold text-sm">Transcript</span>
+                        </div>
+                        <div className="flex items-center gap-2">
+                          {parsedSpeakerData && (
+                            <>
+                              <label className={`flex items-center gap-1 text-xs px-2 py-0.5 rounded-full border transition-colors cursor-pointer ${
+                                showTimestamps ? 'border-blue-800/30 bg-blue-900/20 text-blue-400' : 'border-slate-700 text-slate-500 hover:text-slate-400'
+                              }`} title="Toggle timestamps">
+                                <input type="checkbox" checked={showTimestamps} onChange={(e) => setShowTimestamps(e.target.checked)} className="sr-only" />
+                                <Clock className="w-3 h-3" />
+                              </label>
+                              <button
+                                onClick={() => setReaderView(v => !v)}
+                                className={`flex items-center gap-1 text-xs px-2 py-0.5 rounded-full border transition-colors ${
+                                  readerView ? 'border-blue-800/30 bg-blue-900/20 text-blue-400' : 'border-slate-700 text-slate-500 hover:text-slate-400'
+                                }`}
+                                title="Reader view"
+                              >
+                                <BookOpen className="w-3 h-3" />
+                              </button>
+                              <select
+                                value={selectedSpeaker || ''}
+                                onChange={(e) => setSelectedSpeaker(e.target.value || null)}
+                                className={`text-xs px-2 py-0.5 rounded-full border transition-colors bg-transparent ${
+                                  selectedSpeaker
+                                    ? 'border-blue-800/30 bg-blue-900/20 text-blue-400'
+                                    : 'border-slate-700 text-slate-500 hover:text-slate-400'
+                                }`}
+                              >
+                                <option value="">All speakers</option>
+                                {Object.keys(parsedSpeakerData.speakers || {}).map((speakerId) => (
+                                  <option key={speakerId} value={speakerId}>
+                                    {getSpeakerDisplayName(parsedSpeakerData.speakers[speakerId])}
+                                  </option>
+                                ))}
+                              </select>
+                            </>
+                          )}
+                        </div>
                       </div>
 
-                      {activeTab === 'transcript' && parsedSpeakerData && (
-                        <div className="flex items-center gap-2 flex-wrap justify-end">
-                          <label
-                            className={`flex items-center gap-1.5 text-xs px-2.5 py-1 rounded-full border transition-colors cursor-pointer ${
-                              showTimestamps
-                                ? 'border-blue-200 bg-blue-50 text-blue-600'
-                                : 'border-gray-200 bg-white text-gray-400 hover:text-gray-600 hover:border-gray-300'
-                            }`}
-                          >
-                            <input
-                              type="checkbox"
-                              checked={showTimestamps}
-                              onChange={(e) => setShowTimestamps(e.target.checked)}
-                              className="sr-only"
-                            />
-                            <Clock className="w-3.5 h-3.5" />
-                            <span>Timestamps</span>
-                          </label>
-
-                          <select
-                            value={selectedSpeaker || ''}
-                            onChange={(e) => setSelectedSpeaker(e.target.value || null)}
-                            className={`text-xs px-2.5 py-1 rounded-full border transition-colors ${
-                              selectedSpeaker
-                                ? 'border-blue-200 bg-blue-50 text-blue-600'
-                                : 'border-gray-200 bg-white text-gray-400 hover:text-gray-600 hover:border-gray-300'
-                            }`}
-                          >
-                            <option value="">All speakers</option>
-                            {Object.keys(parsedSpeakerData.speakers || {}).map((speakerId) => (
-                              <option key={speakerId} value={speakerId}>
-                                {getSpeakerDisplayName(parsedSpeakerData.speakers[speakerId])}
-                              </option>
-                            ))}
-                          </select>
-
-                          <button
-                            onClick={() => setReaderView(v => !v)}
-                            className={`flex items-center gap-1.5 text-xs px-2.5 py-1 rounded-full border transition-colors ${
-                              readerView
-                                ? 'border-blue-200 bg-blue-50 text-blue-600'
-                                : 'border-gray-200 bg-white text-gray-400 hover:text-gray-600 hover:border-gray-300'
-                            }`}
-                          >
-                            <BookOpen className="w-3.5 h-3.5" />
-                            <span>Reader view</span>
-                          </button>
+                      {/* Status notices */}
+                      {(isProjectRefreshing || (projectPreviousStatus === 'processing' && selectedProject.status === 'completed')) && (
+                        <div className="flex-shrink-0 px-4 py-2 bg-slate-900 border-b border-slate-800">
+                          {isProjectRefreshing && (
+                            <div className="flex items-center gap-2 text-blue-400 text-sm">
+                              <RefreshCw className="h-3.5 w-3.5 animate-spin" />
+                              <span>Refreshing speaker data...</span>
+                            </div>
+                          )}
+                          {projectPreviousStatus === 'processing' && selectedProject.status === 'completed' && (
+                            <div className="flex items-center gap-2 text-green-400 text-sm">
+                              <CheckCircle className="h-3.5 w-3.5" />
+                              <span>Processing complete!</span>
+                            </div>
+                          )}
                         </div>
                       )}
-                    </nav>
-                  </div>
 
-                  {/* Tab Content - Scrollable */}
-                  <div className="flex-1 overflow-y-auto bg-gray-50/50">
-                    {/* TRANSCRIPT TAB - ConversationView with plain-text fallback */}
-                    {activeTab === 'transcript' && (
-                      <div className="h-full flex flex-col">
+                      {/* Audio Player */}
+                      {audioUrl && (
+                        <div className="flex-shrink-0 px-4 py-2 bg-slate-900 border-b border-slate-800 flex justify-end">
+                          <audio ref={audioElementRef} src={audioUrl} controls className="h-8 w-48" preload="metadata" />
+                        </div>
+                      )}
+
+                      {/* Transcript Body */}
+                      <div className="flex-1 min-h-0 overflow-y-auto">
                         {parsedSpeakerData ? (
-                          <div className="h-full flex flex-col">
-                            {/* Status Notices */}
-                            {(isProjectRefreshing || (projectPreviousStatus === 'processing' && selectedProject.status === 'completed')) && (
-                              <div className="flex-shrink-0 px-2 py-1.5 bg-white border-b border-gray-100">
-                                <div className="max-w-3xl mx-auto">
-                                  {isProjectRefreshing && (
-                                    <div className="flex items-center gap-2 text-blue-600 text-sm">
-                                      <RefreshCw className="h-3.5 w-3.5 animate-spin" />
-                                      <span>Refreshing speaker data...</span>
-                                    </div>
-                                  )}
-                                  {projectPreviousStatus === 'processing' && selectedProject.status === 'completed' && (
-                                    <div className="flex items-center gap-2 text-green-600 text-sm">
-                                      <CheckCircle className="h-3.5 w-3.5" />
-                                      <span>Processing complete!</span>
-                                    </div>
-                                  )}
-                                </div>
-                              </div>
-                            )}
-
-                            {/* Audio Player for Speaker Samples */}
-                            {audioUrl && (
-                              <div className="flex-shrink-0 px-2 py-1.5 bg-white border-b border-gray-100">
-                                <div className="max-w-3xl mx-auto flex justify-end">
-                                  <audio
-                                    ref={audioElementRef}
-                                    src={audioUrl}
-                                    controls
-                                    className="h-8 w-48"
-                                    preload="metadata"
-                                  />
-                                </div>
-                              </div>
-                            )}
-
-                            {readerView ? (
-                              /* Reader View — clean, scannable transcript */
-                              <div className="flex-1 overflow-y-auto px-4 py-4">
-                                <div className="max-w-3xl mx-auto divide-y divide-gray-100">
-                                  {parsedSpeakerData.segments.map((segment: any, i: number) => {
-                                    const speakerId = segment.finalSpeakerId || segment.speakerId;
-                                    const speaker = parsedSpeakerData.speakers[speakerId];
-                                    const speakerName = speaker?.finalName || speaker?.fallbackName || speaker?.name || speakerId;
-                                    const colorClass = getSpeakerColor(speakerId);
-                                    const mins = Math.floor((segment.startTime || 0) / 60);
-                                    const secs = Math.floor((segment.startTime || 0) % 60);
-                                    const timestamp = `${mins}:${secs.toString().padStart(2, '0')}`;
-                                    return (
-                                      <div key={i} className="flex items-baseline gap-3 py-2.5">
-                                        <span className="flex-shrink-0 text-[11px] font-mono text-gray-400 w-9 select-none">{timestamp}</span>
-                                        <span className={`flex-shrink-0 text-[11px] font-semibold px-2 py-0.5 rounded-full ${colorClass}`}>{speakerName}</span>
-                                        <span className="text-[14px] text-gray-800 leading-relaxed">{segment.text}</span>
-                                      </div>
-                                    );
-                                  })}
-                                </div>
-                              </div>
-                            ) : (
-                              /* Conversation View — full editing controls */
-                              <div className="flex-1 overflow-y-auto px-2 py-2">
-                                <div className="max-w-3xl mx-auto">
-                                  <ConversationView
-                                    speakerData={parsedSpeakerData}
-                                    transcriptionText={selectedProject.transcription_text || ''}
-                                    projectId={selectedProject.id}
-                                    userTier={selectedProject.performance_level || 'basic'}
-                                    onSpeakerUpdate={(updatedSpeakerData) => {
-                                      setSelectedProject(prev => prev ? {
-                                        ...prev,
-                                        speaker_data: updatedSpeakerData
-                                      } : null);
-                                      setProjects(prev =>
-                                        prev.map(project =>
-                                          project.id === selectedProject.id
-                                            ? { ...project, speaker_data: updatedSpeakerData }
-                                            : project
-                                        )
-                                      );
-                                    }}
-                                    insightsSidebarOpen={insightsSidebarOpen}
-                                    onInsightsSidebarChange={setInsightsSidebarOpen}
-                                    onInsightsStatusChange={setInsightsStatus}
-                                    onInsightsDataChange={setInsightsData}
-                                    triggerInsightGeneration={triggerInsightGeneration}
-                                    insightsRefreshToken={insightsRefreshToken}
-                                    audioPlayerRef={audioPlayerRef}
-                                    showTimestamps={showTimestamps}
-                                    selectedSpeaker={selectedSpeaker}
-                                  />
-                                </div>
-                              </div>
-                            )}
-                          </div>
+                          readerView ? (
+                            <div className="px-4 py-4 divide-y divide-slate-800/70">
+                              {parsedSpeakerData.segments.map((segment: any, i: number) => {
+                                const speakerId = segment.finalSpeakerId || segment.speakerId;
+                                const speaker = parsedSpeakerData.speakers[speakerId];
+                                const speakerName = speaker?.finalName || speaker?.fallbackName || speaker?.name || speakerId;
+                                const colorClass = getSpeakerColor(speakerId);
+                                const mins = Math.floor((segment.startTime || 0) / 60);
+                                const secs = Math.floor((segment.startTime || 0) % 60);
+                                const timestamp = `${mins}:${secs.toString().padStart(2, '0')}`;
+                                return (
+                                  <div key={i} className="flex items-baseline gap-3 py-2.5">
+                                    <span className="flex-shrink-0 text-[11px] font-mono text-slate-500 w-9 select-none">{timestamp}</span>
+                                    <span className={`flex-shrink-0 text-[11px] font-semibold px-2 py-0.5 rounded-full ${colorClass}`}>{speakerName}</span>
+                                    <span className="text-[14px] text-slate-300 leading-relaxed">{segment.text}</span>
+                                  </div>
+                                );
+                              })}
+                            </div>
+                          ) : (
+                            <ConversationView
+                              speakerData={parsedSpeakerData}
+                              transcriptionText={selectedProject.transcription_text || ''}
+                              projectId={selectedProject.id}
+                              userTier={selectedProject.performance_level || 'basic'}
+                              onSpeakerUpdate={(updatedSpeakerData) => {
+                                setSelectedProject(prev => prev ? { ...prev, speaker_data: updatedSpeakerData } : null);
+                                setProjects(prev => prev.map(project =>
+                                  project.id === selectedProject.id ? { ...project, speaker_data: updatedSpeakerData } : project
+                                ));
+                              }}
+                              insightsSidebarOpen={insightsSidebarOpen}
+                              onInsightsSidebarChange={setInsightsSidebarOpen}
+                              onInsightsStatusChange={setInsightsStatus}
+                              onInsightsDataChange={setInsightsData}
+                              triggerInsightGeneration={triggerInsightGeneration}
+                              insightsRefreshToken={insightsRefreshToken}
+                              audioPlayerRef={audioPlayerRef}
+                              showTimestamps={showTimestamps}
+                              selectedSpeaker={selectedSpeaker}
+                              selectedSegments={selectedSegments}
+                              onToggleSegmentSelection={handleToggleSegmentSelection}
+                              scrollToSegmentIndex={scrollToSegmentIndex}
+                              onConfirmSegment={handleConfirmSegment}
+                            />
+                          )
                         ) : selectedProject.transcription_text ? (
-                          <div className="flex-1 overflow-y-auto px-2 py-2">
-                            <div className="max-w-3xl mx-auto text-[15px] text-gray-700 leading-relaxed whitespace-pre-wrap">
+                          <div className="px-4 py-4">
+                            <div className="text-[15px] text-slate-300 leading-relaxed whitespace-pre-wrap">
                               {selectedProject.transcription_text}
                             </div>
                           </div>
                         ) : (
-                          <div className="flex-1 flex items-center justify-center">
-                            <div className="text-center py-12 text-gray-500">
-                              <Loader2 className="h-8 w-8 mx-auto mb-3 animate-spin text-gray-300" />
+                          <div className="flex items-center justify-center h-full">
+                            <div className="text-center py-12 text-slate-400">
+                              <Loader2 className="h-8 w-8 mx-auto mb-3 animate-spin text-slate-500" />
                               <p className="text-sm">Processing transcription...</p>
                             </div>
                           </div>
                         )}
                       </div>
-                    )}
 
-                    {/* GENERATED CONTENT TAB */}
-                    {activeTab === 'outputs' && (
-                      <div className="px-2 py-2">
-                        <div className="max-w-3xl mx-auto">
-                          {outputs.length === 0 ? (
-                            <div className="text-center py-16 bg-white rounded-lg shadow-sm border border-gray-100">
-                              <Clock className="mx-auto h-10 w-10 text-gray-300" />
-                              <p className="mt-3 text-sm text-gray-500">
-                                {selectedProject.status === 'processing'
-                                  ? 'Content is being generated...'
-                                  : selectedProject.transcription_text
-                                  ? 'Ready to generate content - click Generate above'
-                                  : 'No content generated yet'
-                                }
-                              </p>
-                            </div>
-                          ) : (
-                            <div className="space-y-4">
-                              {outputs.map((output) => (
-                                <div
-                                  key={output.id}
-                                  className="bg-white p-5 rounded-lg shadow-sm border border-gray-100 hover:shadow-md transition-shadow"
-                                >
-                                {/* Header: Badges & Title */}
-                                <div className="mb-4">
-                                  <div className="flex flex-wrap gap-2 mb-2">
-                                    <span className={`inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-medium ${getPlatformColor(output)}`}>
-                                      {getPlatformDisplayName(output)}
-                                    </span>
-                                    {output.metadata?.theme && (
-                                      <span className="inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-medium bg-purple-50 text-purple-700 border border-purple-100">
-                                        {output.metadata.theme}
-                                      </span>
-                                    )}
-                                  </div>
-                                  <h3 className="text-base font-semibold text-gray-900 leading-tight">
-                                    {output.title}
-                                  </h3>
-                                </div>
-
-                                {/* Content: Quote Style */}
-                                <div className="pl-4 border-l-4 border-gray-200 py-1 mb-5">
-                                  <div className={`text-sm text-gray-700 whitespace-pre-wrap leading-relaxed ${expandedOutputs.has(output.id) ? '' : 'line-clamp-4'}`}>
-                                    {output.content}
-                                  </div>
-                                  {output.content.length > 200 && (
-                                    <button
-                                      onClick={() => toggleOutputExpansion(output.id)}
-                                      className="mt-2 text-xs font-medium text-blue-600 hover:text-blue-800"
-                                    >
-                                      {expandedOutputs.has(output.id) ? 'Show Less' : 'Show More'}
-                                    </button>
-                                  )}
-                                </div>
-
-                                {/* Footer: Date & Actions */}
-                                <div className="flex items-center justify-between pt-4 border-t border-gray-100">
-                                  <span className="text-xs text-gray-400">
-                                    Generated {new Date(output.created_at).toLocaleDateString()}
-                                  </span>
-
-                                  <div className="flex items-center gap-1">
-                                    <button
-                                      onClick={() => toggleOutputExpansion(output.id)}
-                                      className="p-1.5 text-gray-400 hover:text-blue-600 hover:bg-blue-50 rounded transition-colors"
-                                      title={expandedOutputs.has(output.id) ? 'Collapse' : 'Expand'}
-                                    >
-                                      <Eye className="h-4 w-4" />
-                                    </button>
-                                    <button
-                                      onClick={() => handleDownloadOutput(output)}
-                                      className="p-1.5 text-gray-400 hover:text-green-600 hover:bg-green-50 rounded transition-colors"
-                                      title="Download as .txt"
-                                    >
-                                      <Download className="h-4 w-4" />
-                                    </button>
-                                    <button
-                                      onClick={() => handleCopyOutput(output)}
-                                      className="p-1.5 text-gray-400 hover:text-violet-600 hover:bg-violet-50 rounded transition-colors"
-                                      title="Copy to clipboard"
-                                    >
-                                      <Copy className="h-4 w-4" />
-                                    </button>
-                                    <button
-                                      onClick={() => handleDeleteOutput(output.id)}
-                                      disabled={deletingOutput === output.id}
-                                      className="p-1.5 text-gray-400 hover:text-red-600 hover:bg-red-50 rounded transition-colors disabled:opacity-50"
-                                      title="Delete"
-                                    >
-                                      {deletingOutput === output.id ? (
-                                        <Loader2 className="h-4 w-4 animate-spin" />
-                                      ) : (
-                                        <Trash2 className="h-4 w-4" />
-                                      )}
-                                    </button>
-                                  </div>
-                                </div>
-                              </div>
-                              ))}
-                            </div>
-                          )}
-                        </div>
+                      {/* Transcript Footer */}
+                      <div className="flex-shrink-0 border-t border-slate-800 px-4 py-3">
+                        <p className="text-slate-500 text-xs">
+                          {parsedSpeakerData?.detectionMetadata?.totalSpeakers ?? 0} speakers detected
+                          {(selectedProject.audio_duration || selectedProject.audio_duration_seconds)
+                            ? ` | ${formatDuration(selectedProject.audio_duration || selectedProject.audio_duration_seconds || 0)}`
+                            : ''
+                          }
+                          {accuracyPercent !== null ? ` · ${accuracyPercent.toFixed(1)}% accuracy` : ''}
+                        </p>
                       </div>
-                    )}
+                    </div>
+
                   </div>
                 </div>
               ) : (
                 /* Empty state when no project selected */
-                <div className="h-full flex items-center justify-center bg-gray-50/30">
+                <div className="h-full flex items-center justify-center bg-[#0F172A]">
                   <div className="text-center py-12 px-6">
-                    <FileText className="mx-auto h-12 w-12 text-gray-300" />
-                    <h3 className="mt-3 text-sm font-medium text-gray-900">
+                    <FileText className="mx-auto h-12 w-12 text-slate-600" />
+                    <h3 className="mt-3 text-sm font-medium text-slate-50">
                       Select a project
                     </h3>
-                    <p className="mt-1 text-sm text-gray-500 max-w-xs">
+                    <p className="mt-1 text-sm text-slate-400 max-w-xs">
                       Choose a project from the list on the left to view its details and content
                     </p>
                   </div>
@@ -2154,27 +2255,54 @@ export default function ProjectsPage() {
               onSpeakerClick={(speakerId) => setActiveSpeakerId(speakerId)}
               activeSpeakerId={activeSpeakerId}
               projectId={selectedProject?.id}
+              segments={parsedSpeakerData?.segments}
+              selectedSegments={selectedSegments}
+              hasUncertainSegments={hasUncertainSegments}
+              onSelectAllUncertain={handleSelectAllUncertain}
+              onClearSelection={() => setSelectedSegments(new Set())}
+              onToggleSegmentSelection={handleToggleSegmentSelection}
+              onScrollToSegment={(idx) => {
+                setScrollToSegmentIndex(null);
+                setTimeout(() => setScrollToSegmentIndex(idx), 0);
+              }}
+              onConfirmSegment={handleConfirmSegment}
+              onSegmentReassign={handleSidebarSegmentReassign}
+              onSpeakerAdd={handleAddSpeaker}
+              onSpeakerDelete={handleDeleteSpeaker}
+              aiTouchupLoading={aiTouchupLoading}
+              onAiTouchup={handleAiTouchup}
+              aiTouchupResult={aiTouchupResult}
+              touchupPreview={touchupPreview}
+              applyingTouchup={applyingTouchup}
+              onApplyTouchup={handleApplyTouchup}
+              onTogglePreviewItem={handleTogglePreviewItem}
+              onDismissPreview={() => setTouchupPreview(null)}
               onSpeakerRename={async (speakerId, newName) => {
                 if (!selectedProject?.id) return;
-
-                const response = await fetch(`/api/projects/${selectedProject.id}/speakers/${speakerId}`, {
+                const res = await fetch(`/api/projects/${selectedProject.id}/speakers/${speakerId}`, {
                   method: 'PATCH',
                   headers: { 'Content-Type': 'application/json' },
-                  body: JSON.stringify({
-                    action: 'rename',
-                    newName
-                  })
+                  body: JSON.stringify({ action: 'rename', newName }),
                 });
-
-                if (response.ok) {
-                  const refreshed = await fetch(`/api/projects/${selectedProject.id}`);
-                  if (refreshed.ok) {
-                    const updatedProject = await refreshed.json();
-                    setSelectedProject(prev => prev ? {
-                      ...prev,
-                      speaker_data: updatedProject.speaker_data
-                    } : null);
-                  }
+                if (!res.ok) return;
+                const data = await res.json();
+                if (data.updatedSpeakerData) {
+                  setSelectedProject(prev => prev ? { ...prev, speaker_data: data.updatedSpeakerData } : null);
+                  setProjects(prev => prev.map(p => p.id === selectedProject.id ? { ...p, speaker_data: data.updatedSpeakerData } : p));
+                }
+              }}
+              onSpeakerRoleChange={async (speakerId, newRole) => {
+                if (!selectedProject?.id) return;
+                const res = await fetch(`/api/projects/${selectedProject.id}/speakers/${speakerId}`, {
+                  method: 'PATCH',
+                  headers: { 'Content-Type': 'application/json' },
+                  body: JSON.stringify({ action: 'set_role', newRole }),
+                });
+                if (!res.ok) return;
+                const data = await res.json();
+                if (data.updatedSpeakerData) {
+                  setSelectedProject(prev => prev ? { ...prev, speaker_data: data.updatedSpeakerData } : null);
+                  setProjects(prev => prev.map(p => p.id === selectedProject.id ? { ...p, speaker_data: data.updatedSpeakerData } : p));
                 }
               }}
               onSpeakerMerge={async (sourceSpeakerId, targetSpeakerId) => {
@@ -2214,6 +2342,17 @@ export default function ProjectsPage() {
               quotes={selectedProject?.social_quotes || []}
               tier={selectedProject?.performance_level || 'basic'}
               contentLoading={selectedProject?.status === 'processing' || isProjectRefreshing}
+              outputs={outputs}
+              onCopyOutput={handleCopyOutput}
+              onDownloadOutput={handleDownloadOutput}
+              onDeleteOutput={handleDeleteOutput}
+              deletingOutput={deletingOutput}
+              onGenerateContent={() => {
+                if (selectedProject) {
+                  setSelectedProjectForGeneration(selectedProject);
+                  setShowContentSelection(true);
+                }
+              }}
               isOpen={contextSidebarOpen}
               onClose={() => setContextSidebarOpen(false)}
               className={`flex-shrink-0 transition-all duration-300 ease-in-out overflow-hidden ${

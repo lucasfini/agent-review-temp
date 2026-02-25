@@ -67,6 +67,13 @@ interface ConversationViewProps {
   audioPlayerRef?: RefObject<AudioPlayerRef | null>;
   showTimestamps?: boolean;
   selectedSpeaker?: string | null;
+  // Lifted selection state (from ProjectsPage)
+  selectedSegments?: Set<number>;
+  onToggleSegmentSelection?: (index: number) => void;
+  // Scroll to a segment triggered from the review sidebar
+  scrollToSegmentIndex?: number | null;
+  // Callback after a segment is confirmed
+  onConfirmSegment?: (index: number) => void;
 }
 
 interface InsightCard {
@@ -107,7 +114,11 @@ export default function ConversationView({
   insightsRefreshToken,
   audioPlayerRef,
   showTimestamps: controlledShowTimestamps,
-  selectedSpeaker: controlledSelectedSpeaker
+  selectedSpeaker: controlledSelectedSpeaker,
+  selectedSegments: externalSelectedSegments,
+  onToggleSegmentSelection,
+  scrollToSegmentIndex,
+  onConfirmSegment,
 }: ConversationViewProps) {
   const showTimestamps = controlledShowTimestamps ?? true;
   const selectedSpeaker = controlledSelectedSpeaker ?? null;
@@ -118,9 +129,6 @@ export default function ConversationView({
   const [deletingSpeaker, setDeletingSpeaker] = useState<string | null>(null);
   const [deleteAction, setDeleteAction] = useState<'delete' | 'reassign'>('reassign');
   const [reassignToSpeaker, setReassignToSpeaker] = useState<string>('');
-  const [selectedSegments, setSelectedSegments] = useState<Set<number>>(new Set());
-  const [bulkReassignTarget, setBulkReassignTarget] = useState<string>('');
-  const [bulkReassigning, setBulkReassigning] = useState(false);
   const [segmentReassigning, setSegmentReassigning] = useState<number | null>(null);
   const [activeInsightId, setActiveInsightId] = useState<string | null>(null);
   const [internalShowInlineInsights, setInternalShowInlineInsights] = useState(false);
@@ -136,21 +144,6 @@ export default function ConversationView({
   const [insightsError, setInsightsError] = useState<string | null>(null);
   const [refreshingInsights, setRefreshingInsights] = useState(false);
   const [generatingInsights, setGeneratingInsights] = useState(false);
-  const [aiTouchupLoading, setAiTouchupLoading] = useState(false);
-  const [aiTouchupResult, setAiTouchupResult] = useState<string | null>(null);
-
-  // Preview state for dry-run touch-up
-  interface TouchupPreviewItem {
-    index: number;
-    oldSpeakerId: string;
-    newSpeakerId: string;
-    reason: string;
-    confidence: number | null;
-    segmentText: string;
-    accepted: boolean;
-  }
-  const [touchupPreview, setTouchupPreview] = useState<TouchupPreviewItem[] | null>(null);
-  const [applyingTouchup, setApplyingTouchup] = useState(false);
 
   // Helper to check if a speaker is filtered
   const getFilterInfo = (speakerId: string) => {
@@ -300,122 +293,35 @@ export default function ConversationView({
     }
   };
 
-  const handleBulkReassign = async (newSpeakerId: string) => {
-    if (!projectId || selectedSegments.size === 0 || !newSpeakerId) return;
-
+  const handleConfirmSegment = async (segmentIndex: number) => {
+    if (!projectId) return;
     try {
-      setBulkReassigning(true);
       const response = await fetch(`/api/projects/${projectId}/segments/reassign`, {
         method: 'PATCH',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          segmentIndices: Array.from(selectedSegments),
-          newSpeakerId
-        })
+        body: JSON.stringify({ segmentIndices: [segmentIndex], confirmOnly: true })
       });
-
-      if (!response.ok) {
-        throw new Error('Failed to reassign segments');
-      }
-
+      if (!response.ok) throw new Error('Failed to confirm segment');
       const data = await response.json();
       if (data.updatedSpeakerData && onSpeakerUpdate) {
         onSpeakerUpdate(data.updatedSpeakerData);
       }
-      setSelectedSegments(new Set());
-      setBulkReassigning(false);
+      onConfirmSegment?.(segmentIndex);
     } catch (error) {
-      console.error('Error reassigning segments:', error);
-      alert('Failed to reassign segments. Please try again.');
-    } finally {
-      setBulkReassigning(false);
+      console.error('Error confirming segment:', error);
     }
-  };
-
-  const handleAiTouchup = async () => {
-    if (!projectId || selectedSegments.size === 0) return;
-    setAiTouchupLoading(true);
-    setAiTouchupResult(null);
-    setTouchupPreview(null);
-    try {
-      // Dry run: get Claude's suggestions without writing to DB
-      const response = await fetch(`/api/projects/${projectId}/segments/touchup`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ segmentIndices: Array.from(selectedSegments), dryRun: true })
-      });
-      const data = await response.json();
-      if (!response.ok) throw new Error(data.error || 'Touch-up failed');
-
-      // Only show changed suggestions in the preview
-      const changed = (data.reassignments || []).filter((r: any) => r.oldSpeakerId !== r.newSpeakerId);
-      if (changed.length === 0) {
-        setAiTouchupResult(`AI found no changes needed for ${selectedSegments.size} segment${selectedSegments.size !== 1 ? 's' : ''}`);
-        return;
-      }
-      setTouchupPreview(changed.map((r: any) => ({ ...r, accepted: true })));
-    } catch (err) {
-      setAiTouchupResult('Touch-up failed — try again');
-    } finally {
-      setAiTouchupLoading(false);
-    }
-  };
-
-  const togglePreviewItem = (index: number) => {
-    setTouchupPreview(prev =>
-      prev ? prev.map(item => item.index === index ? { ...item, accepted: !item.accepted } : item) : null
-    );
-  };
-
-  const handleApplyTouchup = async () => {
-    if (!projectId || !touchupPreview) return;
-    const approved = touchupPreview.filter(item => item.accepted);
-    if (approved.length === 0) {
-      setTouchupPreview(null);
-      return;
-    }
-    setApplyingTouchup(true);
-    try {
-      const response = await fetch(`/api/projects/${projectId}/segments/touchup`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ approvedReassignments: approved })
-      });
-      const data = await response.json();
-      if (!response.ok) throw new Error(data.error || 'Apply failed');
-      setAiTouchupResult(`AI reassigned ${approved.length} segment${approved.length !== 1 ? 's' : ''}`);
-      setTouchupPreview(null);
-      setSelectedSegments(new Set());
-      if (data.updatedSpeakerData && onSpeakerUpdate) {
-        onSpeakerUpdate(data.updatedSpeakerData);
-      }
-    } catch (err) {
-      setAiTouchupResult('Apply failed — try again');
-    } finally {
-      setApplyingTouchup(false);
-    }
-  };
-
-  const toggleSegmentSelection = (index: number) => {
-    const newSelection = new Set(selectedSegments);
-    if (newSelection.has(index)) {
-      newSelection.delete(index);
-    } else {
-      newSelection.add(index);
-    }
-    setSelectedSegments(newSelection);
   };
 
   // Shift feature removed
 
   if (!speakerData || !speakerData.segments || speakerData.segments.length === 0) {
     return (
-      <div className={`p-6 bg-yellow-50 border border-yellow-200 rounded-lg ${className}`}>
-        <div className="flex items-center space-x-3 text-yellow-800">
+      <div className={`p-6 bg-yellow-900/20 border border-yellow-800/30 rounded-lg ${className}`}>
+        <div className="flex items-center space-x-3 text-yellow-300">
           <MessageCircle className="h-5 w-5" />
           <span className="text-sm font-medium">Conversation Format Processing</span>
         </div>
-        <p className="text-sm text-yellow-700 mt-3 leading-relaxed">
+        <p className="text-sm text-yellow-400 mt-3 leading-relaxed">
           Speaker detection is being processed in the background. 
           Please refresh the page in a few moments to see the conversation format.
         </p>
@@ -426,12 +332,12 @@ export default function ConversationView({
   // Check if speaker analysis had errors
   if (speakerData.detectionMetadata?.error) {
     return (
-      <div className={`p-6 bg-orange-50 border border-orange-200 rounded-lg ${className}`}>
+      <div className={`p-6 bg-orange-900/20 border border-orange-800/30 rounded-lg ${className}`}>
         <div className="flex items-center space-x-3 text-orange-800">
           <MessageCircle className="h-5 w-5" />
           <span className="text-sm font-medium">Conversation Format Partially Available</span>
         </div>
-        <p className="text-sm text-orange-700 mt-3 leading-relaxed">
+        <p className="text-sm text-orange-400 mt-3 leading-relaxed">
           Speaker segments are available but name detection failed. 
           Speakers will be shown as "Speaker 1", "Speaker 2", etc.
         </p>
@@ -448,17 +354,6 @@ export default function ConversationView({
     [segments]
   );
 
-  const hasUncertainSegments = useMemo(
-    () => segments.some(s =>
-      s.status === 'uncertain' && (
-        s.confidenceReason === 'acoustic_only' ||
-        s.confidenceReason === 'transition_short' ||
-        s.confidenceReason === 'role_mismatch'
-      )
-    ),
-    [segments]
-  );
-
   const filteredSegments = useMemo(() => {
     if (selectedSpeaker) {
       return segmentsWithIndex.filter(({ segment }) => resolveSpeakerId(segment) === selectedSpeaker);
@@ -466,11 +361,11 @@ export default function ConversationView({
     return segmentsWithIndex;
   }, [segmentsWithIndex, selectedSpeaker]);
 
+  // Scroll to a segment when triggered from the review sidebar
   useEffect(() => {
-    if (!bulkReassignTarget || (bulkReassignTarget && !speakerList.includes(bulkReassignTarget))) {
-      setBulkReassignTarget(speakerList[0] || '');
-    }
-  }, [speakerList, bulkReassignTarget]);
+    if (scrollToSegmentIndex == null) return;
+    document.getElementById(`segment-${scrollToSegmentIndex}`)?.scrollIntoView({ behavior: 'smooth', block: 'center' });
+  }, [scrollToSegmentIndex]);
 
   // Fetch AI-powered insights from database
   useEffect(() => {
@@ -912,12 +807,12 @@ export default function ConversationView({
         <div className="flex items-center gap-4">
           {/* Conversation Info */}
           <div className="flex items-center gap-3">
-            <div className="flex items-center justify-center h-9 w-9 rounded-full bg-blue-50 text-blue-600">
+            <div className="flex items-center justify-center h-9 w-9 rounded-full bg-blue-900/20 text-blue-600">
               <MessageCircle className="h-4 w-4" />
             </div>
             <div>
-              <h4 className="text-sm font-semibold text-gray-900">Conversation</h4>
-              <p className="text-xs text-gray-500">
+              <h4 className="text-sm font-semibold text-slate-50">Conversation</h4>
+              <p className="text-xs text-slate-400">
                 {detectionMetadata.totalSpeakers} speaker{detectionMetadata.totalSpeakers !== 1 ? 's' : ''} • {detectionMetadata.totalSegments} segments
               </p>
             </div>
@@ -926,187 +821,6 @@ export default function ConversationView({
         </div>
 
       </div>
-
-      {/* Bulk Selection Controls */}
-      {projectId && (selectedSegments.size > 0 || hasUncertainSegments) && (
-        <div className="flex-shrink-0 mx-4 mb-3 p-4 border border-blue-100 bg-blue-50 rounded-lg text-xs text-blue-900 space-y-3">
-          <div className="flex flex-wrap items-center gap-2">
-            {selectedSegments.size > 0 && (
-              <span className="font-medium">
-                {selectedSegments.size} segment{selectedSegments.size === 1 ? '' : 's'} selected
-              </span>
-            )}
-            {selectedSegments.size > 0 && (
-              <button
-                onClick={() => setSelectedSegments(new Set(filteredSegments.map(({ index }) => index)))}
-                className="px-2 py-1 rounded border border-blue-200 bg-white text-blue-700 hover:bg-blue-100"
-              >
-                Select Visible
-              </button>
-            )}
-            {selectedSegments.size > 0 && (
-              <button
-                onClick={() => setSelectedSegments(new Set())}
-                className="px-2 py-1 rounded border border-transparent text-blue-700 hover:bg-blue-100"
-              >
-                Clear Selection
-              </button>
-            )}
-            {hasUncertainSegments && (
-              <button
-                onClick={() => setSelectedSegments(new Set(
-                  segmentsWithIndex
-                    .filter(({ segment }) =>
-                      segment.status === 'uncertain' && (
-                        segment.confidenceReason === 'acoustic_only' ||
-                        segment.confidenceReason === 'transition_short' ||
-                        segment.confidenceReason === 'role_mismatch'
-                      )
-                    )
-                    .map(({ index }) => index)
-                ))}
-                className="px-2 py-1 rounded border border-yellow-300 bg-yellow-50 text-yellow-800 hover:bg-yellow-100"
-              >
-                ⚠️ Select all uncertain
-              </button>
-            )}
-          </div>
-          {selectedSegments.size > 0 && (
-            <div className="flex flex-wrap items-center gap-2">
-              <span>Reassign selected to:</span>
-              <select
-                value={bulkReassignTarget}
-                onChange={(e) => setBulkReassignTarget(e.target.value)}
-                className="border border-blue-200 rounded px-2 py-1 bg-white text-blue-900"
-              >
-                {speakerList.map((speakerId) => (
-                  <option key={speakerId} value={speakerId}>
-                    {getSpeakerDisplayName(speakers[speakerId])}
-                  </option>
-                ))}
-              </select>
-              <button
-                onClick={() => handleBulkReassign(bulkReassignTarget)}
-                disabled={
-                  !bulkReassignTarget || selectedSegments.size === 0 || bulkReassigning
-                }
-                className={`inline-flex items-center px-3 py-1.5 rounded text-white text-xs font-semibold ${
-                  !bulkReassignTarget || selectedSegments.size === 0 || bulkReassigning
-                    ? 'bg-blue-300 cursor-not-allowed'
-                    : 'bg-blue-600 hover:bg-blue-700'
-                }`}
-              >
-                {bulkReassigning ? (
-                  <span className="flex items-center space-x-1">
-                    <span className="h-3 w-3 border border-white border-t-transparent rounded-full animate-spin" />
-                    <span>Updating…</span>
-                  </span>
-                ) : (
-                  'Apply'
-                )}
-              </button>
-              <button
-                onClick={handleAiTouchup}
-                disabled={aiTouchupLoading || selectedSegments.size === 0}
-                className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded text-white text-xs font-semibold bg-violet-600 hover:bg-violet-700 disabled:bg-violet-300 disabled:cursor-not-allowed"
-              >
-                {aiTouchupLoading ? (
-                  <><span className="h-3 w-3 border border-white border-t-transparent rounded-full animate-spin" /> AI analyzing…</>
-                ) : (
-                  <>✦ Touch-up with AI</>
-                )}
-              </button>
-              {aiTouchupResult && (
-                <span className="text-xs text-blue-700 font-medium">{aiTouchupResult}</span>
-              )}
-            </div>
-          )}
-        </div>
-      )}
-
-      {/* AI Touch-up Preview Panel */}
-      {touchupPreview && (
-        <div className="flex-shrink-0 mx-4 mb-3 p-4 border border-violet-200 bg-violet-50 rounded-lg space-y-3">
-          <div className="flex items-center justify-between">
-            <span className="text-sm font-semibold text-violet-900">
-              ✦ AI Corrections ({touchupPreview.filter(i => i.accepted).length} of {touchupPreview.length} selected)
-            </span>
-            <button
-              onClick={() => setTouchupPreview(null)}
-              className="text-violet-400 hover:text-violet-700"
-              aria-label="Discard preview"
-            >
-              <X className="h-4 w-4" />
-            </button>
-          </div>
-
-          <div className="space-y-2 max-h-64 overflow-y-auto">
-            {touchupPreview.map((item) => {
-              const oldSpk = speakers[item.oldSpeakerId];
-              const newSpk = speakers[item.newSpeakerId];
-              const oldName = getSpeakerDisplayName(oldSpk) || item.oldSpeakerId;
-              const newName = getSpeakerDisplayName(newSpk) || item.newSpeakerId;
-              return (
-                <div
-                  key={item.index}
-                  className={`flex items-start gap-3 p-3 rounded-lg border transition-opacity ${
-                    item.accepted ? 'bg-white border-violet-200' : 'bg-gray-50 border-gray-200 opacity-50'
-                  }`}
-                >
-                  <input
-                    type="checkbox"
-                    checked={item.accepted}
-                    onChange={() => togglePreviewItem(item.index)}
-                    className="mt-0.5 h-4 w-4 rounded border-gray-300 text-violet-600 focus:ring-violet-500"
-                  />
-                  <div className="flex-1 min-w-0 space-y-1">
-                    <div className="flex items-center gap-1.5 text-xs font-medium flex-wrap">
-                      <span className="text-gray-400">Seg {item.index}</span>
-                      <span className="text-gray-300">·</span>
-                      <span className="text-red-500 line-through">{oldName}</span>
-                      <span className="text-gray-400">→</span>
-                      <span className="text-green-700 font-semibold">{newName}</span>
-                      {item.confidence != null && (
-                        <span className="ml-auto text-gray-400 font-normal">
-                          {Math.round(item.confidence * 100)}% confident
-                        </span>
-                      )}
-                    </div>
-                    {item.segmentText && (
-                      <p className="text-xs text-gray-600 truncate">
-                        &ldquo;{item.segmentText}&rdquo;
-                      </p>
-                    )}
-                    {item.reason && (
-                      <p className="text-xs text-gray-500 italic">{item.reason}</p>
-                    )}
-                  </div>
-                </div>
-              );
-            })}
-          </div>
-
-          <div className="flex items-center gap-2 pt-1">
-            <button
-              onClick={handleApplyTouchup}
-              disabled={applyingTouchup || touchupPreview.every(i => !i.accepted)}
-              className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded text-white text-xs font-semibold bg-violet-600 hover:bg-violet-700 disabled:bg-violet-300 disabled:cursor-not-allowed"
-            >
-              {applyingTouchup ? (
-                <><span className="h-3 w-3 border border-white border-t-transparent rounded-full animate-spin" /> Applying…</>
-              ) : (
-                `Apply ${touchupPreview.filter(i => i.accepted).length} change${touchupPreview.filter(i => i.accepted).length !== 1 ? 's' : ''}`
-              )}
-            </button>
-            <button
-              onClick={() => setTouchupPreview(null)}
-              className="px-3 py-1.5 rounded text-xs font-medium text-gray-600 hover:bg-gray-100"
-            >
-              Discard
-            </button>
-          </div>
-        </div>
-      )}
 
       {/* Conversation Segments */}
       <div className="flex-1 overflow-y-auto px-4 pb-4">
@@ -1128,7 +842,7 @@ export default function ConversationView({
           const isFiltered = !!filterInfo;
           const colorClass = getSpeakerColor(segmentSpeakerId);
           const duration = segment.endTime - segment.startTime;
-          const isSelected = selectedSegments.has(segmentIndex);
+          const isSelected = externalSelectedSegments?.has(segmentIndex) ?? false;
 
           // Additional safety: if speakerName is still empty/undefined, skip this segment
           if (!speakerName || speakerName.trim() === '') {
@@ -1139,21 +853,24 @@ export default function ConversationView({
           return (
             <div
               key={`${segmentSpeakerId}-${segmentIndex}`}
-              className="flex space-x-3 p-4 rounded-lg hover:bg-gray-50 transition-colors border border-gray-100 group"
+              id={`segment-${segmentIndex}`}
+              className={`flex space-x-3 p-4 rounded-xl transition-colors border group ${
+                isSelected ? 'bg-blue-900/20 border-blue-800/30' : 'bg-slate-900/80 border-slate-800 hover:border-slate-700'
+              }`}
             >
               {projectId && (
                 <div className="flex items-start pt-2">
                   <input
                     type="checkbox"
                     checked={isSelected}
-                    onChange={() => toggleSegmentSelection(segmentIndex)}
-                    className="h-4 w-4 rounded border-gray-300 text-blue-600 focus:ring-blue-500"
+                    onChange={() => onToggleSegmentSelection?.(segmentIndex)}
+                    className="h-4 w-4 rounded border-slate-600 text-blue-600 focus:ring-blue-500"
                   />
                 </div>
               )}
 
               {/* Speaker Avatar */}
-              <div className={`flex-shrink-0 w-10 h-10 rounded-full flex items-center justify-center ${colorClass} border-2 border-white shadow-md`}>
+              <div className={`flex-shrink-0 w-10 h-10 rounded-full flex items-center justify-center ${colorClass.replace('bg-blue-50', 'bg-blue-600').replace('bg-green-50', 'bg-green-600').replace('bg-purple-50', 'bg-purple-600').replace('bg-orange-50', 'bg-orange-600').replace('bg-pink-50', 'bg-pink-600').replace('bg-indigo-50', 'bg-indigo-600').replace(/text-\w+-600/, 'text-white')} border-2 border-slate-900`}>
                 <span className="text-sm font-bold">
                   {speakerName.charAt(0).toUpperCase()}
                 </span>
@@ -1164,12 +881,12 @@ export default function ConversationView({
                 {/* Speaker Name and Timing */}
                 <div className="flex items-center justify-between mb-2 flex-wrap gap-2">
                   <div className="flex items-center gap-2 flex-wrap">
-                    <span className={`text-sm font-semibold ${isFiltered ? 'text-gray-400 italic' : colorClass.split(' ')[0]}`}>
+                    <span className={`text-sm font-semibold ${isFiltered ? 'text-slate-500 italic' : colorClass.split(' ')[0]}`}>
                       {speakerName}
                     </span>
                     {isFiltered && filterInfo && (
                       <span
-                        className="inline-flex items-center text-[11px] uppercase tracking-wide px-2 py-0.5 rounded-full bg-yellow-100 text-yellow-700 border border-yellow-200"
+                        className="inline-flex items-center text-[11px] uppercase tracking-wide px-2 py-0.5 rounded-full bg-yellow-100 text-yellow-400 border border-yellow-800/30"
                         title={`Filtered: ${filterInfo.evidence} (confidence: ${(filterInfo.confidence * 100).toFixed(0)}%)`}
                       >
                         {formatFilterReason(filterInfo.filterReason)}
@@ -1177,12 +894,12 @@ export default function ConversationView({
                     )}
                     {!isFiltered && speakerRoleLabel && (
                       <span
-                        className="inline-flex items-center text-[11px] uppercase tracking-wide px-2 py-0.5 rounded-full bg-gray-100 text-gray-600 border border-gray-200"
+                        className="inline-flex items-center text-[11px] uppercase tracking-wide px-2 py-0.5 rounded-full bg-slate-800 text-slate-400 border border-slate-700"
                         title={roleTooltip}
                       >
                         {speakerRoleLabel}
                         {speaker.autoRoleAssigned && (
-                          <span className="ml-1 text-[10px] font-semibold text-gray-400">
+                          <span className="ml-1 text-[10px] font-semibold text-slate-500">
                             AUTO
                           </span>
                         )}
@@ -1190,9 +907,9 @@ export default function ConversationView({
                     )}
                   </div>
                   {showTimestamps && (
-                    <div className="flex items-center space-x-2 text-xs text-gray-500">
+                    <div className="flex items-center space-x-2 text-xs text-slate-400">
                       <span className="font-mono">{formatTime(segment.startTime)}</span>
-                      <span className="text-gray-300">•</span>
+                      <span className="text-slate-500">•</span>
                       <span>{duration.toFixed(1)}s</span>
                       {segment.status === 'uncertain' && (
                         segment.confidenceReason === 'acoustic_only' ||
@@ -1215,14 +932,14 @@ export default function ConversationView({
                   )}
                 </div>
                 {/* Message Text */}
-                <div className="text-sm text-gray-800 leading-relaxed break-words">
+                <div className="text-sm text-slate-200 leading-relaxed break-words">
                   {highlightSegmentText(segment.text)}
                 </div>
 
                 {projectId && (
                   <div className="mt-2 flex items-center justify-end">
                     <div className="flex items-center gap-2 opacity-30 transition-opacity group-hover:opacity-100">
-                      <label className="text-[11px] uppercase tracking-wide text-gray-400">
+                      <label className="text-[11px] uppercase tracking-wide text-slate-400">
                         Reassign
                       </label>
                       <select
@@ -1231,8 +948,8 @@ export default function ConversationView({
                           if (e.target.value === segmentSpeakerId) return;
                           handleSegmentReassign(segmentIndex, e.target.value);
                         }}
-                        disabled={segmentReassigning === segmentIndex || bulkReassigning}
-                        className="text-xs bg-transparent border border-transparent rounded px-1.5 py-0.5 text-gray-700 hover:border-gray-200 focus:border-gray-300 focus:outline-none focus:ring-0 disabled:text-gray-400"
+                        disabled={segmentReassigning === segmentIndex}
+                        className="text-xs bg-slate-800 border border-slate-700 rounded px-1.5 py-0.5 text-slate-200 focus:outline-none focus:ring-0 disabled:text-slate-500"
                       >
                         {speakerList.map((speakerId) => (
                           <option key={speakerId} value={speakerId}>
@@ -1240,6 +957,13 @@ export default function ConversationView({
                           </option>
                         ))}
                       </select>
+                      <button
+                        onClick={() => handleConfirmSegment(segmentIndex)}
+                        title="Mark as confirmed"
+                        className="p-1 text-green-600 hover:text-green-300 hover:bg-green-900/20 rounded transition-colors"
+                      >
+                        <Check className="h-3.5 w-3.5" />
+                      </button>
                     </div>
                   </div>
                 )}
@@ -1251,7 +975,7 @@ export default function ConversationView({
       </div>
 
       {/* Footer Stats */}
-      <div className="flex-shrink-0 px-4 pb-4 text-xs text-gray-500 pt-4 border-t border-gray-200">
+      <div className="flex-shrink-0 px-4 pb-4 text-xs text-slate-400 pt-4 border-t border-slate-700">
         {selectedSpeaker ? (
           <span>
             Showing {filteredSegments.length} segments from {getSpeakerDisplayName(speakers[selectedSpeaker])}

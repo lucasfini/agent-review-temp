@@ -1,354 +1,219 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { supabaseAdmin } from '@/lib/supabase/server';
-import { SpeakerSegment, DetectedSpeaker } from '@/lib/types';
 
-interface SpeakerData {
-  segments: SpeakerSegment[];
-  speakers: Record<string, DetectedSpeaker>;
-  detectionMetadata?: {
-    totalSpeakers: number;
-    totalSegments: number;
-    processedAt: string;
-    processingTimeMs: number;
-    method: string;
-    confidence?: number;
-    cost_usd?: number;
-  };
-}
+export const dynamic = 'force-dynamic';
+export const revalidate = 0;
 
-function sanitizeSpeakerDataForUpdate(speakerData: SpeakerData): SpeakerData {
-  if (!speakerData?.detectionMetadata) return speakerData;
-  const meta: any = speakerData.detectionMetadata;
-  if (!meta.pipelineDiagnostics?.gptRawResponse) return speakerData;
-
-  const raw = String(meta.pipelineDiagnostics.gptRawResponse);
-  if (raw.length <= 50_000) return speakerData;
-
-  return {
-    ...speakerData,
-    detectionMetadata: {
-      ...speakerData.detectionMetadata,
-      pipelineDiagnostics: {
-        ...meta.pipelineDiagnostics,
-        gptRawResponse: `${raw.slice(0, 50_000)}…[truncated ${raw.length - 50_000} chars]`
-      }
-    }
-  };
-}
-
-/**
- * PATCH /api/projects/[id]/speakers/[speakerId]
- *
- * Update a speaker (rename) or merge into another speaker.
- *
- * Body:
- * - action: 'rename' | 'reassign'
- * - newName?: string (required if action='rename')
- * - reassignToSpeakerId?: string (required if action='reassign')
- */
 export async function PATCH(
   request: NextRequest,
   { params }: { params: Promise<{ id: string; speakerId: string }> }
 ) {
   try {
     const { id: projectId, speakerId } = await params;
-    const body = await request.json();
-    const { action, newName, reassignToSpeakerId } = body;
+    const { action, newName, newRole, reassignToSpeakerId } = await request.json();
 
-    if (!action || (action !== 'rename' && action !== 'reassign')) {
-      return NextResponse.json(
-        { error: 'Invalid action. Must be "rename" or "reassign"' },
-        { status: 400 }
-      );
-    }
-
-    if (action === 'rename' && (!newName || typeof newName !== 'string')) {
-      return NextResponse.json(
-        { error: 'newName is required when action is "rename"' },
-        { status: 400 }
-      );
-    }
-
-    if (action === 'reassign' && !reassignToSpeakerId) {
-      return NextResponse.json(
-        { error: 'reassignToSpeakerId is required when action is "reassign"' },
-        { status: 400 }
-      );
+    if (!projectId || !speakerId || !action) {
+      return NextResponse.json({ error: 'Missing required fields' }, { status: 400 });
     }
 
     const { data: project, error: fetchError } = await supabaseAdmin
       .from('projects')
       .select('speaker_data')
       .eq('id', projectId)
-      .single() as { data: { speaker_data: any } | null; error: any };
+      .single();
 
     if (fetchError || !project) {
-      return NextResponse.json(
-        { error: 'Project not found' },
-        { status: 404 }
-      );
+      return NextResponse.json({ error: 'Project not found' }, { status: 404 });
     }
 
-    const rawSpeakerData = project.speaker_data;
-    const speakerData = (typeof rawSpeakerData === 'string'
-      ? JSON.parse(rawSpeakerData)
-      : rawSpeakerData) as SpeakerData;
+    const speakerData = typeof project.speaker_data === 'string'
+      ? JSON.parse(project.speaker_data)
+      : (project.speaker_data || { speakers: {}, segments: [] });
 
-    if (!speakerData || !speakerData.speakers || !speakerData.segments) {
-      return NextResponse.json(
-        { error: 'No speaker data found in project' },
-        { status: 400 }
-      );
+    if (!speakerData.speakers?.[speakerId]) {
+      return NextResponse.json({ error: 'Speaker not found' }, { status: 404 });
     }
 
-    if (!speakerData.speakers[speakerId]) {
-      return NextResponse.json(
-        { error: `Speaker ${speakerId} not found` },
-        { status: 404 }
-      );
-    }
-
-    if (action === 'reassign' && !speakerData.speakers[reassignToSpeakerId]) {
-      return NextResponse.json(
-        { error: `Target speaker ${reassignToSpeakerId} not found` },
-        { status: 404 }
-      );
-    }
+    const speaker = speakerData.speakers[speakerId];
 
     if (action === 'rename') {
-      speakerData.speakers[speakerId] = {
-        ...speakerData.speakers[speakerId],
-        finalName: newName,
-        customName: newName
-      };
-    } else {
-      const updatedSegments = speakerData.segments.map(segment => {
-        if ((segment.finalSpeakerId || segment.speakerId) === speakerId) {
-          return {
-            ...segment,
-            speakerId: reassignToSpeakerId,
-            finalSpeakerId: reassignToSpeakerId
-          };
-        }
-        return segment;
-      });
-
-      const deletedSpeaker = speakerData.speakers[speakerId];
-      if (speakerData.speakers[reassignToSpeakerId]) {
-        speakerData.speakers[reassignToSpeakerId].totalDuration += deletedSpeaker.totalDuration;
-        speakerData.speakers[reassignToSpeakerId].segments = updatedSegments.filter(
-          s => (s.finalSpeakerId || s.speakerId) === reassignToSpeakerId
-        );
+      if (!newName?.trim()) {
+        return NextResponse.json({ error: 'newName is required' }, { status: 400 });
       }
-
-      const { [speakerId]: removed, ...remainingSpeakers } = speakerData.speakers;
-      speakerData.segments = updatedSegments;
-      speakerData.speakers = remainingSpeakers;
-      speakerData.detectionMetadata = {
-        ...speakerData.detectionMetadata,
-        totalSpeakers: Object.keys(remainingSpeakers).length,
-        totalSegments: updatedSegments.length,
-        processedAt: new Date().toISOString(),
-        processingTimeMs: speakerData.detectionMetadata?.processingTimeMs || 0,
-        method: speakerData.detectionMetadata?.method || 'unknown'
+      speakerData.speakers[speakerId] = {
+        ...speaker,
+        finalName: newName.trim(),
+        customName: newName.trim(),
+        fallbackName: newName.trim(),
       };
+    } else if (action === 'set_role') {
+      if (!newRole) {
+        return NextResponse.json({ error: 'newRole is required' }, { status: 400 });
+      }
+      speakerData.speakers[speakerId] = {
+        ...speaker,
+        role: newRole,
+      };
+    } else if (action === 'reassign') {
+      if (!reassignToSpeakerId) {
+        return NextResponse.json({ error: 'reassignToSpeakerId is required' }, { status: 400 });
+      }
+      if (!speakerData.speakers[reassignToSpeakerId]) {
+        return NextResponse.json({ error: 'Target speaker not found' }, { status: 404 });
+      }
+      const updatedSegments = (speakerData.segments || []).map((seg: any) => {
+        const segSpeakerId = seg.finalSpeakerId || seg.speakerId;
+        if (segSpeakerId === speakerId) {
+          return { ...seg, speakerId: reassignToSpeakerId, finalSpeakerId: reassignToSpeakerId };
+        }
+        return seg;
+      });
+      const updatedSpeakers: Record<string, any> = {};
+      for (const [id, spk] of Object.entries(speakerData.speakers as Record<string, any>)) {
+        if (id === speakerId) continue;
+        const ownSegments = updatedSegments.filter(
+          (s: any) => (s.finalSpeakerId || s.speakerId) === id
+        );
+        updatedSpeakers[id] = {
+          ...spk,
+          segmentCount: ownSegments.length,
+          totalDuration: ownSegments.reduce(
+            (sum: number, s: any) => sum + Math.max(0, (s.endTime || 0) - (s.startTime || 0)),
+            0
+          ),
+        };
+      }
+      speakerData.segments = updatedSegments;
+      speakerData.speakers = updatedSpeakers;
+    } else {
+      return NextResponse.json({ error: 'Invalid action' }, { status: 400 });
     }
 
-    const sanitizedSpeakerData = sanitizeSpeakerDataForUpdate(speakerData);
+    speakerData.detectionMetadata = {
+      ...speakerData.detectionMetadata,
+      lastModified: new Date().toISOString(),
+      lastModificationType: `speaker_${action}`,
+    };
 
-    const { error: updateError } = await supabaseAdmin
+    const { data: saved, error: updateError } = await supabaseAdmin
       .from('projects')
       // @ts-expect-error - Supabase types issue with update
-      .update({
-        speaker_data: sanitizedSpeakerData
-      })
-      .eq('id', projectId);
+      .update({ speaker_data: speakerData })
+      .eq('id', projectId)
+      .select('speaker_data')
+      .single();
 
-    if (updateError) {
-      console.error('Error updating speaker data:', updateError);
-      return NextResponse.json(
-        { error: 'Failed to update speaker data' },
-        { status: 500 }
-      );
+    if (updateError || !saved) {
+      console.error('Error updating speaker:', updateError);
+      return NextResponse.json({ error: 'Failed to update speaker' }, { status: 500 });
     }
 
-    return NextResponse.json({
-      success: true,
-      action,
-      speakerId,
-      reassignToSpeakerId: action === 'reassign' ? reassignToSpeakerId : undefined
-    });
+    return NextResponse.json({ success: true, updatedSpeakerData: saved.speaker_data });
+
   } catch (error) {
-    console.error('Speaker update error:', error);
-    return NextResponse.json(
-      { error: 'Internal server error' },
-      { status: 500 }
-    );
+    console.error('PATCH speaker error:', error);
+    return NextResponse.json({ error: 'Internal server error' }, { status: 500 });
   }
 }
 
-/**
- * DELETE /api/projects/[id]/speakers/[speakerId]
- *
- * Delete a speaker and handle their segments
- *
- * Body:
- * - action: 'delete' | 'reassign'
- * - reassignToSpeakerId?: string (required if action='reassign')
- */
 export async function DELETE(
   request: NextRequest,
   { params }: { params: Promise<{ id: string; speakerId: string }> }
 ) {
   try {
     const { id: projectId, speakerId } = await params;
-    const body = await request.json();
-    const { action, reassignToSpeakerId } = body;
+    const { action, reassignToSpeakerId } = await request.json();
 
-    // Validate input
-    if (!action || (action !== 'delete' && action !== 'reassign')) {
-      return NextResponse.json(
-        { error: 'Invalid action. Must be "delete" or "reassign"' },
-        { status: 400 }
-      );
+    if (!projectId || !speakerId || !action) {
+      return NextResponse.json({ error: 'Missing required fields' }, { status: 400 });
     }
-
     if (action === 'reassign' && !reassignToSpeakerId) {
-      return NextResponse.json(
-        { error: 'reassignToSpeakerId is required when action is "reassign"' },
-        { status: 400 }
-      );
+      return NextResponse.json({ error: 'Missing reassignToSpeakerId' }, { status: 400 });
     }
 
-    // Fetch current project data
     const { data: project, error: fetchError } = await supabaseAdmin
       .from('projects')
       .select('speaker_data')
       .eq('id', projectId)
-      .single() as { data: { speaker_data: any } | null; error: any };
+      .single();
 
     if (fetchError || !project) {
-      return NextResponse.json(
-        { error: 'Project not found' },
-        { status: 404 }
-      );
+      return NextResponse.json({ error: 'Project not found' }, { status: 404 });
     }
 
-    const rawSpeakerData = project.speaker_data;
-    const speakerData = (typeof rawSpeakerData === 'string'
-      ? JSON.parse(rawSpeakerData)
-      : rawSpeakerData) as SpeakerData;
+    const speakerData = typeof project.speaker_data === 'string'
+      ? JSON.parse(project.speaker_data)
+      : (project.speaker_data || { speakers: {}, segments: [] });
 
-    if (!speakerData || !speakerData.speakers || !speakerData.segments) {
-      return NextResponse.json(
-        { error: 'No speaker data found in project' },
-        { status: 400 }
-      );
+    if (!speakerData.speakers?.[speakerId]) {
+      return NextResponse.json({ error: 'Speaker not found' }, { status: 404 });
     }
-
-    // Check if speaker exists
-    if (!speakerData.speakers[speakerId]) {
-      return NextResponse.json(
-        { error: `Speaker ${speakerId} not found` },
-        { status: 404 }
-      );
-    }
-
-    // Check if reassignToSpeakerId exists (if action is reassign)
     if (action === 'reassign' && !speakerData.speakers[reassignToSpeakerId]) {
-      return NextResponse.json(
-        { error: `Target speaker ${reassignToSpeakerId} not found` },
-        { status: 404 }
-      );
+      return NextResponse.json({ error: 'Target speaker not found' }, { status: 404 });
     }
 
-    // Process segments based on action
-    let updatedSegments: SpeakerSegment[];
+    let updatedSegments: any[] = [...(speakerData.segments || [])];
 
-    if (action === 'delete') {
-      // Remove all segments belonging to this speaker
-      updatedSegments = speakerData.segments.filter(
-        segment => (segment.finalSpeakerId || segment.speakerId) !== speakerId
-      );
-    } else {
-      // Reassign all segments to another speaker
-      updatedSegments = speakerData.segments.map(segment => {
-        if ((segment.finalSpeakerId || segment.speakerId) === speakerId) {
-          return {
-            ...segment,
-            speakerId: reassignToSpeakerId,
-            finalSpeakerId: reassignToSpeakerId
-          };
+    if (action === 'reassign') {
+      updatedSegments = updatedSegments.map((seg: any) => {
+        const segSpeakerId = seg.finalSpeakerId || seg.speakerId;
+        if (segSpeakerId === speakerId) {
+          return { ...seg, speakerId: reassignToSpeakerId, finalSpeakerId: reassignToSpeakerId };
         }
-        return segment;
+        return seg;
       });
-
-      // Update reassignToSpeaker's totalDuration
-      const deletedSpeaker = speakerData.speakers[speakerId];
-      if (speakerData.speakers[reassignToSpeakerId]) {
-        speakerData.speakers[reassignToSpeakerId].totalDuration += deletedSpeaker.totalDuration;
-        speakerData.speakers[reassignToSpeakerId].segments = updatedSegments.filter(
-          s => (s.finalSpeakerId || s.speakerId) === reassignToSpeakerId
-        );
-      }
+    } else {
+      updatedSegments = updatedSegments.filter(
+        (seg: any) => (seg.finalSpeakerId || seg.speakerId) !== speakerId
+      );
     }
 
-    // Remove the deleted speaker from speakers record
-    const { [speakerId]: deletedSpeaker, ...remainingSpeakers } = speakerData.speakers;
+    // Rebuild speakers map without the deleted speaker, with updated counts
+    const updatedSpeakers: Record<string, any> = {};
+    for (const [id, spk] of Object.entries(speakerData.speakers as Record<string, any>)) {
+      if (id === speakerId) continue;
+      const ownSegments = updatedSegments.filter(
+        (s: any) => (s.finalSpeakerId || s.speakerId) === id
+      );
+      updatedSpeakers[id] = {
+        ...spk,
+        segmentCount: ownSegments.length,
+        totalDuration: ownSegments.reduce(
+          (sum: number, s: any) => sum + Math.max(0, (s.endTime || 0) - (s.startTime || 0)),
+          0
+        ),
+      };
+    }
 
-    // Update metadata
-    const updatedMetadata = {
-      ...speakerData.detectionMetadata,
-      totalSpeakers: Object.keys(remainingSpeakers).length,
-      totalSegments: updatedSegments.length,
-      processedAt: new Date().toISOString(),
-      processingTimeMs: speakerData.detectionMetadata?.processingTimeMs || 0,
-      method: speakerData.detectionMetadata?.method || 'unknown'
-    };
-
-    // Build updated speaker data
-    const updatedSpeakerData: SpeakerData = {
+    const updatedSpeakerData = {
+      ...speakerData,
       segments: updatedSegments,
-      speakers: remainingSpeakers,
-      detectionMetadata: updatedMetadata
+      speakers: updatedSpeakers,
+      detectionMetadata: {
+        ...speakerData.detectionMetadata,
+        totalSpeakers: Object.keys(updatedSpeakers).length,
+        lastModified: new Date().toISOString(),
+        lastModificationType: 'speaker_delete',
+      },
     };
 
-    const sanitizedSpeakerData = sanitizeSpeakerDataForUpdate(updatedSpeakerData);
-
-    // Save to database
-    const { error: updateError } = await supabaseAdmin
+    const { data: savedDelete, error: updateError } = await supabaseAdmin
       .from('projects')
       // @ts-expect-error - Supabase types issue with update
-      .update({
-        speaker_data: sanitizedSpeakerData
-      })
-      .eq('id', projectId);
+      .update({ speaker_data: updatedSpeakerData })
+      .eq('id', projectId)
+      .select('speaker_data')
+      .single();
 
-    if (updateError) {
-      console.error('Error updating speaker data:', updateError);
-      return NextResponse.json(
-        { error: 'Failed to delete speaker' },
-        { status: 500 }
-      );
+    if (updateError || !savedDelete) {
+      console.error('Error deleting speaker (0 rows matched or DB error):', updateError);
+      return NextResponse.json({ error: 'Failed to delete speaker' }, { status: 500 });
     }
 
-    return NextResponse.json({
-      success: true,
-      message: action === 'delete'
-        ? `Speaker ${speakerId} deleted and ${speakerData.segments.filter(s => (s.finalSpeakerId || s.speakerId) === speakerId).length} segments removed`
-        : `Speaker ${speakerId} deleted and ${speakerData.segments.filter(s => (s.finalSpeakerId || s.speakerId) === speakerId).length} segments reassigned to ${reassignToSpeakerId}`,
-      deletedSpeaker: speakerId,
-      action,
-      remainingSpeakers: Object.keys(remainingSpeakers).length,
-      remainingSegments: updatedSegments.length,
-      updatedSpeakerData: sanitizedSpeakerData
-    });
+    return NextResponse.json({ success: true, updatedSpeakerData: savedDelete.speaker_data });
 
   } catch (error) {
-    console.error('Speaker deletion error:', error);
-    return NextResponse.json(
-      { error: 'Internal server error' },
-      { status: 500 }
-    );
+    console.error('Delete speaker error:', error);
+    return NextResponse.json({ error: 'Internal server error' }, { status: 500 });
   }
 }

@@ -1,4 +1,5 @@
-import { createClient, type SupabaseClient } from '@supabase/supabase-js'
+import { createBrowserClient } from '@supabase/ssr'
+import type { SupabaseClient } from '@supabase/supabase-js'
 
 type AnyFn = (...args: any[]) => any;
 
@@ -99,7 +100,11 @@ const isTestEnv = process.env.NODE_ENV === 'test'
 
 export const supabase: SupabaseClient<Database> = isTestEnv
   ? createMockSupabaseClient()
-  : createClient<Database>(supabaseUrl, supabaseAnonKey)
+  : createBrowserClient<Database>(supabaseUrl, supabaseAnonKey, {
+      auth: {
+        flowType: 'pkce',
+      },
+    })
 
 export type Database = {
   public: {

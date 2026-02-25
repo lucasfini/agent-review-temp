@@ -49,16 +49,16 @@ interface GoalsSectionProps {
 // ============================================================================
 
 const GOAL_TYPE_STYLES: Record<string, { bg: string; text: string; border: string }> = {
-  include: { bg: 'bg-blue-50', text: 'text-blue-700', border: 'border-l-blue-500' },
-  cta: { bg: 'bg-emerald-50', text: 'text-emerald-700', border: 'border-l-emerald-500' },
-  avoid: { bg: 'bg-red-50', text: 'text-red-700', border: 'border-l-red-500' },
-  mention: { bg: 'bg-amber-50', text: 'text-amber-700', border: 'border-l-amber-500' }
+  include: { bg: 'bg-blue-900/20', text: 'text-blue-400', border: 'border-l-blue-500' },
+  cta: { bg: 'bg-emerald-900/20', text: 'text-emerald-400', border: 'border-l-emerald-500' },
+  avoid: { bg: 'bg-red-900/20', text: 'text-red-400', border: 'border-l-red-500' },
+  mention: { bg: 'bg-amber-900/20', text: 'text-amber-400', border: 'border-l-amber-500' }
 }
 
 const STATUS_STYLES: Record<string, { bg: string; text: string; icon: typeof Check }> = {
-  active: { bg: 'bg-green-50', text: 'text-green-700', icon: Check },
-  paused: { bg: 'bg-yellow-50', text: 'text-yellow-700', icon: Pause },
-  archived: { bg: 'bg-gray-100', text: 'text-gray-600', icon: Archive }
+  active: { bg: 'bg-green-900/20', text: 'text-green-400', icon: Check },
+  paused: { bg: 'bg-yellow-900/20', text: 'text-yellow-400', icon: Pause },
+  archived: { bg: 'bg-slate-800', text: 'text-slate-400', icon: Archive }
 }
 
 // ============================================================================
@@ -85,7 +85,7 @@ function ProgressBar({
   return (
     <div className="flex items-center gap-3">
       <div className={cn(
-        "flex-1 rounded-full overflow-hidden bg-gray-100",
+        "flex-1 rounded-full overflow-hidden bg-slate-800",
         size === 'sm' ? 'h-1.5' : 'h-2.5'
       )}>
         <div
@@ -100,7 +100,7 @@ function ProgressBar({
         <span className={cn(
           "font-medium tabular-nums",
           size === 'sm' ? 'text-xs' : 'text-sm',
-          percent >= 100 ? 'text-green-600' : 'text-gray-600'
+          percent >= 100 ? 'text-green-400' : 'text-slate-400'
         )}>
           {Math.round(percent)}%
         </span>
@@ -131,7 +131,7 @@ function GoalCard({ goal, progress, onToggleStatus, onArchive }: GoalCardProps) 
 
   return (
     <div className={cn(
-      "bg-white rounded-lg border border-gray-100 shadow-sm overflow-hidden",
+      "bg-slate-900 rounded-lg border border-slate-800 shadow-sm overflow-hidden",
       "hover:shadow-md transition-shadow",
       "border-l-4",
       typeStyle.border
@@ -142,7 +142,7 @@ function GoalCard({ goal, progress, onToggleStatus, onArchive }: GoalCardProps) 
           <div className="flex items-start gap-2 min-w-0">
             <Target className={cn("h-4 w-4 mt-0.5 flex-shrink-0", typeStyle.text)} />
             <div className="min-w-0">
-              <h4 className="text-sm font-medium text-gray-900 truncate">
+              <h4 className="text-sm font-medium text-slate-50 truncate">
                 {goal.topic_label}
               </h4>
               <div className="flex items-center gap-2 mt-1">
@@ -152,7 +152,7 @@ function GoalCard({ goal, progress, onToggleStatus, onArchive }: GoalCardProps) 
                 )}>
                   {goal.goal_type}
                 </span>
-                <span className="text-xs text-gray-500">
+                <span className="text-xs text-slate-400">
                   Target: {targetMentions} / {goal.cadence_days ? `${goal.cadence_days}d` : 'ongoing'}
                 </span>
               </div>
@@ -169,9 +169,9 @@ function GoalCard({ goal, progress, onToggleStatus, onArchive }: GoalCardProps) 
 
         {/* Progress */}
         <div className="space-y-1.5">
-          <div className="flex items-center justify-between text-xs text-gray-500">
+          <div className="flex items-center justify-between text-xs text-slate-400">
             <span>{currentMentions} of {targetMentions} mentions</span>
-            <span className={progressPercent >= 100 ? 'text-green-600 font-medium' : ''}>
+            <span className={progressPercent >= 100 ? 'text-green-400 font-medium' : ''}>
               {progressPercent >= 100 ? 'Complete!' : `${100 - progressPercent}% to go`}
             </span>
           </div>
@@ -184,21 +184,21 @@ function GoalCard({ goal, progress, onToggleStatus, onArchive }: GoalCardProps) 
 
       {/* Actions */}
       {goal.status !== 'archived' && (
-        <div className="px-4 py-2 bg-gray-50 border-t border-gray-100 flex items-center justify-end gap-2">
+        <div className="px-4 py-2 bg-slate-800/50 border-t border-slate-800 flex items-center justify-end gap-2">
           <button
             type="button"
             onClick={onToggleStatus}
             aria-label={`${goal.status === 'active' ? 'Pause' : 'Activate'} goal: ${goal.topic_label}`}
-            className="text-xs font-medium text-gray-600 hover:text-gray-900"
+            className="text-xs font-medium text-slate-400 hover:text-slate-50"
           >
             {goal.status === 'active' ? 'Pause' : 'Activate'}
           </button>
-          <span className="text-gray-300" aria-hidden="true">|</span>
+          <span className="text-slate-500" aria-hidden="true">|</span>
           <button
             type="button"
             onClick={onArchive}
             aria-label={`Archive goal: ${goal.topic_label}`}
-            className="text-xs font-medium text-red-600 hover:text-red-800"
+            className="text-xs font-medium text-red-600 hover:text-red-300"
           >
             Archive
           </button>
@@ -248,14 +248,14 @@ function CreateGoalForm({ onSave, suggestedGoals, isSaving, error, onOpenExample
       {/* Quick Suggestions */}
       {suggestedGoals.length > 0 && (
         <div>
-          <p className="text-xs text-gray-500 mb-2">Quick add from analysis:</p>
+          <p className="text-xs text-slate-400 mb-2">Quick add from analysis:</p>
           <div className="flex flex-wrap gap-2">
             {suggestedGoals.slice(0, 4).map((suggestion, idx) => (
               <button
                 key={idx}
                 type="button"
                 onClick={() => onSave(suggestion)}
-                className="px-2.5 py-1.5 text-xs rounded-lg border border-gray-200 bg-white text-gray-700 hover:border-blue-300 hover:bg-blue-50 hover:text-blue-700 transition-colors"
+                className="px-2.5 py-1.5 text-xs rounded-lg border border-slate-700 bg-slate-900 text-slate-300 hover:border-blue-300 hover:bg-blue-900/20 hover:text-blue-400 transition-colors"
               >
                 + {suggestion.label}
               </button>
@@ -267,7 +267,7 @@ function CreateGoalForm({ onSave, suggestedGoals, isSaving, error, onOpenExample
       {/* Form */}
       <form onSubmit={handleSubmit} className="space-y-4">
         <div>
-          <label htmlFor="goal-label" className="block text-sm font-medium text-gray-700 mb-1.5">
+          <label htmlFor="goal-label" className="block text-sm font-medium text-slate-300 mb-1.5">
             Goal Label
           </label>
           <input
@@ -275,33 +275,33 @@ function CreateGoalForm({ onSave, suggestedGoals, isSaving, error, onOpenExample
             type="text"
             value={form.label}
             onChange={(e) => setForm(f => ({ ...f, label: e.target.value.slice(0, 80) }))}
-            className="w-full px-3 py-2 text-sm border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500"
+            className="w-full px-3 py-2 text-sm border border-slate-600 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500"
             placeholder="e.g., Mention coaching program"
           />
         </div>
 
         <div>
-          <label htmlFor="goal-type" className="block text-sm font-medium text-gray-700 mb-1.5">
+          <label htmlFor="goal-type" className="block text-sm font-medium text-slate-300 mb-1.5">
             Goal Type
           </label>
           <select
             id="goal-type"
             value={form.type}
             onChange={(e) => setForm(f => ({ ...f, type: e.target.value }))}
-            className="w-full px-3 py-2 text-sm border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500"
+            className="w-full px-3 py-2 text-sm border border-slate-600 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500"
           >
             {GOAL_TYPE_OPTIONS.map(option => (
               <option key={option.value} value={option.value}>{option.label}</option>
             ))}
           </select>
-          <p className="text-xs text-gray-500 mt-1">
+          <p className="text-xs text-slate-400 mt-1">
             {GOAL_TYPE_OPTIONS.find(o => o.value === form.type)?.helper}
           </p>
         </div>
 
         <div className="grid grid-cols-2 gap-4">
           <div>
-            <label htmlFor="goal-target" className="block text-sm font-medium text-gray-700 mb-1.5">
+            <label htmlFor="goal-target" className="block text-sm font-medium text-slate-300 mb-1.5">
               Target Mentions
             </label>
             <input
@@ -310,11 +310,11 @@ function CreateGoalForm({ onSave, suggestedGoals, isSaving, error, onOpenExample
               min={0}
               value={form.target}
               onChange={(e) => setForm(f => ({ ...f, target: Number(e.target.value) }))}
-              className="w-full px-3 py-2 text-sm border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500"
+              className="w-full px-3 py-2 text-sm border border-slate-600 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500"
             />
           </div>
           <div>
-            <label htmlFor="goal-cadence" className="block text-sm font-medium text-gray-700 mb-1.5">
+            <label htmlFor="goal-cadence" className="block text-sm font-medium text-slate-300 mb-1.5">
               Cadence (days)
             </label>
             <input
@@ -323,7 +323,7 @@ function CreateGoalForm({ onSave, suggestedGoals, isSaving, error, onOpenExample
               min={1}
               value={form.cadence}
               onChange={(e) => setForm(f => ({ ...f, cadence: Number(e.target.value) }))}
-              className="w-full px-3 py-2 text-sm border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500"
+              className="w-full px-3 py-2 text-sm border border-slate-600 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500"
             />
           </div>
         </div>
@@ -344,7 +344,7 @@ function CreateGoalForm({ onSave, suggestedGoals, isSaving, error, onOpenExample
             type="button"
             onClick={onOpenExamples}
             aria-label="Browse example goals"
-            className="px-4 py-2.5 text-sm font-medium text-gray-700 bg-gray-100 rounded-lg hover:bg-gray-200 transition-colors"
+            className="px-4 py-2.5 text-sm font-medium text-slate-300 bg-slate-800 rounded-lg hover:bg-slate-700 transition-colors"
           >
             <BookOpen className="h-4 w-4" />
           </button>
@@ -382,8 +382,8 @@ export function GoalsSection({
       {/* Header */}
       <div className="flex items-center justify-between">
         <div>
-          <h3 className="text-base font-semibold text-gray-900">Active Goals</h3>
-          <p className="text-sm text-gray-500">
+          <h3 className="text-base font-semibold text-slate-50">Active Goals</h3>
+          <p className="text-sm text-slate-400">
             {activeGoals.length} goal{activeGoals.length !== 1 ? 's' : ''} being tracked
           </p>
         </div>
@@ -420,16 +420,16 @@ export function GoalsSection({
 
       {/* Goals Grid */}
       {activeGoals.length === 0 ? (
-        <div className="bg-gray-50 rounded-lg border border-dashed border-gray-300 p-8 text-center">
-          <Target className="h-10 w-10 text-gray-400 mx-auto mb-3" />
-          <h4 className="text-sm font-medium text-gray-900 mb-1">No goals yet</h4>
-          <p className="text-sm text-gray-500 mb-4">
+        <div className="bg-slate-800/50 rounded-lg border border-dashed border-slate-600 p-8 text-center">
+          <Target className="h-10 w-10 text-slate-500 mx-auto mb-3" />
+          <h4 className="text-sm font-medium text-slate-50 mb-1">No goals yet</h4>
+          <p className="text-sm text-slate-400 mb-4">
             Create goals to track narrative coverage across your content.
           </p>
           <button
             type="button"
             onClick={() => setIsSheetOpen(true)}
-            className="inline-flex items-center gap-1 px-4 py-2 text-sm font-medium text-blue-600 bg-blue-50 rounded-lg hover:bg-blue-100"
+            className="inline-flex items-center gap-1 px-4 py-2 text-sm font-medium text-blue-600 bg-blue-900/20 rounded-lg hover:bg-blue-100"
           >
             <Plus className="h-4 w-4" />
             Create your first goal

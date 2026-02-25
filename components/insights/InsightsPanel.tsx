@@ -40,7 +40,7 @@ export function InsightsPanel({
       {/* Transcript Content */}
       <div className="flex-1 overflow-y-auto p-6">
         <div className="max-w-2xl">
-          <p className="text-gray-700 text-[15px] leading-7 whitespace-pre-wrap">
+          <p className="text-slate-300 text-[15px] leading-7 whitespace-pre-wrap">
             {highlightedTranscript}
           </p>
         </div>

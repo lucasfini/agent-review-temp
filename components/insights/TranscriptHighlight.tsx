@@ -28,7 +28,7 @@ export function TranscriptHighlight({
       className={cn(
         'inline cursor-pointer transition-all duration-150',
         // Subtle dotted underline by default
-        'border-b-2 border-dotted border-gray-400',
+        'border-b-2 border-dotted border-slate-600',
         // Hover: faint background
         'hover:bg-amber-100/50 hover:border-amber-400',
         // Active state

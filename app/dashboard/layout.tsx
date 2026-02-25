@@ -1,6 +1,6 @@
 "use client";
 
-import { useState, useEffect } from 'react';
+import { useState, useEffect, Suspense } from 'react';
 import { useRouter } from 'next/navigation';
 import { useAuth } from '@/lib/auth/context';
 import { supabase } from '@/lib/supabase/client';
@@ -60,10 +60,10 @@ export default function DashboardLayout({
 
   if (loading) {
     return (
-      <div className="min-h-screen bg-gray-50 flex items-center justify-center">
+      <div className="min-h-screen bg-slate-950 flex items-center justify-center">
         <div className="text-center">
-          <div className="h-12 w-12 animate-spin rounded-full border-4 border-blue-600 border-t-transparent mx-auto mb-4" />
-          <p className="text-gray-600">Loading...</p>
+          <div className="h-12 w-12 animate-spin rounded-full border-4 border-blue-500 border-t-transparent mx-auto mb-4" />
+          <p className="text-slate-400">Loading...</p>
         </div>
       </div>
     );
@@ -75,8 +75,10 @@ export default function DashboardLayout({
 
   return (
     <CoverageProgressProvider>
-      <div className="h-screen flex overflow-hidden bg-gray-50">
-        <DashboardNav />
+      <div className="h-screen flex overflow-hidden bg-slate-950">
+        <Suspense fallback={<div className="hidden md:block md:w-64 md:flex-shrink-0" />}>
+          <DashboardNav />
+        </Suspense>
 
         {/* Main content */}
         <div className="flex flex-col w-0 flex-1 overflow-hidden md:ml-64">

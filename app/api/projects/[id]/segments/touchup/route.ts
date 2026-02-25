@@ -7,7 +7,28 @@ export const dynamic = 'force-dynamic';
 export const revalidate = 0;
 
 const CONTEXT_WINDOW = 8; // segments before/after each selected segment
-const TOUCHUP_MODEL = 'gpt-5-mini';
+const TOUCHUP_MODEL = 'gpt-4o';
+
+function recomputeSpeakerCounts(
+  speakers: Record<string, any>,
+  segments: any[]
+): Record<string, any> {
+  const updated: Record<string, any> = {};
+  for (const [id, speaker] of Object.entries(speakers)) {
+    const ownSegments = segments.filter(
+      (s: any) => (s.finalSpeakerId || s.speakerId) === id
+    );
+    updated[id] = {
+      ...speaker,
+      segmentCount: ownSegments.length,
+      totalDuration: ownSegments.reduce(
+        (sum: number, s: any) => sum + Math.max(0, (s.endTime || 0) - (s.startTime || 0)),
+        0
+      ),
+    };
+  }
+  return updated;
+}
 
 function getTypicalBehavior(role: string | undefined, avgDuration: number): string {
   if (role === 'host' || role === 'co_host') {
@@ -88,6 +109,7 @@ export async function POST(
       const updatedSpeakerData = {
         ...speakerData,
         segments: updatedSegments,
+        speakers: recomputeSpeakerCounts(speakers, updatedSegments),
         detectionMetadata: {
           ...speakerData.detectionMetadata,
           lastModified: new Date().toISOString(),
@@ -95,18 +117,20 @@ export async function POST(
         }
       };
 
-      const { error: updateError } = await supabaseAdmin
+      const { data: savedApproved, error: updateError } = await supabaseAdmin
         .from('projects')
         // @ts-expect-error - Supabase types issue with update
         .update({ speaker_data: updatedSpeakerData })
-        .eq('id', projectId);
+        .eq('id', projectId)
+        .select('speaker_data')
+        .single();
 
-      if (updateError) {
-        console.error('[touchup] Error applying approved reassignments:', updateError);
+      if (updateError || !savedApproved) {
+        console.error('[touchup] Error applying approved reassignments (0 rows matched or DB error):', updateError);
         return NextResponse.json({ error: 'Failed to save touch-up results' }, { status: 500 });
       }
 
-      return NextResponse.json({ success: true, reassignments: applied, updatedSpeakerData });
+      return NextResponse.json({ success: true, reassignments: applied, updatedSpeakerData: savedApproved.speaker_data });
     }
 
     // ─── Claude analysis mode ───
@@ -162,21 +186,25 @@ export async function POST(
       const updatedSpeakerData = {
         ...speakerData,
         segments: updatedSegments,
+        speakers: recomputeSpeakerCounts(speakers, updatedSegments),
         detectionMetadata: {
           ...speakerData.detectionMetadata,
           lastModified: new Date().toISOString(),
           lastModificationType: 'ai_touchup'
         }
       };
-      const { error: updateError } = await supabaseAdmin
+      const { data: savedSwap, error: updateError } = await supabaseAdmin
         .from('projects')
         // @ts-expect-error - Supabase types issue
         .update({ speaker_data: updatedSpeakerData })
-        .eq('id', projectId);
-      if (updateError) {
+        .eq('id', projectId)
+        .select('speaker_data')
+        .single();
+      if (updateError || !savedSwap) {
+        console.error('[touchup] Error saving 2-speaker swap (0 rows matched or DB error):', updateError);
         return NextResponse.json({ error: 'Failed to save touch-up results' }, { status: 500 });
       }
-      return NextResponse.json({ success: true, reassignments, updatedSpeakerData });
+      return NextResponse.json({ success: true, reassignments, updatedSpeakerData: savedSwap.speaker_data });
     }
 
     // Compute per-speaker stats from segments
@@ -267,34 +295,39 @@ export async function POST(
       return `--- Segment ${idx} ---\n${lines.join('\n')}`;
     }).filter(Boolean).join('\n\n');
 
-    const prompt = `You are correcting CONFIRMED speaker attribution errors in a podcast transcript.
+    const prompt = `You are a speaker attribution expert correcting misattributed segments in a podcast transcript.
 
-The segments marked [WRONG] have been flagged as DEFINITIVELY misattributed.
-Your job is to determine who is ACTUALLY speaking in each [WRONG] segment.
+The segments marked [WRONG] have been flagged as DEFINITIVELY misattributed by the user.
+Your task: identify the ACTUAL speaker for each [WRONG] segment by aligning it with the established patterns of [CORRECT] speakers.
 
 SPEAKERS IN THIS CONVERSATION:
 ${speakerProfileLines}
 
 CONTEXT LEGEND:
-  [CORRECT] = verified speaker assignment — treat as ground truth
-  [WRONG]   = confirmed incorrect assignment — determine the real speaker
+  [CORRECT] = user-confirmed ground truth — these assignments are ABSOLUTE and MUST NOT be changed
+  [WRONG]   = confirmed incorrect assignment — determine the real speaker using [CORRECT] context
 
 SEGMENTS:
 ${segmentBlocks}
 
 DIRECT ADDRESS RULE (critical):
-If a segment addresses someone by name or title ("Prime Minister, where are you?", "Professor, what do you think?"),
-the speaker is the one DOING the addressing — NOT the person being named.
-  ✓ "I'm in Montreal right now, Professor." → speaker is the GUEST (addressing the Professor)
-  ✓ "Prime Minister, where does this find you?" → speaker is the HOST (not the Prime Minister)
+When a segment addresses someone by name or title, the SPEAKER is the one doing the addressing — NOT the person being named.
+Examples:
+  ✓ "Yeah, Prime Minister — where does this find you?" → speaker is the HOST (addressing the PM)
+  ✓ "Professor, what's your take on this?" → speaker is whoever asks, NOT the Professor
+  ✓ "I'm in Montreal right now, Professor." → speaker is the GUEST (responding while addressing Professor)
+  ✓ "Yeah, [Name]." / "[Name], yeah." → speaker is the one ACKNOWLEDGING, not the named person
+  ✓ "Thank you, [Name]." → speaker is the one giving thanks, not the named person
 
-INSTRUCTIONS:
-1. For every [WRONG] segment you MUST return a definitive correctSpeakerId — never "uncertain"
-2. Use [CORRECT] segments as anchoring ground truth for conversational flow
-3. Use each speaker's "Sample statements" to match topic ownership, vocabulary, and speaking style
-4. Consider: who uses this kind of language? who owns this topic? who asks vs. answers?
-5. Only use speakerIds from the SPEAKERS list above
-6. Every [WRONG] segment index must appear in your response exactly once
+ALIGNMENT INSTRUCTIONS:
+1. Your PRIMARY goal is to make [WRONG] segments consistent with the conversational flow of [CORRECT] segments
+2. [CORRECT] segments are user-verified ground truth — use them as anchor points to infer speaker identity
+3. Match vocabulary, topic ownership, sentence structure, and speaking style to each speaker's "Sample statements"
+4. Consider conversational turn-taking: after a [CORRECT] segment ends a thought, who would logically speak next?
+5. Consider: who asks questions vs. who answers? who narrates vs. who responds?
+6. For every [WRONG] segment you MUST return a definitive speakerId — never leave uncertain
+7. Only use speakerIds from the SPEAKERS list above
+8. Every [WRONG] segment index must appear in your response exactly once
 
 Respond with ONLY valid JSON:
 {"reassignments": [
@@ -376,6 +409,7 @@ Respond with ONLY valid JSON:
     const updatedSpeakerData = {
       ...speakerData,
       segments: updatedSegments,
+      speakers: recomputeSpeakerCounts(speakers, updatedSegments),
       detectionMetadata: {
         ...speakerData.detectionMetadata,
         lastModified: new Date().toISOString(),
@@ -384,21 +418,23 @@ Respond with ONLY valid JSON:
     };
 
     // Save to database
-    const { error: updateError } = await supabaseAdmin
+    const { data: savedAI, error: updateError } = await supabaseAdmin
       .from('projects')
       // @ts-expect-error - Supabase types issue with update
       .update({ speaker_data: updatedSpeakerData })
-      .eq('id', projectId);
+      .eq('id', projectId)
+      .select('speaker_data')
+      .single();
 
-    if (updateError) {
-      console.error('[touchup] Error updating speaker data:', updateError);
+    if (updateError || !savedAI) {
+      console.error('[touchup] Error saving AI touch-up (0 rows matched or DB error):', updateError);
       return NextResponse.json({ error: 'Failed to save touch-up results' }, { status: 500 });
     }
 
     return NextResponse.json({
       success: true,
       reassignments,
-      updatedSpeakerData
+      updatedSpeakerData: savedAI.speaker_data
     });
 
   } catch (error) {

@@ -82,23 +82,23 @@ export function InsightsSidebar({
   return (
     <div
       className={cn(
-        'flex flex-col h-full bg-white border-l border-gray-100',
+        'flex flex-col h-full bg-slate-900 border-l border-slate-800',
         className
       )}
     >
       {/* Header - Only shown if onClose is provided (e.g. in overlay mode) */}
       {onClose && (
-        <div className="flex-shrink-0 px-4 py-2 border-b border-gray-100">
+        <div className="flex-shrink-0 px-4 py-2 border-b border-slate-800">
           <div className="flex items-center justify-between">
             <div className="flex items-center gap-2">
-              <span className="text-[10px] font-semibold text-gray-400 uppercase tracking-widest">
+              <span className="text-[10px] font-semibold text-slate-500 uppercase tracking-widest">
                 {filteredInsights.length} Results
               </span>
             </div>
             <button
               type="button"
               onClick={onClose}
-              className="p-1 text-gray-400 hover:text-gray-600 rounded transition-colors"
+              className="p-1 text-slate-500 hover:text-slate-400 rounded transition-colors"
               aria-label="Close"
             >
               <X className="h-4 w-4" />
@@ -108,7 +108,7 @@ export function InsightsSidebar({
       )}
 
       {/* Filter Row */}
-      <div className="flex-shrink-0 px-4 py-2 border-b border-gray-50 flex gap-1">
+      <div className="flex-shrink-0 px-4 py-2 border-b border-slate-800 flex gap-1">
         {filters.map((f) => {
           const isActive = activeFilter === f.key;
           const config = f.key !== 'all' ? CATEGORY_CONFIG[f.key] : null;
@@ -124,7 +124,7 @@ export function InsightsSidebar({
                 'disabled:opacity-40 disabled:cursor-not-allowed',
                 isActive
                   ? 'bg-gray-900 text-white'
-                  : 'text-gray-500 hover:bg-gray-100 hover:text-gray-700'
+                  : 'text-slate-400 hover:bg-slate-800 hover:text-slate-300'
               )}
             >
               <span className="flex items-center gap-1.5">
@@ -145,8 +145,8 @@ export function InsightsSidebar({
       >
         {filteredInsights.length === 0 ? (
           <div className="flex flex-col items-center justify-center py-12 px-4 text-center">
-            <Lightbulb className="h-6 w-6 text-gray-300 mb-2" />
-            <p className="text-sm text-gray-400">
+            <Lightbulb className="h-6 w-6 text-slate-500 mb-2" />
+            <p className="text-sm text-slate-500">
               {activeFilter !== 'all'
                 ? 'No insights in this category'
                 : 'No insights detected'}

@@ -530,8 +530,8 @@ function ProjectSwitcher({
         aria-label={`Filter projects: ${selectedProject ? selectedProject.title : 'All Projects'}`}
         className={`inline-flex items-center gap-2 px-4 py-2 text-sm font-medium rounded-lg transition-colors ${
           selectedProject
-            ? 'bg-blue-50 text-blue-700'
-            : 'text-gray-600 hover:text-gray-900 hover:bg-gray-50'
+            ? 'bg-blue-900/20 text-blue-400'
+            : 'text-slate-400 hover:text-slate-50 hover:bg-slate-800/50'
         }`}
       >
         <span className="max-w-[200px] truncate">
@@ -546,7 +546,7 @@ function ProjectSwitcher({
           <div
             role="listbox"
             aria-label="Select project"
-            className="absolute left-0 mt-2 w-64 bg-white border border-gray-200 rounded-lg shadow-lg z-20 max-h-80 overflow-y-auto"
+            className="absolute left-0 mt-2 w-64 bg-slate-900 border border-slate-700 rounded-lg shadow-lg z-20 max-h-80 overflow-y-auto"
           >
             <button
               type="button"
@@ -556,13 +556,13 @@ function ProjectSwitcher({
                 onSelect(null);
                 setIsOpen(false);
               }}
-              className={`w-full text-left px-4 py-2 text-sm hover:bg-gray-50 ${
-                !selectedProjectId ? 'bg-blue-50 text-blue-700 font-medium' : 'text-gray-700'
+              className={`w-full text-left px-4 py-2 text-sm hover:bg-slate-800/50 ${
+                !selectedProjectId ? 'bg-blue-900/20 text-blue-400 font-medium' : 'text-slate-300'
               }`}
             >
               All Projects
             </button>
-            <div className="border-t border-gray-100" />
+            <div className="border-t border-slate-800" />
             {projects.map(project => (
               <button
                 key={project.id}
@@ -573,12 +573,12 @@ function ProjectSwitcher({
                   onSelect(project.id);
                   setIsOpen(false);
                 }}
-                className={`w-full text-left px-4 py-2 text-sm hover:bg-gray-50 ${
-                  selectedProjectId === project.id ? 'bg-blue-50 text-blue-700 font-medium' : 'text-gray-700'
+                className={`w-full text-left px-4 py-2 text-sm hover:bg-slate-800/50 ${
+                  selectedProjectId === project.id ? 'bg-blue-900/20 text-blue-400 font-medium' : 'text-slate-300'
                 }`}
               >
                 <span className="block truncate">{project.title || 'Untitled'}</span>
-                <span className="text-xs text-gray-500">
+                <span className="text-xs text-slate-400">
                   {new Date(project.created_at).toLocaleDateString()}
                 </span>
               </button>
@@ -606,37 +606,37 @@ function ExampleGoalsModal({
     <div className="fixed inset-0 z-50 overflow-y-auto" role="dialog" aria-modal="true" aria-labelledby="example-goals-title">
       <div className="flex min-h-full items-center justify-center p-4">
         <div className="fixed inset-0 bg-black/30" onClick={onClose} />
-        <div className="relative bg-white rounded-xl shadow-2xl max-w-2xl w-full max-h-[80vh] overflow-hidden">
-          <div className="flex items-center justify-between p-4 border-b border-gray-200">
+        <div className="relative bg-slate-900 rounded-xl shadow-2xl max-w-2xl w-full max-h-[80vh] overflow-hidden">
+          <div className="flex items-center justify-between p-4 border-b border-slate-700">
             <div className="flex items-center gap-2">
               <BookOpen className="h-5 w-5 text-indigo-600" />
-              <h2 id="example-goals-title" className="text-lg font-semibold text-gray-900">Example Goals Library</h2>
+              <h2 id="example-goals-title" className="text-lg font-semibold text-slate-50">Example Goals Library</h2>
             </div>
             <button
               type="button"
               onClick={onClose}
-              className="p-1 rounded-full hover:bg-gray-100"
+              className="p-1 rounded-full hover:bg-slate-800"
               aria-label="Close example goals"
             >
-              <X className="h-5 w-5 text-gray-500" />
+              <X className="h-5 w-5 text-slate-400" />
             </button>
           </div>
           <div className="p-4 overflow-y-auto max-h-[calc(80vh-80px)] space-y-4">
             {EXAMPLE_NARRATIVE_GOALS.map((category, idx) => (
-              <div key={idx} className="bg-gray-50 rounded-lg p-4">
-                <h3 className="font-semibold text-gray-900 mb-1">{category.category}</h3>
-                <p className="text-xs text-gray-600 mb-3">{category.description}</p>
+              <div key={idx} className="bg-slate-800/50 rounded-lg p-4">
+                <h3 className="font-semibold text-slate-50 mb-1">{category.category}</h3>
+                <p className="text-xs text-slate-400 mb-3">{category.description}</p>
                 <div className="space-y-2">
                   {category.examples.map((example, exIdx) => (
                     <div
                       key={exIdx}
-                      className="bg-white rounded-lg border border-gray-200 p-3 hover:border-indigo-300 transition-colors"
+                      className="bg-slate-900 rounded-lg border border-slate-700 p-3 hover:border-indigo-300 transition-colors"
                     >
                       <div className="flex items-start justify-between gap-2">
                         <div className="min-w-0">
-                          <p className="text-sm font-medium text-gray-900">{example.label}</p>
-                          <p className="text-xs text-gray-500 mt-0.5">{example.description}</p>
-                          <div className="flex items-center gap-2 mt-2 text-xs text-gray-500">
+                          <p className="text-sm font-medium text-slate-50">{example.label}</p>
+                          <p className="text-xs text-slate-400 mt-0.5">{example.description}</p>
+                          <div className="flex items-center gap-2 mt-2 text-xs text-slate-400">
                             <span className="uppercase font-semibold text-indigo-600">{example.type}</span>
                             <span>•</span>
                             <span>{example.target} mention{example.target !== 1 ? 's' : ''}</span>
@@ -658,7 +658,7 @@ function ExampleGoalsModal({
                               cadence: example.cadence
                             });
                           }}
-                          className="flex-shrink-0 text-xs font-medium text-indigo-600 hover:text-indigo-800"
+                          className="flex-shrink-0 text-xs font-medium text-indigo-600 hover:text-indigo-300"
                         >
                           + Add
                         </button>
@@ -1212,17 +1212,17 @@ export default function AnalyticsPage() {
       <div className="p-6">
         <div className="max-w-7xl mx-auto">
           <div className="animate-pulse space-y-6">
-            <div className="h-8 bg-gray-200 rounded w-1/4" />
+            <div className="h-8 bg-slate-700 rounded w-1/4" />
             <div className="grid grid-cols-4 gap-4">
               {[1, 2, 3, 4].map(i => (
-                <div key={i} className="h-28 bg-gray-200 rounded-xl" />
+                <div key={i} className="h-28 bg-slate-700 rounded-xl" />
               ))}
             </div>
             <div className="grid grid-cols-2 gap-6">
-              <div className="h-64 bg-gray-200 rounded-xl" />
-              <div className="h-64 bg-gray-200 rounded-xl" />
+              <div className="h-64 bg-slate-700 rounded-xl" />
+              <div className="h-64 bg-slate-700 rounded-xl" />
             </div>
-            <div className="h-80 bg-gray-200 rounded-xl" />
+            <div className="h-80 bg-slate-700 rounded-xl" />
           </div>
         </div>
       </div>
@@ -1231,16 +1231,16 @@ export default function AnalyticsPage() {
 
   if (!analytics || analytics.totalProjects === 0) {
     return (
-      <div className="p-6 bg-gray-50 min-h-screen">
+      <div className="p-6 bg-slate-800/50 min-h-screen">
         <div className="max-w-lg mx-auto text-center pt-20">
-          <div className="mx-auto w-16 h-16 rounded-2xl bg-blue-50 flex items-center justify-center mb-6">
+          <div className="mx-auto w-16 h-16 rounded-2xl bg-blue-900/20 flex items-center justify-center mb-6">
             <BarChart3 className="h-8 w-8 text-blue-600" />
           </div>
-          <h1 className="text-2xl font-bold text-gray-900 mb-3">No analytics yet</h1>
-          <p className="text-gray-600 mb-2">
+          <h1 className="text-2xl font-bold text-slate-50 mb-3">No analytics yet</h1>
+          <p className="text-slate-400 mb-2">
             Upload and transcribe your first podcast or audio file to unlock analytics.
           </p>
-          <p className="text-sm text-gray-500 mb-8">
+          <p className="text-sm text-slate-400 mb-8">
             You&apos;ll see real KPI trends, content breakdowns, topic coverage, narrative goal tracking, and AI-driven insights — all computed from your actual data.
           </p>
           <button
@@ -1260,7 +1260,7 @@ export default function AnalyticsPage() {
   // ============================================================================
 
   return (
-    <div className="p-4 lg:p-6 bg-gray-50 min-h-screen">
+    <div className="p-4 lg:p-6 bg-slate-800/50 min-h-screen">
       <div className="max-w-7xl mx-auto space-y-6">
 
         {/* ================================================================== */}
@@ -1268,8 +1268,8 @@ export default function AnalyticsPage() {
         {/* ================================================================== */}
         <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-4">
           <div>
-            <h1 className="text-2xl font-bold text-gray-900">Analytics</h1>
-            <p className="text-sm text-gray-500 mt-0.5">Insights and trends from your content</p>
+            <h1 className="text-2xl font-bold text-slate-50">Analytics</h1>
+            <p className="text-sm text-slate-400 mt-0.5">Insights and trends from your content</p>
           </div>
 
           <div className="flex items-center gap-4">
@@ -1278,7 +1278,7 @@ export default function AnalyticsPage() {
               selectedProjectId={projectIdFromUrl}
               onSelect={handleProjectSelect}
             />
-            <div className="flex items-center gap-1 bg-white rounded-lg p-1 shadow-sm border border-gray-100">
+            <div className="flex items-center gap-1 bg-slate-900 rounded-lg p-1 shadow-sm border border-slate-800">
               {(['7d', '30d', '90d'] as const).map((range) => (
                 <button
                   key={range}
@@ -1286,7 +1286,7 @@ export default function AnalyticsPage() {
                   className={`px-3 py-1.5 rounded-md text-sm font-medium transition-colors ${
                     timeRange === range
                       ? 'bg-gray-900 text-white'
-                      : 'text-gray-600 hover:text-gray-900'
+                      : 'text-slate-400 hover:text-slate-50'
                   }`}
                 >
                   {range.toUpperCase()}
@@ -1327,13 +1327,13 @@ export default function AnalyticsPage() {
         {/* Unanalyzed Projects Banner */}
         {/* ================================================================== */}
         {!bannerDismissed && unanalyzedProjects.length > 0 && (
-          <div className="bg-blue-50 border border-blue-200 rounded-xl p-4 flex items-start gap-3" role="alert">
+          <div className="bg-blue-900/20 border border-blue-800/30 rounded-xl p-4 flex items-start gap-3" role="alert">
             <AlertCircle className="h-5 w-5 text-blue-600 flex-shrink-0 mt-0.5" />
             <div className="flex-1 min-w-0">
-              <h4 className="text-sm font-semibold text-blue-900">
+              <h4 className="text-sm font-semibold text-blue-200">
                 {unanalyzedProjects.length} project{unanalyzedProjects.length !== 1 ? 's' : ''} ready for analysis
               </h4>
-              <p className="text-sm text-blue-800 mt-1">
+              <p className="text-sm text-blue-300 mt-1">
                 These projects have transcriptions but haven&apos;t been analyzed yet. Run analytics to see topic coverage and insights.
               </p>
               <div className="flex flex-wrap gap-2 mt-3">
@@ -1342,7 +1342,7 @@ export default function AnalyticsPage() {
                     key={project.id}
                     onClick={() => handleRunCoverage(project.id)}
                     disabled={runningCoverageIds.has(project.id)}
-                    className="inline-flex items-center gap-1 px-3 py-1.5 text-xs font-medium text-blue-700 bg-white border border-blue-200 rounded-lg hover:bg-blue-100 transition-colors disabled:opacity-60 disabled:cursor-not-allowed"
+                    className="inline-flex items-center gap-1 px-3 py-1.5 text-xs font-medium text-blue-400 bg-slate-900 border border-blue-800/30 rounded-lg hover:bg-blue-100 transition-colors disabled:opacity-60 disabled:cursor-not-allowed"
                     aria-label={`Run analytics on ${project.title}`}
                   >
                     {runningCoverageIds.has(project.id) ? (
@@ -1376,9 +1376,9 @@ export default function AnalyticsPage() {
         {/* ================================================================== */}
         {/* ROW 3: Tab Section (Insights & Goals) */}
         {/* ================================================================== */}
-        <div className="bg-white rounded-xl shadow-sm border border-gray-100" role="region" aria-label="Insights and goals">
+        <div className="bg-slate-900 rounded-xl shadow-sm border border-slate-800" role="region" aria-label="Insights and goals">
           {/* Tab Header */}
-          <div className="border-b border-gray-100 p-1">
+          <div className="border-b border-slate-800 p-1">
             <nav className="flex gap-1" role="tablist" aria-label="Analytics sections">
               <button
                 id="tab-insights"
@@ -1389,7 +1389,7 @@ export default function AnalyticsPage() {
                 className={`flex items-center gap-2 px-4 py-2.5 text-sm font-medium rounded-lg transition-colors ${
                   activeTab === 'insights'
                     ? 'bg-gray-900 text-white'
-                    : 'text-gray-600 hover:text-gray-900 hover:bg-gray-50'
+                    : 'text-slate-400 hover:text-slate-50 hover:bg-slate-800/50'
                 }`}
               >
                 <Lightbulb className="h-4 w-4" />
@@ -1404,7 +1404,7 @@ export default function AnalyticsPage() {
                 className={`flex items-center gap-2 px-4 py-2.5 text-sm font-medium rounded-lg transition-colors ${
                   activeTab === 'goals'
                     ? 'bg-gray-900 text-white'
-                    : 'text-gray-600 hover:text-gray-900 hover:bg-gray-50'
+                    : 'text-slate-400 hover:text-slate-50 hover:bg-slate-800/50'
                 }`}
               >
                 <Target className="h-4 w-4" />

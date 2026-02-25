@@ -164,20 +164,20 @@ export default function ContentSelectionModal({
 
   return (
     <div className="fixed inset-0 z-[60] bg-black/20 flex items-center justify-center px-4 py-6">
-      <div className="relative w-full max-w-2xl bg-white rounded-lg border border-gray-200 max-h-[90vh] flex flex-col overflow-hidden shadow-xl">
+      <div className="relative w-full max-w-2xl bg-slate-900 rounded-lg border border-slate-700 max-h-[90vh] flex flex-col overflow-hidden shadow-xl">
         {/* Header */}
-        <div className="px-5 py-4 border-b border-gray-200">
+        <div className="px-5 py-4 border-b border-slate-700">
           <div className="flex items-center justify-between">
             <div>
-              <h2 className="text-lg font-semibold text-gray-900">Generate Content</h2>
-              <p className="text-xs text-gray-500 mt-0.5 truncate max-w-md">
+              <h2 className="text-lg font-semibold text-slate-50">Generate Content</h2>
+              <p className="text-xs text-slate-400 mt-0.5 truncate max-w-md">
                 {projectTitle || `Project ${projectId.slice(0, 8)}`}
               </p>
             </div>
             <button
               onClick={onClose}
               disabled={isGenerating}
-              className="text-gray-400 hover:text-gray-600 p-1"
+              className="text-slate-500 hover:text-slate-400 p-1"
             >
               <X className="w-5 h-5" />
             </button>
@@ -196,10 +196,10 @@ export default function ContentSelectionModal({
               <div key={section.id}>
                 {/* Section header */}
                 <div className="flex items-center gap-2 mb-3">
-                  <span className="text-xs font-semibold text-gray-400 uppercase tracking-wider">
+                  <span className="text-xs font-semibold text-slate-500 uppercase tracking-wider">
                     {section.label}
                   </span>
-                  <div className="flex-1 h-px bg-gray-200" />
+                  <div className="flex-1 h-px bg-slate-700" />
                 </div>
 
                 <div className="space-y-2">
@@ -214,21 +214,21 @@ export default function ContentSelectionModal({
                         key={ct.id}
                         className={`flex items-center gap-3 p-3 rounded-lg border transition-colors ${
                           q.count > 0
-                            ? 'border-blue-200 bg-blue-50/40'
-                            : 'border-gray-200 bg-white'
+                            ? 'border-blue-800/30 bg-blue-900/20/40'
+                            : 'border-slate-700 bg-slate-900'
                         }`}
                       >
                         {/* Icon */}
-                        <div className="flex h-9 w-9 items-center justify-center rounded-lg bg-white border border-gray-200 text-gray-600 flex-shrink-0">
+                        <div className="flex h-9 w-9 items-center justify-center rounded-lg bg-slate-900 border border-slate-700 text-slate-400 flex-shrink-0">
                           <IconComponent className="h-4 w-4" />
                         </div>
 
                         {/* Name + Description */}
                         <div className="flex-1 min-w-0">
                           <div className="flex items-center gap-2">
-                            <p className="text-sm font-medium text-gray-900">{ct.name}</p>
+                            <p className="text-sm font-medium text-slate-50">{ct.name}</p>
                           </div>
-                          <p className="text-xs text-gray-500 line-clamp-1">{ct.description}</p>
+                          <p className="text-xs text-slate-400 line-clamp-1">{ct.description}</p>
                         </div>
 
                         {/* Theme selector */}
@@ -237,7 +237,7 @@ export default function ContentSelectionModal({
                             <select
                               value={q.theme}
                               onChange={(e) => setTheme(ct.id, e.target.value)}
-                              className="appearance-none text-xs border border-gray-200 rounded-md pl-2 pr-6 py-1.5 bg-white text-gray-700 font-medium focus:border-blue-400 focus:ring-1 focus:ring-blue-400 cursor-pointer"
+                              className="appearance-none text-xs border border-slate-700 rounded-md pl-2 pr-6 py-1.5 bg-slate-900 text-slate-300 font-medium focus:border-blue-400 focus:ring-1 focus:ring-blue-400 cursor-pointer"
                             >
                               {curatedThemes.map(theme => (
                                 <option key={theme.id} value={theme.id}>
@@ -245,7 +245,7 @@ export default function ContentSelectionModal({
                                 </option>
                               ))}
                             </select>
-                            <ChevronDown className="absolute right-1.5 top-1/2 -translate-y-1/2 w-3 h-3 text-gray-400 pointer-events-none" />
+                            <ChevronDown className="absolute right-1.5 top-1/2 -translate-y-1/2 w-3 h-3 text-slate-500 pointer-events-none" />
                           </div>
                         </div>
 
@@ -254,24 +254,24 @@ export default function ContentSelectionModal({
                           <button
                             onClick={() => setCount(ct.id, -1)}
                             disabled={q.count <= 0}
-                            className="h-7 w-7 flex items-center justify-center rounded-l-md border border-gray-300 bg-white text-gray-600 hover:bg-gray-50 disabled:opacity-30 disabled:cursor-not-allowed transition-colors"
+                            className="h-7 w-7 flex items-center justify-center rounded-l-md border border-slate-600 bg-slate-900 text-slate-400 hover:bg-slate-800/50 disabled:opacity-30 disabled:cursor-not-allowed transition-colors"
                           >
                             <Minus className="w-3 h-3" />
                           </button>
-                          <div className="h-7 w-8 flex items-center justify-center border-y border-gray-300 bg-white text-sm font-semibold text-gray-900 tabular-nums">
+                          <div className="h-7 w-8 flex items-center justify-center border-y border-slate-600 bg-slate-900 text-sm font-semibold text-slate-50 tabular-nums">
                             {q.count}
                           </div>
                           <button
                             onClick={() => setCount(ct.id, 1)}
                             disabled={q.count >= max}
-                            className="h-7 w-7 flex items-center justify-center rounded-r-md border border-gray-300 bg-white text-gray-600 hover:bg-gray-50 disabled:opacity-30 disabled:cursor-not-allowed transition-colors"
+                            className="h-7 w-7 flex items-center justify-center rounded-r-md border border-slate-600 bg-slate-900 text-slate-400 hover:bg-slate-800/50 disabled:opacity-30 disabled:cursor-not-allowed transition-colors"
                           >
                             <Plus className="w-3 h-3" />
                           </button>
                         </div>
 
                         {/* Per-unit cost */}
-                        <span className="text-xs text-gray-400 w-16 text-right flex-shrink-0 tabular-nums">
+                        <span className="text-xs text-slate-500 w-16 text-right flex-shrink-0 tabular-nums">
                           ~{formatCost(unitCost)}ea
                         </span>
                       </div>
@@ -284,8 +284,8 @@ export default function ContentSelectionModal({
         </div>
 
         {/* Footer */}
-        <div className="px-5 py-3 border-t border-gray-200 bg-gray-50 flex items-center justify-between">
-          <div className="text-xs text-gray-600 font-medium tabular-nums">
+        <div className="px-5 py-3 border-t border-slate-700 bg-slate-800/50 flex items-center justify-between">
+          <div className="text-xs text-slate-400 font-medium tabular-nums">
             {totalItems} {totalItems === 1 ? 'item' : 'items'}
             {totalCost > 0 && <span className="ml-1">· ~{formatCost(totalCost)}</span>}
           </div>
@@ -293,7 +293,7 @@ export default function ContentSelectionModal({
             <button
               onClick={onClose}
               disabled={isGenerating}
-              className="px-3 py-1.5 text-sm font-medium text-gray-700 bg-white border border-gray-300 rounded hover:bg-gray-100 disabled:opacity-50"
+              className="px-3 py-1.5 text-sm font-medium text-slate-300 bg-slate-900 border border-slate-600 rounded hover:bg-slate-800 disabled:opacity-50"
             >
               Cancel
             </button>
