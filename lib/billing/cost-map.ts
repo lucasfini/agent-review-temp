@@ -67,7 +67,46 @@ export const COST_MAP: Record<string, ServiceCost> = {
   },
 
   // ============================================================================
-  // OpenAI - GPT-4o-mini (Name Extraction, Role Classification)
+  // OpenAI - GPT-4o (Speaker Intelligence, Summary, Quotes, Content Gen)
+  // ============================================================================
+  openai_gpt4o_input: {
+    serviceKey: 'openai_gpt4o_input',
+    serviceName: 'GPT-4o Input Tokens',
+    provider: 'openai',
+    unitType: 'input_tokens',
+    providerRate: 2.50 / 1_000_000, // $2.50 per 1M tokens
+    providerRateDisplay: '$2.50/1M tokens',
+    marginPercent: 35,
+    billedRate: (2.50 / 1_000_000) * 1.35,
+    billedRateDisplay: '$3.375/1M tokens',
+  },
+
+  openai_gpt4o_output: {
+    serviceKey: 'openai_gpt4o_output',
+    serviceName: 'GPT-4o Output Tokens',
+    provider: 'openai',
+    unitType: 'output_tokens',
+    providerRate: 10.00 / 1_000_000, // $10 per 1M tokens
+    providerRateDisplay: '$10/1M tokens',
+    marginPercent: 35,
+    billedRate: (10.00 / 1_000_000) * 1.35,
+    billedRateDisplay: '$13.50/1M tokens',
+  },
+
+  openai_gpt4o_cached_input: {
+    serviceKey: 'openai_gpt4o_cached_input',
+    serviceName: 'GPT-4o Cached Input Tokens',
+    provider: 'openai',
+    unitType: 'input_tokens',
+    providerRate: 1.25 / 1_000_000, // $1.25 per 1M tokens (50% discount)
+    providerRateDisplay: '$1.25/1M tokens',
+    marginPercent: 35,
+    billedRate: (1.25 / 1_000_000) * 1.35,
+    billedRateDisplay: '$1.6875/1M tokens',
+  },
+
+  // ============================================================================
+  // OpenAI - GPT-4o-mini (Insight Extraction, Chapters, Takeaways)
   // ============================================================================
   openai_gpt4o_mini_input: {
     serviceKey: 'openai_gpt4o_mini_input',
@@ -91,6 +130,99 @@ export const COST_MAP: Record<string, ServiceCost> = {
     marginPercent: 35,
     billedRate: (0.60 / 1_000_000) * 1.35,
     billedRateDisplay: '$0.81/1M tokens',
+  },
+
+  openai_gpt4o_mini_cached_input: {
+    serviceKey: 'openai_gpt4o_mini_cached_input',
+    serviceName: 'GPT-4o-mini Cached Input Tokens',
+    provider: 'openai',
+    unitType: 'input_tokens',
+    providerRate: 0.075 / 1_000_000, // $0.075 per 1M tokens (50% discount)
+    providerRateDisplay: '$0.075/1M tokens',
+    marginPercent: 35,
+    billedRate: (0.075 / 1_000_000) * 1.35,
+    billedRateDisplay: '$0.10125/1M tokens',
+  },
+
+  // ============================================================================
+  // OpenAI - GPT-5 (Speaker Intelligence)
+  // ============================================================================
+  openai_gpt5_input: {
+    serviceKey: 'openai_gpt5_input',
+    serviceName: 'GPT-5 Input Tokens',
+    provider: 'openai',
+    unitType: 'input_tokens',
+    providerRate: 5.00 / 1_000_000, // $5.00 per 1M tokens
+    providerRateDisplay: '$5.00/1M tokens',
+    marginPercent: 35,
+    billedRate: (5.00 / 1_000_000) * 1.35,
+    billedRateDisplay: '$6.75/1M tokens',
+  },
+
+  openai_gpt5_output: {
+    serviceKey: 'openai_gpt5_output',
+    serviceName: 'GPT-5 Output Tokens',
+    provider: 'openai',
+    unitType: 'output_tokens',
+    providerRate: 20.00 / 1_000_000, // $20.00 per 1M tokens
+    providerRateDisplay: '$20.00/1M tokens',
+    marginPercent: 35,
+    billedRate: (20.00 / 1_000_000) * 1.35,
+    billedRateDisplay: '$27.00/1M tokens',
+  },
+
+  // ============================================================================
+  // OpenAI - GPT-5-mini (Summary, Quotes)
+  // ============================================================================
+  openai_gpt5_mini_input: {
+    serviceKey: 'openai_gpt5_mini_input',
+    serviceName: 'GPT-5-mini Input Tokens',
+    provider: 'openai',
+    unitType: 'input_tokens',
+    providerRate: 0.80 / 1_000_000, // $0.80 per 1M tokens
+    providerRateDisplay: '$0.80/1M tokens',
+    marginPercent: 35,
+    billedRate: (0.80 / 1_000_000) * 1.35,
+    billedRateDisplay: '$1.08/1M tokens',
+  },
+
+  openai_gpt5_mini_output: {
+    serviceKey: 'openai_gpt5_mini_output',
+    serviceName: 'GPT-5-mini Output Tokens',
+    provider: 'openai',
+    unitType: 'output_tokens',
+    providerRate: 3.20 / 1_000_000, // $3.20 per 1M tokens
+    providerRateDisplay: '$3.20/1M tokens',
+    marginPercent: 35,
+    billedRate: (3.20 / 1_000_000) * 1.35,
+    billedRateDisplay: '$4.32/1M tokens',
+  },
+
+  // ============================================================================
+  // OpenAI - GPT-5-nano (Chapters, Takeaways, Role Classification, Insights)
+  // ============================================================================
+  openai_gpt5_nano_input: {
+    serviceKey: 'openai_gpt5_nano_input',
+    serviceName: 'GPT-5-nano Input Tokens',
+    provider: 'openai',
+    unitType: 'input_tokens',
+    providerRate: 0.20 / 1_000_000, // $0.20 per 1M tokens
+    providerRateDisplay: '$0.20/1M tokens',
+    marginPercent: 35,
+    billedRate: (0.20 / 1_000_000) * 1.35,
+    billedRateDisplay: '$0.27/1M tokens',
+  },
+
+  openai_gpt5_nano_output: {
+    serviceKey: 'openai_gpt5_nano_output',
+    serviceName: 'GPT-5-nano Output Tokens',
+    provider: 'openai',
+    unitType: 'output_tokens',
+    providerRate: 0.80 / 1_000_000, // $0.80 per 1M tokens
+    providerRateDisplay: '$0.80/1M tokens',
+    marginPercent: 35,
+    billedRate: (0.80 / 1_000_000) * 1.35,
+    billedRateDisplay: '$1.08/1M tokens',
   },
 
   // ============================================================================
@@ -324,20 +456,20 @@ export function estimateTranscriptionCost(params: {
     : Math.ceil(durationSeconds * 3); // Fallback: ~3 tokens per second of audio
 
   if (tier === 'pro' || tier === 'premium') {
-    // Name extraction (GPT-4o-mini): ~500-1000 input, ~100 output
-    const nameExtraction = calculateTokenCost(
-      'openai_gpt4o_mini_input',
-      'openai_gpt4o_mini_output',
+    // Speaker Intelligence (gpt-5): full transcript input, ~500 output
+    const speakerIntel = calculateTokenCost(
+      'openai_gpt5_input',
+      'openai_gpt5_output',
       estimatedTokens + 500,
-      100
+      500
     );
-    aiProcessingCost += nameExtraction.billedCost;
-    breakdown.push({ service: 'Name Extraction', cost: nameExtraction.billedCost });
+    aiProcessingCost += speakerIntel.billedCost;
+    breakdown.push({ service: 'Speaker Intelligence', cost: speakerIntel.billedCost });
 
-    // Summary (Claude Sonnet): ~1000 input, ~500 output
+    // Summary (gpt-5-mini): full transcript input, ~500 output
     const summary = calculateTokenCost(
-      'claude_sonnet_input',
-      'claude_sonnet_output',
+      'openai_gpt5_mini_input',
+      'openai_gpt5_mini_output',
       estimatedTokens,
       500
     );
@@ -346,40 +478,40 @@ export function estimateTranscriptionCost(params: {
   }
 
   if (tier === 'premium') {
-    // Role classification (GPT-4o-mini): ~300-500 input, ~50 output
+    // Role classification (gpt-5-nano): ~500 input, ~50 output
     const roleClassification = calculateTokenCost(
-      'openai_gpt4o_mini_input',
-      'openai_gpt4o_mini_output',
+      'openai_gpt5_nano_input',
+      'openai_gpt5_nano_output',
       500,
       50
     );
     aiProcessingCost += roleClassification.billedCost;
     breakdown.push({ service: 'Role Classification', cost: roleClassification.billedCost });
 
-    // Chapters (Claude Sonnet): ~1000 input, ~400 output
+    // Chapters (gpt-5-nano): full transcript input, ~400 output
     const chapters = calculateTokenCost(
-      'claude_sonnet_input',
-      'claude_sonnet_output',
+      'openai_gpt5_nano_input',
+      'openai_gpt5_nano_output',
       estimatedTokens,
       400
     );
     aiProcessingCost += chapters.billedCost;
     breakdown.push({ service: 'Chapter Detection', cost: chapters.billedCost });
 
-    // Takeaways (Claude Sonnet): ~1000 input, ~300 output
+    // Takeaways (gpt-5-nano): full transcript input, ~300 output
     const takeaways = calculateTokenCost(
-      'claude_sonnet_input',
-      'claude_sonnet_output',
+      'openai_gpt5_nano_input',
+      'openai_gpt5_nano_output',
       estimatedTokens,
       300
     );
     aiProcessingCost += takeaways.billedCost;
     breakdown.push({ service: 'Key Takeaways', cost: takeaways.billedCost });
 
-    // Quotes (Claude Sonnet): ~1000 input, ~400 output
+    // Quotes (gpt-5-mini): full transcript input, ~400 output
     const quotes = calculateTokenCost(
-      'claude_sonnet_input',
-      'claude_sonnet_output',
+      'openai_gpt5_mini_input',
+      'openai_gpt5_mini_output',
       estimatedTokens,
       400
     );

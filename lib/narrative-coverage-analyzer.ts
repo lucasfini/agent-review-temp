@@ -1,4 +1,4 @@
-import Anthropic from '@anthropic-ai/sdk';
+import OpenAI from 'openai';
 import type {
   TopicSignal,
   CtaSignal,
@@ -7,7 +7,7 @@ import type {
 } from '@/lib/narrative-coverage';
 import { getPrompt, prompts } from '@/lib/prompts/loader';
 import type { NarrativeCoverageVars } from '@/lib/prompts/types';
-import { trackAnthropicUsage } from '@/lib/billing/track-usage';
+import { trackOpenAIUsage } from '@/lib/billing/track-usage';
 
 interface NarrativeGoal {
   id: string;
@@ -41,8 +41,9 @@ export interface NarrativeCoverageAnalyzerOptions {
 // Get configuration from centralized config
 const config = prompts.audioRepurpose.narrativeCoverage;
 const MODEL_ID = config.model;
-const INPUT_RATE_PER_TOKEN = 3 / 1_000_000; // $3 per million input tokens
-const OUTPUT_RATE_PER_TOKEN = 15 / 1_000_000; // $15 per million output tokens
+// GPT-4o pricing: $2.50 per 1M input, $10 per 1M output
+const INPUT_RATE_PER_TOKEN = 2.5 / 1_000_000;
+const OUTPUT_RATE_PER_TOKEN = 10 / 1_000_000;
 
 const STRICT_JSON_INSTRUCTION = `You are a JSON generator. Respond with ONLY one JSON object, no prose, no markdown fences. Shape:
 {
@@ -59,7 +60,7 @@ const DEFAULT_RESULT: NarrativeCoverageAnalysisResult = {
   opportunities: [],
   coverageWindow: 'full_episode',
   aiUsage: {
-    provider: 'anthropic',
+    provider: 'openai',
     model: MODEL_ID,
     runType: 'narrative_coverage',
     inputTokens: 0,
@@ -75,16 +76,16 @@ export async function analyzeNarrativeCoverage(
   transcriptionText: string,
   options: NarrativeCoverageAnalyzerOptions = {}
 ): Promise<NarrativeCoverageAnalysisResult> {
-  const apiKey = process.env.ANTHROPIC_API_KEY;
+  const apiKey = process.env.OPENAI_API_KEY;
   if (!apiKey) {
-    throw new Error('ANTHROPIC_API_KEY not configured; unable to run narrative coverage analysis.');
+    throw new Error('OPENAI_API_KEY not configured; unable to run narrative coverage analysis.');
   }
 
   if (!transcriptionText || transcriptionText.trim().length === 0) {
     return DEFAULT_RESULT;
   }
 
-  const anthropic = new Anthropic({ apiKey });
+  const openai = new OpenAI({ apiKey, timeout: 180000, maxRetries: 1 });
   const transcriptSlice = transcriptionText.slice(0, MAX_TRANSCRIPT_CHARS);
   const summarySnippet = options.summary ? options.summary.slice(0, 4000) : '';
   const coverageWindow = options.coverageWindow || 'full_episode';
@@ -109,37 +110,35 @@ export async function analyzeNarrativeCoverage(
   );
   const strictPrompt = `${STRICT_JSON_INSTRUCTION}\n\n${instructions}`;
 
-  const response = await anthropic.messages.create({
+  const response = await openai.chat.completions.create({
     model: config.model,
-    max_tokens: config.max_tokens,
-    temperature: 0,
+    max_completion_tokens: config.max_tokens,
+    response_format: { type: 'json_object' },
     messages: [
       {
+        role: 'system',
+        content: STRICT_JSON_INSTRUCTION
+      },
+      {
         role: 'user',
-        content: strictPrompt
+        content: instructions
       }
     ]
   });
 
   // Track usage and bill user
   if (options.userId) {
-    // Map config model to billed model name (assuming sonnet-4.5 for high quality analysis)
-    const modelName = config.model.includes('sonnet') ? 'sonnet-4.5' : 'haiku-4.5';
-    
-    await trackAnthropicUsage({
+    await trackOpenAIUsage({
       userId: options.userId,
       projectId: options.projectId,
       response,
-      modelName,
+      modelName: config.model,
       purpose: 'Narrative Coverage Analysis',
       shouldDebit: true
     });
   }
 
-  const rawText =
-    response.content[0]?.type === 'text'
-      ? response.content[0].text
-      : '';
+  const rawText = response.choices?.[0]?.message?.content || '';
 
   const parsed = safeJsonParse(rawText);
 
@@ -147,8 +146,8 @@ export async function analyzeNarrativeCoverage(
   const normalizedCtas = normalizeCtas(parsed?.ctas || []);
   const normalizedOpportunities = normalizeOpportunities(parsed?.opportunities || []);
 
-  const inputTokens = response.usage.input_tokens || 0;
-  const outputTokens = response.usage.output_tokens || 0;
+  const inputTokens = response.usage?.prompt_tokens || 0;
+  const outputTokens = response.usage?.completion_tokens || 0;
   const aiCostUsd = Number(
     inputTokens * INPUT_RATE_PER_TOKEN + outputTokens * OUTPUT_RATE_PER_TOKEN
   );
@@ -165,7 +164,7 @@ export async function analyzeNarrativeCoverage(
     coverageWindow: parsed?.coverage_window || coverageWindow,
     notes: hasAiTopics ? parsed?.notes || undefined : 'Heuristic topics/ctas generated due to empty AI response.',
     aiUsage: {
-      provider: 'anthropic',
+      provider: 'openai',
       model: MODEL_ID,
       runType: 'narrative_coverage',
       inputTokens,

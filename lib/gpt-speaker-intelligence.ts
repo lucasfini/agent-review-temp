@@ -3,17 +3,8 @@
 // This service is AUTHORITATIVE - its output defines all valid speakers
 
 import OpenAI from 'openai';
-import { SpeakerSegment } from './types';
+import { SpeakerSegment, SpeakerRole, SpeakerIdentityProfile } from './types';
 import { trackOpenAIUsage } from '@/lib/billing/track-usage';
-
-export type SpeakerRole =
-  | 'host'
-  | 'co_host'
-  | 'guest'
-  | 'narrator'
-  | 'advertiser'
-  | 'quoted_audio'
-  | 'unknown';
 
 export interface GPTSpeaker {
   id: string;
@@ -21,6 +12,7 @@ export interface GPTSpeaker {
   role: SpeakerRole;
   confidence: number;
   source?: string;
+  profile?: SpeakerIdentityProfile;
 }
 
 export interface GPTSpeakerIntelligenceResult {
@@ -30,46 +22,115 @@ export interface GPTSpeakerIntelligenceResult {
   validationErrors: string[];
 }
 
-const GPT_SYSTEM_PROMPT = `You are a strict information extraction system.
-You must not guess, infer, or use outside knowledge.
-If something is not explicitly supported, return 'unknown'.
+const GPT_SYSTEM_PROMPT = `You are a forensic transcript analyst identifying WHO IS SPEAKING in audio recordings.
 
-MAX_NAME_LENGTH: A speaker name is a human name — typically 1 to 3 words (e.g. "Sam Harris", "Jessica Tarlov", "Dr. Jane Smith"). A name is NEVER a phrase, sentence fragment, or clause. If you see text like "in full support of pressuring the university" or "so happy to share the stage", that is NOT a name — reject it immediately. Any candidate longer than 4 words MUST be discarded.
+CRITICAL DISTINCTION:
+- SPEAKER = someone whose voice we HEAR in the recording
+- MENTIONED PERSON = someone talked ABOUT but not present
 
-STRICT_ID_FORMAT: Speaker IDs MUST follow the format "speaker_1", "speaker_2", etc. NEVER use a person's name, a role label, or any other string as the ID.
+Example:
+  "As Warren Buffett once said, 'Be fearful when others are greedy.'"
+  → Warren Buffett is MENTIONED, not a speaker. The person reading this quote IS the speaker.
+
+EVIDENCE HIERARCHY (strongest to weakest):
+1. EXPLICIT SELF-ID: "I'm Jessica Tarlov" or "My name is Jessica" → Jessica is a speaker (confidence: 0.95)
+2. DIRECT INTRODUCTION: "Joining us today is Dr. Patel" → Dr. Patel is likely a speaker (0.85)
+3. CONVERSATIONAL CONTEXT: Two alternating voices in Q&A format → two speakers (0.75)
+4. FILENAME HINT: File named "Interview_with_Sam_Harris.mp3" → Sam may be a speaker (0.60)
+
+NEVER EXTRACT AS SPEAKERS:
+- Locations: "New York", "Washington D.C."
+- Organizations: "The White House", "NBC News", "The New York Times"
+- Show names: "Pod Save America", "The Daily Show"
+- Historical figures quoted but not present
+- People mentioned in third person only ("John said last week...")
+- Names from ad reads unless they also appear in main content
+
+AD/SPONSOR DETECTION:
+The first 1-2 minutes often contain sponsor reads. Signs:
+- "This episode is brought to you by..."
+- "Use code [X] for discount..."
+- Website URLs, promotional language
+If a voice ONLY appears in promotional content, classify as role=advertiser.
+
+OUTRO/CLOSING BIO RULE:
+Many podcast hosts read a biographical summary of the guest near the END of the episode, in third person:
+  "[speaker_2]: John Smith is a bestselling author, former CEO of Acme Corp..."
+The READER of this bio is the HOST — NOT the bio's subject. A person cannot narrate their own third-person biography.
+When you see a long biographical passage about a speaker who also speaks in first person elsewhere, the passage is being READ BY SOMEONE ELSE (the host). Do not assign the bio's subject as the speaker reading it.
+
+PODCAST SHOW NAME → HOST IDENTIFICATION:
+If the filename contains a recognizable podcast/show name, use your knowledge to identify that show's host as a speaker.
+Examples: "The Prof G Pod" → host is Scott Galloway; "Lex Fridman Podcast" → host is Lex Fridman; "The Tim Ferriss Show" → host is Tim Ferriss; "SmartLess" → hosts are Jason Bateman, Sean Hayes, Will Arnett.
+The show name itself is not a speaker, but the known host of that show IS a speaker in this recording.
+
+DIARIZATION NOISE:
+Speaker diarization software occasionally misattributes 1-2 segments to the wrong speaker. Judge each speaker's identity from the OVERALL PATTERN across all their segments — not from isolated outliers that seem inconsistent with the rest.
+
+NAME VALIDATION:
+- A valid name is 1-3 words (max 4 for rare cases like "Mary Jane Watson Parker")
+- NEVER extract phrases, clauses, or sentence fragments as names
+- Invalid: "in full support of", "so happy to share the stage", "speaking now is"
+- If you cannot isolate a clean name, set name to null
+- For debate/panel MODERATORS: if no personal name is explicitly stated, use null.
+  Do NOT use institutional titles (e.g. "MSU president", "dean of students",
+  "university president", "chair") as a speaker name — these are roles, not names.
+
+ID FORMAT: Speaker IDs MUST be "speaker_1", "speaker_2", etc. Never use names as IDs.
 
 Output valid JSON only.`;
 
-const GPT_USER_PROMPT_TEMPLATE = `You are given a podcast transcript.
+const GPT_USER_PROMPT_TEMPLATE = `Analyze this transcript to identify WHO IS SPEAKING (not who is mentioned).
 
-CONTEXT METADATA:
-- Filename: "{{FILENAME}}"
-- Hint: The filename often contains the names of the Guest or Host (e.g. "with Sam Harris"). Use this to identify speakers if they are not explicitly introduced in the text.
+FILENAME: "{{FILENAME}}"
+(Filenames often contain guest names like "with Sam Harris" or "John Doe Interview". If the filename contains a recognizable podcast show name, use your knowledge to identify that show's host as a speaker.)
 
-TASK:
-Identify the unique HUMAN speakers in the transcript.
+TASK: Identify the unique HUMAN speakers whose voices appear in this recording.
 
-CRITICAL RULES:
-1. IGNORE AD READS: Many audio files start with 1-2 minutes of Advertisements or Sponsor Reads. Do NOT include speakers who ONLY appear in the first 2 minutes reading an ad (unless they are the main host). Focus on identifying the Main Participants.
-2. Only humans may be speakers
-3. Locations, shows, networks, states are NEVER speakers (e.g., "New York", "NBC", "Pod Save America" are NOT speakers)
-4. Ads → advertiser
-5. Clips/montages → quoted_audio
-6. One human = one speaker ID (consolidate if same person mentioned differently)
-7. If uncertain, prefer fewer speakers over more
-8. If you cannot identify a name, set name to null
-9. LATE INTRODUCTIONS: The transcript may include segments marked [LATE-N] from later in the audio. These are high-probability introductions. You MUST include any new speakers identified from these segments in your roster. Do NOT ignore them just because they appear later.
-10. NAME VALIDATION: A valid human name is 1–3 words (maximum 4 in rare cases like "Mary Jane Watson Parker"). NEVER extract a phrase, clause, or sentence fragment as a name. Examples of INVALID names: "in full support of pressuring", "so happy to share the stage", "speaking now is the next". If you cannot isolate a clean 1–3 word name, set name to null.
-11. ID FORMAT: Every speaker ID MUST be "speaker_1", "speaker_2", etc. Do NOT use the person's name or role as the ID field.
+KEY RULES:
+1. SPEAKERS vs MENTIONED: Only extract people whose voice we HEAR. If someone is talked ABOUT but never speaks, they are NOT a speaker.
+   - "As John said last week..." → John is mentioned, not speaking
+   - "I'm John, thanks for having me" → John IS speaking
 
-ALLOWED ROLES (strict enum):
-- host
-- co_host
-- guest
-- narrator
-- advertiser
-- quoted_audio
-- unknown
+2. AD READS: The first 1-2 minutes often contain sponsor reads. If a voice ONLY appears reading ads and never in the main conversation, classify as role=advertiser.
+
+3. CONSOLIDATION: One person = one speaker ID. If "Jessica" and "Jess" are the same person, merge them.
+
+4. NAME EXTRACTION: Only extract FULL PROPER NAMES:
+   - Valid: "Olami Olaleri", "Sam Harris", "Dr. Jane Smith", "JJ"
+   - INVALID: Adjectives ("Nigerian", "American"), possessives ("your second"), phrases ("the one"), descriptors ("student", "candidate")
+   - If you see "My name is Olami" but also "I'm Nigerian" → extract "Olami", NOT "Nigerian"
+   - If you cannot extract a clean proper name, set name to null
+
+5. SPEAKER COUNT: The audio diarization detected {{CLUSTER_COUNT}} distinct voice clusters.
+   - Aim to identify all {{CLUSTER_COUNT}} speakers if transcript evidence supports it.
+   - If you cannot determine a name, list the speaker as name: null — do NOT merge distinct voices just to reduce the count.
+   - Only collapse two clusters into one speaker if you have clear evidence they are the same person (e.g. same self-ID appears in both clusters).
+{{#if EXPECTED_SPEAKER_COUNT}}
+   - IMPORTANT: The user expects exactly {{EXPECTED_SPEAKER_COUNT}} distinct speakers. If you can only identify fewer, still list all {{EXPECTED_SPEAKER_COUNT}} — use name: null for any you cannot identify from the text.
+{{/if}}
+
+6. LATE INTRODUCTIONS: Segments marked [LATE-N] are from later in the audio - still include any new speakers found there.
+
+6. NAME FORMAT:
+   - Valid: "Sam Harris", "Dr. Jane Smith", "JJ" (1-3 words)
+   - Invalid: "in full support of", "so happy to be here", "speaking now is"
+   - If you can't extract a clean name, set name to null
+
+ROLES (strict enum):
+- host: Main presenter/interviewer
+- co_host: Secondary presenter
+- guest: Interview subject or panel member
+- narrator: Voice-over that isn't a conversation participant
+- advertiser: Only appears in ad reads
+- quoted_audio: Audio clips/montages from other sources
+- unknown: Cannot determine role
+
+CONFIDENCE CALIBRATION:
+- 0.95: Explicit self-ID ("I'm Jessica Tarlov")
+- 0.85: Introduced by another speaker ("Joining us is Dr. Patel")
+- 0.75: Clear from conversational context
+- 0.60: Inferred from filename or weak evidence
 
 OUTPUT (JSON ONLY):
 {
@@ -78,7 +139,7 @@ OUTPUT (JSON ONLY):
       "id": "speaker_1",
       "name": "Full Name or null",
       "role": "host|co_host|guest|narrator|advertiser|quoted_audio|unknown",
-      "confidence": 0.0-1.0
+      "confidence": 0.60-0.95
     }
   ]
 }
@@ -86,7 +147,7 @@ OUTPUT (JSON ONLY):
 TRANSCRIPT:
 {{UTTERANCES}}
 
-Return ONLY the JSON object. No explanations.`;
+Return ONLY the JSON object.`;
 
 /**
  * PASS 1: GPT Speaker Intelligence
@@ -107,6 +168,7 @@ export async function identifySpeakersWithGPT(
     userId?: string;
     projectId?: string;
     filename?: string;
+    speakerCount?: number;
   } = {}
 ): Promise<GPTSpeakerIntelligenceResult> {
   const apiKey = options.apiKey || process.env.OPENAI_API_KEY;
@@ -114,8 +176,8 @@ export async function identifySpeakersWithGPT(
     throw new Error('OPENAI_API_KEY required for speaker intelligence');
   }
 
-  const openai = new OpenAI({ apiKey });
-  const model = options.model || 'gpt-4o';
+  const openai = new OpenAI({ apiKey, timeout: 120000 });
+  const model = options.model || 'gpt-5';
   const maxUtterances = options.maxUtterances || 150;
   const filename = options.filename || 'unknown_file';
 
@@ -124,16 +186,26 @@ export async function identifySpeakersWithGPT(
   console.log(`[GPT SPEAKER INTELLIGENCE] Filename context: "${filename}"`);
 
   // Build utterance context
-  const utteranceContext = buildUtteranceContext(segments, maxUtterances);
+  const { context: utteranceContext, clusterCount } = buildUtteranceContext(segments, maxUtterances);
+  console.log(`[GPT SPEAKER INTELLIGENCE] Raw diarization clusters detected: ${clusterCount}`);
   let userPrompt = GPT_USER_PROMPT_TEMPLATE.replace('{{UTTERANCES}}', utteranceContext);
+  userPrompt = userPrompt.replace(/\{\{CLUSTER_COUNT\}\}/g, String(clusterCount));
   userPrompt = userPrompt.replace('{{FILENAME}}', filename);
+
+  // Handle EXPECTED_SPEAKER_COUNT conditional block
+  if (options.speakerCount) {
+    userPrompt = userPrompt.replace(/\{\{EXPECTED_SPEAKER_COUNT\}\}/g, String(options.speakerCount));
+    userPrompt = userPrompt.replace(/\{\{#if EXPECTED_SPEAKER_COUNT\}\}/g, '');
+    userPrompt = userPrompt.replace(/\{\{\/if\}\}/g, '');
+    console.log(`[GPT SPEAKER INTELLIGENCE] User-specified speakerCount hint: ${options.speakerCount}`);
+  } else {
+    userPrompt = userPrompt.replace(/\{\{#if EXPECTED_SPEAKER_COUNT\}\}[\s\S]*?\{\{\/if\}\}/g, '');
+  }
 
   try {
     const response = await openai.chat.completions.create({
       model,
-      temperature: 0.0,
-      top_p: 1,
-      max_tokens: 2000,
+      max_completion_tokens: 6000,
       messages: [
         { role: 'system', content: GPT_SYSTEM_PROMPT },
         { role: 'user', content: userPrompt }
@@ -157,15 +229,87 @@ export async function identifySpeakersWithGPT(
 
     // Parse and validate
     const parsed = JSON.parse(rawResponse);
-    const speakers: GPTSpeaker[] = Array.isArray(parsed.speakers) ? parsed.speakers : [];
+    let speakers: GPTSpeaker[] = Array.isArray(parsed.speakers) ? parsed.speakers : [];
 
     console.log(`[GPT SPEAKER INTELLIGENCE] GPT identified ${speakers.length} speakers`);
+
+    // Warn on empty roster (GPT returned no speakers)
+    if (speakers.length === 0) {
+      console.warn('[GPT SPEAKER INTELLIGENCE] WARNING: GPT returned 0 speakers — downstream passes will use fallback roster');
+    }
+
+    // Strip speakers without an id field before validation
+    const preSanitizeCount = speakers.length;
+    speakers = speakers.filter(s => typeof s.id === 'string' && s.id.trim().length > 0);
+    if (speakers.length < preSanitizeCount) {
+      console.warn(`[GPT SPEAKER INTELLIGENCE] Stripped ${preSanitizeCount - speakers.length} speaker(s) missing 'id' field`);
+    }
 
     // Validate speakers
     const validationErrors = validateGPTSpeakers(speakers);
 
     if (validationErrors.length > 0) {
       console.warn('[GPT SPEAKER INTELLIGENCE] Validation errors:', validationErrors);
+    }
+
+    // Sanitize invalid names
+    const sanitizedErrors: string[] = [];
+    speakers = speakers.map(speaker => {
+      if (!speaker.name) return speaker;
+      if (isValidSpeakerName(speaker.name)) return speaker;
+      sanitizedErrors.push(`Sanitized invalid name "${speaker.name}" for ${speaker.id}`);
+      return { ...speaker, name: null };
+    });
+
+    if (sanitizedErrors.length > 0) {
+      console.warn('[GPT SPEAKER INTELLIGENCE] Sanitized names:', sanitizedErrors);
+      validationErrors.push(...sanitizedErrors);
+    }
+
+    // ── Post-process fallback: ensure at least one host is identified ──
+    // If GPT returned `role=unknown` for a speaker and no host exists, promote the
+    // unknown speaker to host. This prevents the anchor system from producing zero
+    // host-affinity anchors (which cascades into all-acoustic_only attribution).
+    const hasHost = speakers.some(s => s.role === 'host' || s.role === 'co_host');
+    if (!hasHost && speakers.length >= 2) {
+      const unknowns = speakers.filter(s => s.role === 'unknown');
+      if (unknowns.length === 1) {
+        // Exactly one unknown + no host → the unknown is almost certainly the host
+        const promoted = unknowns[0];
+        speakers = speakers.map(s =>
+          s.id === promoted.id ? { ...s, role: 'host' as SpeakerRole } : s
+        );
+        console.log(`[GPT SPEAKER INTELLIGENCE] Post-process: promoted sole unknown "${promoted.name || '(unnamed)'}" to host (no host found in GPT output)`);
+      } else if (unknowns.length === 0) {
+        // All roles assigned but no host — find the most question-asking speaker as host
+        // Proxy: count question marks per raw cluster, map to roster speaker
+        const questionCounts = new Map<string, number>();
+        for (const seg of segments) {
+          const qCount = (seg.text.match(/\?/g) || []).length;
+          if (qCount > 0) {
+            const id = seg.speakerId;
+            questionCounts.set(id, (questionCounts.get(id) || 0) + qCount);
+          }
+        }
+        if (questionCounts.size > 0) {
+          // Find the speaker ID with the most questions
+          let maxQ = 0;
+          let hostCandidate: string | null = null;
+          for (const [id, count] of questionCounts) {
+            if (count > maxQ) { maxQ = count; hostCandidate = id; }
+          }
+          if (hostCandidate) {
+            const speaker = speakers.find(s => s.id === hostCandidate);
+            if (speaker && speaker.role === 'guest') {
+              // Only promote guest→host if it clearly dominates
+              speakers = speakers.map(s =>
+                s.id === hostCandidate ? { ...s, role: 'host' as SpeakerRole } : s
+              );
+              console.log(`[GPT SPEAKER INTELLIGENCE] Post-process: promoted "${speaker.name || '(unnamed)'}" from guest to host (most questions: ${maxQ})`);
+            }
+          }
+        }
+      }
     }
 
     // Log identified speakers
@@ -201,6 +345,11 @@ const INTRODUCTION_PATTERNS = [
   /our next (?:guest|speaker|panelist)/i,
   /please welcome/i,
   /thanks for (?:being|joining|coming)/i,
+  // Panel handoffs: "Tony, let's bring you in..." / "Alex, at Ocado..."
+  /\b[A-Z][a-z]{1,},\s+(?:let'?s bring you|let me bring you|can you take us|what'?s your)/i,
+  /\b[A-Z][a-z]{1,},\s+at [A-Z][a-zA-Z]+/i,
+  // Moderator hand-off: "Tony, you've mentioned..." / "Alex, how do you..."
+  /\b[A-Z][a-z]{1,},\s+(?:you(?:'ve| have| were| are)|how do you|what do you|I want to)/i,
 ];
 
 /**
@@ -214,7 +363,7 @@ const INTRODUCTION_PATTERNS = [
 export function extractRosterContext(
   segments: SpeakerSegment[],
   maxUtterances: number = 150
-): string {
+): { context: string; clusterCount: number } {
   // Group consecutive same-speaker segments
   const grouped: Array<{ speakerId: string; text: string; start: number; end: number }> = [];
 
@@ -286,7 +435,23 @@ export function extractRosterContext(
     }).join('\n');
   }
 
-  return context;
+  // Compute raw cluster counts from initialSpeakerId (pre-pass-2 voice clusters)
+  const clusterCounts = new Map<string, number>();
+  for (const seg of segments) {
+    const rawId = (seg as any).initialSpeakerId || seg.speakerId;
+    if (rawId) clusterCounts.set(rawId, (clusterCounts.get(rawId) || 0) + 1);
+  }
+
+  if (clusterCounts.size > 1) {
+    context += '\n\n--- RAW DIARIZATION CLUSTERS ---\n';
+    context += `Audio diarization detected ${clusterCounts.size} distinct speaker voice clusters:\n`;
+    for (const [id, count] of clusterCounts) {
+      context += `  ${id}: ${count} segments\n`;
+    }
+    context += 'Each cluster is an acoustically distinct voice. Only merge two clusters if you have strong evidence they are the same person.\n';
+  }
+
+  return { context, clusterCount: clusterCounts.size };
 }
 
 /**
@@ -296,7 +461,7 @@ export function extractRosterContext(
 function buildUtteranceContext(
   segments: SpeakerSegment[],
   maxUtterances: number
-): string {
+): { context: string; clusterCount: number } {
   return extractRosterContext(segments, maxUtterances);
 }
 
@@ -325,6 +490,17 @@ function validateGPTSpeakers(speakers: GPTSpeaker[]): string[] {
   ];
 
   for (const speaker of speakers) {
+    // Check required fields
+    if (!speaker.id || typeof speaker.id !== 'string') {
+      errors.push(`Speaker missing required 'id' field`);
+    }
+    if (!speaker.role || typeof speaker.role !== 'string') {
+      errors.push(`Speaker ${speaker.id || '(unknown)'} missing required 'role' field`);
+    }
+    if (typeof speaker.confidence !== 'number') {
+      errors.push(`Speaker ${speaker.id || '(unknown)'} missing required 'confidence' field`);
+    }
+
     // Check role validity
     if (!validRoles.includes(speaker.role)) {
       errors.push(`Invalid role "${speaker.role}" for speaker ${speaker.id}`);
@@ -344,9 +520,87 @@ function validateGPTSpeakers(speakers: GPTSpeaker[]): string[] {
     if (duplicates.length > 0) {
       errors.push(`Duplicate name "${speaker.name}" assigned to multiple speaker IDs`);
     }
+
+    if (speaker.name && !isValidSpeakerName(speaker.name)) {
+      errors.push(`Speaker name "${speaker.name}" fails validation (not a human name)`);
+    }
   }
 
   return errors;
+}
+
+// Common short English words that should NEVER be speaker names.
+// Checked before the initials check to prevent "in", "so", "not" etc.
+// from being treated as valid initials/nicknames.
+const COMMON_NON_NAME_WORDS = new Set([
+  // Prepositions and conjunctions
+  'in', 'on', 'at', 'to', 'by', 'of', 'or', 'an', 'as', 'if', 'so', 'no', 'up',
+  // Pronouns
+  'me', 'we', 'he', 'us', 'it', 'my',
+  // Short verbs
+  'am', 'is', 'be', 'do', 'go',
+  // Negation and other function words
+  'not', 'but', 'yet', 'nor', 'for', 'and', 'the',
+  // Common fillers and interjections
+  'oh', 'ok', 'ah', 'um', 'uh',
+  // Other common short words
+  'all', 'too', 'now', 'out', 'off', 'own', 'its', 'has', 'had', 'was', 'are',
+  'her', 'his', 'our', 'who', 'how', 'why', 'can', 'did', 'got', 'get', 'let',
+  'say', 'see', 'may', 'way', 'day', 'old', 'new', 'big', 'few', 'far', 'ago',
+  'run', 'put', 'set', 'try', 'ask', 'use', 'lot', 'bit', 'per', 'via', 'yes',
+]);
+
+function isValidSpeakerName(name: string): boolean {
+  const cleaned = name.trim();
+  if (!cleaned) return false;
+
+  const words = cleaned.split(/\s+/);
+  if (words.length === 0 || words.length > 3) return false;
+
+  // CRITICAL: Check common English words BEFORE the initials check.
+  // This prevents "in", "so", "not" from being treated as initials.
+  if (words.length === 1 && COMMON_NON_NAME_WORDS.has(cleaned.toLowerCase())) {
+    return false;
+  }
+
+  // Allow initials/nicknames: single word, 2-3 chars, all same case (JJ, DJ, jj, etc.)
+  const isInitials = words.length === 1 && (/^[A-Z]{2,3}$/.test(cleaned) || /^[a-z]{2,3}$/.test(cleaned));
+  if (isInitials) {
+    return true; // Initials are valid (common words already filtered above)
+  }
+
+  const hasUppercase = /[A-Z]/.test(cleaned);
+  if (!hasUppercase) return false;
+
+  const stopwords = new Set([
+    // Articles and conjunctions
+    'the', 'a', 'an', 'and', 'or', 'of', 'to', 'for', 'with', 'on', 'in', 'at',
+    'by', 'from', 'this', 'that', 'these', 'those',
+    // Possessives
+    'my', 'your', 'his', 'her', 'their', 'our',
+    // Modals and verbs
+    'could', 'would', 'should', 'expecting', 'hammering', 'spreading',
+    // Greetings
+    'welcome', 'thanks', 'hello', 'hi', 'please',
+    // Ordinals and sequence words
+    'first', 'second', 'third', 'last', 'next', 'final',
+    // Nationalities (adjectives, not names)
+    'nigerian', 'american', 'canadian', 'british', 'indian', 'chinese', 'japanese',
+    'african', 'european', 'asian', 'mexican', 'brazilian', 'australian',
+    // Role descriptors
+    'student', 'candidate', 'host', 'moderator', 'speaker', 'guest', 'interviewer',
+    'person', 'guy', 'man', 'woman', 'people',
+  ]);
+
+  for (const word of words) {
+    const normalized = word.replace(/[^\w'.-]/g, '').toLowerCase();
+    if (!normalized) return false;
+    if (stopwords.has(normalized)) return false;
+    if (!/^[A-Za-z.'-]+$/.test(word)) return false;
+    if (word.length > 24) return false;
+  }
+
+  return true;
 }
 
 /**

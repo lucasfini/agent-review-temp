@@ -23,7 +23,7 @@
 // Public API unchanged: performAnchorMapping(segments, roster) → segments
 
 import { GPTSpeaker } from './gpt-speaker-intelligence';
-import { SpeakerSegment } from './types';
+import { SpeakerSegment, SpeakerIdentityProfile } from './types';
 import {
   Anchor,
   ClusterAssignment,
@@ -39,6 +39,7 @@ import {
   CONFIDENCE_THRESHOLD,
 } from './confidence-scoring';
 import { reconcile } from './reconciliation-pass';
+import { acousticSimilarity, PROFILE_THRESHOLDS } from './speaker-profiles';
 
 // ─────────────────────────────────────────────
 // Takeback Patterns (used by the linear resolver)
@@ -64,6 +65,19 @@ export interface AnchorMappingOptions {
   enableIntroOverride?: boolean;
   introOverrideEvents?: IntroOverrideEvent[];
   introSelfIdCounts?: Record<string, number>;
+  clusterProfiles?: Record<string, SpeakerIdentityProfile>;
+  identityProfiles?: Record<string, SpeakerIdentityProfile>;
+}
+
+function detectContext(roster: GPTSpeaker[]): 'podcast' | 'debate' {
+  const candidateCount = roster.filter(s => s.role === 'candidate' || s.role === 'guest').length;
+  const hasHost = roster.some(s => s.role === 'host' || s.role === 'co_host');
+
+  // Debate: multiple candidates + host
+  if (candidateCount >= 3 && hasHost) return 'debate';
+
+  // Podcast: 1-2 guests + host
+  return 'podcast';
 }
 
 export function performAnchorMapping(
@@ -73,6 +87,9 @@ export function performAnchorMapping(
 ): SpeakerSegment[] {
   console.log(`\n[ANCHOR] ═══ CSP-Based Anchor Mapping ═══`);
   console.log(`[ANCHOR] ${segments.length} segments, ${roster.length} roster entries`);
+
+  const context = detectContext(roster);
+  console.log(`[ANCHOR] Detected context: ${context}`);
 
   if (segments.length === 0) return [];
   if (roster.length === 0) {
@@ -87,6 +104,7 @@ export function performAnchorMapping(
     enableIntroOverride: options.enableIntroOverride,
     introOverrideEvents: options.introOverrideEvents,
     introSelfIdCounts: options.introSelfIdCounts,
+    identityProfiles: options.identityProfiles,
   });
   if (options.introOverrideEvents && options.introOverrideEvents.length > 0) {
     console.log(`[ANCHOR] Intro override events: ${options.introOverrideEvents.length}`);
@@ -94,8 +112,17 @@ export function performAnchorMapping(
       console.log(`[ANCHOR]   seg ${e.segmentIndex}: handoff "${e.handoffName}" overridden by self-ID "${e.selfIdName}"`);
     });
   }
-  const matrix = buildAffinityMatrix(segments, roster, anchors);
-  const assignments = solveConstraints(matrix, roster);
+  const matrix = buildAffinityMatrix(segments, roster, anchors, {
+    clusterProfiles: options.clusterProfiles,
+    identityProfiles: options.identityProfiles,
+    context,
+  });
+  // Compute cluster segment counts for fallback distribution
+  const clusterSegmentCounts = new Map<string, number>();
+  for (const seg of segments) {
+    clusterSegmentCounts.set(seg.speakerId, (clusterSegmentCounts.get(seg.speakerId) || 0) + 1);
+  }
+  const assignments = solveConstraints(matrix, roster, undefined, clusterSegmentCounts);
 
   // ── Phase 1: Confidence Scoring ──
   console.log('\n[ANCHOR] ── Phase 1: Confidence Scoring ──');
@@ -106,12 +133,17 @@ export function performAnchorMapping(
   // For clusters the CSP marked as contested, use linear context
   // to assign individual segments (simplified baton pass)
   console.log('\n[ANCHOR] ── Contested Segment Resolution ──');
-  scored = resolveContestedSegments(scored, anchors, assignments, roster);
+  scored = resolveContestedSegments(scored, anchors, assignments, roster, options.identityProfiles);
 
   // ── Phase 3: Post-Hoc Reconciliation ──
   console.log('\n[ANCHOR] ── Phase 3: Post-Hoc Reconciliation ──');
   const { segments: reconciled, repairs } = reconcile(
-    scored, anchors, assignments, roster
+    scored,
+    anchors,
+    assignments,
+    roster,
+    undefined,
+    { identityProfiles: options.identityProfiles, clusterProfiles: options.clusterProfiles }
   );
 
   // ── Final Summary ──
@@ -130,11 +162,13 @@ export function performAnchorMapping(
     speakerId: seg.assignedIdentity || seg.clusterId,
     finalSpeakerId: seg.assignedIdentity || seg.clusterId,
     initialSpeakerId: seg.clusterId,
+    rawClusterId: seg.clusterId,
     text: seg.text,
     startTime: seg.startTime,
     endTime: seg.endTime,
     confidence: seg.confidence,
     status: seg.status,
+    confidenceReason: seg.confidenceReason,
   }));
 }
 
@@ -158,7 +192,8 @@ function resolveContestedSegments(
   segments: ScoredSegment[],
   anchors: Anchor[],
   assignments: ClusterAssignment[],
-  roster: GPTSpeaker[]
+  roster: GPTSpeaker[],
+  identityProfiles?: Record<string, SpeakerIdentityProfile>
 ): ScoredSegment[] {
   const contestedClusters = new Set(
     assignments.filter(a => a.contested).map(a => a.clusterId)
@@ -192,6 +227,8 @@ function resolveContestedSegments(
   // Track current identity through the linear walk
   let currentIdentity: string | null = hostEntry?.id ?? null;
   const updated = segments.map(s => ({ ...s, factors: { ...s.factors } }));
+  let profileMismatchHoldsPrevented = 0;
+  let hostRoleSwitchPrevented = 0;
 
   for (let i = 0; i < updated.length; i++) {
     const seg = updated[i];
@@ -216,6 +253,20 @@ function resolveContestedSegments(
         const sb = b.strength === 'strong' ? 3 : b.strength === 'medium' ? 2 : 1;
         return sb - sa;
       })[0];
+
+      const targetRole = roster.find(r => r.id === best.targetIdentityId)?.role;
+      const currentRole = currentIdentity ? roster.find(r => r.id === currentIdentity)?.role : undefined;
+      const isHostRole = (role?: string) => role === 'host' || role === 'co_host';
+      const isGuestRole = (role?: string) => role === 'guest' || role === 'candidate' || role === 'unknown';
+
+      if (
+        best.direction !== 'self' &&
+        currentIdentity &&
+        ((isHostRole(currentRole) && isGuestRole(targetRole)) || (isGuestRole(currentRole) && isHostRole(targetRole)))
+      ) {
+        hostRoleSwitchPrevented++;
+        continue;
+      }
 
       const name = roster.find(r => r.id === best.targetIdentityId)?.name || best.targetIdentityId;
       const reason = best.direction === 'self' ? 'strong_self_id' as const : 'handoff_consensus' as const;
@@ -263,8 +314,55 @@ function resolveContestedSegments(
       continue;
     }
 
-    // ── Priority 3: Baton hold ──
+    // ── Priority 3: CSP cluster assignment (overrides baton hold) ──
+    // If this cluster has a CSP assignment different from the current baton,
+    // prefer the CSP assignment. This prevents unassigned clusters from being
+    // swept up by the host's baton hold.
+    const clusterAssignment = assignments.find(a => a.clusterId === seg.clusterId);
+    if (clusterAssignment && clusterAssignment.identityId !== currentIdentity) {
+      const name = roster.find(r => r.id === clusterAssignment.identityId)?.name || clusterAssignment.identityId;
+      updated[i] = {
+        ...seg,
+        assignedIdentity: clusterAssignment.identityId,
+        assignedName: name,
+        tentative: clusterAssignment.score < 0.1,
+        confidenceReason: 'acoustic_only' as const,
+        factors: {
+          ...seg.factors,
+          anchorStrength: Math.max(seg.factors.anchorStrength, 0.3),
+        },
+      };
+      currentIdentity = clusterAssignment.identityId;
+      continue;
+    }
+
+    // ── Priority 4: Baton hold ──
     if (currentIdentity) {
+      const segEmbedding = (seg as any).embedding as number[] | undefined;
+      const currentProfile = identityProfiles?.[currentIdentity];
+      if (segEmbedding && currentProfile?.acoustic?.centrdEmbedding) {
+        const sim = acousticSimilarity(
+          { acoustic: { centrdEmbedding: segEmbedding, variance: 0 } },
+          currentProfile
+        );
+        if (sim < PROFILE_THRESHOLDS.acousticSimilarityMin) {
+          profileMismatchHoldsPrevented++;
+          updated[i] = {
+            ...seg,
+            assignedIdentity: null,
+            assignedName: null,
+            tentative: true,
+            confidenceReason: 'posthoc_repair' as const,
+            reconciliationReason: 'acoustic_conflict_resolution' as const,
+            factors: {
+              ...seg.factors,
+              acousticConsistency: 0.2,
+            },
+          };
+          continue;
+        }
+      }
+
       const name = roster.find(r => r.id === currentIdentity)?.name || currentIdentity;
       updated[i] = {
         ...seg,
@@ -277,6 +375,10 @@ function resolveContestedSegments(
         },
       };
     }
+  }
+
+  if (profileMismatchHoldsPrevented > 0 || hostRoleSwitchPrevented > 0) {
+    console.log(`[ANCHOR] profileMismatchHoldsPrevented=${profileMismatchHoldsPrevented}, hostRoleSwitchPrevented=${hostRoleSwitchPrevented}`);
   }
 
   return updated;

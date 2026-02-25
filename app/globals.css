@@ -120,3 +120,8 @@
     @apply bg-background text-foreground;
   }
 }
+
+@keyframes banner-sweep {
+  0%   { transform: translateX(-150%); }
+  100% { transform: translateX(350%); }
+}

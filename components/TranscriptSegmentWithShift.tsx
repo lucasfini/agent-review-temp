@@ -6,6 +6,7 @@ import { ChevronDown, ChevronUp, MoreHorizontal, UserCheck, AlertTriangle } from
 type Segment = {
   id: string;
   speakerId: string;
+  finalSpeakerId?: string;
   text: string;
   startTime: number;
   endTime?: number;

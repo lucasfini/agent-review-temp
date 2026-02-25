@@ -188,10 +188,9 @@ export async function transcribeWithAssemblyAI(
       console.log(`[ASSEMBLYAI] 📋 Full utterances count: ${transcript.utterances.length}\n`);
     }
 
-    // Get duration from transcript (in milliseconds)
-    const durationMs = transcript.audio_duration || 0;
-    const durationSeconds = durationMs / 1000;
-    console.log(`[ASSEMBLYAI] 📊 Audio duration: ${durationSeconds.toFixed(1)}s (${durationMs}ms from API)`);
+    // Get duration from transcript (AssemblyAI returns audio_duration in seconds)
+    const durationSeconds = transcript.audio_duration || 0;
+    console.log(`[ASSEMBLYAI] 📊 Audio duration: ${durationSeconds.toFixed(1)}s (${(durationSeconds / 60).toFixed(1)} min from API)`);
     console.log(`[ASSEMBLYAI] 📊 Confidence: ${(transcript.confidence! * 100).toFixed(1)}%`);
 
     // Fallback: If duration seems wrong (less than 1 second for a multi-MB file), estimate from file size
@@ -283,7 +282,7 @@ function convertAssemblyAIResponse(
     transcription_segments: transcriptionSegments,
     speaker_segments: speakerSegments,
     metadata: {
-      audio_duration: actualDuration !== undefined ? actualDuration : (transcript.audio_duration || 0) / 1000,
+      audio_duration: actualDuration !== undefined ? actualDuration : (transcript.audio_duration || 0),
       processing_time: processingTime,
       total_speakers: uniqueSpeakers,
       total_segments: speakerSegments.length,
@@ -292,7 +291,7 @@ function convertAssemblyAIResponse(
       speech_model: transcript.speech_model || undefined,
       cost_usd: actualDuration !== undefined
         ? (actualDuration / 3600) * 0.27  // $0.27 per hour
-        : ((transcript.audio_duration || 0) / 1000 / 3600) * 0.27
+        : ((transcript.audio_duration || 0) / 3600) * 0.27
     }
   };
 }

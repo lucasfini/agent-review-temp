@@ -106,6 +106,7 @@ function InsightCard({ opportunity, showProject, formatRelativeDate, status }: I
                 : "bg-green-100 text-green-700"
             )}>
               {opportunity.type}
+              <span className="sr-only"> — severity: {opportunity.severity}</span>
             </span>
           </div>
           <p className="text-xs text-gray-500 mt-0.5">
@@ -176,7 +177,7 @@ export function InsightsGrid({
         <TrendingUp className="h-10 w-10 text-gray-400 mx-auto mb-3" />
         <h4 className="text-sm font-medium text-gray-900 mb-1">No insights yet</h4>
         <p className="text-sm text-gray-500">
-          Run coverage analysis on your projects to discover opportunities and gaps.
+          Run analytics on your projects to discover opportunities and gaps.
         </p>
       </div>
     )
@@ -209,8 +210,8 @@ export function InsightsGrid({
   const finalDisplayOrder = [...gaps, ...mediumItems, ...otherOpportunities, ...pausedOps];
 
   return (
-    <div className="space-y-6">
-      
+    <div className="space-y-6" role="region" aria-label="Opportunities and gaps insights">
+
       {/* Section Header */}
       <div className="flex items-center justify-between">
         <div>
@@ -222,16 +223,16 @@ export function InsightsGrid({
         </div>
         <div className="flex items-center gap-3 text-xs">
           <span className="flex items-center gap-1.5">
-            <span className="w-2.5 h-2.5 rounded-full bg-red-500" />
+            <span className="w-2.5 h-2.5 rounded-full bg-red-500" aria-hidden="true" />
             <span className="text-gray-600">Gaps ({gaps.length})</span>
           </span>
           <span className="flex items-center gap-1.5">
-            <span className="w-2.5 h-2.5 rounded-full bg-amber-500" />
+            <span className="w-2.5 h-2.5 rounded-full bg-amber-500" aria-hidden="true" />
             <span className="text-gray-600">Needs attention ({mediumItems.length})</span>
           </span>
           {pausedOps.length > 0 && (
              <span className="flex items-center gap-1.5">
-               <span className="w-2.5 h-2.5 rounded-full bg-gray-400" />
+               <span className="w-2.5 h-2.5 rounded-full bg-gray-400" aria-hidden="true" />
                <span className="text-gray-600">Paused ({pausedOps.length})</span>
              </span>
           )}

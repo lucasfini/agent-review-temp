@@ -4,6 +4,8 @@
 
 import JSZip from 'jszip';
 import { jsPDF } from 'jspdf';
+import { formatTime } from '@/lib/time-utils';
+import { getSpeakerDisplayName } from '@/lib/name-extraction';
 
 interface ExportOutput {
   id: string;
@@ -60,6 +62,14 @@ export interface ExportManifestItem {
 }
 
 export type ExportFormat = 'markdown' | 'pdf' | 'json' | 'plaintext';
+
+interface SpeakerRosterEntry {
+  id: string;
+  name: string;
+  role?: string | null;
+  segmentCount: number;
+  totalDuration: number;
+}
 
 /**
  * Sanitize filename for filesystem
@@ -139,6 +149,64 @@ function formatDuration(seconds: number): string {
   return `${mins}:${secs.toString().padStart(2, '0')}`;
 }
 
+function formatRoleLabel(role?: string | null): string | null {
+  if (!role) return null;
+  return role
+    .replace(/_/g, ' ')
+    .replace(/\b\w/g, (char) => char.toUpperCase());
+}
+
+function parseSpeakerData(project: ExportProject): any | null {
+  if (!project.speaker_data) return null;
+  if (typeof project.speaker_data === 'string') {
+    try {
+      return JSON.parse(project.speaker_data);
+    } catch {
+      return null;
+    }
+  }
+  return project.speaker_data;
+}
+
+function buildSpeakerRoster(speakerData: any): SpeakerRosterEntry[] {
+  if (!speakerData?.speakers) return [];
+  const segments = Array.isArray(speakerData.segments) ? speakerData.segments : [];
+  const totals: Record<string, { duration: number; count: number }> = {};
+
+  for (const seg of segments) {
+    const speakerId = seg.finalSpeakerId || seg.speakerId;
+    if (!speakerId) continue;
+    const duration = Number.isFinite(seg.endTime) && Number.isFinite(seg.startTime)
+      ? Math.max(0, seg.endTime - seg.startTime)
+      : 0;
+    if (!totals[speakerId]) {
+      totals[speakerId] = { duration: 0, count: 0 };
+    }
+    totals[speakerId].duration += duration;
+    totals[speakerId].count += 1;
+  }
+
+  const roster = Object.entries(speakerData.speakers).map(([id, speaker]: [string, any]) => ({
+    id,
+    name: getSpeakerDisplayName({ ...speaker, id }),
+    role: speaker?.role || null,
+    segmentCount: totals[id]?.count || 0,
+    totalDuration: totals[id]?.duration || 0,
+  }));
+
+  return roster.sort((a, b) => b.totalDuration - a.totalDuration);
+}
+
+function formatConversationTimestamp(startTime?: number, endTime?: number): string {
+  if (!Number.isFinite(startTime)) return '[00:00]';
+  const start = formatTime(startTime as number);
+  const duration = Number.isFinite(endTime)
+    ? Math.max(0, (endTime as number) - (startTime as number))
+    : null;
+  if (duration === null) return `[${start}]`;
+  return `[${start} + ${duration.toFixed(1)}s]`;
+}
+
 /**
  * Format core content as markdown
  */
@@ -165,21 +233,35 @@ ${project.transcription_text}
 `;
 
     case 'conversation':
-      if (!project.transcription_text || !project.speaker_data) return null;
-      const speakerData = typeof project.speaker_data === 'string'
-        ? JSON.parse(project.speaker_data)
-        : project.speaker_data;
+      if (!project.speaker_data) return null;
+      const speakerData = parseSpeakerData(project);
+      if (!speakerData) return null;
 
       let conversationText = '';
       if (speakerData.segments) {
         conversationText = speakerData.segments
           .map((seg: any) => {
             const segmentSpeakerId = seg.finalSpeakerId || seg.speakerId;
-            const speakerName = speakerData.speakers?.[segmentSpeakerId]?.finalName || segmentSpeakerId;
-            return `**${speakerName}:** ${seg.text}`;
+            const speakerName = speakerData.speakers?.[segmentSpeakerId]
+              ? getSpeakerDisplayName({ ...speakerData.speakers[segmentSpeakerId], id: segmentSpeakerId })
+              : segmentSpeakerId;
+            const timestamp = formatConversationTimestamp(seg.startTime, seg.endTime);
+            return `**${speakerName}** ${timestamp}: ${seg.text}`;
           })
           .join('\n\n');
       }
+
+      const roster = buildSpeakerRoster(speakerData);
+      const rosterText = roster.length > 0
+        ? roster
+          .map((speaker) => {
+            const roleLabel = formatRoleLabel(speaker.role);
+            const duration = speaker.totalDuration ? ` • ${speaker.totalDuration.toFixed(1)}s` : '';
+            const segments = ` • ${speaker.segmentCount} segment${speaker.segmentCount === 1 ? '' : 's'}`;
+            return `- **${speaker.name}**${roleLabel ? ` — ${roleLabel}` : ''}${duration}${segments}`;
+          })
+          .join('\n')
+        : '- No speakers available';
 
       return `# Conversation
 
@@ -187,6 +269,14 @@ ${project.transcription_text}
 **Exported:** ${date}
 
 ---
+
+## Speakers
+
+${rosterText}
+
+---
+
+## Conversation
 
 ${conversationText || project.transcription_text}
 
@@ -301,21 +391,35 @@ Exported from AudioRepurpose
 `;
 
     case 'conversation':
-      if (!project.transcription_text || !project.speaker_data) return null;
-      const speakerData = typeof project.speaker_data === 'string'
-        ? JSON.parse(project.speaker_data)
-        : project.speaker_data;
+      if (!project.speaker_data) return null;
+      const speakerData = parseSpeakerData(project);
+      if (!speakerData) return null;
 
       let conversationText = '';
       if (speakerData.segments) {
         conversationText = speakerData.segments
           .map((seg: any) => {
             const segmentSpeakerId = seg.finalSpeakerId || seg.speakerId;
-            const speakerName = speakerData.speakers?.[segmentSpeakerId]?.finalName || segmentSpeakerId;
-            return `${speakerName}: ${seg.text}`;
+            const speakerName = speakerData.speakers?.[segmentSpeakerId]
+              ? getSpeakerDisplayName({ ...speakerData.speakers[segmentSpeakerId], id: segmentSpeakerId })
+              : segmentSpeakerId;
+            const timestamp = formatConversationTimestamp(seg.startTime, seg.endTime);
+            return `${timestamp} ${speakerName}: ${seg.text}`;
           })
           .join('\n\n');
       }
+
+      const roster = buildSpeakerRoster(speakerData);
+      const rosterText = roster.length > 0
+        ? roster
+          .map((speaker) => {
+            const roleLabel = formatRoleLabel(speaker.role);
+            const duration = speaker.totalDuration ? ` • ${speaker.totalDuration.toFixed(1)}s` : '';
+            const segments = ` • ${speaker.segmentCount} segment${speaker.segmentCount === 1 ? '' : 's'}`;
+            return `- ${speaker.name}${roleLabel ? ` — ${roleLabel}` : ''}${duration}${segments}`;
+          })
+          .join('\n')
+        : '- No speakers available';
 
       return `CONVERSATION
 ${'='.repeat(12)}
@@ -324,6 +428,13 @@ Project: ${project.title}
 Exported: ${date}
 
 ${'-'.repeat(40)}
+
+SPEAKERS
+${rosterText}
+
+${'-'.repeat(40)}
+
+CONVERSATION
 
 ${conversationText || project.transcription_text}
 
@@ -438,12 +549,18 @@ function formatAsJSON(projects: ExportProject[], manifest: ExportManifestItem[])
         coreContent.transcript = project.transcription_text;
       }
       if (selectedCore.includes('conversation') && project.speaker_data) {
-        const speakerData = typeof project.speaker_data === 'string'
-          ? JSON.parse(project.speaker_data)
-          : project.speaker_data;
+        const speakerData = parseSpeakerData(project);
+        const roster = speakerData ? buildSpeakerRoster(speakerData) : [];
         coreContent.conversation = {
-          speakers: speakerData.speakers,
-          segments: speakerData.segments,
+          speakers: speakerData?.speakers,
+          segments: speakerData?.segments,
+          speakerRoster: roster.length > 0 ? roster.map((speaker) => ({
+            id: speaker.id,
+            name: speaker.name,
+            role: speaker.role || undefined,
+            segmentCount: speaker.segmentCount,
+            totalDuration: speaker.totalDuration,
+          })) : undefined,
         };
       }
       if (selectedCore.includes('summary') && project.ai_summary) {
@@ -480,9 +597,49 @@ function formatAsJSON(projects: ExportProject[], manifest: ExportManifestItem[])
 }
 
 /**
- * Trigger browser download
+ * Map file extension to MIME type for the save picker
  */
-function downloadBlob(blob: Blob, filename: string): void {
+function getMimeType(filename: string): string {
+  const ext = filename.split('.').pop()?.toLowerCase();
+  switch (ext) {
+    case 'json': return 'application/json';
+    case 'pdf': return 'application/pdf';
+    case 'zip': return 'application/zip';
+    case 'md': return 'text/markdown';
+    case 'txt': return 'text/plain';
+    default: return 'application/octet-stream';
+  }
+}
+
+/**
+ * Save blob via native "Save As" dialog (File System Access API).
+ * Falls back to auto-download on unsupported browsers.
+ */
+async function saveBlob(blob: Blob, filename: string): Promise<void> {
+  if (typeof window !== 'undefined' && 'showSaveFilePicker' in window) {
+    try {
+      const ext = filename.split('.').pop() || 'bin';
+      const handle = await (window as any).showSaveFilePicker({
+        suggestedName: filename,
+        types: [
+          {
+            description: ext.toUpperCase() + ' file',
+            accept: { [getMimeType(filename)]: ['.' + ext] },
+          },
+        ],
+      });
+      const writable = await handle.createWritable();
+      await writable.write(blob);
+      await writable.close();
+      return;
+    } catch (err: any) {
+      // User cancelled the dialog — don't fall through to auto-download
+      if (err?.name === 'AbortError') return;
+      // Other errors (e.g. SecurityError) — fall back to auto-download
+    }
+  }
+
+  // Fallback: auto-download to Downloads folder
   const url = URL.createObjectURL(blob);
   const link = document.createElement('a');
   link.href = url;
@@ -574,16 +731,16 @@ async function exportAsZip(
     ? `audiorepurpose-export-${timestamp}.zip`
     : `${sanitizeFilename(projects[0].title)}-export-${timestamp}.zip`;
 
-  downloadBlob(blob, filename);
+  await saveBlob(blob, filename);
 }
 
 /**
  * Export content as a single JSON file
  */
-function exportAsJSON(
+async function exportAsJSON(
   projects: ExportProject[],
   manifest: ExportManifestItem[]
-): void {
+): Promise<void> {
   const content = formatAsJSON(projects, manifest);
   const blob = new Blob([content], { type: 'application/json' });
   const timestamp = new Date().toISOString().split('T')[0];
@@ -592,17 +749,18 @@ function exportAsJSON(
     ? `audiorepurpose-export-${timestamp}.json`
     : `${sanitizeFilename(projects[0].title)}-export-${timestamp}.json`;
 
-  downloadBlob(blob, filename);
+  await saveBlob(blob, filename);
+  void maybeSaveExportLocally(filename, 'json', content);
 }
 
 /**
  * Export as single text/markdown file (non-ZIP for single items)
  */
-function exportAsSingleFile(
+async function exportAsSingleFile(
   projects: ExportProject[],
   manifest: ExportManifestItem[],
   format: 'markdown' | 'plaintext'
-): void {
+): Promise<void> {
   const ext = getExtension(format);
   const allContent: string[] = [];
 
@@ -646,16 +804,16 @@ function exportAsSingleFile(
     ? `audiorepurpose-export-${timestamp}.${ext}`
     : `${sanitizeFilename(projects[0].title)}-export-${timestamp}.${ext}`;
 
-  downloadBlob(blob, filename);
+  await saveBlob(blob, filename);
 }
 
 /**
  * Export content as PDF
  */
-function exportAsPDF(
+async function exportAsPDF(
   projects: ExportProject[],
   manifest: ExportManifestItem[]
-): void {
+): Promise<void> {
   const doc = new jsPDF({
     orientation: 'portrait',
     unit: 'mm',
@@ -741,6 +899,47 @@ function exportAsPDF(
     doc.text('Exported from AudioRepurpose', margin, yPosition);
   };
 
+  const addSpeakersPage = (project: ExportProject, roster: SpeakerRosterEntry[]) => {
+    if (!isFirstItem) {
+      doc.addPage();
+      yPosition = margin;
+    }
+    isFirstItem = false;
+
+    const date = new Date().toLocaleDateString();
+
+    doc.setTextColor(79, 70, 229);
+    addWrappedText('Speakers', 18, true);
+    yPosition += 4;
+
+    doc.setTextColor(100, 100, 100);
+    doc.setFontSize(10);
+    doc.setFont('helvetica', 'normal');
+    doc.text(`Project: ${project.title}`, margin, yPosition);
+    yPosition += 5;
+    doc.text(`Exported: ${date}`, margin, yPosition);
+    yPosition += 8;
+
+    doc.setDrawColor(200, 200, 200);
+    doc.line(margin, yPosition, pageWidth - margin, yPosition);
+    yPosition += 8;
+
+    doc.setTextColor(0, 0, 0);
+    if (roster.length === 0) {
+      addWrappedText('No speakers available.', 11);
+      return;
+    }
+
+    for (const speaker of roster) {
+      const roleLabel = formatRoleLabel(speaker.role);
+      const duration = speaker.totalDuration ? ` • ${speaker.totalDuration.toFixed(1)}s` : '';
+      const segments = ` • ${speaker.segmentCount} segment${speaker.segmentCount === 1 ? '' : 's'}`;
+      const line = `${speaker.name}${roleLabel ? ` — ${roleLabel}` : ''}${duration}${segments}`;
+      addWrappedText(line, 11);
+      yPosition += 2;
+    }
+  };
+
   // Process each project
   for (const project of projects) {
     const manifestItem = manifest.find(m => m.projectId === project.id);
@@ -772,12 +971,15 @@ function exportAsPDF(
           break;
         case 'conversation':
           if (project.speaker_data) {
-            const sd = typeof project.speaker_data === 'string' ? JSON.parse(project.speaker_data) : project.speaker_data;
+            const sd = parseSpeakerData(project);
             if (sd.segments) {
               content = sd.segments.map((seg: any) => {
                 const segmentSpeakerId = seg.finalSpeakerId || seg.speakerId;
-                const name = sd.speakers?.[segmentSpeakerId]?.finalName || segmentSpeakerId;
-                return `${name}: ${seg.text}`;
+                const name = sd.speakers?.[segmentSpeakerId]
+                  ? getSpeakerDisplayName({ ...sd.speakers[segmentSpeakerId], id: segmentSpeakerId })
+                  : segmentSpeakerId;
+                const timestamp = formatConversationTimestamp(seg.startTime, seg.endTime);
+                return `${timestamp} ${name}: ${seg.text}`;
               }).join('\n\n');
             }
           }
@@ -809,6 +1011,11 @@ function exportAsPDF(
       }
 
       if (content) {
+        if (contentType === 'conversation' && project.speaker_data) {
+          const sd = parseSpeakerData(project);
+          const roster = sd ? buildSpeakerRoster(sd) : [];
+          addSpeakersPage(project, roster);
+        }
         addCoreContentPage(project, contentType, titles[contentType], content);
       }
     }
@@ -873,7 +1080,57 @@ function exportAsPDF(
     ? `audiorepurpose-export-${timestamp}.pdf`
     : `${sanitizeFilename(projects[0].title)}-export-${timestamp}.pdf`;
 
-  doc.save(filename);
+  const arrayBuffer = doc.output('arraybuffer');
+  void maybeSaveExportLocally(filename, 'pdf', arrayBuffer);
+  const pdfBlob = new Blob([arrayBuffer], { type: 'application/pdf' });
+  await saveBlob(pdfBlob, filename);
+}
+
+function shouldSaveExportLocally(): boolean {
+  if (typeof window === 'undefined') return false;
+  return process.env.NEXT_PUBLIC_SAVE_EXPORT_LOCALLY === 'true';
+}
+
+function base64FromString(value: string): string {
+  // Preserve unicode safely
+  return btoa(unescape(encodeURIComponent(value)));
+}
+
+function base64FromArrayBuffer(buffer: ArrayBuffer): string {
+  const bytes = new Uint8Array(buffer);
+  let binary = '';
+  const chunkSize = 0x8000;
+  for (let i = 0; i < bytes.length; i += chunkSize) {
+    const chunk = bytes.subarray(i, i + chunkSize);
+    binary += String.fromCharCode(...chunk);
+  }
+  return btoa(binary);
+}
+
+async function maybeSaveExportLocally(
+  filename: string,
+  format: 'json' | 'pdf',
+  content: string | ArrayBuffer
+): Promise<void> {
+  if (!shouldSaveExportLocally()) return;
+
+  try {
+    const contentBase64 = typeof content === 'string'
+      ? base64FromString(content)
+      : base64FromArrayBuffer(content);
+
+    await fetch('/api/debug/save-export', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        filename,
+        format,
+        contentBase64,
+      }),
+    });
+  } catch (error) {
+    console.warn('[EXPORT] Failed to save export locally:', error);
+  }
 }
 
 /**
@@ -923,13 +1180,13 @@ export async function exportContent(
 
     switch (format) {
       case 'json':
-        exportAsJSON(projects, manifest);
+        await exportAsJSON(projects, manifest);
         break;
 
       case 'markdown':
         // Use ZIP for multiple files, single file for 1-3 items
         if (counts.total <= 3) {
-          exportAsSingleFile(projects, manifest, 'markdown');
+          await exportAsSingleFile(projects, manifest, 'markdown');
         } else {
           await exportAsZip(projects, manifest, 'markdown');
         }
@@ -938,14 +1195,14 @@ export async function exportContent(
       case 'plaintext':
         // Use ZIP for multiple files, single file for 1-3 items
         if (counts.total <= 3) {
-          exportAsSingleFile(projects, manifest, 'plaintext');
+          await exportAsSingleFile(projects, manifest, 'plaintext');
         } else {
           await exportAsZip(projects, manifest, 'plaintext');
         }
         break;
 
       case 'pdf':
-        exportAsPDF(projects, manifest);
+        await exportAsPDF(projects, manifest);
         break;
 
       default:

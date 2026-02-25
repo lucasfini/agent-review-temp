@@ -24,11 +24,16 @@ export interface SpeakerSegment {
   finalSpeakerId?: string;
   // Original diarization cluster ID (pre-attribution)
   initialSpeakerId?: string;
+  // Alias for initialSpeakerId when needed
+  rawClusterId?: string;
   startTime: number;
   endTime: number;
   text: string;
   confidence?: number;
   status?: 'confirmed' | 'tentative' | 'uncertain';
+  confidenceReason?: string;
+  // Optional embedding for acoustic profiling (if provider supports it)
+  embedding?: number[];
 }
 
 export interface DetectedSpeaker {
@@ -37,7 +42,39 @@ export interface DetectedSpeaker {
   totalDuration: number;
   segmentCount: number;
   fallbackName?: string | null;
+  role?: SpeakerRole;
+  roleConfidence?: number;
+  source?: string;
+  profile?: SpeakerIdentityProfile;
 }
+
+export type SpeakerRole =
+  | 'host'
+  | 'co_host'
+  | 'candidate'
+  | 'guest'
+  | 'advertiser'
+  | 'narrator'
+  | 'quoted_audio'
+  | 'unknown';
+
+export type SpeakerIdentityProfile = {
+  acoustic?: {
+    centrdEmbedding: number[];    // mean embedding
+    variance: number;             // stability score
+  };
+  lexical?: {
+    topPhrases: string[];
+    greetingStyle?: string;
+    pronounHints?: string[];
+  };
+  behavioral?: {
+    avgTurnSeconds: number;
+    handoffGivenCount: number;
+    handoffReceivedCount: number;
+    interruptLikeTurnRate: number; // short turns between others
+  };
+};
 
 export interface SpeakerProfile {
   id: string;

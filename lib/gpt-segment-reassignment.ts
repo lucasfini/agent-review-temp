@@ -43,6 +43,15 @@ STRICT RULES:
 4. You MAY NOT use role names (like "advertiser" or "quoted_audio") as IDs
 5. Every AssemblyAI speaker MUST map to exactly ONE GPT speaker ID
 
+DIRECT ADDRESS RULE (applies before all other rules):
+If a segment text addresses someone by name or title at the start — e.g., "Prime Minister, ...",
+"Senator, what do you...", "Professor, can you...", "Thank you, Scott" — the speaker of that
+segment is the INTERVIEWER/HOST, NOT the titled or named person. Do NOT map that cluster to the
+titled/named person. Examples:
+  "Prime Minister, where does this podcast find you?" → cluster belongs to the HOST (not the PM)
+  "I'm in Montreal right now, Professor." → cluster belongs to the GUEST (not the Professor)
+  "Thank you, Scott." → cluster belongs to someone OTHER than Scott
+
 === DECISION HIERARCHY (in strict priority order) ===
 
 When deciding which GPT speaker ID an AssemblyAI speaker maps to, apply these
@@ -114,8 +123,8 @@ export async function reassignSegmentsWithGPT(
     throw new Error('OPENAI_API_KEY required for segment reassignment');
   }
 
-  const openai = new OpenAI({ apiKey });
-  const model = options.model || 'gpt-4o-mini';
+  const openai = new OpenAI({ apiKey, timeout: 45000 });
+  const model = options.model || 'gpt-5-nano';
 
   console.log('[GPT REASSIGNMENT] Starting Pass 2');
   console.log(`[GPT REASSIGNMENT] Model: ${model}`);
@@ -153,8 +162,7 @@ Return ONLY the JSON mapping object using speaker IDs (speaker_1, speaker_2, etc
   try {
     const response = await openai.chat.completions.create({
       model,
-      temperature: 0.2,
-      max_tokens: 2000,
+      max_completion_tokens: 4000,
       messages: [
         { role: 'system', content: GPT_SYSTEM_PROMPT },
         { role: 'user', content: userPrompt }

@@ -18,6 +18,8 @@
 // forcibly assign uncertain segments.
 
 import { GPTSpeaker } from './gpt-speaker-intelligence';
+import { SpeakerIdentityProfile } from './types';
+import { acousticSimilarity, PROFILE_THRESHOLDS, computeRoleCompatibility } from './speaker-profiles';
 import { Anchor, ClusterAssignment } from './constraint-solver';
 import {
   ScoredSegment,
@@ -50,7 +52,11 @@ export function reconcile(
   anchors: Anchor[],
   assignments: ClusterAssignment[],
   roster: GPTSpeaker[],
-  targetSpeakerCount?: number
+  targetSpeakerCount?: number,
+  profiles?: {
+    clusterProfiles?: Record<string, SpeakerIdentityProfile>;
+    identityProfiles?: Record<string, SpeakerIdentityProfile>;
+  }
 ): ReconciliationResult {
   const repairs: RepairAction[] = [];
   let working = deepCopySegments(segments);
@@ -69,18 +75,18 @@ export function reconcile(
   // ─────────────────────────────────────────
   // Step 1: Re-scan strong self-IDs for contradictions
   // ─────────────────────────────────────────
-  working = repairSelfIdContradictions(working, anchors, roster, assignmentMap, repairs);
+  working = repairSelfIdContradictions(working, anchors, roster, assignmentMap, repairs, profiles);
 
   // ─────────────────────────────────────────
   // Step 2: Detect duplicate humans across clusters
   // ─────────────────────────────────────────
-  working = repairDuplicateIdentities(working, assignmentMap, repairs);
+  working = repairDuplicateIdentities(working, assignmentMap, repairs, profiles);
 
   // ─────────────────────────────────────────
   // Step 3: Enforce speaker count ceiling
   // ─────────────────────────────────────────
   const ceiling = targetSpeakerCount || roster.length;
-  working = enforceSpeakerCeiling(working, ceiling, roster, repairs);
+  working = enforceSpeakerCeiling(working, ceiling, roster, repairs, profiles);
 
   // ─────────────────────────────────────────
   // Step 4: Recompute confidence scores
@@ -120,7 +126,11 @@ function repairSelfIdContradictions(
   anchors: Anchor[],
   roster: GPTSpeaker[],
   assignmentMap: Map<string, ClusterAssignment>,
-  repairs: RepairAction[]
+  repairs: RepairAction[],
+  profiles?: {
+    clusterProfiles?: Record<string, SpeakerIdentityProfile>;
+    identityProfiles?: Record<string, SpeakerIdentityProfile>;
+  }
 ): ScoredSegment[] {
   let working = segments;
 
@@ -153,6 +163,12 @@ function repairSelfIdContradictions(
     // If the dominant self-ID contradicts the current assignment → reassign
     if (dominantId && dominantId !== assignment.identityId) {
       const newName = roster.find(r => r.id === dominantId)?.name || dominantId;
+      const clusterProfile = profiles?.clusterProfiles?.[clusterId];
+      const identityProfile = profiles?.identityProfiles?.[dominantId];
+      const acousticMismatch = identityProfile && clusterProfile
+        ? acousticSimilarity(clusterProfile, identityProfile) < PROFILE_THRESHOLDS.acousticExtremeMismatch
+        : false;
+
       console.log(
         `[RECONCILE] Contradiction in ${clusterId}: assigned ${assignment.identityName} ` +
         `but self-identifies as ${newName} (${dominantCount} anchors) → reassigning`
@@ -167,11 +183,15 @@ function repairSelfIdContradictions(
             assignedIdentity: dominantId,
             assignedName: newName,
             confidenceReason: 'posthoc_repair' as const,
-            reconciliationReason: 'late_self_id_override' as const,
+            reconciliationReason: acousticMismatch
+              ? 'acoustic_conflict_resolution' as const
+              : 'late_self_id_override' as const,
+            tentative: acousticMismatch ? true : seg.tentative,
             factors: {
               ...seg.factors,
               anchorStrength: 1.0,
               anchorAgreement: 0.9,
+              acousticConsistency: acousticMismatch ? 0.2 : seg.factors.acousticConsistency,
             },
           };
         }
@@ -204,7 +224,11 @@ function repairSelfIdContradictions(
 function repairDuplicateIdentities(
   segments: ScoredSegment[],
   assignmentMap: Map<string, ClusterAssignment>,
-  repairs: RepairAction[]
+  repairs: RepairAction[],
+  profiles?: {
+    clusterProfiles?: Record<string, SpeakerIdentityProfile>;
+    identityProfiles?: Record<string, SpeakerIdentityProfile>;
+  }
 ): ScoredSegment[] {
   let working = segments;
 
@@ -242,12 +266,20 @@ function repairDuplicateIdentities(
       }
     }
 
-    // Keep dominant, downgrade minor clusters to tentative
+    // Keep dominant, downgrade minor clusters to tentative (only if acoustically compatible)
     const minorClusters = clusterIds.filter(c => c !== dominantCluster);
     const affected: number[] = [];
+    const dominantProfile = profiles?.clusterProfiles?.[dominantCluster];
 
     working = working.map(seg => {
       if (minorClusters.includes(seg.clusterId) && seg.assignedIdentity === identityId) {
+        const clusterProfile = profiles?.clusterProfiles?.[seg.clusterId];
+        const canMerge =
+          dominantProfile &&
+          clusterProfile &&
+          acousticSimilarity(dominantProfile, clusterProfile) >= PROFILE_THRESHOLDS.acousticSimilarityMin;
+
+        if (!canMerge) return seg;
         affected.push(seg.index);
         return {
           ...seg,
@@ -284,7 +316,11 @@ function enforceSpeakerCeiling(
   segments: ScoredSegment[],
   ceiling: number,
   roster: GPTSpeaker[],
-  repairs: RepairAction[]
+  repairs: RepairAction[],
+  profiles?: {
+    clusterProfiles?: Record<string, SpeakerIdentityProfile>;
+    identityProfiles?: Record<string, SpeakerIdentityProfile>;
+  }
 ): ScoredSegment[] {
   let working = segments;
 
@@ -320,16 +356,27 @@ function enforceSpeakerCeiling(
     const overflowName = roster.find(r => r.id === overflowId)?.name || overflowId;
     const overflowRole = roster.find(r => r.id === overflowId)?.role;
 
-    // Prefer same-role target
+    // Prefer role + acoustic compatible target
     let targetId: string | null = null;
     let targetName: string | null = null;
 
+    let bestScore = -Infinity;
+    const overflowProfile = profiles?.identityProfiles?.[overflowId];
     for (const [keepId] of sorted.filter(([id]) => keepIds.has(id)).reverse()) {
       const keepRole = roster.find(r => r.id === keepId)?.role;
-      if (keepRole === overflowRole) {
+      const roleScore = computeRoleCompatibility(
+        profiles?.identityProfiles?.[keepId],
+        overflowRole as any
+      );
+      const acousticScore = overflowProfile && profiles?.identityProfiles?.[keepId]
+        ? acousticSimilarity(overflowProfile, profiles?.identityProfiles?.[keepId])
+        : 0;
+
+      const score = roleScore + acousticScore;
+      if (score > bestScore) {
+        bestScore = score;
         targetId = keepId;
         targetName = roster.find(r => r.id === keepId)?.name || keepId;
-        break;
       }
     }
 

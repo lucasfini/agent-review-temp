@@ -5,7 +5,7 @@
 
 'use client';
 
-import { Suspense, useEffect, useState } from 'react';
+import { Suspense, useEffect, useRef, useState } from 'react';
 import { useSearchParams, useRouter } from 'next/navigation';
 import { CheckCircle, Loader2 } from 'lucide-react';
 import Link from 'next/link';
@@ -21,15 +21,19 @@ function PaymentSuccessContent() {
   const [balance, setBalance] = useState<number | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [creditsAdded, setCreditsAdded] = useState<number | null>(null);
+  const hasVerified = useRef(false);
 
   useEffect(() => {
-    const verifyAndFetchBalance = async () => {
-      if (!session?.access_token) {
-        setError('Not authenticated');
-        setLoading(false);
-        return;
-      }
+    if (!sessionId || !session?.access_token) {
+      if (!sessionId) setLoading(false);
+      return;
+    }
 
+    // Prevent multiple verification calls when session ref changes
+    if (hasVerified.current) return;
+    hasVerified.current = true;
+
+    const verifyAndFetchBalance = async () => {
       try {
         // First, verify the session and ensure credits are added
         const verifyResponse = await fetch('/api/stripe/verify-session', {
@@ -73,12 +77,9 @@ function PaymentSuccessContent() {
       }
     };
 
-    if (sessionId && session?.access_token) {
-      // Small delay to let any webhooks process first
-      setTimeout(verifyAndFetchBalance, 1000);
-    } else if (!sessionId) {
-      setLoading(false);
-    }
+    // Small delay to let any webhooks process first
+    // No cleanup needed — hasVerified ref prevents duplicate calls
+    setTimeout(verifyAndFetchBalance, 1000);
   }, [sessionId, session]);
 
   if (!sessionId) {

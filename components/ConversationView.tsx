@@ -5,7 +5,6 @@ import { getSpeakerColor, getSpeakerDisplayName } from '@/lib/name-extraction';
 import { SpeakerSegment } from '@/lib/types';
 import { formatTime } from '@/lib/time-utils';
 import {
-  Clock,
   User,
   MessageCircle,
   Edit2,
@@ -13,24 +12,13 @@ import {
   X,
   Trash2,
   AlertTriangle,
-  PanelRightOpen,
-  PanelRightClose,
-  Lightbulb,
-  Sparkles,
-  RefreshCw,
-  ChevronDown,
-  ChevronUp,
-  Undo2
 } from 'lucide-react';
-import { shiftSpeakerLabels } from '@/lib/utils/shiftSpeakerLabels';
 import {
-  InsightsSidebar,
   TranscriptHighlight,
   scrollToHighlight,
   type Insight,
   type Category
 } from '@/components/insights';
-import { SpeakerManagerModal } from '@/components/SpeakerManagerModal';
 import type { AudioPlayerRef } from '@/lib/hooks/useSpeakerSample';
 
 interface ConversationViewProps {
@@ -74,8 +62,11 @@ interface ConversationViewProps {
     matchVariants?: string[];
   }>) => void;
   triggerInsightGeneration?: number;
+  insightsRefreshToken?: number;
   // Audio player ref for speaker sample playback
   audioPlayerRef?: RefObject<AudioPlayerRef | null>;
+  showTimestamps?: boolean;
+  selectedSpeaker?: string | null;
 }
 
 interface InsightCard {
@@ -113,10 +104,13 @@ export default function ConversationView({
   onInsightsStatusChange,
   onInsightsDataChange,
   triggerInsightGeneration,
-  audioPlayerRef
+  insightsRefreshToken,
+  audioPlayerRef,
+  showTimestamps: controlledShowTimestamps,
+  selectedSpeaker: controlledSelectedSpeaker
 }: ConversationViewProps) {
-  const [showTimestamps, setShowTimestamps] = useState(true);
-  const [selectedSpeaker, setSelectedSpeaker] = useState<string | null>(null);
+  const showTimestamps = controlledShowTimestamps ?? true;
+  const selectedSpeaker = controlledSelectedSpeaker ?? null;
   const [editingSpeaker, setEditingSpeaker] = useState<string | null>(null);
   const [editingName, setEditingName] = useState<string>('');
   const [savingSpeaker, setSavingSpeaker] = useState<string | null>(null);
@@ -131,9 +125,6 @@ export default function ConversationView({
   const [activeInsightId, setActiveInsightId] = useState<string | null>(null);
   const [internalShowInlineInsights, setInternalShowInlineInsights] = useState(false);
 
-  // Shift cascade state for fixing diarization drift
-  const [shiftHistory, setShiftHistory] = useState<SpeakerSegment[][]>([]);
-  const [lastShiftInfo, setLastShiftInfo] = useState<{ count: number; direction: string } | null>(null);
 
   // Use external control if provided, otherwise internal state
   const showInlineInsights = insightsSidebarOpen !== undefined ? insightsSidebarOpen : internalShowInlineInsights;
@@ -145,6 +136,21 @@ export default function ConversationView({
   const [insightsError, setInsightsError] = useState<string | null>(null);
   const [refreshingInsights, setRefreshingInsights] = useState(false);
   const [generatingInsights, setGeneratingInsights] = useState(false);
+  const [aiTouchupLoading, setAiTouchupLoading] = useState(false);
+  const [aiTouchupResult, setAiTouchupResult] = useState<string | null>(null);
+
+  // Preview state for dry-run touch-up
+  interface TouchupPreviewItem {
+    index: number;
+    oldSpeakerId: string;
+    newSpeakerId: string;
+    reason: string;
+    confidence: number | null;
+    segmentText: string;
+    accepted: boolean;
+  }
+  const [touchupPreview, setTouchupPreview] = useState<TouchupPreviewItem[] | null>(null);
+  const [applyingTouchup, setApplyingTouchup] = useState(false);
 
   // Helper to check if a speaker is filtered
   const getFilterInfo = (speakerId: string) => {
@@ -250,9 +256,11 @@ export default function ConversationView({
         throw new Error('Failed to delete speaker');
       }
 
+      const data = await response.json();
       setPendingDeleteSpeaker(null);
-      // Refresh page to get updated data
-      window.location.reload();
+      if (data.updatedSpeakerData && onSpeakerUpdate) {
+        onSpeakerUpdate(data.updatedSpeakerData);
+      }
     } catch (error) {
       console.error('Error deleting speaker:', error);
       alert('Failed to delete speaker. Please try again.');
@@ -279,9 +287,11 @@ export default function ConversationView({
         throw new Error('Failed to reassign segment');
       }
 
-      // Refresh page to get updated data
+      const data = await response.json();
+      if (data.updatedSpeakerData && onSpeakerUpdate) {
+        onSpeakerUpdate(data.updatedSpeakerData);
+      }
       setSegmentReassigning(null);
-      window.location.reload();
     } catch (error) {
       console.error('Error reassigning segment:', error);
       alert('Failed to reassign segment. Please try again.');
@@ -308,15 +318,81 @@ export default function ConversationView({
         throw new Error('Failed to reassign segments');
       }
 
-      // Clear selection and refresh
+      const data = await response.json();
+      if (data.updatedSpeakerData && onSpeakerUpdate) {
+        onSpeakerUpdate(data.updatedSpeakerData);
+      }
       setSelectedSegments(new Set());
       setBulkReassigning(false);
-      window.location.reload();
     } catch (error) {
       console.error('Error reassigning segments:', error);
       alert('Failed to reassign segments. Please try again.');
     } finally {
       setBulkReassigning(false);
+    }
+  };
+
+  const handleAiTouchup = async () => {
+    if (!projectId || selectedSegments.size === 0) return;
+    setAiTouchupLoading(true);
+    setAiTouchupResult(null);
+    setTouchupPreview(null);
+    try {
+      // Dry run: get Claude's suggestions without writing to DB
+      const response = await fetch(`/api/projects/${projectId}/segments/touchup`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ segmentIndices: Array.from(selectedSegments), dryRun: true })
+      });
+      const data = await response.json();
+      if (!response.ok) throw new Error(data.error || 'Touch-up failed');
+
+      // Only show changed suggestions in the preview
+      const changed = (data.reassignments || []).filter((r: any) => r.oldSpeakerId !== r.newSpeakerId);
+      if (changed.length === 0) {
+        setAiTouchupResult(`AI found no changes needed for ${selectedSegments.size} segment${selectedSegments.size !== 1 ? 's' : ''}`);
+        return;
+      }
+      setTouchupPreview(changed.map((r: any) => ({ ...r, accepted: true })));
+    } catch (err) {
+      setAiTouchupResult('Touch-up failed — try again');
+    } finally {
+      setAiTouchupLoading(false);
+    }
+  };
+
+  const togglePreviewItem = (index: number) => {
+    setTouchupPreview(prev =>
+      prev ? prev.map(item => item.index === index ? { ...item, accepted: !item.accepted } : item) : null
+    );
+  };
+
+  const handleApplyTouchup = async () => {
+    if (!projectId || !touchupPreview) return;
+    const approved = touchupPreview.filter(item => item.accepted);
+    if (approved.length === 0) {
+      setTouchupPreview(null);
+      return;
+    }
+    setApplyingTouchup(true);
+    try {
+      const response = await fetch(`/api/projects/${projectId}/segments/touchup`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ approvedReassignments: approved })
+      });
+      const data = await response.json();
+      if (!response.ok) throw new Error(data.error || 'Apply failed');
+      setAiTouchupResult(`AI reassigned ${approved.length} segment${approved.length !== 1 ? 's' : ''}`);
+      setTouchupPreview(null);
+      setSelectedSegments(new Set());
+      if (data.updatedSpeakerData && onSpeakerUpdate) {
+        onSpeakerUpdate(data.updatedSpeakerData);
+      }
+    } catch (err) {
+      setAiTouchupResult('Apply failed — try again');
+    } finally {
+      setApplyingTouchup(false);
     }
   };
 
@@ -330,95 +406,7 @@ export default function ConversationView({
     setSelectedSegments(newSelection);
   };
 
-  // Shift cascade handlers for fixing diarization drift
-  const handleShiftCascade = async (fromIndex: number, direction: 'forward' | 'backward') => {
-    if (!projectId || !speakerData?.segments) return;
-
-    const speakerOrder = Object.keys(speakerData.speakers);
-    if (speakerOrder.length < 2) return;
-
-    // Save current state for undo
-    setShiftHistory(prev => [...prev.slice(-9), speakerData.segments]);
-
-    // Create segment with ID for the shift function
-    const segmentsWithIds = speakerData.segments.map((seg: SpeakerSegment, i: number) => ({
-      ...seg,
-      id: `segment-${i}`,
-    }));
-
-    const result = shiftSpeakerLabels(
-      segmentsWithIds,
-      `segment-${fromIndex}`,
-      direction,
-      speakerOrder
-    );
-
-    if (result.affectedCount === 0) return;
-
-    // Build updated speaker data
-    const updatedSegments = result.segments.map(({ id, ...seg }) => seg);
-    const updatedSpeakerData = {
-      ...speakerData,
-      segments: updatedSegments,
-      detectionMetadata: {
-        ...speakerData.detectionMetadata,
-        lastModified: new Date().toISOString(),
-        lastModificationType: 'shift_cascade',
-      },
-    };
-
-    // Save to backend
-    try {
-      const response = await fetch(`/api/projects/${projectId}/speakers`, {
-        method: 'PATCH',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          speakerId: '_shift_cascade',
-          newName: '_shift_cascade',
-          speakerData: updatedSpeakerData,
-        }),
-      });
-
-      if (response.ok && onSpeakerUpdate) {
-        onSpeakerUpdate(updatedSpeakerData);
-        setLastShiftInfo({ count: result.affectedCount, direction });
-        setTimeout(() => setLastShiftInfo(null), 3000);
-      }
-    } catch (error) {
-      console.error('Shift cascade failed:', error);
-      // Revert on error
-      setShiftHistory(prev => prev.slice(0, -1));
-    }
-  };
-
-  const handleUndoShift = async () => {
-    if (!projectId || shiftHistory.length === 0) return;
-
-    const previousSegments = shiftHistory[shiftHistory.length - 1];
-    const updatedSpeakerData = {
-      ...speakerData,
-      segments: previousSegments,
-    };
-
-    try {
-      const response = await fetch(`/api/projects/${projectId}/speakers`, {
-        method: 'PATCH',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          speakerId: '_undo_shift',
-          newName: '_undo_shift',
-          speakerData: updatedSpeakerData,
-        }),
-      });
-
-      if (response.ok && onSpeakerUpdate) {
-        onSpeakerUpdate(updatedSpeakerData);
-        setShiftHistory(prev => prev.slice(0, -1));
-      }
-    } catch (error) {
-      console.error('Undo shift failed:', error);
-    }
-  };
+  // Shift feature removed
 
   if (!speakerData || !speakerData.segments || speakerData.segments.length === 0) {
     return (
@@ -457,6 +445,17 @@ export default function ConversationView({
   // Filter segments by selected speaker
   const segmentsWithIndex = useMemo(
     () => segments.map((segment, index) => ({ segment, index })),
+    [segments]
+  );
+
+  const hasUncertainSegments = useMemo(
+    () => segments.some(s =>
+      s.status === 'uncertain' && (
+        s.confidenceReason === 'acoustic_only' ||
+        s.confidenceReason === 'transition_short' ||
+        s.confidenceReason === 'role_mismatch'
+      )
+    ),
     [segments]
   );
 
@@ -528,7 +527,7 @@ export default function ConversationView({
     }
 
     fetchInsights();
-  }, [projectId, userTier]);
+  }, [projectId, userTier, insightsRefreshToken]);
 
   const [activeInsightIds, setActiveInsightIds] = useState<Set<string>>(() => new Set());
 
@@ -637,21 +636,6 @@ export default function ConversationView({
     }
   }, [activeInsightIds, activeInsightId]);
 
-  useEffect(() => {
-    if (!showInlineInsights) return;
-    const original = document.body.style.overflow;
-    document.body.style.overflow = 'hidden';
-    const handleKey = (event: KeyboardEvent) => {
-      if (event.key === 'Escape') {
-        setShowInlineInsights(false);
-      }
-    };
-    document.addEventListener('keydown', handleKey);
-    return () => {
-      document.body.style.overflow = original;
-      document.removeEventListener('keydown', handleKey);
-    };
-  }, [showInlineInsights]);
 
   const handleRefreshInsights = async () => {
     if (!projectId || userTier !== 'premium' || refreshingInsights) {
@@ -742,8 +726,10 @@ export default function ConversationView({
   }, [inlineInsightPresets.length, insightsLoading, generatingInsights, onInsightsStatusChange]);
 
   // Report insights data changes to parent (for ContextSidebar)
+  // Guard with !insightsLoading to prevent firing with [] during initial mount,
+  // which would wipe out the project page's already-fetched insights data.
   useEffect(() => {
-    if (onInsightsDataChange) {
+    if (onInsightsDataChange && !insightsLoading) {
       // Map InsightCard to Insight format expected by ContextSidebar
       const mappedInsights = inlineInsightPresets.map(card => {
         // Map category to allowed types
@@ -767,7 +753,7 @@ export default function ConversationView({
       });
       onInsightsDataChange(mappedInsights);
     }
-  }, [inlineInsightPresets, onInsightsDataChange]);
+  }, [inlineInsightPresets, onInsightsDataChange, insightsLoading]);
 
   // Generate insights for the first time
   const handleGenerateInsights = async () => {
@@ -817,8 +803,6 @@ export default function ConversationView({
         }));
 
         setInlineInsightPresets(transformedInsights);
-        // Auto-open sidebar after generation
-        setShowInlineInsights(true);
       }
 
       console.log(`[Insights] Generated: ${data.insight_count} insights`);
@@ -939,209 +923,186 @@ export default function ConversationView({
             </div>
           </div>
 
-          {/* Only show internal Insights button when NOT controlled externally */}
-          {insightsSidebarOpen === undefined && (
-            <>
-              {/* Divider */}
-              <div className="h-8 w-px bg-gray-200 hidden sm:block" />
-
-              {/* Insights Button - Only shown when not externally controlled */}
-              <button
-                type="button"
-                onClick={() => {
-                  if (inlineInsightPresets.length === 0 && !insightsLoading && !generatingInsights) {
-                    handleGenerateInsights();
-                  } else {
-                    setShowInlineInsights(!showInlineInsights);
-                  }
-                }}
-                disabled={generatingInsights || insightsLoading}
-                className={`flex items-center gap-2 px-3 py-2 rounded-lg transition-all ${
-                  showInlineInsights
-                    ? 'bg-amber-50 text-amber-700 ring-1 ring-amber-200'
-                    : generatingInsights || insightsLoading
-                    ? 'bg-gray-50 text-gray-400 cursor-wait'
-                    : inlineInsightPresets.length === 0
-                    ? 'bg-gray-50 text-gray-600 hover:bg-amber-50 hover:text-amber-700'
-                    : 'bg-gray-50 text-gray-600 hover:bg-gray-100'
-                }`}
-              >
-                <div className={`flex items-center justify-center h-7 w-7 rounded-full ${
-                  showInlineInsights ? 'bg-amber-100' : 'bg-white border border-gray-200'
-                }`}>
-                  {generatingInsights ? (
-                    <RefreshCw className="h-3.5 w-3.5 animate-spin text-amber-600" />
-                  ) : insightsLoading ? (
-                    <div className="h-3 w-3 border-2 border-gray-300 border-t-gray-600 rounded-full animate-spin" />
-                  ) : inlineInsightPresets.length === 0 ? (
-                    <Sparkles className="h-3.5 w-3.5 text-amber-500" />
-                  ) : (
-                    <Lightbulb className={`h-3.5 w-3.5 ${showInlineInsights ? 'text-amber-600' : 'text-gray-500'}`} />
-                  )}
-                </div>
-                <div className="text-left">
-                  <p className="text-sm font-medium">
-                    {generatingInsights
-                      ? 'Generating...'
-                      : insightsLoading
-                      ? 'Loading...'
-                      : inlineInsightPresets.length === 0
-                      ? 'Generate Insights'
-                      : 'Insights'}
-                  </p>
-                  {!generatingInsights && !insightsLoading && inlineInsightPresets.length > 0 && (
-                    <p className="text-xs text-gray-500">{transformedInsights.length} found</p>
-                  )}
-                </div>
-                {showInlineInsights && inlineInsightPresets.length > 0 && (
-                  <PanelRightClose className="h-4 w-4 ml-1 text-amber-500" />
-                )}
-              </button>
-            </>
-          )}
         </div>
 
-        <div className="flex flex-wrap items-center gap-2">
-          <label className="flex items-center space-x-2 text-xs text-gray-600 cursor-pointer border border-gray-200 rounded-full px-3 py-1.5 bg-white">
-            <input
-              type="checkbox"
-              checked={showTimestamps}
-              onChange={(e) => setShowTimestamps(e.target.checked)}
-              className="rounded border-gray-300"
-            />
-            <Clock className="h-3 w-3" />
-            <span>Timestamps</span>
-          </label>
-
-          <select
-            value={selectedSpeaker || ''}
-            onChange={(e) => setSelectedSpeaker(e.target.value || null)}
-            className="text-xs border border-gray-200 rounded-full px-3 py-1.5 bg-white"
-          >
-            <option value="">All speakers</option>
-            {speakerList.map(speakerId => (
-              <option key={speakerId} value={speakerId}>
-                {getSpeakerDisplayName(speakers[speakerId])}
-              </option>
-            ))}
-          </select>
-
-          {speakerList.length > 1 && (
-            <>
-              {/* Undo Shift Button */}
-              {shiftHistory.length > 0 && (
-                <button
-                  type="button"
-                  onClick={handleUndoShift}
-                  className="inline-flex items-center gap-1 text-xs font-semibold rounded-full px-3 py-1.5 border border-amber-200 bg-amber-50 text-amber-700 hover:bg-amber-100 transition-colors"
-                >
-                  <Undo2 className="h-3 w-3" />
-                  Undo Shift
-                </button>
-              )}
-
-              {/* Shift Feedback Toast */}
-              {lastShiftInfo && (
-                <span className="inline-flex items-center gap-1 text-xs font-medium text-green-700 bg-green-50 px-2 py-1 rounded-full border border-green-200 animate-pulse">
-                  Shifted {lastShiftInfo.count} segments {lastShiftInfo.direction === 'forward' ? 'down' : 'up'}
-                </span>
-              )}
-
-              {/* Speaker Manager Modal with Play Sample */}
-              {audioPlayerRef && (
-                <SpeakerManagerModal
-                  speakerData={speakerData}
-                  audioPlayerRef={audioPlayerRef}
-                  onRename={(speakerId, newName) => {
-                    // Reuse existing rename logic
-                    if (!projectId) return;
-
-                    const updatedSpeakerData = {
-                      ...speakerData,
-                      speakers: {
-                        ...speakerData.speakers,
-                        [speakerId]: {
-                          ...speakerData.speakers[speakerId],
-                          finalName: newName,
-                          customName: newName
-                        }
-                      }
-                    };
-
-                    // Save to backend
-                    fetch(`/api/projects/${projectId}/speakers`, {
-                      method: 'PATCH',
-                      headers: { 'Content-Type': 'application/json' },
-                      body: JSON.stringify({
-                        speakerId,
-                        newName,
-                        speakerData: updatedSpeakerData
-                      })
-                    }).then(response => {
-                      if (response.ok && onSpeakerUpdate) {
-                        onSpeakerUpdate(updatedSpeakerData);
-                      }
-                    }).catch(console.error);
-                  }}
-                />
-              )}
-            </>
-          )}
-        </div>
       </div>
 
       {/* Bulk Selection Controls */}
-      {projectId && selectedSegments.size > 0 && (
+      {projectId && (selectedSegments.size > 0 || hasUncertainSegments) && (
         <div className="flex-shrink-0 mx-4 mb-3 p-4 border border-blue-100 bg-blue-50 rounded-lg text-xs text-blue-900 space-y-3">
           <div className="flex flex-wrap items-center gap-2">
-            <span className="font-medium">
-              {selectedSegments.size} segment{selectedSegments.size === 1 ? '' : 's'} selected
+            {selectedSegments.size > 0 && (
+              <span className="font-medium">
+                {selectedSegments.size} segment{selectedSegments.size === 1 ? '' : 's'} selected
+              </span>
+            )}
+            {selectedSegments.size > 0 && (
+              <button
+                onClick={() => setSelectedSegments(new Set(filteredSegments.map(({ index }) => index)))}
+                className="px-2 py-1 rounded border border-blue-200 bg-white text-blue-700 hover:bg-blue-100"
+              >
+                Select Visible
+              </button>
+            )}
+            {selectedSegments.size > 0 && (
+              <button
+                onClick={() => setSelectedSegments(new Set())}
+                className="px-2 py-1 rounded border border-transparent text-blue-700 hover:bg-blue-100"
+              >
+                Clear Selection
+              </button>
+            )}
+            {hasUncertainSegments && (
+              <button
+                onClick={() => setSelectedSegments(new Set(
+                  segmentsWithIndex
+                    .filter(({ segment }) =>
+                      segment.status === 'uncertain' && (
+                        segment.confidenceReason === 'acoustic_only' ||
+                        segment.confidenceReason === 'transition_short' ||
+                        segment.confidenceReason === 'role_mismatch'
+                      )
+                    )
+                    .map(({ index }) => index)
+                ))}
+                className="px-2 py-1 rounded border border-yellow-300 bg-yellow-50 text-yellow-800 hover:bg-yellow-100"
+              >
+                ⚠️ Select all uncertain
+              </button>
+            )}
+          </div>
+          {selectedSegments.size > 0 && (
+            <div className="flex flex-wrap items-center gap-2">
+              <span>Reassign selected to:</span>
+              <select
+                value={bulkReassignTarget}
+                onChange={(e) => setBulkReassignTarget(e.target.value)}
+                className="border border-blue-200 rounded px-2 py-1 bg-white text-blue-900"
+              >
+                {speakerList.map((speakerId) => (
+                  <option key={speakerId} value={speakerId}>
+                    {getSpeakerDisplayName(speakers[speakerId])}
+                  </option>
+                ))}
+              </select>
+              <button
+                onClick={() => handleBulkReassign(bulkReassignTarget)}
+                disabled={
+                  !bulkReassignTarget || selectedSegments.size === 0 || bulkReassigning
+                }
+                className={`inline-flex items-center px-3 py-1.5 rounded text-white text-xs font-semibold ${
+                  !bulkReassignTarget || selectedSegments.size === 0 || bulkReassigning
+                    ? 'bg-blue-300 cursor-not-allowed'
+                    : 'bg-blue-600 hover:bg-blue-700'
+                }`}
+              >
+                {bulkReassigning ? (
+                  <span className="flex items-center space-x-1">
+                    <span className="h-3 w-3 border border-white border-t-transparent rounded-full animate-spin" />
+                    <span>Updating…</span>
+                  </span>
+                ) : (
+                  'Apply'
+                )}
+              </button>
+              <button
+                onClick={handleAiTouchup}
+                disabled={aiTouchupLoading || selectedSegments.size === 0}
+                className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded text-white text-xs font-semibold bg-violet-600 hover:bg-violet-700 disabled:bg-violet-300 disabled:cursor-not-allowed"
+              >
+                {aiTouchupLoading ? (
+                  <><span className="h-3 w-3 border border-white border-t-transparent rounded-full animate-spin" /> AI analyzing…</>
+                ) : (
+                  <>✦ Touch-up with AI</>
+                )}
+              </button>
+              {aiTouchupResult && (
+                <span className="text-xs text-blue-700 font-medium">{aiTouchupResult}</span>
+              )}
+            </div>
+          )}
+        </div>
+      )}
+
+      {/* AI Touch-up Preview Panel */}
+      {touchupPreview && (
+        <div className="flex-shrink-0 mx-4 mb-3 p-4 border border-violet-200 bg-violet-50 rounded-lg space-y-3">
+          <div className="flex items-center justify-between">
+            <span className="text-sm font-semibold text-violet-900">
+              ✦ AI Corrections ({touchupPreview.filter(i => i.accepted).length} of {touchupPreview.length} selected)
             </span>
             <button
-              onClick={() => setSelectedSegments(new Set(filteredSegments.map(({ index }) => index)))}
-              className="px-2 py-1 rounded border border-blue-200 bg-white text-blue-700 hover:bg-blue-100"
+              onClick={() => setTouchupPreview(null)}
+              className="text-violet-400 hover:text-violet-700"
+              aria-label="Discard preview"
             >
-              Select Visible
-            </button>
-            <button
-              onClick={() => setSelectedSegments(new Set())}
-              className="px-2 py-1 rounded border border-transparent text-blue-700 hover:bg-blue-100"
-            >
-              Clear Selection
+              <X className="h-4 w-4" />
             </button>
           </div>
-          <div className="flex flex-wrap items-center gap-2">
-            <span>Reassign selected to:</span>
-            <select
-              value={bulkReassignTarget}
-              onChange={(e) => setBulkReassignTarget(e.target.value)}
-              className="border border-blue-200 rounded px-2 py-1 bg-white text-blue-900"
-            >
-              {speakerList.map((speakerId) => (
-                <option key={speakerId} value={speakerId}>
-                  {getSpeakerDisplayName(speakers[speakerId])}
-                </option>
-              ))}
-            </select>
+
+          <div className="space-y-2 max-h-64 overflow-y-auto">
+            {touchupPreview.map((item) => {
+              const oldSpk = speakers[item.oldSpeakerId];
+              const newSpk = speakers[item.newSpeakerId];
+              const oldName = getSpeakerDisplayName(oldSpk) || item.oldSpeakerId;
+              const newName = getSpeakerDisplayName(newSpk) || item.newSpeakerId;
+              return (
+                <div
+                  key={item.index}
+                  className={`flex items-start gap-3 p-3 rounded-lg border transition-opacity ${
+                    item.accepted ? 'bg-white border-violet-200' : 'bg-gray-50 border-gray-200 opacity-50'
+                  }`}
+                >
+                  <input
+                    type="checkbox"
+                    checked={item.accepted}
+                    onChange={() => togglePreviewItem(item.index)}
+                    className="mt-0.5 h-4 w-4 rounded border-gray-300 text-violet-600 focus:ring-violet-500"
+                  />
+                  <div className="flex-1 min-w-0 space-y-1">
+                    <div className="flex items-center gap-1.5 text-xs font-medium flex-wrap">
+                      <span className="text-gray-400">Seg {item.index}</span>
+                      <span className="text-gray-300">·</span>
+                      <span className="text-red-500 line-through">{oldName}</span>
+                      <span className="text-gray-400">→</span>
+                      <span className="text-green-700 font-semibold">{newName}</span>
+                      {item.confidence != null && (
+                        <span className="ml-auto text-gray-400 font-normal">
+                          {Math.round(item.confidence * 100)}% confident
+                        </span>
+                      )}
+                    </div>
+                    {item.segmentText && (
+                      <p className="text-xs text-gray-600 truncate">
+                        &ldquo;{item.segmentText}&rdquo;
+                      </p>
+                    )}
+                    {item.reason && (
+                      <p className="text-xs text-gray-500 italic">{item.reason}</p>
+                    )}
+                  </div>
+                </div>
+              );
+            })}
+          </div>
+
+          <div className="flex items-center gap-2 pt-1">
             <button
-              onClick={() => handleBulkReassign(bulkReassignTarget)}
-              disabled={
-                !bulkReassignTarget || selectedSegments.size === 0 || bulkReassigning
-              }
-              className={`inline-flex items-center px-3 py-1.5 rounded text-white text-xs font-semibold ${
-                !bulkReassignTarget || selectedSegments.size === 0 || bulkReassigning
-                  ? 'bg-blue-300 cursor-not-allowed'
-                  : 'bg-blue-600 hover:bg-blue-700'
-              }`}
+              onClick={handleApplyTouchup}
+              disabled={applyingTouchup || touchupPreview.every(i => !i.accepted)}
+              className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded text-white text-xs font-semibold bg-violet-600 hover:bg-violet-700 disabled:bg-violet-300 disabled:cursor-not-allowed"
             >
-              {bulkReassigning ? (
-                <span className="flex items-center space-x-1">
-                  <span className="h-3 w-3 border border-white border-t-transparent rounded-full animate-spin" />
-                  <span>Updating…</span>
-                </span>
+              {applyingTouchup ? (
+                <><span className="h-3 w-3 border border-white border-t-transparent rounded-full animate-spin" /> Applying…</>
               ) : (
-                'Apply'
+                `Apply ${touchupPreview.filter(i => i.accepted).length} change${touchupPreview.filter(i => i.accepted).length !== 1 ? 's' : ''}`
               )}
+            </button>
+            <button
+              onClick={() => setTouchupPreview(null)}
+              className="px-3 py-1.5 rounded text-xs font-medium text-gray-600 hover:bg-gray-100"
+            >
+              Discard
             </button>
           </div>
         </div>
@@ -1178,7 +1139,7 @@ export default function ConversationView({
           return (
             <div
               key={`${segmentSpeakerId}-${segmentIndex}`}
-              className="flex space-x-3 p-4 rounded-lg hover:bg-gray-50 transition-colors border border-gray-100"
+              className="flex space-x-3 p-4 rounded-lg hover:bg-gray-50 transition-colors border border-gray-100 group"
             >
               {projectId && (
                 <div className="flex items-start pt-2">
@@ -1233,10 +1194,19 @@ export default function ConversationView({
                       <span className="font-mono">{formatTime(segment.startTime)}</span>
                       <span className="text-gray-300">•</span>
                       <span>{duration.toFixed(1)}s</span>
-                      {segment.confidence !== undefined && segment.confidence < 0.8 && (
+                      {segment.status === 'uncertain' && (
+                        segment.confidenceReason === 'acoustic_only' ||
+                        segment.confidenceReason === 'transition_short' ||
+                        segment.confidenceReason === 'role_mismatch') && (
                         <span
                           className="text-yellow-600 cursor-help"
-                          title="Low confidence speaker detection"
+                          title={
+                            segment.confidenceReason === 'transition_short'
+                              ? 'Uncertain — very short segment at a speaker-change boundary'
+                              : segment.confidenceReason === 'role_mismatch'
+                              ? "Uncertain — segment duration is inconsistent with this speaker's typical role"
+                              : 'Uncertain — assigned by acoustic similarity only'
+                          }
                         >
                           ⚠️
                         </span>
@@ -1244,9 +1214,14 @@ export default function ConversationView({
                     </div>
                   )}
                 </div>
+                {/* Message Text */}
+                <div className="text-sm text-gray-800 leading-relaxed break-words">
+                  {highlightSegmentText(segment.text)}
+                </div>
+
                 {projectId && (
-                  <div className="flex items-center justify-between mb-2 flex-wrap gap-2">
-                    <div className="flex items-center gap-2">
+                  <div className="mt-2 flex items-center justify-end">
+                    <div className="flex items-center gap-2 opacity-30 transition-opacity group-hover:opacity-100">
                       <label className="text-[11px] uppercase tracking-wide text-gray-400">
                         Reassign
                       </label>
@@ -1257,7 +1232,7 @@ export default function ConversationView({
                           handleSegmentReassign(segmentIndex, e.target.value);
                         }}
                         disabled={segmentReassigning === segmentIndex || bulkReassigning}
-                        className="text-xs border border-gray-200 rounded px-2 py-1 bg-white text-gray-700"
+                        className="text-xs bg-transparent border border-transparent rounded px-1.5 py-0.5 text-gray-700 hover:border-gray-200 focus:border-gray-300 focus:outline-none focus:ring-0 disabled:text-gray-400"
                       >
                         {speakerList.map((speakerId) => (
                           <option key={speakerId} value={speakerId}>
@@ -1266,34 +1241,8 @@ export default function ConversationView({
                         ))}
                       </select>
                     </div>
-
-                    {/* Shift Cascade Buttons */}
-                    <div className="flex items-center gap-1">
-                      <span className="text-[11px] uppercase tracking-wide text-gray-400 mr-1">
-                        Shift
-                      </span>
-                      <button
-                        onClick={() => handleShiftCascade(segmentIndex, 'backward')}
-                        className="p-1 rounded hover:bg-purple-100 text-purple-600 transition-colors"
-                        title="Shift labels up from here (C→B, B→A)"
-                      >
-                        <ChevronUp className="w-4 h-4" />
-                      </button>
-                      <button
-                        onClick={() => handleShiftCascade(segmentIndex, 'forward')}
-                        className="p-1 rounded hover:bg-blue-100 text-blue-600 transition-colors"
-                        title="Shift labels down from here (A→B, B→C)"
-                      >
-                        <ChevronDown className="w-4 h-4" />
-                      </button>
-                    </div>
                   </div>
                 )}
-
-                {/* Message Text */}
-                <div className="text-sm text-gray-800 leading-relaxed break-words">
-                  {highlightSegmentText(segment.text)}
-                </div>
               </div>
             </div>
           );
@@ -1315,17 +1264,6 @@ export default function ConversationView({
         )}
       </div>
 
-      {/* Insights Sidebar */}
-      {showInlineInsights && transformedInsights.length > 0 && (
-        <div className="fixed top-0 right-0 h-full w-80 z-40 shadow-xl">
-          <InsightsSidebar
-            insights={transformedInsights}
-            activeInsightId={activeInsightId}
-            onInsightClick={handleInsightClick}
-            onClose={() => setShowInlineInsights(false)}
-          />
-        </div>
-      )}
     </div>
   );
 }

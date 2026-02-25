@@ -92,7 +92,86 @@ export const MODEL_PROVIDERS: Record<string, ModelProvider> = {
 
 // Model specifications database
 export const MODEL_SPECS: ModelSpec[] = [
-  // OpenAI Models
+  // OpenAI GPT-5 Family
+  {
+    id: 'gpt-5',
+    name: 'gpt-5',
+    displayName: 'GPT-5',
+    provider: 'openai',
+    contextLength: 128000,
+    maxOutputTokens: 16384,
+    pricing: {
+      inputCostPer1kTokens: 0.00125,
+      outputCostPer1kTokens: 0.01,
+      currency: 'USD'
+    },
+    capabilities: {
+      reasoning: 10,
+      creativity: 10,
+      speed: 7,
+      multimodal: true,
+      functionCalling: true,
+      jsonMode: true
+    },
+    description: 'Flagship model — deep reasoning and multi-speaker analysis',
+    releaseDate: '2025-01-01',
+    deprecated: false,
+    recommended: true,
+    category: 'reasoning'
+  },
+  {
+    id: 'gpt-5-mini',
+    name: 'gpt-5-mini',
+    displayName: 'GPT-5 Mini',
+    provider: 'openai',
+    contextLength: 128000,
+    maxOutputTokens: 16384,
+    pricing: {
+      inputCostPer1kTokens: 0.00025,
+      outputCostPer1kTokens: 0.002,
+      currency: 'USD'
+    },
+    capabilities: {
+      reasoning: 8,
+      creativity: 9,
+      speed: 9,
+      multimodal: true,
+      functionCalling: true,
+      jsonMode: true
+    },
+    description: 'Best balance of quality and cost — language tasks, summaries, content generation',
+    releaseDate: '2025-01-01',
+    deprecated: false,
+    recommended: true,
+    category: 'general'
+  },
+  {
+    id: 'gpt-5-nano',
+    name: 'gpt-5-nano',
+    displayName: 'GPT-5 Nano',
+    provider: 'openai',
+    contextLength: 128000,
+    maxOutputTokens: 16384,
+    pricing: {
+      inputCostPer1kTokens: 0.00005,
+      outputCostPer1kTokens: 0.0004,
+      currency: 'USD'
+    },
+    capabilities: {
+      reasoning: 7,
+      creativity: 7,
+      speed: 10,
+      multimodal: false,
+      functionCalling: true,
+      jsonMode: true
+    },
+    description: 'Ultra-fast and cheap — classification, routing, structured extraction',
+    releaseDate: '2025-01-01',
+    deprecated: false,
+    recommended: true,
+    category: 'fast'
+  },
+  // OpenAI Legacy Models
   {
     id: 'gpt-4o',
     name: 'gpt-4o',

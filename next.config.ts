@@ -4,6 +4,9 @@ const nextConfig: NextConfig = {
   // Temporarily disable the React Compiler in dev to reduce overhead
   // Re-enable once dev compiles reliably
   reactCompiler: false,
+  // Keep youtube-dl-exec out of the webpack bundle so __dirname resolves
+  // to its actual node_modules path (needed to locate the yt-dlp binary).
+  serverExternalPackages: ['youtube-dl-exec'],
   experimental: {
     // Large file upload support
     largePageDataBytes: 128 * 1024, // 128KB

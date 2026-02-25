@@ -30,7 +30,7 @@ function SparkAreaChart({
   color?: string
 }) {
   return (
-    <div className="h-10 w-20">
+    <div className="h-10 w-20" aria-hidden="true">
       <ResponsiveContainer width="100%" height="100%">
         <AreaChart data={data} margin={{ top: 0, right: 0, left: 0, bottom: 0 }}>
           <defs>
@@ -70,6 +70,7 @@ interface KPIGridProps {
   aiSpend: string
   spendTrend: { value: number; direction: 'up' | 'down' | 'neutral'; label: string }
   spendSparkline: SparklineData[]
+  aiSpendLabel?: string
 }
 
 export function KPIGrid({
@@ -84,7 +85,8 @@ export function KPIGrid({
   processingSparkline,
   aiSpend,
   spendTrend,
-  spendSparkline
+  spendSparkline,
+  aiSpendLabel = 'Est. AI Spend'
 }: KPIGridProps) {
   const cards: KPICardData[] = [
     {
@@ -115,7 +117,7 @@ export function KPIGrid({
       sparklineColor: '#10b981'
     },
     {
-      title: 'Est. AI Spend',
+      title: aiSpendLabel,
       value: aiSpend,
       trend: spendTrend,
       sparkline: spendSparkline,
@@ -130,6 +132,8 @@ export function KPIGrid({
       {cards.map((card, idx) => (
         <div
           key={idx}
+          role="group"
+          aria-label={`${card.title}: ${card.value}`}
           className="relative overflow-hidden rounded-xl border border-gray-100 bg-white p-4 shadow-sm hover:shadow-md transition-shadow"
         >
           {/* Header with icon */}
@@ -166,6 +170,9 @@ export function KPIGrid({
               {card.trend.value > 0 ? "+" : ""}{card.trend.value}%
             </span>
             <span className="text-xs text-gray-400">{card.trend.label}</span>
+            <span className="sr-only">
+              {card.trend.direction === "up" ? "Increased" : card.trend.direction === "down" ? "Decreased" : "No change"} by {card.trend.value}% {card.trend.label}
+            </span>
           </div>
         </div>
       ))}
@@ -173,18 +180,3 @@ export function KPIGrid({
   )
 }
 
-// Helper to generate mock sparkline data
-export function generateSparklineData(baseValue: number, variance: number = 0.3): SparklineData[] {
-  const points = 7
-  const data: SparklineData[] = []
-
-  for (let i = 0; i < points; i++) {
-    const randomVariance = (Math.random() - 0.5) * variance * baseValue
-    const trendBoost = (i / points) * baseValue * 0.2 // Slight upward trend
-    data.push({
-      value: Math.max(0, baseValue + randomVariance + trendBoost)
-    })
-  }
-
-  return data
-}

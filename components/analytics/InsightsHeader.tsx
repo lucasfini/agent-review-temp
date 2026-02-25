@@ -52,6 +52,9 @@ export function InsightsHeader({
         <div className="relative flex-shrink-0">
           <button
             onClick={() => setIsOpen(!isOpen)}
+            aria-haspopup="listbox"
+            aria-expanded={isOpen}
+            aria-label="Select analysis run"
             className="flex items-center justify-between w-full sm:w-[260px] px-3 py-2 bg-white border border-gray-300 rounded-lg text-sm shadow-sm hover:bg-gray-50 transition-colors"
           >
             <div className="flex flex-col items-start text-left truncate mr-3">
@@ -72,7 +75,7 @@ export function InsightsHeader({
           {isOpen && snapshots.length > 0 && (
             <>
               <div className="fixed inset-0 z-10" onClick={() => setIsOpen(false)} />
-              <div className="absolute right-0 mt-2 w-[300px] bg-white border border-gray-200 rounded-lg shadow-xl z-20 max-h-[320px] overflow-y-auto ring-1 ring-black ring-opacity-5">
+              <div role="listbox" aria-label="Analysis run history" className="absolute right-0 mt-2 w-[300px] bg-white border border-gray-200 rounded-lg shadow-xl z-20 max-h-[320px] overflow-y-auto ring-1 ring-black ring-opacity-5">
                 <div className="sticky top-0 bg-gray-50 px-4 py-2 border-b border-gray-200 text-xs font-medium text-gray-500 uppercase tracking-wider">
                   History
                 </div>
@@ -83,6 +86,8 @@ export function InsightsHeader({
                   return (
                     <button
                       key={snapshot.id}
+                      role="option"
+                      aria-selected={isSelected}
                       onClick={() => {
                         onSelectSnapshot(isItemLatest ? null : snapshot.id); // Null implies latest
                         setIsOpen(false);
@@ -135,16 +140,17 @@ export function InsightsHeader({
               {onRerunAnalysis ? (
                 <>
                   {' '}
-                  <button 
+                  <button
                     onClick={onRerunAnalysis}
+                    aria-label="Rerun analytics to update insights"
                     className="font-medium underline hover:text-amber-950 transition-colors"
                   >
-                    Rerun coverage analysis
+                    Rerun analytics
                   </button>
                   {' '} to see updated insights.
                 </>
               ) : (
-                ' Rerun coverage analysis to update these insights.'
+                ' Rerun analytics to update these insights.'
               )}
             </p>
           </div>

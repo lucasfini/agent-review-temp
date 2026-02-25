@@ -15,17 +15,73 @@ import {
 import { getAICompletion, type AIMessage } from '@/lib/ai-providers/multi-provider';
 
 /**
- * Parse JSON response from OpenAI, stripping markdown code fences if present
+ * Parse JSON response from AI, stripping markdown code fences and conversational filler
  */
 function parseAIResponse(content: string): any {
   let cleaned = content.trim();
 
-  // Strip markdown code fences (```json ... ``` or ``` ... ```)
+  // 1. Try to find JSON block if conversational text exists
+  const firstBrace = cleaned.indexOf('{');
+  const lastBrace = cleaned.lastIndexOf('}');
+  const firstBracket = cleaned.indexOf('[');
+  const lastBracket = cleaned.lastIndexOf(']');
+
+  // Determine which structure starts first (object or array)
+  let start = -1;
+  let end = -1;
+
+  if (firstBrace !== -1 && (firstBracket === -1 || firstBrace < firstBracket)) {
+    start = firstBrace;
+    end = lastBrace;
+  } else if (firstBracket !== -1) {
+    start = firstBracket;
+    end = lastBracket;
+  }
+
+  if (start !== -1 && end !== -1 && end > start) {
+    cleaned = cleaned.substring(start, end + 1);
+  }
+
+  // 2. Strip markdown code fences if still present
   if (cleaned.startsWith('```')) {
     cleaned = cleaned.replace(/^```(?:json)?\s*\n?/, '').replace(/\n?```\s*$/, '');
   }
 
-  return JSON.parse(cleaned);
+  try {
+    return JSON.parse(cleaned);
+  } catch (error) {
+    console.error('[PARSE] Failed to parse JSON:', error);
+    console.error('[PARSE] Raw content preview:', content.substring(0, 500));
+    throw error;
+  }
+}
+
+/**
+ * Robustly extract a field from a parsed JSON object even if the key is slightly different
+ */
+function resilientGet(obj: any, preferredKey: string, synonyms: string[] = []): any {
+  if (!obj || typeof obj !== 'object') return undefined;
+
+  // 1. Try preferred key
+  if (obj[preferredKey] !== undefined) return obj[preferredKey];
+
+  // 2. Try synonyms
+  for (const synonym of synonyms) {
+    if (obj[synonym] !== undefined) return obj[synonym];
+  }
+
+  // 3. Try case-insensitive search
+  const lowerPreferred = preferredKey.toLowerCase();
+  const lowerSynonyms = synonyms.map(s => s.toLowerCase());
+
+  for (const key of Object.keys(obj)) {
+    const lowerKey = key.toLowerCase();
+    if (lowerKey === lowerPreferred || lowerSynonyms.includes(lowerKey)) {
+      return obj[key];
+    }
+  }
+
+  return undefined;
 }
 
 /**
@@ -80,6 +136,12 @@ function buildUIMetadata(contentTypeId: string, themeName: string): {
  * Ad-Blocker Protocol: Blacklist specific sponsor brands and scam patterns
  */
 function validateOutput(output: any): void {
+  // Check for empty content
+  if (!output.content || (typeof output.content === 'string' && output.content.trim().length === 0)) {
+    console.error('[VALIDATION] ❌ Empty content detected for output type:', output.type);
+    throw new Error(`Generated content for ${output.type} is empty.`);
+  }
+
   const contentString = JSON.stringify(output).toLowerCase();
 
   // BLACKLIST: Specific sponsor brands and ad patterns
@@ -275,7 +337,7 @@ async function getStoryAngles(
     const result = await getAICompletion({
       model,
       temperature: 0.2,
-      maxTokens: 500,
+      maxTokens: 8000,
       responseFormat: { type: "json_object" },
       messages: [
         {
@@ -325,7 +387,9 @@ Return JSON format:
 
     const content = result.content || '{"angles":[]}';
     const parsed = parseAIResponse(content);
-    const angles = parsed.angles || [];
+
+    // Use resilientGet to find the angles array even if the key is slightly different
+    const angles = resilientGet(parsed, 'angles', ['narrative_angles', 'stories', 'narratives', 'topics']) || [];
 
     console.log(`[STORY ANGLES] ✅ Identified ${angles.length} angles:`, angles);
 
@@ -333,7 +397,9 @@ Return JSON format:
     if (angles.length < 3) {
       console.warn('[STORY ANGLES] ⚠️ Less than 3 angles found, using generic fallbacks');
       while (angles.length < 3) {
-        angles.push(`Key Narrative ${angles.length + 1}`);
+        // Only push if not already present
+        const fallback = [`Key Narrative ${angles.length + 1}`, 'Main Narrative', 'Key Debate', 'Critical Insight'][angles.length];
+        angles.push(fallback);
       }
     }
 
@@ -390,7 +456,7 @@ export async function POST(request: NextRequest) {
     }
 
     // Use selected model or default to GPT-4o
-    const modelToUse = modelId || 'gpt-4o';
+    const modelToUse = modelId || 'gpt-5-mini';
 
     console.log(`[GENERATION] 🚀 Starting Universal Content Engine for project ${projectId}`);
     console.log(`[GENERATION] 📦 Processing ${blocks.length} blocks with ${modelToUse}`);
@@ -462,6 +528,13 @@ export async function POST(request: NextRequest) {
 
     const contentGenerationTime = Date.now() - contentStartTime;
     console.log(`[GENERATION] ✅ Completed ${generatedContent.length} pieces in ${contentGenerationTime}ms`);
+
+    // Check if we actually generated anything
+    if (generatedContent.length === 0) {
+      const errorMsg = errors.length > 0 ? errors.join(' | ') : 'No content was generated.';
+      console.error(`[GENERATION] ❌ FAILED: ${errorMsg}`);
+      throw new Error(`Generation failed: ${errorMsg}`);
+    }
 
     // Step 5: Save to database
     await saveGeneratedContent(projectId, generatedContent);
@@ -585,7 +658,18 @@ ${transcription.slice(0, 80000)}`;
   }
 
   const content = result.content || '{}';
-  return parseAIResponse(content);
+  const parsed = parseAIResponse(content);
+
+  // Use resilientGet for all analysis fields
+  return {
+    keyTopics: resilientGet(parsed, 'keyTopics', ['topics', 'main_topics', 'subjects']) || [],
+    quotes: resilientGet(parsed, 'quotes', ['quotations', 'notable_quotes']) || [],
+    facts: resilientGet(parsed, 'facts', ['data_points', 'information']) || [],
+    opinions: resilientGet(parsed, 'opinions', ['perspectives', 'debates']) || [],
+    humor: resilientGet(parsed, 'humor', ['jokes', 'funny_moments']) || [],
+    hooks: resilientGet(parsed, 'hooks', ['angles', 'attention_grabbers']) || [],
+    actionable_insights: resilientGet(parsed, 'actionable_insights', ['takeaways', 'insights', 'tips']) || []
+  };
 }
 
 // Generate content for a single block
@@ -684,7 +768,7 @@ ${theme.promptModifier}
       { role: 'user', content: prompt }
     ],
     temperature: 0.7,
-    maxTokens: 1500,
+    maxTokens: 16000,
     responseFormat: { type: "json_object" }
   });
 
@@ -715,17 +799,33 @@ ${theme.promptModifier}
 
   const content = result.content || '{"tweets":[]}';
   const parsed = parseAIResponse(content);
-  let tweets = parsed.tweets || [];
+
+  // Use resilientGet for the tweets array even if keys are different
+  let rawTweets = resilientGet(parsed, 'tweets', ['thread', 'posts', 'tweet_list', 'content']) || [];
+
+  // Robust extraction of tweet content from individual objects
+  let tweets = Array.isArray(rawTweets) ? rawTweets.map((t: any, index: number) => {
+    if (typeof t === 'string') return { tweet: t, position: index + 1 };
+    return {
+      tweet: resilientGet(t, 'tweet', ['text', 'content', 'post']) || '',
+      position: t.position || index + 1
+    };
+  }) : [];
 
   // Enforce 280 character limit
   tweets = tweets.map((t: any) => {
-    const limited = enforceContentLimit(t.tweet, 'twitter_tweet', true);
+    const limited = enforceContentLimit(t.tweet || '', 'twitter_tweet', true);
     return {
       ...t,
       tweet: limited.content,
       wasTruncated: limited.wasTruncated
     };
-  });
+  }).filter(t => t.tweet.trim().length > 0);
+
+  if (tweets.length === 0) {
+    console.error('[TWITTER THREAD] ❌ No valid tweets found in AI response:', content);
+    throw new Error('AI failed to generate any valid tweets for the thread.');
+  }
 
   // Format thread with clear post separators
   const formattedContent = tweets
@@ -813,7 +913,7 @@ ${theme.promptModifier}
       { role: 'user', content: prompt }
     ],
     temperature: 0.7,
-    maxTokens: 800,
+    maxTokens: 16000,
     responseFormat: { type: "json_object" }
   });
 
@@ -845,8 +945,17 @@ ${theme.promptModifier}
   const content = result.content || '{"post":"","hashtags":[]}';
   const parsed = parseAIResponse(content);
 
+  // Use resilientGet for the post content and hashtags
+  const rawPost = resilientGet(parsed, 'post', ['content', 'text', 'post_body', 'body']) || '';
+  const rawHashtags = resilientGet(parsed, 'hashtags', ['tags', 'labels']) || [];
+
+  if (!rawPost || rawPost.trim().length === 0) {
+    console.error('[LINKEDIN POST] ❌ No valid post content found in AI response:', content);
+    throw new Error('AI failed to generate any valid content for the LinkedIn post.');
+  }
+
   // Enforce character limit
-  const limited = enforceContentLimit(parsed.post, 'linkedin_post', true);
+  const limited = enforceContentLimit(rawPost, 'linkedin_post', true);
 
   return [{
     type: 'linkedin_post',
@@ -858,7 +967,7 @@ ${theme.promptModifier}
       platform: 'LinkedIn',  // Specific platform badge
       theme: theme.name,
       angle: insight.text || narrativeMetadata.main_topic || 'Professional Insight',  // Main narrative angle
-      hashtags: parsed.hashtags || [],
+      hashtags: Array.isArray(rawHashtags) ? rawHashtags : [],
       insight: insight.text,  // Keep for backward compatibility
       themeId: theme.id,
       blockNumber: block.blockNumber,
@@ -938,7 +1047,7 @@ ${theme.promptModifier}
       { role: 'user', content: prompt }
     ],
     temperature: 0.7,
-    maxTokens: 1000,
+    maxTokens: 16000,
     responseFormat: { type: "json_object" }
   });
 
@@ -970,8 +1079,19 @@ ${theme.promptModifier}
   const content = result.content || '{"angle":"","slides":[],"caption":"","hashtags":[]}';
   const parsed = parseAIResponse(content);
 
+  // Use resilientGet for carousel components
+  const carouselAngle = resilientGet(parsed, 'angle', ['focus', 'topic', 'narrative']) || instagramAngle;
+  let rawSlides = resilientGet(parsed, 'slides', ['carousel', 'slideshow', 'content']) || [];
+  const rawCaption = resilientGet(parsed, 'caption', ['text', 'description', 'body']) || '';
+  const rawHashtags = resilientGet(parsed, 'hashtags', ['tags', 'labels']) || [];
+
+  if (!Array.isArray(rawSlides) || rawSlides.length === 0) {
+    console.error('[INSTAGRAM] ❌ No valid slides found in AI response:', content);
+    throw new Error('AI failed to generate any valid slides for the Instagram carousel.');
+  }
+
   // Enforce exactly 7 slides
-  let slides = parsed.slides || [];
+  let slides = rawSlides;
   if (slides.length !== 7) {
     console.warn(`[INSTAGRAM] ⚠️ Expected 7 slides, got ${slides.length}. Adjusting...`);
     // Ensure we have exactly 7 slides
@@ -983,19 +1103,18 @@ ${theme.promptModifier}
 
   // Enforce slide word limits
   slides = slides.map((slide: any, index: number) => {
-    const limited = enforceContentLimit(slide.text, 'instagram_slide', true);
+    const slideText = resilientGet(slide, 'text', ['body', 'content', 'message']) || '';
+    const limited = enforceContentLimit(slideText, 'instagram_slide', true);
     return {
       number: index + 1,
-      headline: slide.headline || `Slide ${index + 1}`,
+      headline: resilientGet(slide, 'headline', ['title', 'hook']) || `Slide ${index + 1}`,
       text: limited.content,
       wasTruncated: limited.wasTruncated
     };
   });
 
   // Enforce caption limit
-  const captionLimited = enforceContentLimit(parsed.caption || '', 'instagram_caption', true);
-
-  const carouselAngle = parsed.angle || instagramAngle;
+  const captionLimited = enforceContentLimit(rawCaption, 'instagram_caption', true);
 
   return [{
     type: 'instagram_caption',
@@ -1009,7 +1128,7 @@ ${theme.promptModifier}
       angle: carouselAngle,  // Main narrative angle for carousel
       slides: slides,  // Exactly 7 slides
       slideCount: slides.length,
-      hashtags: parsed.hashtags || [],
+      hashtags: Array.isArray(rawHashtags) ? rawHashtags : [],
       themeId: theme.id,
       blockNumber: block.blockNumber
     }
@@ -1080,7 +1199,7 @@ ${theme.promptModifier}
       { role: 'user', content: prompt }
     ],
     temperature: 0.7,
-    maxTokens: 3000,
+    maxTokens: 16000,
     responseFormat: { type: "json_object" }
   });
 
@@ -1112,22 +1231,30 @@ ${theme.promptModifier}
   const content = result.content || '{"title":"","content":"","metaDescription":""}';
   const parsed = parseAIResponse(content);
 
-  // Enforce word limit
-  const limited = enforceContentLimit(parsed.content || '', 'blog_post', true);
+  // Use resilientGet for blog components
+  const blogTitle = resilientGet(parsed, 'title', ['headline', 'name', 'subject']) || `Blog Post #${block.blockNumber}`;
+  const blogBody = resilientGet(parsed, 'content', ['body', 'markdown', 'text', 'markdown_body']) || '';
+  const metaDescription = resilientGet(parsed, 'metaDescription', ['description', 'summary', 'meta']) || '';
 
-  const finalBlogAngle = parsed.title || blogAngle;
+  if (!blogBody || blogBody.trim().length === 0) {
+    console.error('[BLOG POST] ❌ No valid content found in AI response:', content);
+    throw new Error('AI failed to generate any valid content for the blog post.');
+  }
+
+  // Enforce word limit
+  const limited = enforceContentLimit(blogBody, 'blog_post', true);
 
   return [{
     type: 'blog_post',
     platform: 'general',  // Using 'general' instead of 'blog' for platform constraint compatibility
-    title: parsed.title || `Blog Post #${block.blockNumber}`,
+    title: blogTitle,
     content: limited.content,
     metadata: {
       ui_metadata: buildUIMetadata('blog_post', theme.name),
       platform: 'Blog Post',  // Specific platform badge
       theme: theme.name,
-      angle: finalBlogAngle,  // Main narrative angle (blog title or topic)
-      metaDescription: parsed.metaDescription || '',
+      angle: blogTitle,  // Main narrative angle (blog title or topic)
+      metaDescription: metaDescription,
       themeId: theme.id,
       blockNumber: block.blockNumber,
       wasTruncated: limited.wasTruncated
@@ -1208,7 +1335,7 @@ ${theme.promptModifier}
       { role: 'user', content: prompt }
     ],
     temperature: 0.7,
-    maxTokens: 2000,
+    maxTokens: 16000,
     responseFormat: { type: "json_object" }
   });
 
@@ -1240,24 +1367,34 @@ ${theme.promptModifier}
   const content = result.content || '{"subject":"","previewText":"","content":"","cta":"","ps":""}';
   const parsed = parseAIResponse(content);
 
-  const limited = enforceContentLimit(parsed.content || '', 'newsletter', true);
+  // Use resilientGet for newsletter components
+  const subject = resilientGet(parsed, 'subject', ['subject_line', 'title', 'headline']) || `Newsletter #${block.blockNumber}`;
+  const body = resilientGet(parsed, 'content', ['body', 'text', 'message', 'newsletter_body']) || '';
+  const previewText = resilientGet(parsed, 'previewText', ['preview', 'teaser', 'preheader']) || '';
+  const cta = resilientGet(parsed, 'cta', ['call_to_action', 'link_text']) || '';
+  const ps = resilientGet(parsed, 'ps', ['post_script', 'p_s']) || '';
 
-  const finalNewsletterAngle = parsed.subject || newsletterAngle;
+  if (!body || body.trim().length === 0) {
+    console.error('[NEWSLETTER] ❌ No valid content found in AI response:', content);
+    throw new Error('AI failed to generate any valid content for the newsletter.');
+  }
+
+  const limited = enforceContentLimit(body, 'newsletter', true);
 
   return [{
     type: 'email_newsletter',
     platform: 'general',  // Using 'general' instead of 'email' for platform constraint compatibility
-    title: parsed.subject || `Newsletter #${block.blockNumber}`,
+    title: subject,
     content: limited.content,
     metadata: {
       ui_metadata: buildUIMetadata('newsletter', theme.name),
       platform: 'Email Newsletter',  // Specific platform badge
       theme: theme.name,
-      angle: finalNewsletterAngle,  // Main narrative angle (subject line or topic)
-      subject: parsed.subject || '',
-      previewText: parsed.previewText || '',
-      cta: parsed.cta || '',
-      ps: parsed.ps || '',
+      angle: subject,  // Main narrative angle (subject line or topic)
+      subject: subject,
+      previewText: previewText,
+      cta: cta,
+      ps: ps,
       themeId: theme.id,
       blockNumber: block.blockNumber
     }
@@ -1334,7 +1471,7 @@ FORBIDDEN: Darktrace, recruitment agencies, sponsor websites, promo codes.
       { role: 'user', content: prompt }
     ],
     temperature: 0.7,
-    maxTokens: 1500,
+    maxTokens: 16000,
     responseFormat: { type: "json_object" }
   });
 
@@ -1366,9 +1503,20 @@ FORBIDDEN: Darktrace, recruitment agencies, sponsor websites, promo codes.
   const content = result.content || '{"summary":"","topics":[],"quotes":[],"resources":[]}';
   const parsed = parseAIResponse(content);
 
+  // Use resilientGet for show notes components
+  const summary = resilientGet(parsed, 'summary', ['description', 'overview', 'brief']) || '';
+  const topics = resilientGet(parsed, 'topics', ['timestamps', 'chapters', 'sections']) || [];
+  const quotes = resilientGet(parsed, 'quotes', ['highlights', 'moments']) || [];
+  const resources = resilientGet(parsed, 'resources', ['links', 'tools', 'references']) || [];
+
+  if (!summary || summary.trim().length === 0) {
+    console.error('[SHOW NOTES] ❌ No valid summary found in AI response:', content);
+    throw new Error('AI failed to generate any valid summary for the show notes.');
+  }
+
   // Filter out ad-related resources (Ad-Blocker Protocol for Show Notes)
   // ONLY allow: books, tools, studies, frameworks mentioned organically
-  let cleanedResources = parsed.resources || [];
+  let cleanedResources = resources || [];
   if (Array.isArray(cleanedResources)) {
     const forbiddenResourceTerms = [
       // Specific blacklisted brands
@@ -1378,25 +1526,28 @@ FORBIDDEN: Darktrace, recruitment agencies, sponsor websites, promo codes.
       // Recruiter/scam patterns
       'recruitment', 'recruiter', 'staffing', 'hiring agency', 'job scam'
     ];
-    cleanedResources = cleanedResources.filter((resource: string) => {
-      const lowerResource = resource.toLowerCase();
+    cleanedResources = cleanedResources.filter((resource: any) => {
+      const resourceText = typeof resource === 'string' ? resource : JSON.stringify(resource);
+      const lowerResource = resourceText.toLowerCase();
       return !forbiddenResourceTerms.some(term => lowerResource.includes(term));
     });
   }
 
-  const finalShowNotesAngle = parsed.summary?.split('.')[0] || showNotesAngle;
+  const finalShowNotesAngle = summary.split('.')[0] || showNotesAngle;
 
   return [{
     type: 'show_notes',
     platform: 'general',
     title: 'Show Notes',
-    content: JSON.stringify({ ...parsed, resources: cleanedResources }, null, 2),
+    content: JSON.stringify({ ...parsed, summary, topics, quotes, resources: cleanedResources }, null, 2),
     metadata: {
       ui_metadata: buildUIMetadata('show_notes', theme.name),
       platform: 'Show Notes',  // Specific platform badge
       theme: theme.name,
       angle: finalShowNotesAngle,  // Main narrative angle (first sentence of summary or topic)
-      ...parsed,
+      summary,
+      topics,
+      quotes,
       resources: cleanedResources,  // Use cleaned resources
       themeId: theme.id,
       blockNumber: block.blockNumber

@@ -72,6 +72,244 @@ const purgeInMemoryAudio = (fileName: string | undefined) => {
   keys.forEach(key => global.uploadedFiles?.delete(key));
 };
 
+type AIProcessingFlags = {
+  nameExtraction?: boolean;
+  summary?: boolean;
+  roles?: boolean;
+  chapters?: boolean;
+  takeaways?: boolean;
+  quotes?: boolean;
+  insights?: boolean;
+  debateCorrectionApplied?: boolean;
+  backgroundStartedAt?: string;
+  backgroundCompletedAt?: string;
+  backgroundErrors?: Record<string, string>;
+};
+
+async function updateProjectWithSpeakerData(
+  projectId: string,
+  speakerData: any,
+  extraFields: Record<string, any> = {}
+) {
+  return supabaseAdmin
+    .from('projects')
+    // @ts-expect-error - Supabase types issue
+    .update({
+      speaker_data: speakerData,
+      ...extraFields
+    })
+    .eq('id', projectId);
+}
+
+function buildSpeakerContextFromData(speakerData: any): Record<string, { name: string }> {
+  const speakers = speakerData?.speakers || {};
+  return Object.fromEntries(
+    Object.entries(speakers).map(([id, speaker]: [string, any]) => [
+      id,
+      { name: speaker.finalName || speaker.fallbackName || id }
+    ])
+  );
+}
+
+async function runBackgroundContentTasks(params: {
+  projectId: string;
+  speakerData: any;
+  finalTranscription: string;
+  transcriptionSegments: any[];
+  features: ReturnType<typeof getTierFeatures>;
+  userId?: string;
+}) {
+  const { projectId, speakerData, finalTranscription, transcriptionSegments, features, userId } = params;
+  let workingSpeakerData = speakerData;
+
+  const aiProcessing: AIProcessingFlags = {
+    ...(workingSpeakerData?.detectionMetadata?.aiProcessing || {})
+  };
+
+  aiProcessing.backgroundStartedAt = new Date().toISOString();
+  aiProcessing.backgroundErrors = aiProcessing.backgroundErrors || {};
+
+  workingSpeakerData = {
+    ...workingSpeakerData,
+    detectionMetadata: {
+      ...workingSpeakerData.detectionMetadata,
+      aiProcessing
+    }
+  };
+
+  await updateProjectWithSpeakerData(projectId, workingSpeakerData);
+
+  const speakerContext = buildSpeakerContextFromData(workingSpeakerData);
+
+  const markSuccess = async (key: keyof AIProcessingFlags, extraFields: Record<string, any> = {}) => {
+    const nextProcessing = {
+      ...(workingSpeakerData.detectionMetadata.aiProcessing || {}),
+      [key]: true
+    };
+    workingSpeakerData = {
+      ...workingSpeakerData,
+      detectionMetadata: {
+        ...workingSpeakerData.detectionMetadata,
+        aiProcessing: nextProcessing
+      }
+    };
+    await updateProjectWithSpeakerData(projectId, workingSpeakerData, extraFields);
+  };
+
+  const markFailure = async (key: keyof AIProcessingFlags, error: any) => {
+    const nextProcessing = {
+      ...(workingSpeakerData.detectionMetadata.aiProcessing || {}),
+      [key]: false,
+      backgroundErrors: {
+        ...(workingSpeakerData.detectionMetadata.aiProcessing?.backgroundErrors || {}),
+        [key]: error?.message || String(error)
+      }
+    };
+    workingSpeakerData = {
+      ...workingSpeakerData,
+      detectionMetadata: {
+        ...workingSpeakerData.detectionMetadata,
+        aiProcessing: nextProcessing
+      }
+    };
+    await updateProjectWithSpeakerData(projectId, workingSpeakerData);
+  };
+
+  if (features.roleClassification) {
+    try {
+      console.log('[BACKGROUND] 👥 Classifying speaker roles...');
+      const roleAssignments = await classifySpeakerRoles(
+        Object.fromEntries(
+          Object.entries(workingSpeakerData.speakers).map(([id, speaker]: [string, any]) => [
+            id,
+            {
+              id,
+              fallbackName: speaker.finalName || speaker.fallbackName,
+              totalDuration: speaker.totalDuration,
+              segments: speaker.segments,
+              behavioralStats: speaker.profile?.behavioral ?? null
+            }
+          ])
+        ),
+        {
+          transcriptContext: finalTranscription,
+          userId,
+          projectId,
+        }
+      );
+
+      for (const [speakerId, assignment] of Object.entries(roleAssignments)) {
+        if (!workingSpeakerData.speakers[speakerId]) continue;
+        workingSpeakerData.speakers[speakerId] = {
+          ...workingSpeakerData.speakers[speakerId],
+          role: (assignment as any).role,
+          roleConfidence: (assignment as any).confidence,
+          roleSummary: (assignment as any).summary,
+          roleEvidence: (assignment as any).evidence,
+          autoRoleAssigned: true,
+          finalName: (assignment as any).displayName || workingSpeakerData.speakers[speakerId].finalName
+        };
+      }
+
+      await markSuccess('roles');
+    } catch (error: any) {
+      console.error('[BACKGROUND] ⚠️ Role classification failed:', error.message);
+      await markFailure('roles', error);
+    }
+  }
+
+  if (features.aiSummary) {
+    try {
+      console.log('[BACKGROUND] 📄 Generating summary...');
+      const summary = await generatePodcastSummary(finalTranscription, {
+        speakerContext,
+        userId,
+        projectId
+      });
+      await markSuccess('summary', { ai_summary: summary.summary });
+    } catch (error: any) {
+      console.error('[BACKGROUND] ⚠️ Summary generation failed:', error.message);
+      await markFailure('summary', error);
+    }
+  }
+
+  if (features.chapterDetection) {
+    try {
+      console.log('[BACKGROUND] 📚 Detecting chapters...');
+      const chapters = await detectPodcastChapters(finalTranscription, transcriptionSegments, {
+        speakerContext,
+        userId,
+        projectId
+      });
+      await markSuccess('chapters', { chapters: chapters.chapters });
+    } catch (error: any) {
+      console.error('[BACKGROUND] ⚠️ Chapter detection failed:', error.message);
+      await markFailure('chapters', error);
+    }
+  }
+
+  if (features.keyTakeaways) {
+    try {
+      console.log('[BACKGROUND] 💎 Extracting takeaways...');
+      const takeaways = await extractKeyTakeaways(finalTranscription, {
+        speakerContext,
+        userId,
+        projectId
+      });
+      await markSuccess('takeaways', { key_takeaways: takeaways.takeaways });
+    } catch (error: any) {
+      console.error('[BACKGROUND] ⚠️ Takeaway extraction failed:', error.message);
+      await markFailure('takeaways', error);
+    }
+  }
+
+  if (features.quotesExtraction) {
+    try {
+      console.log('[BACKGROUND] 💬 Extracting quotes...');
+      const quotes = await extractSocialQuotes(finalTranscription, {
+        speakerContext,
+        userId,
+        projectId
+      });
+      await markSuccess('quotes', { social_quotes: quotes.quotes });
+    } catch (error: any) {
+      console.error('[BACKGROUND] ⚠️ Quote extraction failed:', error.message);
+      await markFailure('quotes', error);
+    }
+  }
+
+  if (finalTranscription && workingSpeakerData) {
+    try {
+      console.log('[BACKGROUND] 🔍 Starting insight extraction...');
+      const { processInsightsForProject } = await import('@/lib/insight-extraction');
+      const result = await processInsightsForProject(projectId);
+      if (result.success) {
+        console.log(`[BACKGROUND] ✅ Extracted ${result.insightCount} insights.`);
+        await markSuccess('insights');
+      } else {
+        console.warn(`[BACKGROUND] ⚠️ Insights failed:`, result.error);
+        await markFailure('insights', result.error || 'Insights failed');
+      }
+    } catch (error: any) {
+      console.error('[BACKGROUND] ❌ Insights error:', error);
+      await markFailure('insights', error);
+    }
+  }
+
+  const finalProcessing = {
+    ...(workingSpeakerData.detectionMetadata.aiProcessing || {}),
+    backgroundCompletedAt: new Date().toISOString()
+  };
+  workingSpeakerData = {
+    ...workingSpeakerData,
+    detectionMetadata: {
+      ...workingSpeakerData.detectionMetadata,
+      aiProcessing: finalProcessing
+    }
+  };
+  await updateProjectWithSpeakerData(projectId, workingSpeakerData);
+}
+
 export async function POST(request: NextRequest) {
   const startTime = Date.now();
   let tempAudioFilePath: string | null = null;
@@ -181,7 +419,15 @@ export async function POST(request: NextRequest) {
       // Extract speaker segments from cached speaker_data
       if (existingProject.speaker_data && typeof existingProject.speaker_data === 'object') {
         const speakerData = existingProject.speaker_data as any;
-        speakerSegments = speakerData.segments || [];
+        const rawSegments: any[] = speakerData.segments || [];
+        // Reset speakerId back to the original raw diarization cluster ID (initialSpeakerId)
+        // so the speaker pipeline re-runs on clean acoustic clusters rather than stale
+        // pipeline-output IDs (e.g. "speaker_1") which would cause the cluster-count
+        // logic and GPT context to see the wrong number of distinct voices.
+        speakerSegments = rawSegments.map((seg: any) => ({
+          ...seg,
+          speakerId: seg.initialSpeakerId || seg.rawClusterId || seg.speakerId,
+        }));
       }
 
       baseCost = 0; // No cost for cached transcription
@@ -444,11 +690,6 @@ export async function POST(request: NextRequest) {
     // This provides the ROSTER that debate correction needs
     // ============================================================
     let speakersWithNames = detectedSpeakers;
-    let summaryData: any = null;
-    let chaptersData: any = null;
-    let takeawaysData: any = null;
-    let quotesData: any = null;
-    let roleAssignments: Record<string, any> = {};
     let reassignedSegments = speakerSegments; // Will be updated by LLM pipeline
     let debateCorrectionResult: any = null; // Store debate correction metadata
     let llmExtractedRoster: Array<{ name: string; aliases: string[] }> = []; // Roster from LLM
@@ -494,14 +735,18 @@ export async function POST(request: NextRequest) {
             userId: existingProject?.user_id,
             projectId,
             filename: fileName, // Pass filename for priming
+            title: existingProject?.title || undefined,
             speakerCount: effectiveSpeakerCount, // Pass expected speaker count (explicit or inferred)
-            projectType
+            projectType,
+            mappingMode: 'csp',
+            hasPresetRoster: hasRoster,
           });
 
           // Use GPT's authoritative speaker data
           speakersWithNames = pipelineResult.speakerData.speakers;
           reassignedSegments = pipelineResult.segments; // Use GPT-4o-mini reassigned segments
           pipelineDiagnostics = pipelineResult.diagnostics;
+          console.log(`[PIPELINE] Mapper used: ${pipelineResult.diagnostics?.mapperUsed || 'unknown'}`);
 
           const finalIdCount = (pipelineResult.segments || []).filter(
             (s: any) => s.finalSpeakerId
@@ -539,6 +784,7 @@ export async function POST(request: NextRequest) {
           });
         } catch (error: any) {
           console.error('[AI] ⚠️ Refactored pipeline failed:', error.message);
+          console.error('[AI] Stack trace:', error.stack);
           console.error('[AI] Falling back to numbered speakers');
 
           // Fallback: Use numbered speakers
@@ -581,18 +827,13 @@ export async function POST(request: NextRequest) {
                               Array.isArray(existingProject.preset_speakers) &&
                               existingProject.preset_speakers.length > 0;
 
-      let roster: Array<{ name: string; aliases: string[] }>;
+      let roster: Array<{ id?: string; name: string; role?: string; aliases: string[] }>;
 
       if (hasPresetRoster) {
-        // Use preset speakers (user-provided roster takes priority)
-        roster = existingProject!.preset_speakers!.map((speaker: any) => ({
-          name: speaker.name || speaker,
-          aliases: speaker.aliases || [],
-        }));
+        roster = buildDebateRosterEntriesFromPreset(existingProject!.preset_speakers!, speakersWithNames);
         console.log(`[DEBATE] Using PRESET roster: ${roster.map(r => r.name).join(', ')}`);
       } else if (llmExtractedRoster.length > 0) {
-        // Use LLM-extracted roster
-        roster = llmExtractedRoster;
+        roster = buildDebateRosterEntriesFromSpeakerMap(speakersWithNames);
         console.log(`[DEBATE] Using LLM-EXTRACTED roster: ${roster.map(r => r.name).join(', ')}`);
       } else {
         // No roster available - skip debate correction
@@ -601,7 +842,12 @@ export async function POST(request: NextRequest) {
         roster = [];
       }
 
-      if (roster.length > 0) {
+      // DISABLED: correctDebateSpeakers was creating phantom speakers (e.g. "in")
+      // by overwriting correct assignments with broken lookahead logic.
+      // Keeping the pipeline at: GPT → Orphan Recovery → Conflict Detection → CSP → Reconciliation
+      const ENABLE_DEBATE_CORRECTION = false;
+
+      if (roster.length > 0 && ENABLE_DEBATE_CORRECTION) {
         await updateProcessingProgress(projectId, {
           stage: 'name_extraction' as ProcessingStage,
           progress: 50,
@@ -637,6 +883,15 @@ export async function POST(request: NextRequest) {
             );
             reassignedSegments = debateRemap.segments;
             speakersWithNames = debateRemap.speakers;
+            const lockResult = applyIntroHandoffLocks(
+              reassignedSegments,
+              speakersWithNames,
+              debateResult
+            );
+            reassignedSegments = lockResult.segments;
+            if (lockResult.lockedSegments > 0) {
+              console.log(`[DEBATE] Intro handoff locks applied: ${lockResult.lockedSegments} segments`);
+            }
             reassignedSegments = enforceFinalSpeakerIdContract(
               reassignedSegments,
               '[DEBATE] post-correction'
@@ -694,193 +949,17 @@ export async function POST(request: NextRequest) {
           progress: 100,
           message: `Debate correction complete: ${debateResult.corrections.length} fixes applied`
         });
+      } else if (roster.length > 0 && !ENABLE_DEBATE_CORRECTION) {
+        console.log(`[DEBATE] ⚠️ Debate correction DISABLED (roster has ${roster.length} speakers)`);
+        console.log(`[DEBATE] Using speaker assignments from: GPT → Orphan Recovery → Conflict Detection → CSP → Reconciliation`);
+        console.log(`[DEBATE] Speaker names from earlier passes will be preserved (no lookahead overwrites)`);
       }
     } else {
       console.log(`[CLASSIFY] ℹ️ ${projectType} detected - no debate post-processing needed`);
     }
 
-      // Generate summary (still inside the features.nameExtraction || features.aiSummary block)
-      if (features.aiSummary) {
-        try {
-          await updateProcessingProgress(projectId, {
-            stage: 'summary' as ProcessingStage,
-            progress: 0,
-            message: 'Generating AI-powered podcast summary...'
-          });
-
-          console.log('[AI] 📄 Generating podcast summary...');
-          const speakerContext = Object.fromEntries(
-            Object.entries(speakersWithNames).map(([id, speaker]: [string, any]) => [
-              id,
-              { name: speaker.finalName || speaker.fallbackName || id }
-            ])
-          );
-
-          const summary = await generatePodcastSummary(finalTranscription, {
-            speakerContext,
-            // narrativeMetadata may be undefined if pre-processing was skipped
-            userId: existingProject?.user_id,
-            projectId
-          });
-          summaryData = summary;
-          aiTokenUsage.summary = summary.tokensUsed;
-          console.log(`[AI] ✅ Generated ${summary.wordCount} word summary`);
-
-          await updateProcessingProgress(projectId, {
-            stage: 'summary' as ProcessingStage,
-            progress: 100,
-            message: `Generated ${summary.wordCount}-word summary`
-          });
-        } catch (error: any) {
-          console.error('[AI] ⚠️  Summary generation failed:', error.message);
-        }
-      }
     } // End of: if (features.nameExtraction || features.aiSummary)
-
-    // PREMIUM tier processing
-    if (tier === 'premium') {
-      console.log(`\n[PREMIUM] 💎 Premium AI Processing...`);
-
-      const speakerContext = Object.fromEntries(
-        Object.entries(speakersWithNames).map(([id, speaker]: [string, any]) => [
-          id,
-          { name: speaker.finalName || speaker.fallbackName || id }
-        ])
-      );
-
-      // Classify roles
-      if (features.roleClassification) {
-        try {
-          await updateProcessingProgress(projectId, {
-            stage: 'role_classification' as ProcessingStage,
-            progress: 0,
-            message: 'Classifying speaker roles...'
-          });
-
-          console.log('[PREMIUM] 👥 Classifying speaker roles...');
-          roleAssignments = await classifySpeakerRoles(
-            Object.fromEntries(
-              Object.entries(speakersWithNames).map(([id, speaker]: [string, any]) => [
-                id,
-                {
-                  id,
-                  fallbackName: speaker.finalName || speaker.fallbackName,
-                  totalDuration: speaker.totalDuration,
-                  segments: speaker.segments || speakerSegments.filter(s => s.speakerId === id)
-                }
-              ])
-            ),
-            {
-              transcriptContext: finalTranscription,
-              userId: existingProject?.user_id,
-              projectId,
-            }
-          );
-
-          for (const [speakerId, assignment] of Object.entries(roleAssignments)) {
-            if (!speakersWithNames[speakerId]) continue;
-            (speakersWithNames[speakerId] as any).role = assignment.role;
-            (speakersWithNames[speakerId] as any).roleConfidence = assignment.confidence;
-            (speakersWithNames[speakerId] as any).roleSummary = assignment.summary;
-            (speakersWithNames[speakerId] as any).roleEvidence = assignment.evidence;
-            (speakersWithNames[speakerId] as any).autoRoleAssigned = true;
-            (speakersWithNames[speakerId] as any).finalName = assignment.displayName || (speakersWithNames[speakerId] as any).finalName;
-          }
-
-          await updateProcessingProgress(projectId, {
-            stage: 'role_classification' as ProcessingStage,
-            progress: 100,
-            message: `Assigned roles to ${Object.keys(roleAssignments).length} speakers`
-          });
-        } catch (error: any) {
-          console.error('[PREMIUM] ⚠️  Role classification failed:', error.message);
-        }
-      }
-
-      // Chapters
-      if (features.chapterDetection) {
-        try {
-          await updateProcessingProgress(projectId, {
-            stage: 'chapters' as ProcessingStage,
-            progress: 0,
-            message: 'Detecting chapter markers...'
-          });
-
-          console.log('[PREMIUM] 📚 Detecting chapter markers...');
-          const chapters = await detectPodcastChapters(finalTranscription, transcriptionSegments, {
-            speakerContext,
-            userId: existingProject?.user_id,
-            projectId
-          });
-          chaptersData = chapters;
-          aiTokenUsage.chapters = chapters.tokensUsed;
-
-          await updateProcessingProgress(projectId, {
-            stage: 'chapters' as ProcessingStage,
-            progress: 100,
-            message: `Identified ${chapters.chapters.length} chapters`
-          });
-        } catch (error: any) {
-          console.error('[PREMIUM] ⚠️  Chapter detection failed:', error.message);
-        }
-      }
-
-      // Takeaways
-      if (features.keyTakeaways) {
-        try {
-          await updateProcessingProgress(projectId, {
-            stage: 'takeaways' as ProcessingStage,
-            progress: 0,
-            message: 'Extracting key takeaways...'
-          });
-
-          console.log('[PREMIUM] 💎 Extracting key takeaways...');
-          const takeaways = await extractKeyTakeaways(finalTranscription, {
-            speakerContext,
-            userId: existingProject?.user_id,
-            projectId
-          });
-          takeawaysData = takeaways;
-          aiTokenUsage.takeaways = takeaways.tokensUsed;
-
-          await updateProcessingProgress(projectId, {
-            stage: 'takeaways' as ProcessingStage,
-            progress: 100,
-            message: `Extracted ${takeaways.takeaways.length} takeaways`
-          });
-        } catch (error: any) {
-          console.error('[PREMIUM] ⚠️  Takeaway extraction failed:', error.message);
-        }
-      }
-
-      // Quotes
-      if (features.quotesExtraction) {
-        try {
-          await updateProcessingProgress(projectId, {
-            stage: 'quotes' as ProcessingStage,
-            progress: 0,
-            message: 'Finding shareable quotes...'
-          });
-
-          console.log('[PREMIUM] 💬 Extracting social quotes...');
-          const quotes = await extractSocialQuotes(finalTranscription, {
-            speakerContext,
-            userId: existingProject?.user_id,
-            projectId
-          });
-          quotesData = quotes;
-          aiTokenUsage.quotes = quotes.tokensUsed;
-
-          await updateProcessingProgress(projectId, {
-            stage: 'quotes' as ProcessingStage,
-            progress: 100,
-            message: `Found ${quotes.quotes.length} quotes`
-          });
-        } catch (error: any) {
-          console.error('[PREMIUM] ⚠️  Quote extraction failed:', error.message);
-        }
-      }
-    }
+    // NOTE: Summary, roles, chapters, takeaways, quotes now run in background
 
     // Cost calculation
     // Note: AI processing costs are now billed directly by the generator functions
@@ -953,6 +1032,12 @@ export async function POST(request: NextRequest) {
       console.log(`[MERGE] ✅ Merged ${mergeResult.mergedCount} duplicate speaker name(s)`);
     }
 
+    const smoothingResult = applyNeighborSmoothing(reassignedSegments);
+    reassignedSegments = smoothingResult.segments;
+    if (smoothingResult.updatedSegments > 0) {
+      console.log(`[SMOOTH] Neighbor smoothing applied: ${smoothingResult.updatedSegments} segments`);
+    }
+
     // ============================================================
     // STEP 5: BUILD UNIFIED SPEAKER DATA (Both branches feed here)
     // ============================================================
@@ -986,11 +1071,12 @@ export async function POST(request: NextRequest) {
         debatePostProcessing: projectType === 'DEBATE', // Debate correction as cleanup layer
         aiProcessing: {
           nameExtraction: features.nameExtraction,
-          summary: features.aiSummary,
-          roles: features.roleClassification,
-          chapters: features.chapterDetection,
-          takeaways: features.keyTakeaways,
-          quotes: features.quotesExtraction,
+          summary: features.aiSummary ? false : true,
+          roles: features.roleClassification ? false : true,
+          chapters: features.chapterDetection ? false : true,
+          takeaways: features.keyTakeaways ? false : true,
+          quotes: features.quotesExtraction ? false : true,
+          insights: features.nameExtraction ? false : true,
           debateCorrectionApplied: projectType === 'DEBATE' && debateCorrectionResult !== null,
         }
       }
@@ -1040,15 +1126,10 @@ export async function POST(request: NextRequest) {
       project_type: projectType, // Context-aware classification (DEBATE, INTERVIEW, etc.)
     };
 
-    if (summaryData) updateData.ai_summary = summaryData.summary;
-    if (chaptersData) updateData.chapters = chaptersData.chapters;
-    if (takeawaysData) updateData.key_takeaways = takeawaysData.takeaways;
-    if (quotesData) updateData.social_quotes = quotesData.quotes;
-
     await updateProcessingProgress(projectId, {
       stage: 'finalizing' as ProcessingStage,
       progress: 50,
-      message: 'Saving your results to the database...'
+      message: 'Saving conversation results...'
     });
 
     console.log(`\n[DATABASE] 💾 Saving results to project ${projectId}...`);
@@ -1066,22 +1147,21 @@ export async function POST(request: NextRequest) {
     await updateProcessingProgress(projectId, {
       stage: 'completed' as ProcessingStage,
       progress: 100,
-      message: 'Processing complete! Your content is ready.'
+      message: 'Conversation ready. Generating summaries and insights in the background...'
     });
 
-    // Background insights processing
+    // Background AI content processing (summary, roles, chapters, takeaways, quotes, insights)
     if (finalTranscription && speakerData) {
-      console.log('[INSIGHTS] 🔍 Starting insight extraction in background...');
-      const { processInsightsForProject } = await import('@/lib/insight-extraction');
-      processInsightsForProject(projectId)
-        .then((result) => {
-          if (result.success) {
-            console.log(`[INSIGHTS] ✅ Extracted ${result.insightCount} insights.`);
-          } else {
-            console.warn(`[INSIGHTS] ⚠️ Failed:`, result.error);
-          }
-        })
-        .catch((error) => console.error('[INSIGHTS] ❌ Error:', error));
+      runBackgroundContentTasks({
+        projectId,
+        speakerData,
+        finalTranscription,
+        transcriptionSegments,
+        features,
+        userId: existingProject?.user_id
+      }).catch((error) => {
+        console.error('[BACKGROUND] ❌ Failed to run background tasks:', error);
+      });
     }
 
     // Cleanup
@@ -1104,11 +1184,11 @@ export async function POST(request: NextRequest) {
       cost: totalCost,
       costBreakdown,
       features: {
-        summary: summaryData !== null,
-        chapters: chaptersData !== null,
-        takeaways: takeawaysData !== null,
-        quotes: quotesData !== null,
-        roles: Object.keys(roleAssignments).length > 0
+        summary: false,
+        chapters: false,
+        takeaways: false,
+        quotes: false,
+        roles: false
       }
     });
 
@@ -1203,12 +1283,13 @@ function mergeDuplicateSpeakersByName(
     const currentId = (seg as any).finalSpeakerId || seg.speakerId;
     const target = remap.get(currentId);
     if (!target) return seg;
+    const confidence = typeof seg.confidence === 'number' ? seg.confidence : 0.8;
     return {
       ...seg,
       speakerId: target,
       finalSpeakerId: target,
-      confidence: Math.min((seg as any).confidence ?? 1, 0.5),
-      status: 'uncertain',
+      confidence,
+      status: seg.status ?? 'tentative',
     };
   });
 
@@ -1249,7 +1330,7 @@ function applyDebateCorrectionsToFinalIds(
         id: newId,
         finalName: targetName,
         role: 'guest',
-        confidence: 0.6,
+        confidence: 0.8,
         source: 'debate_correction',
       };
       targetId = newId;
@@ -1264,16 +1345,124 @@ function applyDebateCorrectionsToFinalIds(
     const currentId = (seg as any).finalSpeakerId || seg.speakerId;
     const target = remap.get(currentId);
     if (!target) return seg;
+    const confidence = typeof seg.confidence === 'number' ? seg.confidence : 0.8;
     return {
       ...seg,
       speakerId: target,
       finalSpeakerId: target,
-      confidence: Math.min((seg as any).confidence ?? 1, 0.6),
-      status: 'tentative',
+      confidence,
+      status: seg.status ?? 'tentative',
     };
   });
 
   return { segments: updatedSegments, speakers };
+}
+
+function applyIntroHandoffLocks(
+  segments: SpeakerSegment[],
+  speakers: Record<string, any>,
+  debateResult: {
+    corrections: Array<{ speakerId: string; assignedName: string; assignmentReason: string; introducedAtSegment?: number }>;
+    hostId: string | null;
+  }
+): { segments: SpeakerSegment[]; speakers: Record<string, any>; lockedSegments: number } {
+  if (!debateResult?.corrections?.length) {
+    return { segments, speakers, lockedSegments: 0 };
+  }
+
+  const hostId = debateResult.hostId;
+  const nameToId = new Map<string, string>();
+  for (const [id, speaker] of Object.entries(speakers)) {
+    const name = getSpeakerNameForMerge(speaker);
+    if (!name) continue;
+    nameToId.set(normalizeSpeakerName(name), id);
+  }
+
+  const lockTargets = debateResult.corrections.filter(c =>
+    c.assignmentReason === 'lookahead' || c.assignmentReason === 'auto_advance' || c.assignmentReason === 'name_introduction'
+  );
+
+  if (lockTargets.length === 0) {
+    return { segments, speakers, lockedSegments: 0 };
+  }
+
+  const updated = [...segments];
+  let lockedSegments = 0;
+
+  for (const correction of lockTargets) {
+    const targetId = nameToId.get(normalizeSpeakerName(correction.assignedName));
+    if (!targetId) continue;
+    const anchorIndex = typeof correction.introducedAtSegment === 'number'
+      ? correction.introducedAtSegment
+      : -1;
+    if (anchorIndex < 0 || anchorIndex >= updated.length) continue;
+
+    let locked = 0;
+    for (let i = anchorIndex + 1; i < updated.length && locked < 3; i++) {
+      const seg = updated[i];
+      const currentId = (seg as any).finalSpeakerId || seg.speakerId;
+      if (hostId && currentId === hostId) continue;
+      // Skip if segment already has a strong correction marker
+      if ((seg as any)._debateCorrected || (seg as any)._correctionReason) continue;
+      // Lock only low-confidence segments
+      const confidence = seg.confidence ?? 1;
+      if (confidence < 0.7 || seg.status === 'tentative' || seg.status === 'uncertain') {
+        updated[i] = {
+          ...seg,
+          speakerId: targetId,
+          finalSpeakerId: targetId,
+          confidence,
+          status: seg.status ?? 'tentative',
+        };
+        locked++;
+        lockedSegments++;
+      }
+    }
+  }
+
+  return { segments: updated, speakers, lockedSegments };
+}
+
+function applyNeighborSmoothing(
+  segments: SpeakerSegment[]
+): { segments: SpeakerSegment[]; updatedSegments: number } {
+  if (segments.length < 3) return { segments, updatedSegments: 0 };
+  const updated = [...segments];
+  let updatedSegments = 0;
+  let skippedLong = 0;
+
+  for (let i = 1; i < segments.length - 1; i++) {
+    const prev = segments[i - 1];
+    const next = segments[i + 1];
+    const curr = segments[i];
+    const prevId = (prev as any).finalSpeakerId || prev.speakerId;
+    const nextId = (next as any).finalSpeakerId || next.speakerId;
+    const currId = (curr as any).finalSpeakerId || curr.speakerId;
+    if (prevId !== nextId || currId === prevId) continue;
+
+    const confidence = curr.confidence ?? 1;
+    const duration = curr.endTime - curr.startTime;
+    if (duration > 4) {
+      skippedLong++;
+      continue;
+    }
+    if ((curr as any)._debateCorrected || (curr as any)._correctionReason) continue;
+    if (confidence >= 0.7 && curr.status !== 'tentative' && curr.status !== 'uncertain') continue;
+
+    updated[i] = {
+      ...curr,
+      speakerId: prevId,
+      finalSpeakerId: prevId,
+      confidence,
+      status: curr.status ?? 'tentative',
+    };
+    updatedSegments++;
+  }
+
+  if (skippedLong > 0) {
+    console.log(`[SMOOTH] Skipped long segments (>4s): ${skippedLong}`);
+  }
+  return { segments: updated, updatedSegments };
 }
 
 function enforceFinalSpeakerIdContract(
@@ -1333,6 +1522,46 @@ function logSpeakerAssignmentCounts(segments: SpeakerSegment[], label: string) {
   console.log(`[SPEAKER COUNT] ${label} | final:   ${formatCounts(finalCounts)}`);
 }
 
+function buildAliasesFromName(name: string): string[] {
+  const trimmed = name.trim();
+  if (!trimmed) return [];
+  const parts = trimmed.split(/\s+/).filter(Boolean);
+  const aliases = new Set<string>();
+  aliases.add(trimmed);
+  if (parts.length >= 1) aliases.add(parts[0]);
+  if (parts.length >= 2) {
+    const initials = parts.map(p => p[0]).join('');
+    if (initials.length >= 2) aliases.add(initials);
+    aliases.add(`${parts[0]} ${parts[parts.length - 1][0]}.`);
+  }
+  return [...aliases];
+}
+
+function buildDebateRosterEntriesFromSpeakerMap(speakers: Record<string, any>) {
+  return Object.values(speakers).map((speaker: any) => ({
+    id: speaker.id,
+    name: speaker.finalName || speaker.name || speaker.fallbackName || speaker.id,
+    role: speaker.role,
+    aliases: speaker.aliases || buildAliasesFromName(speaker.finalName || speaker.name || speaker.fallbackName || speaker.id),
+  }));
+}
+
+function buildDebateRosterEntriesFromPreset(preset: any[], speakers: Record<string, any>) {
+  return preset.map((entry: any) => {
+    const name = entry.name || entry;
+    const normalized = name.toLowerCase();
+    const matched = Object.values(speakers).find((s: any) =>
+      (s.finalName || s.name || '').toLowerCase() === normalized
+    );
+    return {
+      id: matched?.id,
+      name,
+      role: matched?.role,
+      aliases: entry.aliases || buildAliasesFromName(name),
+    };
+  });
+}
+
 function buildSpeakerDataFromSegments(
   segments: SpeakerSegment[],
   speakersWithNames: Record<string, any>
@@ -1358,6 +1587,7 @@ function buildSpeakerDataFromSegments(
       role: rosterEntry.role || rosterEntry.displayRole || 'unknown',
       roleConfidence: rosterEntry.roleConfidence,
       extractedName: rosterEntry.extractedName,
+      profile: rosterEntry.profile,
       segments: segs.map(s => ({
         speakerId: s.speakerId,
         finalSpeakerId: (s as any).finalSpeakerId || s.speakerId,
@@ -1367,6 +1597,7 @@ function buildSpeakerDataFromSegments(
         text: s.text,
         confidence: s.confidence,
         status: (s as any).status,
+        confidenceReason: (s as any).confidenceReason,
       })),
       totalDuration,
       segmentCount: segs.length,
@@ -1386,6 +1617,7 @@ function buildSpeakerDataFromSegments(
         role: speaker.role || speaker.displayRole || 'unknown',
         roleConfidence: speaker.roleConfidence,
         extractedName: speaker.extractedName,
+        profile: speaker.profile,
         segments: [],
         totalDuration: 0,
         segmentCount: 0,

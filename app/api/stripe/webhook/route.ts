@@ -6,6 +6,7 @@
 import { NextRequest, NextResponse } from 'next/server';
 import Stripe from 'stripe';
 import { addCredit } from '@/lib/billing/credit';
+import { supabaseAdmin } from '@/lib/supabase/server';
 
 const stripe = new Stripe(process.env.STRIPE_SECRET_KEY!, {
   apiVersion: '2025-10-29.clover',
@@ -80,6 +81,23 @@ async function handleCheckoutComplete(session: Stripe.Checkout.Session) {
     if (!userId || !creditsAmount) {
       console.error('Missing metadata in checkout session:', session.id);
       return;
+    }
+
+    // Dedup: check if this payment_intent was already processed
+    const paymentIntentId = session.payment_intent as string;
+    if (paymentIntentId) {
+      const { data: existing } = await supabaseAdmin
+        .from('credit_transactions')
+        .select('id')
+        .eq('user_id', userId)
+        .eq('payment_id', paymentIntentId)
+        .limit(1)
+        .maybeSingle();
+
+      if (existing) {
+        console.log(`Payment ${paymentIntentId} already processed for user ${userId}, skipping`);
+        return;
+      }
     }
 
     console.log(`Processing payment for user ${userId}: $${creditsAmount} credits`);

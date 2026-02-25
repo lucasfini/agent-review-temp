@@ -9,8 +9,22 @@
 // Input:  Raw segments, roster, extracted anchors
 // Output: ClusterAssignment[] with scores and bind strengths
 
-import { SpeakerSegment } from './types';
+import { SpeakerSegment, SpeakerIdentityProfile } from './types';
 import { GPTSpeaker } from './gpt-speaker-intelligence';
+import {
+  acousticSimilarity,
+  lexicalOverlap,
+  computeRoleCompatibility,
+  hasAdLexicalHint,
+  buildClusterProfiles,
+} from './speaker-profiles';
+import {
+  STRONG_SELF_ID_PATTERNS,
+  MEDIUM_HANDOFF_PATTERNS,
+  MEDIUM_ADDRESS_PATTERNS,
+  WEAK_INDIRECT_PATTERNS,
+  TITLE_ADDRESS_PATTERNS,
+} from './self-id-patterns';
 
 // ─────────────────────────────────────────────
 // Types
@@ -46,6 +60,7 @@ export interface AnchorExtractionOptions {
   enableIntroOverride?: boolean;
   introOverrideEvents?: IntroOverrideEvent[];
   introSelfIdCounts?: Record<string, number>;
+  identityProfiles?: Record<string, SpeakerIdentityProfile>;
 }
 
 export interface AffinityMatrix {
@@ -67,35 +82,11 @@ export interface ClusterAssignment {
 // Regex Patterns by Anchor Strength
 // ─────────────────────────────────────────────
 
-const STRONG_SELF_ID = [
-  /\bmy name is\s+([a-zA-Z][a-zA-Z]*(?:\s+[a-zA-Z][a-zA-Z]*){0,2})/i,
-  /\bI'?m\s+([a-zA-Z][a-zA-Z]*(?:\s+[a-zA-Z][a-zA-Z]*){0,2})/i,
-  /\bthis is\s+([a-zA-Z][a-zA-Z]*(?:\s+[a-zA-Z][a-zA-Z]*){0,2})\s+speaking/i,
-];
-
-const MEDIUM_HANDOFF = [
-  /(?:next|up) (?:is|we have|hear from)\s+([a-zA-Z][a-zA-Z]*(?:\s+[a-zA-Z][a-zA-Z]*){0,2})/i,
-  /turning (?:it )?over to\s+([a-zA-Z][a-zA-Z]*(?:\s+[a-zA-Z][a-zA-Z]*){0,2})/i,
-  /let's hear from\s+([a-zA-Z][a-zA-Z]*(?:\s+[a-zA-Z][a-zA-Z]*){0,2})/i,
-  /start with(?:[.,])?\s+([a-zA-Z][a-zA-Z]*(?:\s+[a-zA-Z][a-zA-Z]*){0,2})/i,
-  /go ahead(?:[.,])?\s+([a-zA-Z][a-zA-Z]*(?:\s+[a-zA-Z][a-zA-Z]*){0,2})/i,
-  /moving (?:on )?to\s+([a-zA-Z][a-zA-Z]*(?:\s+[a-zA-Z][a-zA-Z]*){0,2})/i,
-  /and lastly,?\s+([a-zA-Z][a-zA-Z]*(?:\s+[a-zA-Z][a-zA-Z]*){0,2})/i,
-  /(?:okay|alright|so)(?:[.,])?\s+([a-zA-Z][a-zA-Z]*(?:\s+[a-zA-Z][a-zA-Z]*){0,2})[.,]?$/i,
-  // Short direct name calls: "Colin." / "Okay, Terry."
-  /^(?:okay|alright|so)?(?:[.,])?\s*([a-zA-Z][a-zA-Z]+)[.,?]?$/i,
-];
-
-const MEDIUM_ADDRESS = [
-  /thank(?:s| you),?\s+([a-zA-Z][a-zA-Z]*(?:\s+[a-zA-Z][a-zA-Z]*){0,2})/i,
-  /what do you think,?\s+([a-zA-Z][a-zA-Z]*(?:\s+[a-zA-Z][a-zA-Z]*){0,2})/i,
-];
-
-const WEAK_INDIRECT = [
-  /as\s+([a-zA-Z][a-zA-Z]*(?:\s+[a-zA-Z][a-zA-Z]*){0,2})\s+(?:said|mentioned|noted|pointed out)/i,
-  /like\s+([a-zA-Z][a-zA-Z]*(?:\s+[a-zA-Z][a-zA-Z]*){0,2})\s+(?:was saying|said)/i,
-  /([a-zA-Z][a-zA-Z]*(?:\s+[a-zA-Z][a-zA-Z]*){0,2})(?:'s|s) point about/i,
-];
+// Use imported patterns from self-id-patterns.ts
+const STRONG_SELF_ID = STRONG_SELF_ID_PATTERNS;
+const MEDIUM_HANDOFF = MEDIUM_HANDOFF_PATTERNS;
+const MEDIUM_ADDRESS = MEDIUM_ADDRESS_PATTERNS;
+const WEAK_INDIRECT = WEAK_INDIRECT_PATTERNS;
 
 // ─────────────────────────────────────────────
 // Affinity Score Weights
@@ -119,6 +110,18 @@ const TEMPORAL = {
 // Weak anchor accumulation cap: prevents indirect references from rivaling self-IDs
 // 3 weak anchors (3 × 1.0 = 3.0) would exceed this cap and be clamped to 2.5
 const WEAK_CAP = 0.25 * AFFINITY_WEIGHTS.strong_self; // 2.5
+
+const PROFILE_WEIGHTS = {
+  acoustic: 6.0,  // Increased from 3.0 (now 60% of self-ID weight)
+  lexical: 1.5,   // Slight increase to match
+  variancePenalty: 2.0,  // Increase penalty weight
+  role: 1.5,      // Decrease (will be context-aware)
+};
+
+const PROFILE_THRESHOLDS = {
+  highVariance: 0.45,
+  lowVariance: 0.15,
+};
 
 // ─────────────────────────────────────────────
 // Phase 2a: Anchor Extraction
@@ -144,6 +147,7 @@ export function extractAnchors(
     // Strong: Self-ID
     const selfMatch = matchName(text, STRONG_SELF_ID, roster);
     if (selfMatch) {
+      console.log(`[CSP] Self-ID anchor: seg ${i} → "${selfMatch.name}" (evidence: "${text.substring(0, 60)}")`);
       anchors.push({
         segmentIndex: i,
         strength: 'strong',
@@ -180,8 +184,10 @@ export function extractAnchors(
             : false;
 
         if (enableIntroOverride && inIntroWindow) {
+          // Check for roster-matched self-ID
           const selfIdMatch = matchName(nextSeg.text, STRONG_SELF_ID, roster);
           if (selfIdMatch && selfIdMatch.id !== handoffMatch.id) {
+            console.log(`[CSP] Intro override: handoff "${handoffMatch.name}" contradicted by self-ID "${selfIdMatch.name}"`);
             if (introOverrideEvents) {
               introOverrideEvents.push({
                 segmentIndex: i + 1,
@@ -193,11 +199,13 @@ export function extractAnchors(
             continue;
           }
 
+          // Check for repeated raw self-ID (not in roster but appears 2+ times)
           const rawSelfId = extractSelfIdName(nextSeg.text);
           if (rawSelfId) {
             const normalized = rawSelfId.toLowerCase().trim();
             const count = introSelfIdCounts[normalized] || 0;
             if (count >= 2) {
+              console.log(`[CSP] Intro override: handoff "${handoffMatch.name}" contradicted by repeated self-ID "${rawSelfId}" (${count}x)`);
               if (introOverrideEvents) {
                 introOverrideEvents.push({
                   segmentIndex: i + 1,
@@ -206,6 +214,21 @@ export function extractAnchors(
                   reason: 'intro_window_self_id_override_repeat',
                 });
               }
+              continue;
+            }
+          }
+
+          // NEW: Acoustic validation
+          // If handoff target has an existing profile, check if next segment matches acoustically
+          const targetProfile = options.identityProfiles?.[handoffMatch.id];
+          const nextSegEmbedding = (nextSeg as any).embedding as number[] | undefined;
+          if (targetProfile?.acoustic?.centrdEmbedding && nextSegEmbedding) {
+            const sim = acousticSimilarity(
+              { acoustic: { centrdEmbedding: nextSegEmbedding, variance: 0 } } as any,
+              targetProfile
+            );
+            if (sim < 0.50) {  // Strong mismatch
+              console.log(`[CSP] Intro override: handoff "${handoffMatch.name}" rejected (acoustic mismatch: ${sim.toFixed(2)})`);
               continue;
             }
           }
@@ -237,6 +260,42 @@ export function extractAnchors(
       });
     }
 
+    // ── Phase D: Title-based direct address ──
+    // "Prime Minister, where does this podcast find you?" → current speaker = host (not the PM).
+    // Only apply for 2-speaker interviews (exactly 1 host/co_host + exactly 1 guest).
+    const titleHosts = roster.filter(r => r.role === 'host' || r.role === 'co_host');
+    const titleGuests = roster.filter(r => r.role === 'guest');
+    if (titleHosts.length === 1 && titleGuests.length === 1) {
+      for (const pattern of TITLE_ADDRESS_PATTERNS) {
+        if (pattern.test(text)) {
+          console.log(`[CSP] Title-address anchor: seg ${i} → current speaker is host (evidence: "${text.slice(0, 60)}")`);
+          // Current speaker is the host (they are addressing the titled guest)
+          anchors.push({
+            segmentIndex: i,
+            strength: 'medium',
+            clusterId,
+            targetIdentityId: titleHosts[0].id,
+            targetIdentityName: titleHosts[0].name!,
+            direction: 'handoff_source',
+            evidence: text.slice(0, 60),
+          });
+          // Next segment is the guest's response
+          if (i + 1 < segments.length) {
+            anchors.push({
+              segmentIndex: i + 1,
+              strength: 'medium',
+              clusterId: segments[i + 1].speakerId,
+              targetIdentityId: titleGuests[0].id,
+              targetIdentityName: titleGuests[0].name!,
+              direction: 'handoff_target',
+              evidence: `Title-address response from seg ${i}: "${text.slice(0, 40)}"`,
+            });
+          }
+          break; // Only fire once per segment
+        }
+      }
+    }
+
     // Weak: Indirect Reference ("As Erin said earlier")
     const indirectMatch = matchName(text, WEAK_INDIRECT, roster);
     if (indirectMatch) {
@@ -257,6 +316,40 @@ export function extractAnchors(
   const weak = anchors.filter(a => a.strength === 'weak').length;
   console.log(`[CSP] Extracted ${anchors.length} anchors: ${strong} strong, ${medium} medium, ${weak} weak`);
 
+  // ── Validation: Check for orphaned self-IDs (self-IDs not in roster) ──
+  const orphanedSelfIds = new Set<string>();
+  const rosterNames = new Set(roster.map(r => r.name?.toLowerCase()).filter(Boolean));
+
+  for (let i = 0; i < segments.length; i++) {
+    const text = segments[i].text;
+    const rawSelfId = extractSelfIdName(text);
+
+    if (rawSelfId) {
+      const normalized = rawSelfId.toLowerCase().trim();
+      // Check if this name exists in roster
+      if (!rosterNames.has(normalized)) {
+        // Also check for partial matches (first name only)
+        const firstName = normalized.split(/\s+/)[0];
+        const rosterNamesArray = Array.from(rosterNames);
+        const hasPartialMatch = rosterNamesArray.some(rosterName =>
+          rosterName.split(/\s+/)[0] === firstName
+        );
+
+        if (!hasPartialMatch) {
+          orphanedSelfIds.add(rawSelfId);
+        }
+      }
+    }
+  }
+
+  if (orphanedSelfIds.size > 0) {
+    console.warn(`[CSP] ⚠️  ORPHANED SELF-IDs DETECTED: ${orphanedSelfIds.size} self-identifications NOT in GPT roster`);
+    console.warn(`[CSP] Orphaned names: ${[...orphanedSelfIds].join(', ')}`);
+    console.warn(`[CSP] → These speakers were missed in Pass 1 (GPT speaker intelligence)`);
+    console.warn(`[CSP] → Segments will fall back to acoustic clustering (may cause misassignment)`);
+    console.warn(`[CSP] → Consider improving Pass 1 prompt or increasing intro window`);
+  }
+
   return anchors;
 }
 
@@ -267,7 +360,12 @@ export function extractAnchors(
 export function buildAffinityMatrix(
   segments: SpeakerSegment[],
   roster: GPTSpeaker[],
-  anchors: Anchor[]
+  anchors: Anchor[],
+  profiles?: {
+    clusterProfiles?: Record<string, SpeakerIdentityProfile>;
+    identityProfiles?: Record<string, SpeakerIdentityProfile>;
+    context?: 'podcast' | 'debate';
+  }
 ): AffinityMatrix {
   const clusterSet = new Set(segments.map(s => s.speakerId));
   const clusters = [...clusterSet].sort();
@@ -281,6 +379,10 @@ export function buildAffinityMatrix(
   // Weak contributions tracked separately so we can cap them
   const weakScores: number[][] = clusters.map(() => identities.map(() => 0));
   const totalSegments = segments.length;
+  const clusterProfiles = profiles?.clusterProfiles || buildClusterProfiles(segments);
+  const identityProfiles = profiles?.identityProfiles || Object.fromEntries(
+    roster.map(r => [r.id, r.profile]).filter(([, p]) => !!p)
+  );
 
   for (const anchor of anchors) {
     const ci = clusterIdx.get(anchor.clusterId);
@@ -329,6 +431,83 @@ export function buildAffinityMatrix(
     }
   }
 
+  // Add role + profile based scores
+  let roleScoreHits = 0;
+  let profileScoreHits = 0;
+
+  for (let ci = 0; ci < clusters.length; ci++) {
+    const clusterId = clusters[ci];
+    const clusterProfile = clusterProfiles[clusterId];
+
+    for (let ii = 0; ii < identities.length; ii++) {
+      const identityId = identities[ii];
+      const identity = roster.find(r => r.id === identityId);
+      const identityProfile = identityProfiles[identityId];
+
+      let roleScore = 0;
+      if (identity?.role) {
+        roleScore = computeRoleCompatibility(clusterProfile, identity.role, profiles?.context) * PROFILE_WEIGHTS.role;
+        if (identity.role === 'advertiser' && clusterProfile && hasAdLexicalHint(clusterProfile)) {
+          roleScore += 1.0;
+        }
+      }
+
+      let profileScore = 0;
+      if (clusterProfile && identityProfile) {
+        const acoustic = acousticSimilarity(clusterProfile, identityProfile);
+        const lexical = lexicalOverlap(clusterProfile, identityProfile);
+        profileScore += acoustic * PROFILE_WEIGHTS.acoustic;
+        profileScore += lexical * PROFILE_WEIGHTS.lexical;
+
+        if (
+          clusterProfile.acoustic?.variance !== undefined &&
+          identityProfile.acoustic?.variance !== undefined
+        ) {
+          const clusterVar = clusterProfile.acoustic.variance;
+          const identityVar = identityProfile.acoustic.variance;
+          if (clusterVar > PROFILE_THRESHOLDS.highVariance && identityVar < PROFILE_THRESHOLDS.lowVariance) {
+            profileScore -= PROFILE_WEIGHTS.variancePenalty;
+          }
+        }
+      }
+
+      if (roleScore !== 0) roleScoreHits++;
+      if (profileScore !== 0) profileScoreHits++;
+
+      // Diagnostic logging for profile scoring
+      if (roleScore !== 0 || profileScore !== 0) {
+        const acoustic = clusterProfile && identityProfile ? acousticSimilarity(clusterProfile, identityProfile) : 0;
+        const lexical = clusterProfile && identityProfile ? lexicalOverlap(clusterProfile, identityProfile) : 0;
+        console.log(`[CSP] Profile scoring: cluster=${clusters[ci]}, identity=${identities[ii]}, role=${roleScore.toFixed(2)}, acoustic=${(acoustic * PROFILE_WEIGHTS.acoustic).toFixed(2)}, lexical=${(lexical * PROFILE_WEIGHTS.lexical).toFixed(2)}`);
+      }
+
+      scores[ci][ii] += roleScore + profileScore;
+    }
+  }
+
+  // ── Baseline affinity for unnamed roster entries ──
+  // Floor-enforced entries (name: null) may have zero affinity with all clusters
+  // because they lack text anchors, role data, and identity profiles.
+  // Without a baseline, the greedy solver's `> 0` gate prevents them from ever
+  // receiving a cluster assignment — rendering floor enforcement useless.
+  const UNNAMED_BASELINE = 0.1;
+  for (let ii = 0; ii < identities.length; ii++) {
+    const identity = roster.find(r => r.id === identities[ii]);
+    if (!identity?.name) {
+      const hasAnyAffinity = clusters.some((_, ci) => scores[ci][ii] > 0);
+      if (!hasAnyAffinity) {
+        for (let ci = 0; ci < clusters.length; ci++) {
+          scores[ci][ii] += UNNAMED_BASELINE;
+        }
+        console.log(`[CSP] Unnamed identity ${identities[ii]} given baseline affinity ${UNNAMED_BASELINE} across all clusters`);
+      }
+    }
+  }
+
+  if (roleScoreHits > 0 || profileScoreHits > 0) {
+    console.log(`[CSP] Role/Profile scoring applied: roleHits=${roleScoreHits}, profileHits=${profileScoreHits}`);
+  }
+
   // Log the matrix
   console.log(`[CSP] Affinity Matrix (${clusters.length} clusters × ${identities.length} identities):`);
   const header = ['Cluster', ...identities.map(id => roster.find(r => r.id === id)?.name || id)];
@@ -355,7 +534,8 @@ interface Constraint {
 export function solveConstraints(
   matrix: AffinityMatrix,
   roster: GPTSpeaker[],
-  targetSpeakerCount?: number
+  targetSpeakerCount?: number,
+  clusterSegmentCounts?: Map<string, number>
 ): ClusterAssignment[] {
   const { clusters, identities, scores } = matrix;
   const N = clusters.length;
@@ -497,6 +677,41 @@ export function solveConstraints(
     assignedIdentities.add(ii);
   }
 
+  // ── Fallback: distribute remaining unassigned clusters to remaining identities ──
+  // Safety net for edge cases where baseline affinity gets zeroed out by
+  // constraints (e.g., host exclusivity) or profile penalties.
+  const remainingClusters: number[] = [];
+  const remainingIdentities: number[] = [];
+  for (let ci = 0; ci < N; ci++) if (!assignedClusters.has(ci)) remainingClusters.push(ci);
+  for (let ii = 0; ii < M; ii++) if (!assignedIdentities.has(ii)) remainingIdentities.push(ii);
+
+  if (remainingClusters.length > 0 && remainingIdentities.length > 0) {
+    // Sort remaining clusters by segment count descending (largest unassigned first)
+    if (clusterSegmentCounts) {
+      remainingClusters.sort((a, b) =>
+        (clusterSegmentCounts.get(clusters[b]) || 0) - (clusterSegmentCounts.get(clusters[a]) || 0)
+      );
+    }
+
+    const pairCount = Math.min(remainingClusters.length, remainingIdentities.length);
+    console.log(`[CSP] Fallback distribution: pairing ${pairCount} remaining clusters with identities`);
+    for (let i = 0; i < pairCount; i++) {
+      const ci = remainingClusters[i];
+      const ii = remainingIdentities[i];
+      assignments.push({
+        clusterId: clusters[ci],
+        identityId: identities[ii],
+        identityName: roster.find(r => r.id === identities[ii])?.name || identities[ii],
+        score: 0.01,
+        bindStrength: 'soft',
+        contested: false,
+      });
+      assignedClusters.add(ci);
+      assignedIdentities.add(ii);
+      console.log(`  Fallback: ${clusters[ci]} → ${roster.find(r => r.id === identities[ii])?.name || identities[ii]}`);
+    }
+  }
+
   // Log results
   console.log(`[CSP] Solved ${assignments.length} assignments (${hardBinds.size} hard, ${assignments.length - hardBinds.size} soft):`);
   for (const a of assignments) {
@@ -565,10 +780,48 @@ export function calculateMatchScore(extracted: string, rosterName: string): numb
   return 0.0;
 }
 
+// Invalid names that should never be extracted (adjectives, possessives, common words)
+const INVALID_NAME_PATTERNS = [
+  /^(your|my|his|her|their|our)\b/i,  // Possessives
+  /^(the|a|an)\b/i,  // Articles
+  /^(nigerian|american|canadian|british|indian|chinese|african|european|asian)/i,  // Nationalities
+  /^(student|candidate|host|moderator|speaker|person|guy|man|woman)/i,  // Descriptors
+  /^(first|second|third|last|next|final)/i,  // Ordinals
+  /^(one|two|three|four|five)/i,  // Numbers
+];
+
 function extractSelfIdName(text: string): string | null {
   for (const pattern of STRONG_SELF_ID) {
     const match = text.match(pattern);
-    if (match && match[1]) return match[1].trim();
+    if (match && match[1]) {
+      const extracted = match[1].trim();
+
+      // Validate: reject invalid patterns
+      for (const invalidPattern of INVALID_NAME_PATTERNS) {
+        if (invalidPattern.test(extracted)) {
+          console.log(`[CSP] Rejected invalid self-ID name: "${extracted}" (matched ${invalidPattern})`);
+          return null;
+        }
+      }
+
+      // Validate: must contain at least one letter
+      if (!/[a-zA-Z]/.test(extracted)) {
+        return null;
+      }
+
+      // Allow initials/nicknames: 2-3 characters, all same case (JJ, DJ, jj, etc.)
+      const isInitials = /^[A-Z]{2,3}$/.test(extracted) || /^[a-z]{2,3}$/.test(extracted);
+      if (isInitials) {
+        return extracted; // Initials are valid
+      }
+
+      // Validate: reject if all lowercase (likely a verb or adjective) - but not initials
+      if (extracted === extracted.toLowerCase()) {
+        return null;
+      }
+
+      return extracted;
+    }
   }
   return null;
 }

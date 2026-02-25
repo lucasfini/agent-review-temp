@@ -58,22 +58,25 @@ export async function POST(request: NextRequest) {
       );
     }
 
-    // Check if credits already added (check for existing transaction with this session)
-    const { data: existingTransaction } = await supabaseAdmin
-      .from('credit_transactions')
-      .select('id')
-      .eq('user_id', user.id)
-      .eq('transaction_type', 'purchase')
-      .contains('metadata', { sessionId })
-      .single();
+    // Dedup: check if this payment_intent was already processed (by webhook or prior verify call)
+    const paymentIntentId = session.payment_intent as string;
+    if (paymentIntentId) {
+      const { data: existingTransaction } = await supabaseAdmin
+        .from('credit_transactions')
+        .select('id')
+        .eq('user_id', user.id)
+        .eq('payment_id', paymentIntentId)
+        .limit(1)
+        .maybeSingle();
 
-    if (existingTransaction) {
-      console.log(`Credits already added for session ${sessionId}`);
-      return NextResponse.json({
-        success: true,
-        alreadyProcessed: true,
-        message: 'Credits already added',
-      });
+      if (existingTransaction) {
+        console.log(`Credits already added for payment ${paymentIntentId} (session ${sessionId})`);
+        return NextResponse.json({
+          success: true,
+          alreadyProcessed: true,
+          message: 'Credits already added',
+        });
+      }
     }
 
     // Add credits

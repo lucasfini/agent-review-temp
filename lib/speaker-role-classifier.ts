@@ -17,6 +17,11 @@ interface SpeakerProfile {
   fallbackName?: string | null;
   totalDuration: number;
   segments: SpeakerSegment[];
+  behavioralStats?: {
+    handoffGivenCount?: number;
+    handoffReceivedCount?: number;
+    avgTurnSeconds?: number;
+  } | null;
 }
 
 const ROLE_OPTIONS = [
@@ -78,12 +83,20 @@ export async function classifySpeakerRoles(
     : null;
 
   // Build structured utterances for GPT
-  const structuredUtterances = speakerSummaries.map((summary) => ({
-    speaker_id: summary.id,
-    duration_seconds: summary.duration,
-    segment_count: summary.segmentCount,
-    sample_utterances: summary.sample
-  }));
+  const structuredUtterances = speakerSummaries.map((summary) => {
+    const behavioral = speakers[summary.id]?.behavioralStats;
+    return {
+      speaker_id: summary.id,
+      duration_seconds: summary.duration,
+      segment_count: summary.segmentCount,
+      handoffs_given: behavioral?.handoffGivenCount ?? null,
+      handoffs_received: behavioral?.handoffReceivedCount ?? null,
+      avg_turn_seconds: behavioral?.avgTurnSeconds != null
+        ? Math.round(behavioral.avgTurnSeconds * 10) / 10
+        : null,
+      sample_utterances: summary.sample
+    };
+  });
 
   // Get config for speaker role classification
   const config = prompts.audioRepurpose.speakerRoleClassification as any;
@@ -97,8 +110,7 @@ export async function classifySpeakerRoles(
   try {
     const response = await openai.chat.completions.create({
       model: config.model,
-      temperature: config.temperature,
-      max_tokens: config.max_tokens,
+      max_completion_tokens: config.max_tokens,
       top_p: config.top_p || 1,
       messages: [
         {

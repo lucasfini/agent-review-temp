@@ -404,7 +404,7 @@ export async function getUsageHistory(
 
   let query = supabase
     .from('usage_events')
-    .select('*', { count: 'exact' })
+    .select('*, projects:project_id(title)', { count: 'exact' })
     .eq('user_id', userId)
     .order('created_at', { ascending: false });
 
@@ -439,7 +439,7 @@ export async function getUsageHistory(
     throw new Error(`Failed to get usage history: ${error.message}`);
   }
 
-  const events: UsageEvent[] = (data || []).map((row) => ({
+  const events: (UsageEvent & { projectTitle?: string })[] = (data || []).map((row) => ({
     id: row.id,
     userId: row.user_id,
     projectId: row.project_id,
@@ -454,6 +454,7 @@ export async function getUsageHistory(
     metadata: row.metadata,
     status: row.status,
     createdAt: row.created_at,
+    projectTitle: row.projects?.title || undefined,
   }));
 
   return {

@@ -165,12 +165,13 @@ export async function POST(request: NextRequest) {
         outputs.push({
           project_id: body.project_id,
           user_id: body.user_id,
-          type: 'email_newsletter',
-          platform: 'email',
+          type: 'social_post', // Database doesn't allow 'email_newsletter'
+          platform: 'general', // Database doesn't allow 'email'
           title: result.email_newsletter.content.subject_line,
           content: result.email_newsletter.content.body_sections.big_idea,
           metadata: {
             ui_metadata: result.email_newsletter.ui_metadata,
+            originalOutputType: 'email_newsletter',
             subject_line: result.email_newsletter.content.subject_line,
             preview_text: result.email_newsletter.content.preview_text,
             body_sections: result.email_newsletter.content.body_sections,
@@ -186,7 +187,7 @@ export async function POST(request: NextRequest) {
           project_id: body.project_id,
           user_id: body.user_id,
           type: 'blog_post',
-          platform: 'blog',
+          platform: 'general', // Database doesn't allow 'blog'
           title: result.blog_post.content.title,
           content: result.blog_post.content.markdown_body,
           metadata: {

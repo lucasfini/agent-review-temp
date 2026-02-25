@@ -307,6 +307,12 @@ function parseInsightsFromResponse(responseText: string): ExtractedInsight[] {
     // But handle legacy formats and edge cases gracefully
     let jsonText = responseText.trim();
 
+    // Guard: empty string means the model hit its token cap before producing any output
+    if (!jsonText || jsonText === '{}') {
+      console.warn('[Parser] Empty or stub response — model likely hit token cap. Returning 0 insights.');
+      return [];
+    }
+
     // Remove markdown code fences if present
     const fenceMatch = jsonText.match(/```(?:json)?\s*([\s\S]*?)\s*```/);
     if (fenceMatch) {

@@ -1,7 +1,7 @@
 'use client';
 
 import { useState, RefObject } from 'react';
-import { Play, Loader2, Edit2, Check, X } from 'lucide-react';
+import { Play, Loader2, MoreHorizontal, Check, X } from 'lucide-react';
 import { TableRow, TableCell } from '@/components/ui/table';
 import { useSpeakerSample, AudioPlayerRef } from '@/lib/hooks/useSpeakerSample';
 import type { SpeakerSegment, SpeakerProfile } from '@/lib/types';
@@ -11,6 +11,7 @@ interface SpeakerRowProps {
   segments: SpeakerSegment[];
   audioPlayerRef: RefObject<AudioPlayerRef | null>;
   onRename: (speakerId: string, newName: string) => void;
+  onMergeRequest: (speakerId: string) => void;
 }
 
 export function SpeakerRow({
@@ -18,10 +19,12 @@ export function SpeakerRow({
   segments,
   audioPlayerRef,
   onRename,
+  onMergeRequest,
 }: SpeakerRowProps) {
   const [isEditing, setIsEditing] = useState(false);
   const [name, setName] = useState(speaker.name || speaker.fallbackName || '');
   const [isPlaying, setIsPlaying] = useState(false);
+  const [menuOpen, setMenuOpen] = useState(false);
 
   const { play, hasSegments, bestSegment } = useSpeakerSample(
     speaker.id,
@@ -122,13 +125,37 @@ export function SpeakerRow({
         ) : (
           <div className="flex items-center gap-2 group">
             <span className="font-medium">{displayName}</span>
-            <button
-              onClick={() => setIsEditing(true)}
-              className="p-1 opacity-0 group-hover:opacity-100 text-gray-400 hover:text-gray-600 transition-opacity"
-              title="Edit name"
-            >
-              <Edit2 className="w-3.5 h-3.5" />
-            </button>
+            <div className="relative">
+              <button
+                onClick={() => setMenuOpen((prev) => !prev)}
+                className="p-1 opacity-0 group-hover:opacity-100 text-gray-400 hover:text-gray-600 transition-opacity"
+                title="More actions"
+              >
+                <MoreHorizontal className="w-3.5 h-3.5" />
+              </button>
+              {menuOpen && (
+                <div className="absolute right-0 mt-1 w-28 rounded-md border bg-white shadow-md z-10">
+                  <button
+                    onClick={() => {
+                      setMenuOpen(false);
+                      setIsEditing(true);
+                    }}
+                    className="w-full text-left px-3 py-2 text-xs hover:bg-gray-50"
+                  >
+                    Rename
+                  </button>
+                  <button
+                    onClick={() => {
+                      setMenuOpen(false);
+                      onMergeRequest(speaker.id);
+                    }}
+                    className="w-full text-left px-3 py-2 text-xs hover:bg-gray-50"
+                  >
+                    Merge
+                  </button>
+                </div>
+              )}
+            </div>
             {speaker.role && (
               <span className="text-xs px-2 py-0.5 bg-blue-50 text-blue-600 rounded-full">
                 {speaker.role}

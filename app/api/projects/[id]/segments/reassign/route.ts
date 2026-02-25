@@ -78,12 +78,34 @@ export async function PATCH(
       });
     }
 
+    // Clean up speakers that no longer have any segments
+    const activeIds = new Set<string>();
+    for (const seg of updatedSegments) {
+      activeIds.add(seg.finalSpeakerId || seg.speakerId);
+    }
+
+    const cleanedSpeakers: Record<string, any> = {};
+    for (const id of Object.keys(speakerData.speakers)) {
+      if (!activeIds.has(id)) continue; // drop empty speakers
+      const ownSegments = updatedSegments.filter(
+        s => (s.finalSpeakerId || s.speakerId) === id
+      );
+      cleanedSpeakers[id] = {
+        ...(speakerData.speakers[id] as Record<string, any>),
+        segments: ownSegments,
+        segmentCount: ownSegments.length,
+        totalDuration: ownSegments.reduce((sum, s) => sum + (s.endTime - s.startTime), 0),
+      };
+    }
+
     // Update the speaker data with the modified segments
     const updatedSpeakerData = {
       ...speakerData,
       segments: updatedSegments,
+      speakers: cleanedSpeakers,
       detectionMetadata: {
         ...speakerData.detectionMetadata,
+        totalSpeakers: Object.keys(cleanedSpeakers).length,
         lastModified: new Date().toISOString(),
         lastModificationType: 'segment_reassignment'
       }

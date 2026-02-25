@@ -1,0 +1,325 @@
+{
+  "exportedAt": "2026-02-06T22:05:22.459Z",
+  "projects": [
+    {
+      "id": "4c50bf54-4c8f-403c-b35e-f29236b7cc3e",
+      "title": "Why Scott Galloway Is Choosing to Resist and Unsubscribe  Office Hours - The Prof G Pod – Scott Galloway (youtube)",
+      "coreContent": {
+        "conversation": {
+          "speakers": {
+            "speaker_1": {
+              "id": "speaker_1",
+              "role": "co_host",
+              "segments": [
+                {
+                  "text": "Thanks for that.",
+                  "status": "confirmed",
+                  "endTime": 61.58,
+                  "speakerId": "speaker_1",
+                  "startTime": 60.94,
+                  "confidence": 0.85,
+                  "finalSpeakerId": "speaker_1",
+                  "initialSpeakerId": "Speaker_B"
+                },
+                {
+                  "text": "I understand your point about boycotting businesses and canceling streaming platforms because Trump does respond to the market. But what would stop Republicans from then blaming the upcoming recession on the commie liberals? Wouldn't just biting our time be a better long term strategy? Not saying Minneapolis can wait that long. We are pretty desperate here. Thanks for all you do. I think it's a fair point. I don't think there's a free lunch here. I think possibly people could lose jobs. Although the companies I've listed as potential targets for your unsubscription or non participation. You know they're laying off people because of AI. I don't see them laying off people because of a short term economic strike. What I do see them doing is calling the President and saying, just FYI, this is really impacting us and could take GDP growth negative and could take the S and P down substantially. Also, I'm not comfortable telling people not to work or telling them, yeah, vote, I get it.",
+                  "status": "confirmed",
+                  "endTime": 110.14,
+                  "speakerId": "speaker_1",
+                  "startTime": 61.58,
+                  "confidence": 0.95,
+                  "finalSpeakerId": "speaker_1",
+                  "initialSpeakerId": "Speaker_A"
+                },
+                {
+                  "text": "But I think a lot of damage can be done between now and November and I feel as if we should have more leverage and more opportunity as consumers. In addition, the thing I like about this is you don't really have to do anything. I'm not asking you to risk getting fired. I'm not asking you to take your Saturday and go protest. I'm not even telling you which companies to unsubscribe from or when you might subscribe back, this is up to you. This is meant to create a signal and a framework for showing people that they have more power than they think. That in a consumer driven economy where the President only responds to market signals that you actually have more power just through non participation and power of the purse. Do I think the Republicans will blame Democrats? Yeah, I mean they're going to do that anyways. Anything bad that happens in the economy or any anything, period, that's negative, whether it's a cartoon not turning out the way they'd hoped or being run over in the street, it's going to be reverse engineered not just to Democrats but probably to the Biden administration. So I think that's coming no matter what. I do think if the S and P had been down 17%, not up, I don't think we'd have ice in cities. I think the President would be in.",
+                  "status": "confirmed",
+                  "endTime": 172.66,
+                  "speakerId": "speaker_1",
+                  "startTime": 110.14,
+                  "confidence": 0.85,
+                  "finalSpeakerId": "speaker_1",
+                  "initialSpeakerId": "Speaker_B"
+                },
+                {
+                  "text": "Media seem to be on board with.",
+                  "status": "confirmed",
+                  "endTime": 379.39,
+                  "speakerId": "speaker_1",
+                  "startTime": 378.31,
+                  "confidence": 0.85,
+                  "finalSpeakerId": "speaker_1",
+                  "initialSpeakerId": "Speaker_B"
+                },
+                {
+                  "text": "Huh?",
+                  "status": "confirmed",
+                  "endTime": 462.65,
+                  "speakerId": "speaker_1",
+                  "startTime": 462.25,
+                  "confidence": 0.85,
+                  "finalSpeakerId": "speaker_1",
+                  "initialSpeakerId": "Speaker_B"
+                }
+              ],
+              "finalName": "co host",
+              "segmentCount": 5,
+              "extractedName": null,
+              "totalDuration": 113.19999999999996,
+              "gptAttribution": true,
+              "roleConfidence": 0.75
+            },
+            "speaker_2": {
+              "id": "speaker_2",
+              "role": "advertiser",
+              "segments": [
+                {
+                  "text": "Support for the show comes from LinkedIn. It's a shame when the best B2B marketing gets wasted on the wrong audience. Like imagine running an ad for cataract surgery on Saturday morning cartoons. Or running a promo for this show on a video about Roblox or something. No offense to our Gen Alpha listeners, but that would be a waste of anyone's ad budget. So when you want to reach the right professionals, you can use LinkedIn ads. LinkedIn has grown to a network of over 1 billion professionals and 130 million decision makers according to their data. That's where it stands apart from other ad buys. You can target your buyers by job title, industry, company role, seniority, skills, company revenue, all so you can stop wasting budget on the wrong audience. That's why LinkedIn Ads boasts one of the highest B2B return on ad spend of all online ad networks. Seriously, all of them? Spend $250 on your first campaign on LinkedIn ads and get a free $250 credit for the next one. Just go to LinkedIn.com Scott that's LinkedIn.com Scott. Terms and conditions apply.",
+                  "status": "confirmed",
+                  "endTime": 457.29,
+                  "speakerId": "speaker_2",
+                  "startTime": 399.07,
+                  "confidence": 0.85,
+                  "finalSpeakerId": "speaker_2",
+                  "initialSpeakerId": "Speaker_C"
+                }
+              ],
+              "finalName": "advertiser",
+              "segmentCount": 1,
+              "extractedName": null,
+              "totalDuration": 58.22000000000003,
+              "gptAttribution": true,
+              "roleConfidence": 0.75
+            },
+            "speaker_3": {
+              "id": "speaker_3",
+              "role": "host",
+              "segments": [
+                {
+                  "text": "Such a world of trouble. What happens with America and our government is the idolatry of the dollar has resulted in the S and P and the Nasdaq becoming the ultimate arbiters of success or lack thereof in administration. And despite the fact that Democrats have vastly outperformed Republicans in terms of market returns or employment, as long as the market is up, I believe the President feels he has license to do pretty much anything. As long as people are making money, then he can do anything. And if you look at the people he responds to, he just responds to markets. And the titans of industry are the titans of these markets. So will they blame Democrats? Yeah, but they're going to do that anyways, so they're going to take full credit. It reminds me of when President Trump was asked what parts of the economy do you own? And he said the parts that are good. So yeah, that's going to happen anyways. Is there a downside? Probably. And there's probably downsides. I'm not saying. But if you're looking for a way, way to start hitting back, you want to find the soft tissue. And the soft tissue here is the markets. And the soft tissue within the soft tissue of the markets is in fact Big Tech, who I think are most vulnerable to a slowdown and in some ways most resilient. I don't think this is going to result in layoffs or any sort of consumer offering here. I'm not telling people to stop buying groceries. I don't think a person with economic security can tell people not to work or not to buy essentials. But do you really need five streaming media platforms? Appreciate the question. Question Number two comes from a listener who emailed us. They say, hi Scott and team. What's the biggest way resist and unsubscribe? Could fail or backfire. Is there a scenario where this actually strengthens the very corporations or political actors it's meant to weaken? Just reading this. Yeah. If it becomes politicized and all of a sudden conservatives find that the best way to own the libtards is to, you know, buy five subscriptions to T or buy Palantir stock or whatever it. Yeah, it could absolutely backfire. Also, I don't like the idea of politicizing everything, including corporate spending and I don't believe in canceling people. I think their livelihood should not be threatened by their political views. So, you know, do I have perfect moral clarity around this? No. Could it cost people jobs? Potentially. Although the firms were targeting big tech or I don't know. I don't think this is probably going to result in a huge destruction in employment. It could definitely backfire on me personally if it's, if it's a giant thud or off mic on this podcast. We've decided not to take an advertiser for the month of February because they're one of these firms. And so, you know, I've had a speaking gig canceled already because they said, look, we don't, we respect what you're doing. You're just a little bit hot right now. So like there is no battle, there is no effort that doesn't that's cost free. And could this backfire? Sure could. And could people decide that they don't like the movement and they're going to go the other way and subscribe? I guess I haven't seen any of that so far. I've seen people say, oh, you know, rich guy living in London who wants other people to stop spending. I'm trying to lead by example. I'm unsubscribing from something every day. And I'm also trying to create a signal in a infrastructure so people realize the power they have and. But I'm not telling them to stop buying their groceries or not show up for work. Sure, it could backfire and I'm sure there's things I'm not thinking about, but I will update you on a regular basis around what's gone right and what's gone wrong. The thing I probably worry about most is that advertisers flee from our platform and it ends up damaging the economic well being of the people who work with me because of my political views. And I've always been fairly cognizant of that. But at the same time, at least so far, the people at Prop G.",
+                  "status": "confirmed",
+                  "endTime": 378.31,
+                  "speakerId": "speaker_3",
+                  "startTime": 172.66,
+                  "confidence": 0.85,
+                  "finalSpeakerId": "speaker_3",
+                  "initialSpeakerId": "Speaker_A"
+                },
+                {
+                  "text": "Welcome back. Our final question came from CoverMyLeave on Reddit.",
+                  "status": "confirmed",
+                  "endTime": 462.25,
+                  "speakerId": "speaker_3",
+                  "startTime": 458.41,
+                  "confidence": 0.95,
+                  "finalSpeakerId": "speaker_3",
+                  "initialSpeakerId": "Speaker_A"
+                }
+              ],
+              "finalName": "Scott Galloway",
+              "segmentCount": 2,
+              "extractedName": {
+                "name": "Scott Galloway",
+                "context": "GPT speaker intelligence",
+                "confidence": 0.6
+              },
+              "totalDuration": 209.48999999999998,
+              "gptAttribution": true,
+              "roleConfidence": 0.6
+            },
+            "speaker_4": {
+              "id": "speaker_4",
+              "role": "guest",
+              "segments": [
+                {
+                  "text": "The ripple from the. From the stone. You could throw a giant stone into most spending for most companies and the ripple effect is barely felt. Whereas just a little pebble of disruption in subscription revenue across big tech might create a tidal wave of reaction from the market and ultimately from the individuals who appear to have the President's ear. Welcome to Office Hours with Prof. G. Today we're answering your questions about Resist and Unsubscribe, a campaign built around the idea idea that economic pressure, not outrage, is the most effective lever for change. We've built a website. I apologize. I'm hammering this home. That makes it easy who to unsubscribe from, what to avoid, and where your money actually matters. Join us and go to resist and unsubscribe.com if you'd like to submit a question for next time, you can send a voice recording to office hours of propaganda.com Again, that's office hours@proaganda.com Anyway, let's bust right into it. Our first question comes from Kia side 6230 on Reddit. They say physician from Minneapolis here, mother of two boys and love your podcast.",
+                  "status": "confirmed",
+                  "endTime": 60.94,
+                  "speakerId": "speaker_4",
+                  "startTime": 0.24,
+                  "confidence": 0.85,
+                  "finalSpeakerId": "speaker_4",
+                  "initialSpeakerId": "Speaker_A"
+                }
+              ],
+              "finalName": "hammering this",
+              "segmentCount": 1,
+              "extractedName": {
+                "name": "hammering this",
+                "context": "GPT speaker intelligence",
+                "confidence": 0.85
+              },
+              "totalDuration": 60.699999999999996,
+              "gptAttribution": true,
+              "roleConfidence": 0.85
+            },
+            "speaker_5": {
+              "id": "speaker_5",
+              "role": "guest",
+              "segments": [
+                {
+                  "text": "This and actually enjoying it and are excited about it. But it's the that you don't see that always hits you. Whether it's Covid or 9 11, it's the you're not expecting that hurts you. So the things I'm expecting could be blowback, probably aren't. There's probably things I haven't seen. But I will absolutely keep you posted. Thanks for the question. We'll be right back after a quick break.",
+                  "status": "confirmed",
+                  "endTime": 397.39,
+                  "speakerId": "speaker_5",
+                  "startTime": 379.39,
+                  "confidence": 0.85,
+                  "finalSpeakerId": "speaker_5",
+                  "initialSpeakerId": "Speaker_A"
+                }
+              ],
+              "finalName": "expecting could",
+              "segmentCount": 1,
+              "extractedName": {
+                "name": "expecting could",
+                "context": "GPT speaker intelligence",
+                "confidence": 0.85
+              },
+              "totalDuration": 18,
+              "gptAttribution": true,
+              "roleConfidence": 0.85
+            },
+            "speaker_6": {
+              "id": "speaker_6",
+              "role": "guest",
+              "segments": [
+                {
+                  "text": "Hi Scott, I agree with your premise that dollars are the most honest signal of public will. What struck me is that we may be aiming the message to the wrong decision makers. Roughly 97% of Meta's revenue comes from advertising. That means very small number of media directors and CMOs effectively control the cash supply. Have you considered whether motivating advertisers rather than consumers might be a more efficient pressure point than persuading millions of people to give up their subscriptions. Curious how you pressure test this is coordinated ethical media buying a more realistic market lever than a population wide consumer strike? It's really interesting and it's been tried before and it hasn't worked because it's not a concentration of buyers. Something like one of the Most powerful things about Meta's business model is I don't think any one advertiser controls more than 1% of spending and that is they are have such a robust diverse ecosystem that the ability to impose any sort of damage on Meta, A you'd have to go to millions of advertisers and B I'm spreading the message on resist and unsubscribe on Instagram. Why? Because Instagram basically has monopoly power. There's just no getting around it. If you want a message to go viral, you've got to be on a meta platform. I'm not happy about it. I would like to be telling people to unsubscribe from Meta but The reality is 2/3 of Americans now get their news from social media and 2/3 of social media is controlled by one one company. Something like 3 billion people are on a Meta platform every day. So I would like to see Meta broken up. I think it should. I think they should be forced to divest Instagram and WhatsApp. But I hate coal fired plants but I'm still going to turn on my lights. So going after advertisers of Meta has been tried before. It happened when it came out that they were lying about the addictive nature of their products and that young people who are having suicidal ideation began getting served almost immediately. Images of nooses hey, hey. Need help on suicide? Here's some images we thought you might find interesting. And there was a movement, but it really didn't have any impact because advertisers have an obligation to their shareholders and scaling back meant just putting more money on YouTube. They weren't getting credit for scaling back, but they were getting punished for not having customer acquisition dynamics or a funnel online. But I think the difference here is the following. If consumers stop buying shit, companies stop advertising. Every dollar less in subscription revenue you spend has 7 to 20 times the impact of every dollar less you spend on something like groceries or your car payment. Because these companies control so much market capitalization and are so priced to perfection that built into that expectation is the notion that people are going to continue to sign up another $20 a month for ChatGPT or for Gemini or what have you, or that you'll another 15, 16 bucks a month for Paramount plus whatever it might be that any small change in the uptick in subscription revenue has a massive impact on the market capitalization of these companies. If you got 10% of shoppers to reduce their spend by 50% at Kroger's 5% decrease in revenue, that would be a, you know, several hundred million dollars decrease in market cap of Kroger. And the CEO of Kroger is not being invited to the White House every other day. The ripple from the, from the stone. You could throw a giant stone into most spending for most companies and the ripple effect is barely felt. Whereas just a little pebble of disruption in subscription revenue across big tech might create a tidal wave of reaction from the market and ultimately from the individuals who appear to have the President's year. Meta gets roughly 98% of its revenue from advertising. Google and Alphabet get 75 to 80%. Amazon's advertising arm is now about 10%, but it's its highest margin offering. And Amazon subscription revenue, including prime, was around 44 billion versus 56 billion in ad revenue, meaning ads are now larger revenue streamed than subscriptions. But what drives revenues or what drives market cap is that subscription revenue. The reason I zeroed in on this is like, okay, if you have an enemy, what do you want to do? You're fighting the enemy. You want to kick it, quite frankly, or hit it and soft it. You want to hit the kidneys, you want to hit the Adam's apple, you want to hit the testicles, you want to hit the solar plexus to have, you know, if you punch someone in the thigh, they're going to be able to fight back. And so when you punch someone or encourage them to stop spending less or going into work, I find you're punching someone in the thigh. It's going to take a massive amount of blows to the thigh to debilitate that person. Whereas if you go after the subscription revenue of the seven companies responsible for 30% of the S and P, you are hitting these people in the nuts. Subscription revenue growth is worth much more, and any ding in that will show up immediately, be a disclosable event, and potentially have real big market ramifications and an impact on how these very powerful individuals feel about the current Trump policies. But it's a thoughtful question and also I'm open to advice here. I may have this wrong, but like Eisenhower said, you know, a bad decision is wrong, no decision is worse. Kind of sick of just talking all the time and saying what's wrong and right about everything. And I want to start doing. Even if, you know, do I have this 100% right? Unlikely. But I felt like I needed to do something. Thanks for the question. That's all for this episode. If you'd like to submit a question, please email a voice request. According to office hours of profiting media.com again, that's office hourspropertymedia.com or if you prefer to ask on Reddit, just post your question on skycallery subreddit and we just might feature it in an upcoming episode. Also, finally, if you like this podcast, don't like and subscribe, resist and unsubscribe www.ResistantUnsubscribe or resistant unsub or unsubscribe February and please post the services, the platforms, or the models that you are unsubscribing for on your social feeds. Thanks so much.",
+                  "status": "confirmed",
+                  "endTime": 802.1,
+                  "speakerId": "speaker_6",
+                  "startTime": 462.65,
+                  "confidence": 0.85,
+                  "finalSpeakerId": "speaker_6",
+                  "initialSpeakerId": "Speaker_A"
+                }
+              ],
+              "finalName": "spreading the",
+              "segmentCount": 1,
+              "extractedName": {
+                "name": "spreading the",
+                "context": "GPT speaker intelligence",
+                "confidence": 0.85
+              },
+              "totalDuration": 339.45000000000005,
+              "gptAttribution": true,
+              "roleConfidence": 0.85
+            }
+          },
+          "segments": [
+            {
+              "text": "The ripple from the. From the stone. You could throw a giant stone into most spending for most companies and the ripple effect is barely felt. Whereas just a little pebble of disruption in subscription revenue across big tech might create a tidal wave of reaction from the market and ultimately from the individuals who appear to have the President's ear. Welcome to Office Hours with Prof. G. Today we're answering your questions about Resist and Unsubscribe, a campaign built around the idea idea that economic pressure, not outrage, is the most effective lever for change. We've built a website. I apologize. I'm hammering this home. That makes it easy who to unsubscribe from, what to avoid, and where your money actually matters. Join us and go to resist and unsubscribe.com if you'd like to submit a question for next time, you can send a voice recording to office hours of propaganda.com Again, that's office hours@proaganda.com Anyway, let's bust right into it. Our first question comes from Kia side 6230 on Reddit. They say physician from Minneapolis here, mother of two boys and love your podcast.",
+              "status": "confirmed",
+              "endTime": 60.94,
+              "speakerId": "speaker_4",
+              "startTime": 0.24,
+              "confidence": 0.85,
+              "finalSpeakerId": "speaker_4",
+              "initialSpeakerId": "Speaker_A"
+            },
+            {
+              "text": "Thanks for that.",
+              "status": "confirmed",
+              "endTime": 61.58,
+              "speakerId": "speaker_1",
+              "startTime": 60.94,
+              "confidence": 0.85,
+              "finalSpeakerId": "speaker_1",
+              "initialSpeakerId": "Speaker_B"
+            },
+            {
+              "text": "I understand your point about boycotting businesses and canceling streaming platforms because Trump does respond to the market. But what would stop Republicans from then blaming the upcoming recession on the commie liberals? Wouldn't just biting our time be a better long term strategy? Not saying Minneapolis can wait that long. We are pretty desperate here. Thanks for all you do. I think it's a fair point. I don't think there's a free lunch here. I think possibly people could lose jobs. Although the companies I've listed as potential targets for your unsubscription or non participation. You know they're laying off people because of AI. I don't see them laying off people because of a short term economic strike. What I do see them doing is calling the President and saying, just FYI, this is really impacting us and could take GDP growth negative and could take the S and P down substantially. Also, I'm not comfortable telling people not to work or telling them, yeah, vote, I get it.",
+              "status": "confirmed",
+              "endTime": 110.14,
+              "speakerId": "speaker_1",
+              "startTime": 61.58,
+              "confidence": 0.95,
+              "finalSpeakerId": "speaker_1",
+              "initialSpeakerId": "Speaker_A"
+            },
+            {
+              "text": "But I think a lot of damage can be done between now and November and I feel as if we should have more leverage and more opportunity as consumers. In addition, the thing I like about this is you don't really have to do anything. I'm not asking you to risk getting fired. I'm not asking you to take your Saturday and go protest. I'm not even telling you which companies to unsubscribe from or when you might subscribe back, this is up to you. This is meant to create a signal and a framework for showing people that they have more power than they think. That in a consumer driven economy where the President only responds to market signals that you actually have more power just through non participation and power of the purse. Do I think the Republicans will blame Democrats? Yeah, I mean they're going to do that anyways. Anything bad that happens in the economy or any anything, period, that's negative, whether it's a cartoon not turning out the way they'd hoped or being run over in the street, it's going to be reverse engineered not just to Democrats but probably to the Biden administration. So I think that's coming no matter what. I do think if the S and P had been down 17%, not up, I don't think we'd have ice in cities. I think the President would be in.",
+              "status": "confirmed",
+              "endTime": 172.66,
+              "speakerId": "speaker_1",
+              "startTime": 110.14,
+              "confidence": 0.85,
+              "finalSpeakerId": "speaker_1",
+              "initialSpeakerId": "Speaker_B"
+            },
+            {
+              "text": "Such a world of trouble. What happens with America and our government is the idolatry of the dollar has resulted in the S and P and the Nasdaq becoming the ultimate arbiters of success or lack thereof in administration. And despite the fact that Democrats have vastly outperformed Republicans in terms of market returns or employment, as long as the market is up, I believe the President feels he has license to do pretty much anything. As long as people are making money, then he can do anything. And if you look at the people he responds to, he just responds to markets. And the titans of industry are the titans of these markets. So will they blame Democrats? Yeah, but they're going to do that anyways, so they're going to take full credit. It reminds me of when President Trump was asked what parts of the economy do you own? And he said the parts that are good. So yeah, that's going to happen anyways. Is there a downside? Probably. And there's probably downsides. I'm not saying. But if you're looking for a way, way to start hitting back, you want to find the soft tissue. And the soft tissue here is the markets. And the soft tissue within the soft tissue of the markets is in fact Big Tech, who I think are most vulnerable to a slowdown and in some ways most resilient. I don't think this is going to result in layoffs or any sort of consumer offering here. I'm not telling people to stop buying groceries. I don't think a person with economic security can tell people not to work or not to buy essentials. But do you really need five streaming media platforms? Appreciate the question. Question Number two comes from a listener who emailed us. They say, hi Scott and team. What's the biggest way resist and unsubscribe? Could fail or backfire. Is there a scenario where this actually strengthens the very corporations or political actors it's meant to weaken? Just reading this. Yeah. If it becomes politicized and all of a sudden conservatives find that the best way to own the libtards is to, you know, buy five subscriptions to T or buy Palantir stock or whatever it. Yeah, it could absolutely backfire. Also, I don't like the idea of politicizing everything, including corporate spending and I don't believe in canceling people. I think their livelihood should not be threatened by their political views. So, you know, do I have perfect moral clarity around this? No. Could it cost people jobs? Potentially. Although the firms were targeting big tech or I don't know. I don't think this is probably going to result in a huge destruction in employment. It could definitely backfire on me personally if it's, if it's a giant thud or off mic on this podcast. We've decided not to take an advertiser for the month of February because they're one of these firms. And so, you know, I've had a speaking gig canceled already because they said, look, we don't, we respect what you're doing. You're just a little bit hot right now. So like there is no battle, there is no effort that doesn't that's cost free. And could this backfire? Sure could. And could people decide that they don't like the movement and they're going to go the other way and subscribe? I guess I haven't seen any of that so far. I've seen people say, oh, you know, rich guy living in London who wants other people to stop spending. I'm trying to lead by example. I'm unsubscribing from something every day. And I'm also trying to create a signal in a infrastructure so people realize the power they have and. But I'm not telling them to stop buying their groceries or not show up for work. Sure, it could backfire and I'm sure there's things I'm not thinking about, but I will update you on a regular basis around what's gone right and what's gone wrong. The thing I probably worry about most is that advertisers flee from our platform and it ends up damaging the economic well being of the people who work with me because of my political views. And I've always been fairly cognizant of that. But at the same time, at least so far, the people at Prop G.",
+              "status": "confirmed",
+              "endTime": 378.31,
+              "speakerId": "speaker_3",
+              "startTime": 172.66,
+              "confidence": 0.85,
+              "finalSpeakerId": "speaker_3",
+              "initialSpeakerId": "Speaker_A"
+            },
+            {
+              "text": "Media seem to be on board with.",
+              "status": "confirmed",
+              "endTime": 379.39,
+              "speakerId": "speaker_1",
+              "startTime": 378.31,
+              "confidence": 0.85,
+              "finalSpeakerId": "speaker_1",
+              "initialSpeakerId": "Speaker_B"
+            },
+            {
+              "text": "This and actually enjoying it and are excited about it. But it's the that you don't see that always hits you. Whether it's Covid or 9 11, it's the you're not expecting that hurts you. So the things I'm expecting could be blowback, probably aren't. There's probably things I haven't seen. But I will absolutely keep you posted. Thanks for the question. We'll be right back after a quick break.",
+              "status": "confirmed",
+              "endTime": 397.39,
+              "speakerId": "speaker_5",
+              "startTime": 379.39,
+              "confidence": 0.85,
+              "finalSpeakerId": "speaker_5",
+              "initialSpeakerId": "Speaker_A"
+            },
+            {
+              "text": "Support for the show comes from LinkedIn. It's a shame when the best B2B marketing gets wasted on the wrong audience. Like imagine running an ad for cataract surgery on Saturday morning cartoons. Or running a promo for this show on a video about Roblox or something. No offense to our Gen Alpha listeners, but that would be a waste of anyone's ad budget. So when you want to reach the right professionals, you can use LinkedIn ads. LinkedIn has grown to a network of over 1 billion professionals and 130 million decision makers according to their data. That's where it stands apart from other ad buys. You can target your buyers by job title, industry, company role, seniority, skills, company revenue, all so you can stop wasting budget on the wrong audience. That's why LinkedIn Ads boasts one of the highest B2B return on ad spend of all online ad networks. Seriously, all of them? Spend $250 on your first campaign on LinkedIn ads and get a free $250 credit for the next one. Just go to LinkedIn.com Scott that's LinkedIn.com Scott. Terms and conditions apply.",
+              "status": "confirmed",
+              "endTime": 457.29,
+              "speakerId": "speaker_2",
+              "startTime": 399.07,
+              "confidence": 0.85,
+              "finalSpeakerId": "speaker_2",
+              "initialSpeakerId": "Speaker_C"
+            },
+            {
+              "text": "Welcome back. Our final question came from CoverMyLeave on Reddit.",
+              "status": "confirmed",
+              "endTime": 462.25,
+              "speakerId": "speaker_3",
+              "startTime": 458.41,
+              "confidence": 0.95,
+              "finalSpeakerId": "speaker_3",
+              "initialSpeakerId": "Speaker_A"
+            },
+            {
+              "text": "Huh?",
+              "status": "confirmed",
+              "endTime": 462.65,
+              "speakerId": "speaker_1",
+              "startTime": 462.25,
+              "confidence": 0.85,
+              "finalSpeakerId": "speaker_1",
+              "initialSpeakerId": "Speaker_B"
+            },
+            {
+              "text": "Hi Scott, I agree with your premise that dollars are the most honest signal of public will. What struck me is that we may be aiming the message to the wrong decision makers. Roughly 97% of Meta's revenue comes from advertising. That means very small number of media directors and CMOs effectively control the cash supply. Have you considered whether motivating advertisers rather than consumers might be a more efficient pressure point than persuading millions of people to give up their subscriptions. Curious how you pressure test this is coordinated ethical media buying a more realistic market lever than a population wide consumer strike? It's really interesting and it's been tried before and it hasn't worked because it's not a concentration of buyers. Something like one of the Most powerful things about Meta's business model is I don't think any one advertiser controls more than 1% of spending and that is they are have such a robust diverse ecosystem that the ability to impose any sort of damage on Meta, A you'd have to go to millions of advertisers and B I'm spreading the message on resist and unsubscribe on Instagram. Why? Because Instagram basically has monopoly power. There's just no getting around it. If you want a message to go viral, you've got to be on a meta platform. I'm not happy about it. I would like to be telling people to unsubscribe from Meta but The reality is 2/3 of Americans now get their news from social media and 2/3 of social media is controlled by one one company. Something like 3 billion people are on a Meta platform every day. So I would like to see Meta broken up. I think it should. I think they should be forced to divest Instagram and WhatsApp. But I hate coal fired plants but I'm still going to turn on my lights. So going after advertisers of Meta has been tried before. It happened when it came out that they were lying about the addictive nature of their products and that young people who are having suicidal ideation began getting served almost immediately. Images of nooses hey, hey. Need help on suicide? Here's some images we thought you might find interesting. And there was a movement, but it really didn't have any impact because advertisers have an obligation to their shareholders and scaling back meant just putting more money on YouTube. They weren't getting credit for scaling back, but they were getting punished for not having customer acquisition dynamics or a funnel online. But I think the difference here is the following. If consumers stop buying shit, companies stop advertising. Every dollar less in subscription revenue you spend has 7 to 20 times the impact of every dollar less you spend on something like groceries or your car payment. Because these companies control so much market capitalization and are so priced to perfection that built into that expectation is the notion that people are going to continue to sign up another $20 a month for ChatGPT or for Gemini or what have you, or that you'll another 15, 16 bucks a month for Paramount plus whatever it might be that any small change in the uptick in subscription revenue has a massive impact on the market capitalization of these companies. If you got 10% of shoppers to reduce their spend by 50% at Kroger's 5% decrease in revenue, that would be a, you know, several hundred million dollars decrease in market cap of Kroger. And the CEO of Kroger is not being invited to the White House every other day. The ripple from the, from the stone. You could throw a giant stone into most spending for most companies and the ripple effect is barely felt. Whereas just a little pebble of disruption in subscription revenue across big tech might create a tidal wave of reaction from the market and ultimately from the individuals who appear to have the President's year. Meta gets roughly 98% of its revenue from advertising. Google and Alphabet get 75 to 80%. Amazon's advertising arm is now about 10%, but it's its highest margin offering. And Amazon subscription revenue, including prime, was around 44 billion versus 56 billion in ad revenue, meaning ads are now larger revenue streamed than subscriptions. But what drives revenues or what drives market cap is that subscription revenue. The reason I zeroed in on this is like, okay, if you have an enemy, what do you want to do? You're fighting the enemy. You want to kick it, quite frankly, or hit it and soft it. You want to hit the kidneys, you want to hit the Adam's apple, you want to hit the testicles, you want to hit the solar plexus to have, you know, if you punch someone in the thigh, they're going to be able to fight back. And so when you punch someone or encourage them to stop spending less or going into work, I find you're punching someone in the thigh. It's going to take a massive amount of blows to the thigh to debilitate that person. Whereas if you go after the subscription revenue of the seven companies responsible for 30% of the S and P, you are hitting these people in the nuts. Subscription revenue growth is worth much more, and any ding in that will show up immediately, be a disclosable event, and potentially have real big market ramifications and an impact on how these very powerful individuals feel about the current Trump policies. But it's a thoughtful question and also I'm open to advice here. I may have this wrong, but like Eisenhower said, you know, a bad decision is wrong, no decision is worse. Kind of sick of just talking all the time and saying what's wrong and right about everything. And I want to start doing. Even if, you know, do I have this 100% right? Unlikely. But I felt like I needed to do something. Thanks for the question. That's all for this episode. If you'd like to submit a question, please email a voice request. According to office hours of profiting media.com again, that's office hourspropertymedia.com or if you prefer to ask on Reddit, just post your question on skycallery subreddit and we just might feature it in an upcoming episode. Also, finally, if you like this podcast, don't like and subscribe, resist and unsubscribe www.ResistantUnsubscribe or resistant unsub or unsubscribe February and please post the services, the platforms, or the models that you are unsubscribing for on your social feeds. Thanks so much.",
+              "status": "confirmed",
+              "endTime": 802.1,
+              "speakerId": "speaker_6",
+              "startTime": 462.65,
+              "confidence": 0.85,
+              "finalSpeakerId": "speaker_6",
+              "initialSpeakerId": "Speaker_A"
+            }
+          ]
+        }
+      }
+    }
+  ]
+}

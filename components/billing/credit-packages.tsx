@@ -6,7 +6,7 @@
  */
 
 import { useState } from 'react';
-import { Check } from 'lucide-react';
+import { Check, Zap } from 'lucide-react';
 import { useAuth } from '@/lib/auth/context';
 
 interface Package {
@@ -15,6 +15,8 @@ interface Package {
   price: number;
   popular?: boolean;
   bonus?: number;
+  bonusPercent?: string;
+  episodes?: string;
 }
 
 const packages: Package[] = [
@@ -22,12 +24,15 @@ const packages: Package[] = [
     id: 'starter',
     amount: 10,
     price: 10,
+    episodes: '~17-28 episodes',
   },
   {
     id: 'basic',
     amount: 25,
     price: 25,
     bonus: 2,
+    bonusPercent: '+8%',
+    episodes: '~45-75 episodes',
   },
   {
     id: 'pro',
@@ -35,12 +40,16 @@ const packages: Package[] = [
     price: 50,
     popular: true,
     bonus: 5,
+    bonusPercent: '+10%',
+    episodes: '~92-150 episodes',
   },
   {
     id: 'enterprise',
     amount: 100,
     price: 100,
     bonus: 15,
+    bonusPercent: '+15%',
+    episodes: '~190-320 episodes',
   },
 ];
 
@@ -56,14 +65,12 @@ export default function CreditPackages({ onSuccess }: CreditPackagesProps) {
   const handlePurchase = async (packageId: string) => {
     setIsProcessing(true);
     try {
-      // Get user's auth token from session
       if (!session?.access_token) {
         alert('Please log in to purchase credits');
         setIsProcessing(false);
         return;
       }
 
-      // Create checkout session
       const response = await fetch('/api/stripe/create-checkout', {
         method: 'POST',
         headers: {
@@ -80,7 +87,6 @@ export default function CreditPackages({ onSuccess }: CreditPackagesProps) {
 
       const data = await response.json();
 
-      // Redirect to Stripe checkout
       if (data.url) {
         window.location.href = data.url;
       } else {
@@ -89,58 +95,62 @@ export default function CreditPackages({ onSuccess }: CreditPackagesProps) {
     } catch (error) {
       console.error('Error creating checkout session:', error);
       alert('Failed to initiate checkout. Please try again.');
-      setIsProcessing(false); // Only reset on error, not on redirect
+      setIsProcessing(false);
     }
   };
 
+  const selected = packages.find(p => p.id === selectedPackage);
+
   return (
     <div>
-      <div className="grid gap-4 md:grid-cols-2 lg:grid-cols-4 mb-6">
+      <div className="grid gap-3 md:grid-cols-2 lg:grid-cols-4 mb-4">
         {packages.map((pkg) => (
           <button
             key={pkg.id}
             onClick={() => setSelectedPackage(pkg.id)}
-            className={`relative p-6 rounded-lg border-2 transition-all ${
+            className={`relative p-5 rounded-xl border-2 transition-all text-left ${
               selectedPackage === pkg.id
-                ? 'border-blue-500 bg-blue-50'
-                : 'border-gray-200 hover:border-gray-300'
-            } ${pkg.popular ? 'ring-2 ring-blue-500' : ''}`}
+                ? 'border-blue-500 bg-blue-50/50 shadow-sm'
+                : 'border-gray-200 hover:border-gray-300 hover:shadow-sm'
+            } ${pkg.popular ? 'ring-2 ring-blue-500 ring-offset-1' : ''}`}
           >
             {pkg.popular && (
-              <div className="absolute -top-3 left-1/2 -translate-x-1/2 bg-blue-500 text-white px-3 py-1 rounded-full text-xs font-semibold">
-                Popular
+              <div className="absolute -top-3 left-1/2 -translate-x-1/2 bg-blue-600 text-white px-3 py-0.5 rounded-full text-xs font-semibold flex items-center gap-1">
+                <Zap className="h-3 w-3" />
+                Best Value
               </div>
             )}
 
-            <div className="text-center">
-              <div className="text-3xl font-bold text-gray-900 mb-2">
-                ${pkg.amount}
+            {pkg.bonusPercent && (
+              <div className="absolute -top-2 -right-2 bg-green-500 text-white px-2 py-0.5 rounded-full text-xs font-bold">
+                {pkg.bonusPercent}
               </div>
-              {pkg.bonus && (
-                <div className="text-green-600 text-sm font-medium mb-2">
-                  +${pkg.bonus} bonus
-                </div>
-              )}
-              <div className="text-gray-500 text-sm mb-4">
-                ${pkg.price}
-              </div>
+            )}
 
-              <div className="text-xs text-gray-500 space-y-1">
-                <div className="flex items-center justify-center gap-1">
-                  <Check className="h-3 w-3" />
-                  Instant delivery
-                </div>
-                <div className="flex items-center justify-center gap-1">
-                  <Check className="h-3 w-3" />
-                  No expiration
-                </div>
-              </div>
+            <div className="text-3xl font-bold text-gray-900 mb-1">
+              ${pkg.price}
+            </div>
+
+            <div className="text-sm text-gray-900 font-medium mb-1">
+              ${pkg.amount} credits
+              {pkg.bonus ? (
+                <span className="text-green-600 ml-1">+${pkg.bonus} bonus</span>
+              ) : null}
+            </div>
+
+            <div className="text-xs text-gray-500 mb-3">
+              {pkg.episodes}
+            </div>
+
+            <div className="flex items-center gap-1 text-xs text-gray-400">
+              <Check className="h-3 w-3" />
+              No expiration
             </div>
 
             {selectedPackage === pkg.id && (
               <div className="absolute top-2 right-2">
-                <div className="bg-blue-500 rounded-full p-1">
-                  <Check className="h-4 w-4 text-white" />
+                <div className="bg-blue-500 rounded-full p-0.5">
+                  <Check className="h-3.5 w-3.5 text-white" />
                 </div>
               </div>
             )}
@@ -148,19 +158,13 @@ export default function CreditPackages({ onSuccess }: CreditPackagesProps) {
         ))}
       </div>
 
-      <div className="bg-blue-50 border border-blue-200 rounded-lg p-4 mb-4">
-        <div className="flex items-start gap-3">
-          <div className="text-blue-600 font-bold">ℹ️</div>
-          <div className="text-sm text-blue-800">
-            <div className="font-medium mb-1">About Credits</div>
-            <ul className="space-y-1">
-              <li>• Credits are used for transcription and AI processing</li>
-              <li>• Minimum purchase: $10 (Starter package)</li>
-              <li>• No monthly fees or subscriptions</li>
-              <li>• Pay only for what you use</li>
-            </ul>
-          </div>
-        </div>
+      <div className="flex items-center justify-between mb-4">
+        <p className="text-xs text-gray-500">
+          Pay as you go — no subscriptions, credits never expire
+        </p>
+        <p className="text-xs text-gray-400">
+          Secure payment via Stripe
+        </p>
       </div>
 
       <button
@@ -168,12 +172,10 @@ export default function CreditPackages({ onSuccess }: CreditPackagesProps) {
         disabled={isProcessing}
         className="w-full bg-blue-600 text-white py-3 rounded-lg font-semibold hover:bg-blue-700 disabled:opacity-50 disabled:cursor-not-allowed transition-colors"
       >
-        {isProcessing ? 'Processing...' : `Purchase ${packages.find(p => p.id === selectedPackage)?.amount} Credits`}
+        {isProcessing
+          ? 'Processing...'
+          : `Purchase $${selected?.price ?? 0} — Get $${(selected?.amount ?? 0) + (selected?.bonus ?? 0)} in Credits`}
       </button>
-
-      <div className="mt-4 text-center text-xs text-gray-500">
-        Secure payment powered by Stripe
-      </div>
     </div>
   );
 }

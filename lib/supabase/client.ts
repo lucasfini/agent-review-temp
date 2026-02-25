@@ -221,6 +221,85 @@ export type Database = {
           updated_at?: string
         }
       }
+      integration_connections: {
+        Row: {
+          id: string
+          user_id: string
+          provider: 'zoom' | 'microsoft'
+          external_account_id: string
+          status: 'connected' | 'revoked'
+          scopes: string[] | null
+          access_token_enc: string | null
+          refresh_token_enc: string | null
+          expires_at: string | null
+          metadata: any | null
+          created_at: string
+          updated_at: string
+          last_sync_at: string | null
+        }
+        Insert: {
+          id?: string
+          user_id: string
+          provider: 'zoom' | 'microsoft'
+          external_account_id: string
+          status?: 'connected' | 'revoked'
+          scopes?: string[] | null
+          access_token_enc?: string | null
+          refresh_token_enc?: string | null
+          expires_at?: string | null
+          metadata?: any | null
+          created_at?: string
+          updated_at?: string
+          last_sync_at?: string | null
+        }
+        Update: {
+          id?: string
+          user_id?: string
+          provider?: 'zoom' | 'microsoft'
+          external_account_id?: string
+          status?: 'connected' | 'revoked'
+          scopes?: string[] | null
+          access_token_enc?: string | null
+          refresh_token_enc?: string | null
+          expires_at?: string | null
+          metadata?: any | null
+          created_at?: string
+          updated_at?: string
+          last_sync_at?: string | null
+        }
+      }
+      integration_imports: {
+        Row: {
+          id: string
+          user_id: string
+          provider: 'zoom' | 'microsoft'
+          external_recording_id: string
+          project_id: string | null
+          status: 'imported' | 'failed'
+          error: string | null
+          created_at: string
+        }
+        Insert: {
+          id?: string
+          user_id: string
+          provider: 'zoom' | 'microsoft'
+          external_recording_id: string
+          project_id?: string | null
+          status?: 'imported' | 'failed'
+          error?: string | null
+          created_at?: string
+        }
+        Update: {
+          id?: string
+          user_id?: string
+          provider?: 'zoom' | 'microsoft'
+          external_recording_id?: string
+          project_id?: string | null
+          status?: 'imported' | 'failed'
+          error?: string | null
+          created_at?: string
+        }
+      }
       outputs: {
         Row: {
           id: string

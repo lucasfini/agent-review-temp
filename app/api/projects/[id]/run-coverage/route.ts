@@ -7,6 +7,8 @@ import {
   appendCoverageCostToProject
 } from '@/lib/narrative-coverage';
 
+export const maxDuration = 300;
+
 interface RunCoveragePayload {
   userId?: string;
   force?: boolean;

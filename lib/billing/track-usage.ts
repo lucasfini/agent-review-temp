@@ -15,29 +15,55 @@ import { logUsageEvent, debitCredit } from './credit';
 export interface OpenAIUsage {
   promptTokens: number;
   completionTokens: number;
+  cachedTokens: number;
+  uncachedTokens: number;
   totalTokens: number;
 }
 
 /**
  * Extract usage from OpenAI API response
+ * Handles cached input tokens from prompt_tokens_details
  */
 export function extractOpenAIUsage(response: any): OpenAIUsage {
   const usage = response?.usage;
+  const promptTokens = usage?.prompt_tokens || 0;
+  const completionTokens = usage?.completion_tokens || 0;
+  const cachedTokens = usage?.prompt_tokens_details?.cached_tokens || 0;
 
   return {
-    promptTokens: usage?.prompt_tokens || 0,
-    completionTokens: usage?.completion_tokens || 0,
+    promptTokens,
+    completionTokens,
+    cachedTokens,
+    uncachedTokens: promptTokens - cachedTokens,
     totalTokens: usage?.total_tokens || 0,
   };
 }
 
 /**
- * Track OpenAI GPT-4o-mini usage (most common model for this app)
+ * Map a model name to the correct cost-map service keys
+ */
+function getOpenAIServiceKeys(modelName: string): { input: string; output: string } {
+  if (modelName.includes('gpt-5-nano')) return { input: 'openai_gpt5_nano_input', output: 'openai_gpt5_nano_output' };
+  if (modelName.includes('gpt-5-mini')) return { input: 'openai_gpt5_mini_input', output: 'openai_gpt5_mini_output' };
+  if (modelName.includes('gpt-5'))      return { input: 'openai_gpt5_input',      output: 'openai_gpt5_output' };
+  if (modelName.includes('gpt-4o-mini')) return { input: 'openai_gpt4o_mini_input', output: 'openai_gpt4o_mini_output' };
+  if (modelName.includes('gpt-4o'))      return { input: 'openai_gpt4o_input',      output: 'openai_gpt4o_output' };
+  // Fallback: cheapest known rate to avoid over-billing
+  return { input: 'openai_gpt4o_mini_input', output: 'openai_gpt4o_mini_output' };
+}
+
+/**
+ * Track OpenAI usage with correct per-model pricing
+ *
+ * Supports gpt-5, gpt-5-mini, gpt-5-nano, gpt-4o, gpt-4o-mini with separate rates.
+ * Handles cached input tokens at 50% discount.
  *
  * @param userId - User to bill
  * @param projectId - Project being processed
  * @param response - OpenAI API response object
- * @param metadata - Additional context (model, purpose, etc.)
+ * @param modelName - Model name (gpt-5, gpt-5-mini, gpt-5-nano, gpt-4o, gpt-4o-mini, etc.)
+ * @param purpose - Description for audit trail
+ * @param metadata - Additional context
  * @param shouldDebit - Whether to debit credits immediately (default: true)
  */
 export async function trackOpenAIUsage(params: {
@@ -55,61 +81,43 @@ export async function trackOpenAIUsage(params: {
 }> {
   const { userId, projectId, response, modelName = 'gpt-4o-mini', purpose, metadata, shouldDebit = true } = params;
 
-  // Extract token usage
+  // Extract token usage (including cached tokens)
   const usage = extractOpenAIUsage(response);
 
   // Determine service keys based on model
-  let inputServiceKey = 'openai_gpt4o_mini_input';
-  let outputServiceKey = 'openai_gpt4o_mini_output';
+  const { input: inputServiceKey, output: outputServiceKey } = getOpenAIServiceKeys(modelName);
+  // Cached input: gpt-5 family doesn't expose cached keys, fall back to same as input
+  const cachedInputServiceKey = inputServiceKey;
 
-  // Could extend this to support other models in the future
-  if (modelName.includes('gpt-4o')) {
-    // Already correct
-  }
+  // Calculate costs for uncached input, cached input, and output separately
+  const uncachedInputCost = calculateServiceCost(inputServiceKey, usage.uncachedTokens);
+  const cachedInputCost = usage.cachedTokens > 0
+    ? calculateServiceCost(cachedInputServiceKey, usage.cachedTokens)
+    : { rawCost: 0, billedCost: 0 };
+  const outputCost = calculateServiceCost(outputServiceKey, usage.completionTokens);
 
-  // Calculate costs
-  const costResult = calculateTokenCost(
-    inputServiceKey,
-    outputServiceKey,
-    usage.promptTokens,
-    usage.completionTokens
-  );
+  const totalRawCost = Number((uncachedInputCost.rawCost + cachedInputCost.rawCost + outputCost.rawCost).toFixed(6));
+  const totalBilledCost = Number((uncachedInputCost.billedCost + cachedInputCost.billedCost + outputCost.billedCost).toFixed(6));
 
-  // Log usage event
+  // Log combined usage event (single event per API call for cleaner history)
   const usageEvent = await logUsageEvent({
     userId,
     projectId,
     serviceKey: inputServiceKey,
-    serviceName: `OpenAI ${modelName} Input`,
+    serviceName: `OpenAI ${modelName}`,
     provider: 'openai',
-    units: usage.promptTokens,
-    unitType: 'input_tokens',
-    rawCost: costResult.breakdown.input.rawCost,
+    units: usage.promptTokens + usage.completionTokens,
+    unitType: 'tokens',
+    rawCost: totalRawCost,
     marginPercent: 35,
-    billedCost: costResult.breakdown.input.billedCost,
+    billedCost: totalBilledCost,
     metadata: {
       model: modelName,
       purpose,
-      totalTokens: usage.totalTokens,
-      ...metadata,
-    },
-  });
-
-  // Log output tokens separately
-  await logUsageEvent({
-    userId,
-    projectId,
-    serviceKey: outputServiceKey,
-    serviceName: `OpenAI ${modelName} Output`,
-    provider: 'openai',
-    units: usage.completionTokens,
-    unitType: 'output_tokens',
-    rawCost: costResult.breakdown.output.rawCost,
-    marginPercent: 35,
-    billedCost: costResult.breakdown.output.billedCost,
-    metadata: {
-      model: modelName,
-      purpose,
+      inputTokens: usage.promptTokens,
+      cachedTokens: usage.cachedTokens,
+      uncachedTokens: usage.uncachedTokens,
+      outputTokens: usage.completionTokens,
       totalTokens: usage.totalTokens,
       ...metadata,
     },
@@ -117,12 +125,13 @@ export async function trackOpenAIUsage(params: {
 
   // Debit credits if requested
   if (shouldDebit) {
-    await debitCredit(userId, costResult.billedCost, usageEvent.id, {
+    await debitCredit(userId, totalBilledCost, usageEvent.id, {
       reason: `OpenAI ${modelName} - ${purpose || 'API call'}`,
       metadata: {
         projectId,
         model: modelName,
         inputTokens: usage.promptTokens,
+        cachedTokens: usage.cachedTokens,
         outputTokens: usage.completionTokens,
       },
     });
@@ -130,8 +139,8 @@ export async function trackOpenAIUsage(params: {
 
   return {
     usageEventId: usageEvent.id,
-    billedCost: costResult.billedCost,
-    rawCost: costResult.rawCost,
+    billedCost: totalBilledCost,
+    rawCost: totalRawCost,
   };
 }
 

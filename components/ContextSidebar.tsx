@@ -18,7 +18,9 @@ import {
   Edit2,
   Check,
   X,
-  Loader2
+  Loader2,
+  MoreHorizontal,
+  RefreshCw
 } from 'lucide-react';
 import { cn } from '@/lib/utils';
 import { getSpeakerDisplayName, getSpeakerColor } from '@/lib/name-extraction';
@@ -63,6 +65,7 @@ interface ContextSidebarProps {
   activeSpeakerId?: string | null;
   projectId?: string;
   onSpeakerRename?: (speakerId: string, newName: string) => void;
+  onSpeakerMerge?: (sourceSpeakerId: string, targetSpeakerId: string) => void;
 
   // Insights data
   insights?: Insight[];
@@ -80,6 +83,7 @@ interface ContextSidebarProps {
 
   // Configuration
   tier?: 'basic' | 'pro' | 'premium';
+  contentLoading?: boolean; // True when project is still processing (summary/chapters/etc. not ready yet)
   className?: string;
 
   // Mobile control
@@ -114,6 +118,7 @@ export function ContextSidebar({
   activeSpeakerId,
   projectId,
   onSpeakerRename,
+  onSpeakerMerge,
   insights = [],
   activeInsightId,
   onInsightClick,
@@ -125,6 +130,7 @@ export function ContextSidebar({
   takeaways = [],
   quotes = [],
   tier = 'basic',
+  contentLoading = false,
   className,
   isOpen = true,
   onClose,
@@ -136,6 +142,9 @@ export function ContextSidebar({
   const [editingSpeakerId, setEditingSpeakerId] = useState<string | null>(null);
   const [editingName, setEditingName] = useState('');
   const [savingSpeaker, setSavingSpeaker] = useState<string | null>(null);
+  const [mergeSourceId, setMergeSourceId] = useState<string | null>(null);
+  const [mergeTargetId, setMergeTargetId] = useState<string>('');
+  const [activeMenuId, setActiveMenuId] = useState<string | null>(null);
 
   // Speaker editing handlers
   const handleStartEdit = (speakerId: string, currentName: string) => {
@@ -165,6 +174,20 @@ export function ContextSidebar({
     }
   };
 
+  const handleMerge = async () => {
+    if (!mergeSourceId || !mergeTargetId || mergeSourceId === mergeTargetId) return;
+    if (!projectId) return;
+
+    try {
+      setSavingSpeaker(mergeSourceId);
+      await onSpeakerMerge?.(mergeSourceId, mergeTargetId);
+      setMergeSourceId(null);
+      setMergeTargetId('');
+    } finally {
+      setSavingSpeaker(null);
+    }
+  };
+
   // Build speaker list sorted by segment count
   const speakerList = useMemo(() => {
     return Object.entries(speakers)
@@ -177,34 +200,67 @@ export function ContextSidebar({
       .sort((a, b) => (b.segmentCount || 0) - (a.segmentCount || 0));
   }, [speakers]);
 
-  // Available tabs based on content and tier
+  // Available tabs based on tier — always show tier-appropriate tabs, even when data is loading
   const availableTabs = useMemo(() => {
     const tabs: Array<{ id: TabId; label: string; icon: React.ReactNode; count?: number }> = [
       { id: 'speakers', label: 'Speakers', icon: <Users className="w-4 h-4" />, count: speakerList.length },
     ];
 
-    if (insights.length > 0 || tier !== 'basic') {
-      tabs.push({ id: 'insights', label: 'Insights', icon: <Lightbulb className="w-4 h-4" />, count: insights.length });
-    }
+    if (tier !== 'basic') {
+      tabs.push({
+        id: 'insights',
+        label: 'Insights',
+        icon: insightsLoading || insightsGenerating
+          ? <RefreshCw className="w-4 h-4 animate-spin" />
+          : <Lightbulb className="w-4 h-4" />,
+        count: insights.length || undefined,
+      });
 
-    if ((tier === 'pro' || tier === 'premium') && summary) {
-      tabs.push({ id: 'summary', label: 'Summary', icon: <Sparkles className="w-4 h-4" /> });
+      // Summary available for pro and premium
+      const summaryLoading = !summary && contentLoading;
+      tabs.push({
+        id: 'summary',
+        label: 'Summary',
+        icon: summaryLoading
+          ? <RefreshCw className="w-4 h-4 animate-spin" />
+          : <Sparkles className="w-4 h-4" />,
+      });
     }
 
     if (tier === 'premium') {
-      if (chapters.length > 0) {
-        tabs.push({ id: 'chapters', label: 'Chapters', icon: <BookOpen className="w-4 h-4" />, count: chapters.length });
-      }
-      if (takeaways.length > 0) {
-        tabs.push({ id: 'takeaways', label: 'Takeaways', icon: <CheckCircle className="w-4 h-4" />, count: takeaways.length });
-      }
-      if (quotes.length > 0) {
-        tabs.push({ id: 'quotes', label: 'Quotes', icon: <MessageSquare className="w-4 h-4" />, count: quotes.length });
-      }
+      const chaptersLoading = chapters.length === 0 && contentLoading;
+      tabs.push({
+        id: 'chapters',
+        label: 'Chapters',
+        icon: chaptersLoading
+          ? <RefreshCw className="w-4 h-4 animate-spin" />
+          : <BookOpen className="w-4 h-4" />,
+        count: chapters.length || undefined,
+      });
+
+      const takeawaysLoading = takeaways.length === 0 && contentLoading;
+      tabs.push({
+        id: 'takeaways',
+        label: 'Takeaways',
+        icon: takeawaysLoading
+          ? <RefreshCw className="w-4 h-4 animate-spin" />
+          : <CheckCircle className="w-4 h-4" />,
+        count: takeaways.length || undefined,
+      });
+
+      const quotesLoading = quotes.length === 0 && contentLoading;
+      tabs.push({
+        id: 'quotes',
+        label: 'Quotes',
+        icon: quotesLoading
+          ? <RefreshCw className="w-4 h-4 animate-spin" />
+          : <MessageSquare className="w-4 h-4" />,
+        count: quotes.length || undefined,
+      });
     }
 
     return tabs;
-  }, [speakerList.length, insights.length, summary, chapters.length, takeaways.length, quotes.length, tier]);
+  }, [speakerList.length, insights.length, summary, chapters.length, takeaways.length, quotes.length, tier, insightsLoading, insightsGenerating, contentLoading]);
 
   const toggleSection = (section: string) => {
     setExpandedSections(prev => {
@@ -221,14 +277,13 @@ export function ContextSidebar({
   // Determine if insights truly exist (check array length properly)
   const hasInsights = insights && insights.length > 0;
 
-  if (!isOpen) return null;
-
   return (
     <aside
       className={cn(
         'flex flex-col h-full bg-white border-l border-gray-200',
         className
       )}
+      aria-hidden={!isOpen}
     >
       {/* Tab Navigation - Wrapping and centered */}
       <div className="flex-shrink-0 border-b border-gray-100 bg-gray-50/50">
@@ -350,24 +405,87 @@ export function ContextSidebar({
                                 {speaker.role}
                               </span>
                             )}
-                            {/* Edit button - shows on hover */}
-                            {projectId && onSpeakerRename && (
-                              <button
-                                onClick={(e) => {
-                                  e.stopPropagation();
-                                  handleStartEdit(speaker.id, speaker.displayName);
-                                }}
-                                className="p-1 text-gray-400 hover:text-gray-600 opacity-0 group-hover:opacity-100 transition-opacity"
-                                title="Edit speaker name"
-                              >
-                                <Edit2 className="h-3.5 w-3.5" />
-                              </button>
+                            {projectId && (onSpeakerRename || onSpeakerMerge) && (
+                              <div className="relative">
+                                <button
+                                  onClick={(e) => {
+                                    e.stopPropagation();
+                                    setActiveMenuId(prev => prev === speaker.id ? null : speaker.id);
+                                  }}
+                                  className="p-1 text-gray-400 hover:text-gray-600 opacity-0 group-hover:opacity-100 transition-opacity"
+                                  title="More actions"
+                                >
+                                  <MoreHorizontal className="h-3.5 w-3.5" />
+                                </button>
+                                {activeMenuId === speaker.id && (
+                                  <div className="absolute right-0 mt-1 w-28 rounded-md border bg-white shadow-md z-10">
+                                    <button
+                                      onClick={(e) => {
+                                        e.stopPropagation();
+                                        setActiveMenuId(null);
+                                        handleStartEdit(speaker.id, speaker.displayName);
+                                      }}
+                                      className="w-full text-left px-3 py-2 text-xs hover:bg-gray-50"
+                                    >
+                                      Rename
+                                    </button>
+                                    <button
+                                      onClick={(e) => {
+                                        e.stopPropagation();
+                                        setActiveMenuId(null);
+                                        setMergeSourceId(speaker.id);
+                                        setMergeTargetId('');
+                                      }}
+                                      className="w-full text-left px-3 py-2 text-xs hover:bg-gray-50"
+                                    >
+                                      Merge
+                                    </button>
+                                  </div>
+                                )}
+                              </div>
                             )}
                           </div>
                           {speaker.segmentCount && (
                             <p className="text-xs text-gray-400 mt-1">
                               {speaker.segmentCount} segment{speaker.segmentCount !== 1 ? 's' : ''}
                             </p>
+                          )}
+                          {mergeSourceId === speaker.id && (
+                            <div className="mt-2 rounded-md border border-blue-100 bg-blue-50 p-2 text-[11px] text-blue-800 space-y-2">
+                              <div>Merge into:</div>
+                              <div className="flex items-center gap-2">
+                                <select
+                                  value={mergeTargetId}
+                                  onChange={(e) => setMergeTargetId(e.target.value)}
+                                  className="text-[11px] border border-blue-200 rounded px-2 py-1 bg-white text-blue-800"
+                                >
+                                  <option value="">Select speaker</option>
+                                  {speakerList
+                                    .filter(s => s.id !== mergeSourceId)
+                                    .map((s) => (
+                                      <option key={s.id} value={s.id}>
+                                        {getSpeakerDisplayName(s)}
+                                      </option>
+                                    ))}
+                                </select>
+                                <button
+                                  onClick={handleMerge}
+                                  disabled={!mergeTargetId}
+                                  className="px-2 py-1 rounded border border-blue-200 bg-blue-600 text-white disabled:opacity-50"
+                                >
+                                  Merge
+                                </button>
+                                <button
+                                  onClick={() => {
+                                    setMergeSourceId(null);
+                                    setMergeTargetId('');
+                                  }}
+                                  className="px-2 py-1 rounded border border-transparent text-blue-700"
+                                >
+                                  Cancel
+                                </button>
+                              </div>
+                            </div>
                           )}
                         </>
                       )}
@@ -393,134 +511,207 @@ export function ContextSidebar({
             ) : insightsLoading ? (
               /* Loading state */
               <div className="flex flex-col items-center justify-center py-16 px-4">
-                <div className="w-8 h-8 border-2 border-amber-200 border-t-amber-500 rounded-full animate-spin mb-4" />
-                <p className="text-sm text-gray-500">Loading insights...</p>
+                <div className="relative w-16 h-16 mb-4">
+                  <svg className="w-16 h-16 animate-spin" viewBox="0 0 64 64" fill="none">
+                    <circle cx="32" cy="32" r="28" stroke="#fde68a" strokeWidth="4" />
+                    <circle cx="32" cy="32" r="28" stroke="#f59e0b" strokeWidth="4" strokeLinecap="round" strokeDasharray="80 176" />
+                  </svg>
+                  <div className="absolute inset-0 flex items-center justify-center">
+                    <Lightbulb className="w-5 h-5 text-amber-500" />
+                  </div>
+                </div>
+                <p className="text-sm font-medium text-gray-700">Loading insights...</p>
               </div>
             ) : insightsGenerating ? (
-              /* Generating state */
+              /* Generating state — circular progress */
               <div className="flex flex-col items-center justify-center py-16 px-4">
-                <Sparkles className="w-8 h-8 text-amber-400 animate-pulse mb-4" />
-                <p className="text-sm text-gray-500">Generating insights...</p>
-                <p className="text-xs text-gray-400 mt-1">This may take a moment</p>
+                <div className="relative w-16 h-16 mb-4">
+                  <svg className="w-16 h-16 animate-spin" viewBox="0 0 64 64" fill="none">
+                    <circle cx="32" cy="32" r="28" stroke="#fde68a" strokeWidth="4" />
+                    <circle cx="32" cy="32" r="28" stroke="#f59e0b" strokeWidth="4" strokeLinecap="round" strokeDasharray="120 176" />
+                  </svg>
+                  <div className="absolute inset-0 flex items-center justify-center">
+                    <Sparkles className="w-5 h-5 text-amber-500" />
+                  </div>
+                </div>
+                <p className="text-sm font-medium text-gray-700">Generating insights</p>
+                <p className="text-xs text-gray-400 mt-1">Analyzing your transcript...</p>
               </div>
             ) : (
-              /* Empty state - show generate button */
+              /* Empty state */
               <div className="flex flex-col items-center justify-center py-16 px-6 text-center">
                 <div className="w-14 h-14 rounded-full bg-amber-50 flex items-center justify-center mb-4">
                   <Lightbulb className="w-7 h-7 text-amber-400" />
                 </div>
                 <h3 className="text-sm font-medium text-gray-900 mb-1">No insights yet</h3>
-                <p className="text-xs text-gray-500 mb-4 max-w-[200px]">
-                  Generate AI-powered insights from your transcript
+                <p className="text-xs text-gray-500 max-w-[220px]">
+                  Please check back soon, your insights will be generated shortly.
                 </p>
-                {onGenerateInsights && (
-                  <button
-                    onClick={onGenerateInsights}
-                    className="inline-flex items-center px-4 py-2 text-sm font-medium rounded-lg bg-amber-500 text-white hover:bg-amber-600 transition-colors shadow-sm"
-                  >
-                    <Sparkles className="w-4 h-4 mr-2" />
-                    Generate Insights
-                  </button>
-                )}
               </div>
             )}
           </div>
         )}
 
         {/* Summary Tab */}
-        {activeTab === 'summary' && summary && (
+        {activeTab === 'summary' && (
           <div className="p-4">
-            <div className="prose prose-sm max-w-none">
-              {summary.split('\n\n').map((paragraph, idx) => (
-                <p key={idx} className="text-sm text-gray-700 leading-relaxed mb-3">
-                  {paragraph}
-                </p>
-              ))}
-            </div>
+            {summary ? (
+              <div className="prose prose-sm max-w-none">
+                {summary.split('\n\n').map((paragraph, idx) => (
+                  <p key={idx} className="text-sm text-gray-700 leading-relaxed mb-3">
+                    {paragraph}
+                  </p>
+                ))}
+              </div>
+            ) : contentLoading ? (
+              <div className="flex flex-col items-center justify-center py-16 px-4">
+                <div className="w-8 h-8 border-2 border-purple-200 border-t-purple-500 rounded-full animate-spin mb-4" />
+                <p className="text-sm text-gray-500">Generating summary...</p>
+                <p className="text-xs text-gray-400 mt-1">This may take a moment</p>
+              </div>
+            ) : (
+              <div className="flex flex-col items-center justify-center py-16 px-6 text-center">
+                <div className="w-14 h-14 rounded-full bg-purple-50 flex items-center justify-center mb-4">
+                  <Sparkles className="w-7 h-7 text-purple-300" />
+                </div>
+                <p className="text-sm text-gray-500">Please check back soon, your summary will be generated shortly.</p>
+              </div>
+            )}
           </div>
         )}
 
         {/* Chapters Tab */}
-        {activeTab === 'chapters' && chapters.length > 0 && (
-          <div className="p-3 space-y-2">
-            {chapters.map((chapter, idx) => (
-              <div
-                key={idx}
-                className="p-3 bg-white rounded-lg border border-gray-100 hover:border-indigo-200 transition-colors"
-              >
-                <div className="flex items-start gap-2">
-                  <span className="flex-shrink-0 inline-flex items-center justify-center w-5 h-5 rounded-full bg-indigo-100 text-indigo-700 text-xs font-semibold">
-                    {idx + 1}
-                  </span>
-                  <div className="flex-1 min-w-0">
-                    <h4 className="text-sm font-medium text-gray-900 truncate">
-                      {chapter.title}
-                    </h4>
-                    <div className="flex items-center gap-2 mt-1">
-                      <Clock className="w-3 h-3 text-gray-400" />
-                      <span className="text-xs text-gray-500">
-                        {formatDuration(chapter.start_time)} - {formatDuration(chapter.end_time)}
+        {activeTab === 'chapters' && (
+          <div className="p-3">
+            {chapters.length > 0 ? (
+              <div className="space-y-2">
+                {chapters.map((chapter, idx) => (
+                  <div
+                    key={idx}
+                    className="p-3 bg-white rounded-lg border border-gray-100 hover:border-indigo-200 transition-colors"
+                  >
+                    <div className="flex items-start gap-2">
+                      <span className="flex-shrink-0 inline-flex items-center justify-center w-5 h-5 rounded-full bg-indigo-100 text-indigo-700 text-xs font-semibold">
+                        {idx + 1}
                       </span>
+                      <div className="flex-1 min-w-0">
+                        <h4 className="text-sm font-medium text-gray-900 truncate">
+                          {chapter.title}
+                        </h4>
+                        <div className="flex items-center gap-2 mt-1">
+                          <Clock className="w-3 h-3 text-gray-400" />
+                          <span className="text-xs text-gray-500">
+                            {formatDuration(chapter.start_time)} - {formatDuration(chapter.end_time)}
+                          </span>
+                        </div>
+                        {chapter.description && (
+                          <p className="text-xs text-gray-500 mt-1 line-clamp-2">
+                            {chapter.description}
+                          </p>
+                        )}
+                      </div>
                     </div>
-                    {chapter.description && (
-                      <p className="text-xs text-gray-500 mt-1 line-clamp-2">
-                        {chapter.description}
-                      </p>
-                    )}
                   </div>
-                </div>
+                ))}
               </div>
-            ))}
+            ) : contentLoading ? (
+              <div className="flex flex-col items-center justify-center py-16 px-4">
+                <div className="w-8 h-8 border-2 border-indigo-200 border-t-indigo-500 rounded-full animate-spin mb-4" />
+                <p className="text-sm text-gray-500">Detecting chapters...</p>
+                <p className="text-xs text-gray-400 mt-1">This may take a moment</p>
+              </div>
+            ) : (
+              <div className="flex flex-col items-center justify-center py-16 px-6 text-center">
+                <div className="w-14 h-14 rounded-full bg-indigo-50 flex items-center justify-center mb-4">
+                  <BookOpen className="w-7 h-7 text-indigo-300" />
+                </div>
+                <p className="text-sm text-gray-500">Please check back soon, your chapters will be generated shortly.</p>
+              </div>
+            )}
           </div>
         )}
 
         {/* Takeaways Tab */}
-        {activeTab === 'takeaways' && takeaways.length > 0 && (
-          <div className="p-3 space-y-2">
-            {takeaways.map((item, idx) => (
-              <div
-                key={idx}
-                className="p-3 bg-white rounded-lg border border-gray-100"
-              >
-                <div className="flex items-start gap-2">
-                  <CheckCircle className="w-4 h-4 text-green-500 flex-shrink-0 mt-0.5" />
-                  <div className="flex-1">
-                    <p className="text-sm text-gray-700">{item.takeaway}</p>
-                    {item.timestamp !== undefined && (
-                      <span className="inline-flex items-center mt-1 text-xs text-gray-400">
-                        <Clock className="w-3 h-3 mr-1" />
-                        {formatDuration(item.timestamp)}
-                      </span>
-                    )}
+        {activeTab === 'takeaways' && (
+          <div className="p-3">
+            {takeaways.length > 0 ? (
+              <div className="space-y-2">
+                {takeaways.map((item, idx) => (
+                  <div
+                    key={idx}
+                    className="p-3 bg-white rounded-lg border border-gray-100"
+                  >
+                    <div className="flex items-start gap-2">
+                      <CheckCircle className="w-4 h-4 text-green-500 flex-shrink-0 mt-0.5" />
+                      <div className="flex-1">
+                        <p className="text-sm text-gray-700">{item.takeaway}</p>
+                        {item.timestamp !== undefined && (
+                          <span className="inline-flex items-center mt-1 text-xs text-gray-400">
+                            <Clock className="w-3 h-3 mr-1" />
+                            {formatDuration(item.timestamp)}
+                          </span>
+                        )}
+                      </div>
+                    </div>
                   </div>
-                </div>
+                ))}
               </div>
-            ))}
+            ) : contentLoading ? (
+              <div className="flex flex-col items-center justify-center py-16 px-4">
+                <div className="w-8 h-8 border-2 border-green-200 border-t-green-500 rounded-full animate-spin mb-4" />
+                <p className="text-sm text-gray-500">Extracting takeaways...</p>
+                <p className="text-xs text-gray-400 mt-1">This may take a moment</p>
+              </div>
+            ) : (
+              <div className="flex flex-col items-center justify-center py-16 px-6 text-center">
+                <div className="w-14 h-14 rounded-full bg-green-50 flex items-center justify-center mb-4">
+                  <CheckCircle className="w-7 h-7 text-green-300" />
+                </div>
+                <p className="text-sm text-gray-500">Please check back soon, your takeaways will be generated shortly.</p>
+              </div>
+            )}
           </div>
         )}
 
         {/* Quotes Tab */}
-        {activeTab === 'quotes' && quotes.length > 0 && (
-          <div className="p-3 space-y-2">
-            {quotes.map((quote, idx) => (
-              <div
-                key={idx}
-                className="p-3 bg-white rounded-lg border border-gray-100"
-              >
-                <blockquote className="text-sm text-gray-700 italic border-l-2 border-amber-300 pl-3">
-                  "{quote.quote}"
-                </blockquote>
-                <div className="flex items-center justify-between mt-2 text-xs text-gray-500">
-                  {quote.speaker && <span>— {quote.speaker}</span>}
-                  {quote.timestamp !== undefined && (
-                    <span className="inline-flex items-center">
-                      <Clock className="w-3 h-3 mr-1" />
-                      {formatDuration(quote.timestamp)}
-                    </span>
-                  )}
-                </div>
+        {activeTab === 'quotes' && (
+          <div className="p-3">
+            {quotes.length > 0 ? (
+              <div className="space-y-2">
+                {quotes.map((quote, idx) => (
+                  <div
+                    key={idx}
+                    className="p-3 bg-white rounded-lg border border-gray-100"
+                  >
+                    <blockquote className="text-sm text-gray-700 italic border-l-2 border-amber-300 pl-3">
+                      "{quote.quote}"
+                    </blockquote>
+                    <div className="flex items-center justify-between mt-2 text-xs text-gray-500">
+                      {quote.speaker && <span>— {quote.speaker}</span>}
+                      {quote.timestamp !== undefined && (
+                        <span className="inline-flex items-center">
+                          <Clock className="w-3 h-3 mr-1" />
+                          {formatDuration(quote.timestamp)}
+                        </span>
+                      )}
+                    </div>
+                  </div>
+                ))}
               </div>
-            ))}
+            ) : contentLoading ? (
+              <div className="flex flex-col items-center justify-center py-16 px-4">
+                <div className="w-8 h-8 border-2 border-amber-200 border-t-amber-500 rounded-full animate-spin mb-4" />
+                <p className="text-sm text-gray-500">Finding notable quotes...</p>
+                <p className="text-xs text-gray-400 mt-1">This may take a moment</p>
+              </div>
+            ) : (
+              <div className="flex flex-col items-center justify-center py-16 px-6 text-center">
+                <div className="w-14 h-14 rounded-full bg-amber-50 flex items-center justify-center mb-4">
+                  <MessageSquare className="w-7 h-7 text-amber-300" />
+                </div>
+                <p className="text-sm text-gray-500">Please check back soon, your quotes will be generated shortly.</p>
+              </div>
+            )}
           </div>
         )}
       </div>

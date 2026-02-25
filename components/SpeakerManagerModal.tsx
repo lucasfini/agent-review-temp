@@ -18,14 +18,18 @@ interface SpeakerManagerModalProps {
   };
   audioPlayerRef: RefObject<AudioPlayerRef | null>;
   onRename: (speakerId: string, newName: string) => void;
+  onMerge: (sourceSpeakerId: string, targetSpeakerId: string) => void;
 }
 
 export function SpeakerManagerModal({
   speakerData,
   audioPlayerRef,
   onRename,
+  onMerge,
 }: SpeakerManagerModalProps) {
   const [isOpen, setIsOpen] = useState(false);
+  const [mergeSourceId, setMergeSourceId] = useState<string | null>(null);
+  const [mergeTargetId, setMergeTargetId] = useState<string>('');
 
   // Convert the speakers record to SpeakerProfile array
   const speakerProfiles: SpeakerProfile[] = useMemo(() => {
@@ -54,6 +58,13 @@ export function SpeakerManagerModal({
   }, [speakerData]);
 
   const speakerCount = speakerProfiles.length;
+  const speakerMap = useMemo(() => {
+    const map: Record<string, SpeakerProfile> = {};
+    for (const speaker of speakerProfiles) {
+      map[speaker.id] = speaker;
+    }
+    return map;
+  }, [speakerProfiles]);
 
   return (
     <Dialog open={isOpen} onOpenChange={setIsOpen}>
@@ -71,6 +82,52 @@ export function SpeakerManagerModal({
         <p className="text-sm text-gray-500 mb-4">
           Click the play button to hear a sample of each speaker. Click a name to edit it.
         </p>
+
+        {mergeSourceId && (
+          <div className="mb-4 rounded-md border border-blue-100 bg-blue-50 p-3">
+            <p className="text-xs text-blue-700 font-medium mb-2">
+              Merge "{speakerMap[mergeSourceId]?.name || speakerMap[mergeSourceId]?.fallbackName || mergeSourceId}" into:
+            </p>
+            <div className="flex items-center gap-2">
+              <select
+                value={mergeTargetId}
+                onChange={(e) => setMergeTargetId(e.target.value)}
+                className="text-xs border border-blue-200 rounded px-2 py-1 bg-white text-blue-800"
+              >
+                <option value="">Select speaker</option>
+                {speakerProfiles
+                  .filter((s) => s.id !== mergeSourceId)
+                  .map((speaker) => (
+                    <option key={speaker.id} value={speaker.id}>
+                      {speaker.name || speaker.fallbackName || speaker.id}
+                    </option>
+                  ))}
+              </select>
+              <Button
+                size="sm"
+                variant="default"
+                onClick={() => {
+                  if (!mergeTargetId) return;
+                  onMerge(mergeSourceId, mergeTargetId);
+                  setMergeSourceId(null);
+                  setMergeTargetId('');
+                }}
+              >
+                Merge
+              </Button>
+              <Button
+                size="sm"
+                variant="ghost"
+                onClick={() => {
+                  setMergeSourceId(null);
+                  setMergeTargetId('');
+                }}
+              >
+                Cancel
+              </Button>
+            </div>
+          </div>
+        )}
 
         <div className="border rounded-md">
           <Table>
@@ -90,6 +147,10 @@ export function SpeakerManagerModal({
                   segments={speakerData.segments}
                   audioPlayerRef={audioPlayerRef}
                   onRename={onRename}
+                  onMergeRequest={(id) => {
+                    setMergeSourceId(id);
+                    setMergeTargetId('');
+                  }}
                 />
               ))}
             </TableBody>

@@ -3,14 +3,16 @@
 import { useState, useEffect, useMemo, useRef, useCallback } from 'react';
 import Link from 'next/link';
 import { useSearchParams, useRouter } from 'next/navigation';
-import { FileText, Clock, CheckCircle, AlertCircle, Eye, Download, Share2, RefreshCw, Trash2, Zap, Play, MessageCircle, Crown, Star, Sparkles, BookOpen, Lightbulb, MessageSquare, PanelLeftClose, PanelLeftOpen, Search, Filter, Loader2, CheckSquare, Square, ListChecks, X, PanelRightOpen, ScanSearch, MoreHorizontal, Users, Mic, Radio, User, HelpCircle } from 'lucide-react';
+import { FileText, Clock, CheckCircle, AlertCircle, Eye, Download, Share2, RefreshCw, Trash2, Zap, Play, MessageCircle, Crown, Star, Sparkles, BookOpen, Lightbulb, MessageSquare, PanelLeftClose, PanelLeftOpen, Search, Filter, Loader2, CheckSquare, Square, ListChecks, X, PanelRightOpen, PanelRightClose, ScanSearch, MoreHorizontal, Users, Mic, Radio, User, HelpCircle, Copy, Pencil } from 'lucide-react';
 import { DropdownMenu, DropdownMenuItem, DropdownMenuSeparator } from '@/components/ui/dropdown-menu';
 import { useAuth } from '@/lib/auth/context';
 import { supabase } from '@/lib/supabase/client';
+import { useCoverageProgress } from '@/lib/context/coverage-progress';
 import ContentSelectionModal from '@/components/ContentSelectionModal';
 import ExportModal, { type ExportPayload } from '@/components/ExportModal';
 import { exportContent } from '@/lib/export-utils';
 import ConversationView from '@/components/ConversationView';
+import { getSpeakerColor, getSpeakerDisplayName } from '@/lib/name-extraction';
 import TeamsStyleTranscript from '@/components/TeamsStyleTranscript';
 import ContextSidebar from '@/components/ContextSidebar';
 import type { CostEstimate } from '@/lib/cost-estimation';
@@ -32,14 +34,7 @@ interface Project {
   transcription_text?: string;
   selected_content_types?: string[];
   estimated_cost?: number;
-  actual_processing_cost?: number;
   audio_duration_seconds?: number;
-  cost_breakdown?: {
-    transcription: number;
-    diarization: number;
-    generation: number;
-    provider: string;
-  };
   transcription_segments?: string;
   speaker_data?: any;
   performance_level?: 'basic' | 'pro' | 'premium';
@@ -91,7 +86,10 @@ export default function ProjectsPage() {
   const [generatingProjects, setGeneratingProjects] = useState<Set<string>>(new Set());
   const [showFullTranscription, setShowFullTranscription] = useState(false);
   const [expandedOutputs, setExpandedOutputs] = useState<Set<string>>(new Set());
-  const [activeTab, setActiveTab] = useState<'transcript' | 'conversation' | 'outputs'>('transcript');
+  const [activeTab, setActiveTab] = useState<'transcript' | 'outputs'>('transcript');
+  const [readerView, setReaderView] = useState(false);
+  const [showTimestamps, setShowTimestamps] = useState(true);
+  const [selectedSpeaker, setSelectedSpeaker] = useState<string | null>(null);
   const [projectsSidebarOpen, setProjectsSidebarOpen] = useState(true);
   const [searchTerm, setSearchTerm] = useState('');
   const [tierFilter, setTierFilter] = useState<'all' | 'basic' | 'pro' | 'premium'>('all');
@@ -102,6 +100,7 @@ export default function ProjectsPage() {
   const [insightsSidebarOpen, setInsightsSidebarOpen] = useState(false);
   const [insightsStatus, setInsightsStatus] = useState<{ count: number; loading: boolean; generating: boolean }>({ count: 0, loading: true, generating: false });
   const [triggerInsightGeneration, setTriggerInsightGeneration] = useState(0);
+  const [insightsRefreshToken, setInsightsRefreshToken] = useState(0);
   const [insightsData, setInsightsData] = useState<Array<{
     id: string;
     title: string;
@@ -125,10 +124,24 @@ export default function ProjectsPage() {
   const [exportProjects, setExportProjects] = useState<Array<Project & { outputs: Output[] }>>([]);
 
   // Coverage analysis state
-  const [runningCoverageId, setRunningCoverageId] = useState<string | null>(null);
+  const { runningCoverageIds, startCoverage, stopCoverage } = useCoverageProgress();
 
   // Audio URL state for speaker sample playback
   const [audioUrl, setAudioUrl] = useState<string | null>(null);
+
+  // Toast notification state
+  const [toast, setToast] = useState<{ message: string; type: 'success' | 'error' } | null>(null);
+
+  // Project type filter
+  const [typeFilter, setTypeFilter] = useState<'all' | ProjectType>('all');
+
+  // Project title inline rename
+  const [editingProjectTitle, setEditingProjectTitle] = useState(false);
+  const [editingTitleValue, setEditingTitleValue] = useState('');
+  const [savingTitle, setSavingTitle] = useState(false);
+
+  // Per-output delete tracking
+  const [deletingOutput, setDeletingOutput] = useState<string | null>(null);
 
   const { user } = useAuth();
   const searchParams = useSearchParams();
@@ -250,54 +263,8 @@ export default function ProjectsPage() {
     fetchAudioUrl();
   }, [selectedProject?.id, selectedProject?.audio_file_name]);
 
-  // Fetch insights for a project (called when project is selected)
-  const fetchProjectInsights = useCallback(async (projectId: string, tier: string = 'basic') => {
-    try {
-      setInsightsStatus(prev => ({ ...prev, loading: true }));
-      setInsightsData([]);
-
-      const response = await fetch(`/api/insights/${projectId}?tier=${tier}`);
-      const data = await response.json();
-
-      if (!response.ok) {
-        console.error('[Insights] Failed to fetch:', data.error);
-        setInsightsStatus({ count: 0, loading: false, generating: false });
-        return;
-      }
-
-      // Transform database insights to the format expected by ContextSidebar
-      const transformedInsights = (data.insights || []).map((insight: any) => {
-        // Map category to allowed types
-        let category: 'concept' | 'person' | 'tool' = 'concept';
-        if (insight.category === 'person') category = 'person';
-        else if (insight.category === 'tool') category = 'tool';
-
-        return {
-          id: insight.entity_id,
-          title: insight.label,
-          category,
-          definition: tier === 'premium'
-            ? insight.full_explanation
-            : tier === 'pro'
-            ? insight.simple_definition
-            : '',
-          significance: insight.why_it_matters || insight.transcript_excerpts?.[0]?.text || '',
-          sources: (insight.external_sources || []).map((s: any) => ({
-            title: s.title,
-            url: s.url || '',
-          })),
-          matchText: insight.match_text,
-          matchVariants: insight.match_variants || [],
-        };
-      });
-
-      setInsightsData(transformedInsights);
-      setInsightsStatus({ count: transformedInsights.length, loading: false, generating: false });
-    } catch (error) {
-      console.error('[Insights] Failed to fetch:', error);
-      setInsightsStatus({ count: 0, loading: false, generating: false });
-    }
-  }, []);
+  // Insights are fetched by ConversationView and reported back via onInsightsDataChange / onInsightsStatusChange callbacks.
+  // No independent fetch needed here — single source of truth avoids race conditions.
 
   // Auto-select project from URL query parameter
   useEffect(() => {
@@ -311,7 +278,9 @@ export default function ProjectsPage() {
         setShowFullTranscription(false);
         setActiveTab('transcript');
         fetchProjectOutputs(projectId);
-        fetchProjectInsights(projectId, projectToSelect.performance_level || 'basic');
+        // Reset insights state — ConversationView will fetch and report back
+        setInsightsData([]);
+        setInsightsStatus({ count: 0, loading: true, generating: false });
 
         // If generate=true is in URL, open the content generation modal
         if (shouldGenerate && projectToSelect.transcription_text) {
@@ -320,7 +289,7 @@ export default function ProjectsPage() {
         }
       }
     }
-  }, [searchParams, projects, loading, fetchProjectInsights]);
+  }, [searchParams, projects, loading]);
 
   const parseSpeakerData = (data: any) => {
     if (!data) return null;
@@ -340,6 +309,41 @@ export default function ProjectsPage() {
     [selectedProject?.speaker_data]
   );
 
+  useEffect(() => {
+    setSelectedSpeaker(null);
+  }, [selectedProject?.id]);
+
+  // Auto-refresh insights shortly after completion so they appear without page reload.
+  useEffect(() => {
+    if (!selectedProject?.id) return;
+    if (selectedProject.status !== 'completed') return;
+    if (insightsStatus.generating) return;
+    if (insightsStatus.count > 0) return;
+
+    let attempts = 0;
+    const maxAttempts = 15;
+    const intervalMs = 6000;
+    const interval = setInterval(() => {
+      attempts += 1;
+      setInsightsRefreshToken(prev => prev + 1);
+      if (attempts >= maxAttempts) {
+        clearInterval(interval);
+      }
+    }, intervalMs);
+
+    return () => clearInterval(interval);
+  }, [selectedProject?.id, selectedProject?.status, insightsStatus.count, insightsStatus.generating]);
+
+  const showToast = useCallback((message: string, type: 'success' | 'error' = 'error') => {
+    setToast({ message, type });
+  }, []);
+
+  useEffect(() => {
+    if (!toast) return;
+    const t = setTimeout(() => setToast(null), 3500);
+    return () => clearTimeout(t);
+  }, [toast]);
+
   // Filter and sort projects
   const filteredAndSortedProjects = useMemo(() => {
     let filtered = [...projects];
@@ -356,6 +360,11 @@ export default function ProjectsPage() {
     // Apply tier filter
     if (tierFilter !== 'all') {
       filtered = filtered.filter(project => project.performance_level === tierFilter);
+    }
+
+    // Apply type filter
+    if (typeFilter !== 'all') {
+      filtered = filtered.filter(project => project.project_type === typeFilter);
     }
 
     // Apply sorting
@@ -375,7 +384,7 @@ export default function ProjectsPage() {
     });
 
     return filtered;
-  }, [projects, searchTerm, tierFilter, sortBy]);
+  }, [projects, searchTerm, tierFilter, typeFilter, sortBy]);
 
   const handleRefresh = async () => {
     setRefreshing(true);
@@ -396,7 +405,7 @@ export default function ProjectsPage() {
 
   const handleGenerateContent = (project: Project) => {
     if (!project.transcription_text) {
-      alert('Transcription not available for this project.');
+      showToast('Transcription not available for this project.');
       return;
     }
     setSelectedProjectForGeneration(project);
@@ -439,6 +448,71 @@ export default function ProjectsPage() {
     }
   };
 
+  // Output action handlers
+  const handleDownloadOutput = (output: Output) => {
+    const blob = new Blob([`${output.title}\n\n${output.content}`], { type: 'text/plain' });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    a.href = url;
+    a.download = `${output.title.replace(/[^a-z0-9]/gi, '_').toLowerCase()}.txt`;
+    a.click();
+    URL.revokeObjectURL(url);
+    showToast('Downloaded', 'success');
+  };
+
+  const handleCopyOutput = async (output: Output) => {
+    try {
+      await navigator.clipboard.writeText(output.content);
+      showToast('Copied to clipboard', 'success');
+    } catch {
+      showToast('Failed to copy — try selecting the text manually');
+    }
+  };
+
+  const handleDeleteOutput = async (outputId: string) => {
+    setDeletingOutput(outputId);
+    try {
+      const { error } = await supabase.from('outputs').delete().eq('id', outputId);
+      if (error) throw error;
+      setOutputs(prev => prev.filter(o => o.id !== outputId));
+      showToast('Output deleted', 'success');
+    } catch {
+      showToast('Failed to delete output');
+    } finally {
+      setDeletingOutput(null);
+    }
+  };
+
+  // Project title inline rename
+  const handleSaveProjectTitle = async () => {
+    if (!selectedProject || !editingTitleValue.trim()) {
+      setEditingProjectTitle(false);
+      return;
+    }
+    if (editingTitleValue.trim() === selectedProject.title) {
+      setEditingProjectTitle(false);
+      return;
+    }
+    setSavingTitle(true);
+    try {
+      const response = await fetch(`/api/projects/${selectedProject.id}`, {
+        method: 'PATCH',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ title: editingTitleValue.trim() })
+      });
+      if (!response.ok) throw new Error('Failed to rename');
+      const newTitle = editingTitleValue.trim();
+      setSelectedProject(prev => prev ? { ...prev, title: newTitle } : null);
+      setProjects(prev => prev.map(p => p.id === selectedProject.id ? { ...p, title: newTitle } : p));
+      showToast('Project renamed', 'success');
+    } catch {
+      showToast('Failed to rename project');
+    } finally {
+      setSavingTitle(false);
+      setEditingProjectTitle(false);
+    }
+  };
+
   // Export functionality helpers
   const toggleProjectSelection = (projectId: string) => {
     setSelectedProjectIds(prev => {
@@ -466,11 +540,17 @@ export default function ProjectsPage() {
   };
 
   const prepareExportForProjects = async (projectIds: string[]) => {
-    // Fetch outputs for each selected project
+    // Fetch fresh project data + outputs for each selected project
     const projectsWithOutputs = await Promise.all(
       projectIds.map(async (projectId) => {
-        const project = projects.find(p => p.id === projectId);
-        if (!project) return null;
+        const fallbackProject = projects.find(p => p.id === projectId);
+        if (!fallbackProject) return null;
+
+        const { data: projectData } = await supabase
+          .from('projects')
+          .select('id, title, transcription_text, ai_summary, chapters, key_takeaways, social_quotes, speaker_data')
+          .eq('id', projectId)
+          .single();
 
         const { data: outputsData } = await supabase
           .from('outputs')
@@ -478,16 +558,18 @@ export default function ProjectsPage() {
           .eq('project_id', projectId)
           .order('created_at', { ascending: false });
 
+        const project = projectData || fallbackProject;
+
         return {
           ...project,
           outputs: outputsData || [],
           // Include core content fields for export
-          transcription_text: project.transcription_text,
-          ai_summary: project.ai_summary,
-          chapters: project.chapters,
-          key_takeaways: project.key_takeaways,
-          social_quotes: project.social_quotes,
-          speaker_data: project.speaker_data,
+          transcription_text: (project as any).transcription_text,
+          ai_summary: (project as any).ai_summary,
+          chapters: (project as any).chapters,
+          key_takeaways: (project as any).key_takeaways,
+          social_quotes: (project as any).social_quotes,
+          speaker_data: (project as any).speaker_data,
         };
       })
     );
@@ -551,26 +633,17 @@ export default function ProjectsPage() {
 
   // Run Coverage Analysis for a project
   const handleRunCoverage = async (project: Project) => {
-    if (!user?.id) {
-      alert('You must be logged in to run coverage analysis.');
-      return;
-    }
+    if (!user?.id || !project.id || !project.transcription_text) return;
 
-    if (!project.id || !project.transcription_text) {
-      alert('This project needs a transcript before running coverage analysis.');
-      return;
-    }
-
-    setRunningCoverageId(project.id);
+    startCoverage(project.id, project.title);
 
     try {
-      // Call the correct coverage analysis API endpoint
       const response = await fetch(`/api/projects/${project.id}/run-coverage`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
           userId: user.id,
-          force: true, // Re-run even if snapshot exists
+          force: true,
         }),
       });
 
@@ -581,14 +654,10 @@ export default function ProjectsPage() {
       }
 
       console.log('[Coverage] Analysis complete:', result);
-
-      // Show success message
-      alert(`Coverage analysis complete! Found ${result.topics || 0} topics, ${result.ctas || 0} CTAs, and ${result.opportunities || 0} insights.`);
     } catch (error: any) {
       console.error('[Coverage] Analysis failed:', error);
-      alert(`Coverage analysis failed: ${error.message}`);
     } finally {
-      setRunningCoverageId(null);
+      stopCoverage(project.id);
     }
   };
 
@@ -620,7 +689,7 @@ export default function ProjectsPage() {
 
       if (outputsError) {
         console.error('Error deleting outputs:', outputsError);
-        alert('Failed to delete project outputs. Please try again.');
+        showToast('Failed to delete project outputs. Please try again.');
         return;
       }
 
@@ -633,7 +702,7 @@ export default function ProjectsPage() {
 
       if (projectError) {
         console.error('Error deleting project:', projectError);
-        alert('Failed to delete project. Please try again.');
+        showToast('Failed to delete project. Please try again.');
         return;
       }
 
@@ -674,7 +743,7 @@ export default function ProjectsPage() {
 
     } catch (error) {
       console.error('Failed to delete project:', error);
-      alert('An unexpected error occurred. Please try again.');
+      showToast('An unexpected error occurred. Please try again.');
     } finally {
       setDeletingProject(null);
     }
@@ -1176,11 +1245,13 @@ export default function ProjectsPage() {
   const getContentAvailability = (project: Project) => {
     const tier = project.performance_level || 'basic';
     const features = [];
+    const aiProcessing = (project.speaker_data as any)?.detectionMetadata?.aiProcessing || {};
 
     // Basic tier - always available
     features.push({
       name: 'Transcription',
       available: !!project.transcription_text,
+      pending: false,
       icon: FileText,
       color: 'text-green-600'
     });
@@ -1188,6 +1259,7 @@ export default function ProjectsPage() {
     features.push({
       name: 'Speakers',
       available: !!project.speaker_data,
+      pending: false,
       icon: MessageCircle,
       color: 'text-green-600',
       label: tier === 'basic' ? 'Generic' : 'Named'
@@ -1198,6 +1270,7 @@ export default function ProjectsPage() {
       features.push({
         name: 'AI Summary',
         available: !!project.ai_summary,
+        pending: aiProcessing.summary === false,
         icon: Sparkles,
         color: 'text-blue-600'
       });
@@ -1208,6 +1281,7 @@ export default function ProjectsPage() {
       features.push({
         name: 'Chapters',
         available: !!project.chapters && project.chapters.length > 0,
+        pending: aiProcessing.chapters === false,
         icon: BookOpen,
         color: 'text-purple-600',
         count: project.chapters?.length
@@ -1216,6 +1290,7 @@ export default function ProjectsPage() {
       features.push({
         name: 'Key Takeaways',
         available: !!project.key_takeaways && project.key_takeaways.length > 0,
+        pending: aiProcessing.takeaways === false,
         icon: Lightbulb,
         color: 'text-purple-600',
         count: project.key_takeaways?.length
@@ -1224,6 +1299,7 @@ export default function ProjectsPage() {
       features.push({
         name: 'Social Quotes',
         available: !!project.social_quotes && project.social_quotes.length > 0,
+        pending: aiProcessing.quotes === false,
         icon: MessageSquare,
         color: 'text-purple-600',
         count: project.social_quotes?.length
@@ -1274,7 +1350,7 @@ export default function ProjectsPage() {
             className="lg:hidden p-2 text-gray-500 hover:text-gray-700 hover:bg-gray-100 rounded-md"
             title={contextSidebarOpen ? 'Hide details' : 'Show details'}
           >
-            <PanelRightOpen className="w-5 h-5" />
+            {contextSidebarOpen ? <PanelRightClose className="w-5 h-5" /> : <PanelRightOpen className="w-5 h-5" />}
           </button>
         </div>
       </header>
@@ -1425,12 +1501,28 @@ export default function ProjectsPage() {
                       <option value="name-desc">Name (Z-A)</option>
                     </select>
                   </div>
+
+                  {/* Type Filter */}
+                  <div className="w-full">
+                    <select
+                      value={typeFilter}
+                      onChange={(e) => setTypeFilter(e.target.value as 'all' | ProjectType)}
+                      className="w-full px-3 py-2 border border-gray-300 rounded-md text-sm focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-transparent"
+                    >
+                      <option value="all">All Types</option>
+                      <option value="DEBATE">Debate</option>
+                      <option value="INTERVIEW">Interview</option>
+                      <option value="PODCAST">Podcast</option>
+                      <option value="MONOLOGUE">Monologue</option>
+                      <option value="OTHER">Other</option>
+                    </select>
+                  </div>
                 </div>
 
                 {/* Results count */}
                 <div className="text-xs text-gray-500">
                   {filteredAndSortedProjects.length} {filteredAndSortedProjects.length === 1 ? 'project' : 'projects'}
-                  {(searchTerm || tierFilter !== 'all') && ` (filtered from ${projects.length})`}
+                  {(searchTerm || tierFilter !== 'all' || typeFilter !== 'all') && ` (filtered from ${projects.length})`}
                 </div>
               </div>
 
@@ -1440,11 +1532,12 @@ export default function ProjectsPage() {
                   <div className="text-center py-8 text-gray-500">
                     <FileText className="mx-auto h-8 w-8 text-gray-400 mb-2" />
                     <p className="text-sm">No projects found</p>
-                    {(searchTerm || tierFilter !== 'all') && (
+                    {(searchTerm || tierFilter !== 'all' || typeFilter !== 'all') && (
                       <button
                         onClick={() => {
                           setSearchTerm('');
                           setTierFilter('all');
+                          setTypeFilter('all');
                         }}
                         className="mt-2 text-xs text-blue-600 hover:text-blue-800"
                       >
@@ -1481,9 +1574,15 @@ export default function ProjectsPage() {
                         setInsightsData([]);
                         setTriggerInsightGeneration(0);
                         fetchProjectOutputs(project.id);
-                        fetchProjectInsights(project.id, project.performance_level || 'basic');
                       }}
                     >
+                      {(() => {
+                        const availability = getContentAvailability(project);
+                        const pendingFeatures = availability.filter(f => f.pending && !f.available);
+                        const availableCount = availability.filter(f => f.available).length;
+                        const pendingLabel = pendingFeatures.map(f => f.name).join(', ');
+                        return (
+                          <>
                       {/* Top Row: Checkbox (selection mode), Title & Status */}
                       <div className="flex justify-between items-start mb-1.5 gap-2">
                         <div className="flex items-start gap-2 min-w-0 flex-1">
@@ -1514,9 +1613,17 @@ export default function ProjectsPage() {
                         {/* Compact Content Indicators */}
                         {project.status === 'completed' && (
                           <div className="flex items-center gap-1.5 text-xs text-gray-500">
-                            {getContentAvailability(project).filter(f => f.available).length > 0 && (
+                            {availableCount > 0 && (
                               <span className="flex items-center px-1.5 py-0.5 bg-green-50 text-green-700 rounded text-[10px] font-medium">
-                                {getContentAvailability(project).filter(f => f.available).length} Assets
+                                {availableCount} Assets
+                              </span>
+                            )}
+                            {pendingFeatures.length > 0 && (
+                              <span
+                                className="flex items-center px-1.5 py-0.5 bg-amber-50 text-amber-700 rounded text-[10px] font-medium"
+                                title={`Generating: ${pendingLabel}`}
+                              >
+                                Generating {pendingFeatures.length}
                               </span>
                             )}
                           </div>
@@ -1531,12 +1638,7 @@ export default function ProjectsPage() {
                           {project.audio_duration && (
                             <span>{formatDuration(project.audio_duration)}</span>
                           )}
-                          {project.actual_processing_cost !== undefined && project.actual_processing_cost > 0 && (
-                            <span className="font-medium text-gray-600">
-                              ${project.actual_processing_cost.toFixed(2)}
-                            </span>
-                          )}
-                          {project.project_type && getProjectTypeBadge(project.project_type)}
+{project.project_type && getProjectTypeBadge(project.project_type)}
                         </div>
 
                         {/* Hover Actions */}
@@ -1575,6 +1677,9 @@ export default function ProjectsPage() {
                           </button>
                         </div>
                       </div>
+                          </>
+                        );
+                      })()}
                     </div>
                   );
                   })
@@ -1607,7 +1712,33 @@ export default function ProjectsPage() {
                             <PanelLeftOpen className="w-4 h-4" />
                           )}
                         </button>
-                        <h2 className="text-base font-medium text-gray-900 truncate">{selectedProject.title}</h2>
+                        {editingProjectTitle ? (
+                          <input
+                            type="text"
+                            value={editingTitleValue}
+                            onChange={(e) => setEditingTitleValue(e.target.value)}
+                            onKeyDown={(e) => {
+                              if (e.key === 'Enter') handleSaveProjectTitle();
+                              if (e.key === 'Escape') setEditingProjectTitle(false);
+                            }}
+                            onBlur={handleSaveProjectTitle}
+                            disabled={savingTitle}
+                            autoFocus
+                            className="text-base font-medium text-gray-900 truncate border-b-2 border-blue-400 outline-none bg-transparent min-w-0 flex-1"
+                          />
+                        ) : (
+                          <button
+                            className="group flex items-center gap-1.5 min-w-0 text-left"
+                            onClick={() => {
+                              setEditingTitleValue(selectedProject.title);
+                              setEditingProjectTitle(true);
+                            }}
+                            title="Click to rename"
+                          >
+                            <h2 className="text-base font-medium text-gray-900 truncate">{selectedProject.title}</h2>
+                            <Pencil className="w-3.5 h-3.5 text-gray-400 opacity-0 group-hover:opacity-100 flex-shrink-0 transition-opacity" />
+                          </button>
+                        )}
                         <div className="flex items-center gap-1.5 flex-shrink-0">
                           {getTierBadge(selectedProject.performance_level)}
                           {selectedProject.project_type && getProjectTypeBadge(selectedProject.project_type)}
@@ -1620,7 +1751,7 @@ export default function ProjectsPage() {
                           trigger={
                             <button
                               type="button"
-                              className="inline-flex items-center px-3 py-2 text-sm font-medium text-gray-700 bg-white border border-gray-300 rounded-md shadow-sm hover:bg-gray-50 transition-colors"
+                              className="p-1.5 text-gray-400 hover:text-gray-600 hover:bg-gray-100 rounded-lg transition-colors"
                             >
                               <MoreHorizontal className="w-4 h-4" />
                               <span className="sr-only">More actions</span>
@@ -1629,14 +1760,14 @@ export default function ProjectsPage() {
                         >
                           <DropdownMenuItem
                             onClick={() => handleRunCoverage(selectedProject)}
-                            disabled={runningCoverageId === selectedProject.id || !selectedProject.transcription_text}
+                            disabled={runningCoverageIds.has(selectedProject.id) || !selectedProject.transcription_text}
                           >
-                            {runningCoverageId === selectedProject.id ? (
+                            {runningCoverageIds.has(selectedProject.id) ? (
                               <Loader2 className="w-4 h-4 animate-spin" />
                             ) : (
                               <ScanSearch className="w-4 h-4" />
                             )}
-                            {runningCoverageId === selectedProject.id ? 'Analyzing...' : 'Run Coverage'}
+                            {runningCoverageIds.has(selectedProject.id) ? 'Analyzing...' : 'Run Analysis'}
                           </DropdownMenuItem>
                           <DropdownMenuItem onClick={() => handleSingleExport(selectedProject)}>
                             <Download className="w-4 h-4" />
@@ -1653,20 +1784,20 @@ export default function ProjectsPage() {
                         <button
                           onClick={() => handleGenerateContent(selectedProject)}
                           disabled={generatingProjects.has(selectedProject.id)}
-                          className={`inline-flex items-center px-4 py-2 text-sm font-medium rounded-md shadow-sm transition-colors disabled:opacity-75 disabled:cursor-not-allowed ${
+                          className={`inline-flex items-center gap-1.5 px-3.5 py-1.5 text-sm font-medium rounded-lg transition-colors disabled:opacity-60 disabled:cursor-not-allowed ${
                             generatingProjects.has(selectedProject.id)
-                              ? 'bg-blue-50 text-blue-700 border border-blue-200'
-                              : 'bg-blue-600 text-white hover:bg-blue-700 border border-transparent'
+                              ? 'bg-blue-50 text-blue-600'
+                              : 'bg-blue-600 text-white hover:bg-blue-700'
                           }`}
                         >
                           {generatingProjects.has(selectedProject.id) ? (
                             <>
-                              <Loader2 className="w-4 h-4 mr-2 animate-spin" />
+                              <Loader2 className="w-4 h-4 animate-spin" />
                               Generating...
                             </>
                           ) : (
                             <>
-                              <Zap className="w-4 h-4 mr-2" />
+                              <Zap className="w-4 h-4" />
                               Generate
                             </>
                           )}
@@ -1675,10 +1806,14 @@ export default function ProjectsPage() {
                         {/* Toggle Context Sidebar Button - desktop only */}
                         <button
                           onClick={() => setContextSidebarOpen(!contextSidebarOpen)}
-                          className="hidden lg:flex p-1.5 text-gray-500 hover:text-gray-700 hover:bg-gray-100 rounded-md transition-colors"
+                          className="hidden lg:flex p-1.5 text-gray-500 hover:text-gray-700 hover:bg-gray-100 rounded-md transition-colors flex-shrink-0"
                           title={contextSidebarOpen ? 'Hide details panel' : 'Show details panel'}
                         >
-                          <PanelRightOpen className="w-4 h-4" />
+                          {contextSidebarOpen ? (
+                            <PanelRightClose className="w-4 h-4" />
+                          ) : (
+                            <PanelRightOpen className="w-4 h-4" />
+                          )}
                         </button>
                       </div>
                     </div>
@@ -1686,93 +1821,98 @@ export default function ProjectsPage() {
 
                   {/* Tab Navigation */}
                   <div className="flex-shrink-0 border-b border-gray-200 px-4">
-                    <nav className="flex space-x-4" aria-label="Tabs">
-                      <button
-                        onClick={() => setActiveTab('transcript')}
-                        className={`py-2.5 px-1 border-b-2 font-medium text-sm transition-colors ${
-                          activeTab === 'transcript'
-                            ? 'border-blue-500 text-blue-600'
-                            : 'border-transparent text-gray-500 hover:text-gray-700 hover:border-gray-300'
-                        }`}
-                      >
-                        <div className="flex items-center space-x-1.5">
-                          <FileText className="w-4 h-4" />
-                          <span>Transcript</span>
-                        </div>
-                      </button>
+                    <nav className="flex items-center justify-between" aria-label="Tabs">
+                      <div className="flex space-x-4">
+                        <button
+                          onClick={() => setActiveTab('transcript')}
+                          className={`py-2.5 px-1 border-b-2 font-medium text-sm transition-colors ${
+                            activeTab === 'transcript'
+                              ? 'border-blue-500 text-blue-600'
+                              : 'border-transparent text-gray-500 hover:text-gray-700 hover:border-gray-300'
+                          }`}
+                        >
+                          <div className="flex items-center space-x-1.5">
+                            <FileText className="w-4 h-4" />
+                            <span>Transcript</span>
+                          </div>
+                        </button>
 
-                      <button
-                        onClick={() => setActiveTab('conversation')}
-                        disabled={!parsedSpeakerData}
-                        className={`py-2.5 px-1 border-b-2 font-medium text-sm transition-colors ${
-                          activeTab === 'conversation'
-                            ? 'border-blue-500 text-blue-600'
-                            : !parsedSpeakerData
-                            ? 'border-transparent text-gray-300 cursor-not-allowed'
-                            : 'border-transparent text-gray-500 hover:text-gray-700 hover:border-gray-300'
-                        }`}
-                      >
-                        <div className="flex items-center space-x-1.5">
-                          <MessageCircle className="w-4 h-4" />
-                          <span>Conversation</span>
-                        </div>
-                      </button>
+                        <button
+                          onClick={() => setActiveTab('outputs')}
+                          className={`py-2.5 px-1 border-b-2 font-medium text-sm transition-colors ${
+                            activeTab === 'outputs'
+                              ? 'border-blue-500 text-blue-600'
+                              : 'border-transparent text-gray-500 hover:text-gray-700 hover:border-gray-300'
+                          }`}
+                        >
+                          <div className="flex items-center space-x-1.5">
+                            <Zap className="w-4 h-4" />
+                            <span>Generated Content</span>
+                            {outputs.length > 0 && (
+                              <span className="px-1.5 py-0.5 text-xs rounded-full bg-gray-100 text-gray-600">
+                                {outputs.length}
+                              </span>
+                            )}
+                          </div>
+                        </button>
+                      </div>
 
-                      <button
-                        onClick={() => setActiveTab('outputs')}
-                        className={`py-2.5 px-1 border-b-2 font-medium text-sm transition-colors ${
-                          activeTab === 'outputs'
-                            ? 'border-blue-500 text-blue-600'
-                            : 'border-transparent text-gray-500 hover:text-gray-700 hover:border-gray-300'
-                        }`}
-                      >
-                        <div className="flex items-center space-x-1.5">
-                          <Zap className="w-4 h-4" />
-                          <span>Generated Content</span>
-                          {outputs.length > 0 && (
-                            <span className="px-1.5 py-0.5 text-xs rounded-full bg-gray-100 text-gray-600">
-                              {outputs.length}
-                            </span>
-                          )}
+                      {activeTab === 'transcript' && parsedSpeakerData && (
+                        <div className="flex items-center gap-2 flex-wrap justify-end">
+                          <label
+                            className={`flex items-center gap-1.5 text-xs px-2.5 py-1 rounded-full border transition-colors cursor-pointer ${
+                              showTimestamps
+                                ? 'border-blue-200 bg-blue-50 text-blue-600'
+                                : 'border-gray-200 bg-white text-gray-400 hover:text-gray-600 hover:border-gray-300'
+                            }`}
+                          >
+                            <input
+                              type="checkbox"
+                              checked={showTimestamps}
+                              onChange={(e) => setShowTimestamps(e.target.checked)}
+                              className="sr-only"
+                            />
+                            <Clock className="w-3.5 h-3.5" />
+                            <span>Timestamps</span>
+                          </label>
+
+                          <select
+                            value={selectedSpeaker || ''}
+                            onChange={(e) => setSelectedSpeaker(e.target.value || null)}
+                            className={`text-xs px-2.5 py-1 rounded-full border transition-colors ${
+                              selectedSpeaker
+                                ? 'border-blue-200 bg-blue-50 text-blue-600'
+                                : 'border-gray-200 bg-white text-gray-400 hover:text-gray-600 hover:border-gray-300'
+                            }`}
+                          >
+                            <option value="">All speakers</option>
+                            {Object.keys(parsedSpeakerData.speakers || {}).map((speakerId) => (
+                              <option key={speakerId} value={speakerId}>
+                                {getSpeakerDisplayName(parsedSpeakerData.speakers[speakerId])}
+                              </option>
+                            ))}
+                          </select>
+
+                          <button
+                            onClick={() => setReaderView(v => !v)}
+                            className={`flex items-center gap-1.5 text-xs px-2.5 py-1 rounded-full border transition-colors ${
+                              readerView
+                                ? 'border-blue-200 bg-blue-50 text-blue-600'
+                                : 'border-gray-200 bg-white text-gray-400 hover:text-gray-600 hover:border-gray-300'
+                            }`}
+                          >
+                            <BookOpen className="w-3.5 h-3.5" />
+                            <span>Reader view</span>
+                          </button>
                         </div>
-                      </button>
+                      )}
                     </nav>
                   </div>
 
                   {/* Tab Content - Scrollable */}
                   <div className="flex-1 overflow-y-auto bg-gray-50/50">
-                    {/* TRANSCRIPT TAB - Plain text only */}
+                    {/* TRANSCRIPT TAB - ConversationView with plain-text fallback */}
                     {activeTab === 'transcript' && (
-                      <div className="h-full flex flex-col">
-                        {selectedProject.transcription_text ? (
-                          <div className="flex-1 overflow-y-auto px-2 py-2">
-                            <div className="max-w-3xl mx-auto">
-                              <div className="prose prose-sm max-w-none">
-                                <div className="text-[15px] text-gray-700 leading-relaxed whitespace-pre-wrap">
-                                  {parsedSpeakerData ? (
-                                    parsedSpeakerData.segments
-                                      .map((segment: any) => segment.text)
-                                      .join(' ')
-                                  ) : (
-                                    selectedProject.transcription_text
-                                  )}
-                                </div>
-                              </div>
-                            </div>
-                          </div>
-                        ) : (
-                          <div className="flex-1 flex items-center justify-center">
-                            <div className="text-center py-12 text-gray-500">
-                              <Loader2 className="h-8 w-8 mx-auto mb-3 animate-spin text-gray-300" />
-                              <p className="text-sm">Processing transcription...</p>
-                            </div>
-                          </div>
-                        )}
-                      </div>
-                    )}
-
-                    {/* CONVERSATION TAB - Speaker diarization view */}
-                    {activeTab === 'conversation' && (
                       <div className="h-full flex flex-col">
                         {parsedSpeakerData ? (
                           <div className="h-full flex flex-col">
@@ -1811,36 +1951,75 @@ export default function ProjectsPage() {
                               </div>
                             )}
 
-                            {/* Conversation Content */}
-                            <div className="flex-1 overflow-y-auto px-2 py-2">
-                              <div className="max-w-3xl mx-auto">
-                                <ConversationView
-                                  speakerData={parsedSpeakerData}
-                                  transcriptionText={selectedProject.transcription_text || ''}
-                                  projectId={selectedProject.id}
-                                  userTier={selectedProject.performance_level || 'basic'}
-                                  onSpeakerUpdate={(updatedSpeakerData) => {
-                                    setSelectedProject(prev => prev ? {
-                                      ...prev,
-                                      speaker_data: updatedSpeakerData
-                                    } : null);
-                                  }}
-                                  insightsSidebarOpen={insightsSidebarOpen}
-                                  onInsightsSidebarChange={setInsightsSidebarOpen}
-                                  onInsightsStatusChange={setInsightsStatus}
-                                  onInsightsDataChange={setInsightsData}
-                                  triggerInsightGeneration={triggerInsightGeneration}
-                                  audioPlayerRef={audioPlayerRef}
-                                />
+                            {readerView ? (
+                              /* Reader View — clean, scannable transcript */
+                              <div className="flex-1 overflow-y-auto px-4 py-4">
+                                <div className="max-w-3xl mx-auto divide-y divide-gray-100">
+                                  {parsedSpeakerData.segments.map((segment: any, i: number) => {
+                                    const speakerId = segment.finalSpeakerId || segment.speakerId;
+                                    const speaker = parsedSpeakerData.speakers[speakerId];
+                                    const speakerName = speaker?.finalName || speaker?.fallbackName || speaker?.name || speakerId;
+                                    const colorClass = getSpeakerColor(speakerId);
+                                    const mins = Math.floor((segment.startTime || 0) / 60);
+                                    const secs = Math.floor((segment.startTime || 0) % 60);
+                                    const timestamp = `${mins}:${secs.toString().padStart(2, '0')}`;
+                                    return (
+                                      <div key={i} className="flex items-baseline gap-3 py-2.5">
+                                        <span className="flex-shrink-0 text-[11px] font-mono text-gray-400 w-9 select-none">{timestamp}</span>
+                                        <span className={`flex-shrink-0 text-[11px] font-semibold px-2 py-0.5 rounded-full ${colorClass}`}>{speakerName}</span>
+                                        <span className="text-[14px] text-gray-800 leading-relaxed">{segment.text}</span>
+                                      </div>
+                                    );
+                                  })}
+                                </div>
                               </div>
+                            ) : (
+                              /* Conversation View — full editing controls */
+                              <div className="flex-1 overflow-y-auto px-2 py-2">
+                                <div className="max-w-3xl mx-auto">
+                                  <ConversationView
+                                    speakerData={parsedSpeakerData}
+                                    transcriptionText={selectedProject.transcription_text || ''}
+                                    projectId={selectedProject.id}
+                                    userTier={selectedProject.performance_level || 'basic'}
+                                    onSpeakerUpdate={(updatedSpeakerData) => {
+                                      setSelectedProject(prev => prev ? {
+                                        ...prev,
+                                        speaker_data: updatedSpeakerData
+                                      } : null);
+                                      setProjects(prev =>
+                                        prev.map(project =>
+                                          project.id === selectedProject.id
+                                            ? { ...project, speaker_data: updatedSpeakerData }
+                                            : project
+                                        )
+                                      );
+                                    }}
+                                    insightsSidebarOpen={insightsSidebarOpen}
+                                    onInsightsSidebarChange={setInsightsSidebarOpen}
+                                    onInsightsStatusChange={setInsightsStatus}
+                                    onInsightsDataChange={setInsightsData}
+                                    triggerInsightGeneration={triggerInsightGeneration}
+                                    insightsRefreshToken={insightsRefreshToken}
+                                    audioPlayerRef={audioPlayerRef}
+                                    showTimestamps={showTimestamps}
+                                    selectedSpeaker={selectedSpeaker}
+                                  />
+                                </div>
+                              </div>
+                            )}
+                          </div>
+                        ) : selectedProject.transcription_text ? (
+                          <div className="flex-1 overflow-y-auto px-2 py-2">
+                            <div className="max-w-3xl mx-auto text-[15px] text-gray-700 leading-relaxed whitespace-pre-wrap">
+                              {selectedProject.transcription_text}
                             </div>
                           </div>
                         ) : (
                           <div className="flex-1 flex items-center justify-center">
                             <div className="text-center py-12 text-gray-500">
-                              <MessageCircle className="h-8 w-8 mx-auto mb-3 text-gray-300" />
-                              <p className="text-sm">Speaker data not available</p>
-                              <p className="text-xs text-gray-400 mt-1">Use a Pro or Premium tier for speaker diarization</p>
+                              <Loader2 className="h-8 w-8 mx-auto mb-3 animate-spin text-gray-300" />
+                              <p className="text-sm">Processing transcription...</p>
                             </div>
                           </div>
                         )}
@@ -1909,23 +2088,38 @@ export default function ProjectsPage() {
                                   </span>
 
                                   <div className="flex items-center gap-1">
-                                    <button 
+                                    <button
+                                      onClick={() => toggleOutputExpansion(output.id)}
                                       className="p-1.5 text-gray-400 hover:text-blue-600 hover:bg-blue-50 rounded transition-colors"
-                                      title="View"
+                                      title={expandedOutputs.has(output.id) ? 'Collapse' : 'Expand'}
                                     >
                                       <Eye className="h-4 w-4" />
                                     </button>
-                                    <button 
+                                    <button
+                                      onClick={() => handleDownloadOutput(output)}
                                       className="p-1.5 text-gray-400 hover:text-green-600 hover:bg-green-50 rounded transition-colors"
-                                      title="Download"
+                                      title="Download as .txt"
                                     >
                                       <Download className="h-4 w-4" />
                                     </button>
-                                    <button 
-                                      className="p-1.5 text-gray-400 hover:text-indigo-600 hover:bg-indigo-50 rounded transition-colors"
-                                      title="Share"
+                                    <button
+                                      onClick={() => handleCopyOutput(output)}
+                                      className="p-1.5 text-gray-400 hover:text-violet-600 hover:bg-violet-50 rounded transition-colors"
+                                      title="Copy to clipboard"
                                     >
-                                      <Share2 className="h-4 w-4" />
+                                      <Copy className="h-4 w-4" />
+                                    </button>
+                                    <button
+                                      onClick={() => handleDeleteOutput(output.id)}
+                                      disabled={deletingOutput === output.id}
+                                      className="p-1.5 text-gray-400 hover:text-red-600 hover:bg-red-50 rounded transition-colors disabled:opacity-50"
+                                      title="Delete"
+                                    >
+                                      {deletingOutput === output.id ? (
+                                        <Loader2 className="h-4 w-4 animate-spin" />
+                                      ) : (
+                                        <Trash2 className="h-4 w-4" />
+                                      )}
                                     </button>
                                   </div>
                                 </div>
@@ -1961,36 +2155,51 @@ export default function ProjectsPage() {
               activeSpeakerId={activeSpeakerId}
               projectId={selectedProject?.id}
               onSpeakerRename={async (speakerId, newName) => {
-                if (!selectedProject?.id || !parsedSpeakerData) return;
+                if (!selectedProject?.id) return;
 
-                const updatedSpeakerData = {
-                  ...parsedSpeakerData,
-                  speakers: {
-                    ...parsedSpeakerData.speakers,
-                    [speakerId]: {
-                      ...parsedSpeakerData.speakers[speakerId],
-                      finalName: newName,
-                      customName: newName
-                    }
-                  }
-                };
-
-                // Save to backend
-                const response = await fetch(`/api/projects/${selectedProject.id}/speakers`, {
+                const response = await fetch(`/api/projects/${selectedProject.id}/speakers/${speakerId}`, {
                   method: 'PATCH',
                   headers: { 'Content-Type': 'application/json' },
                   body: JSON.stringify({
-                    speakerId,
-                    newName,
-                    speakerData: updatedSpeakerData
+                    action: 'rename',
+                    newName
                   })
                 });
 
                 if (response.ok) {
-                  setSelectedProject(prev => prev ? {
-                    ...prev,
-                    speaker_data: updatedSpeakerData
-                  } : null);
+                  const refreshed = await fetch(`/api/projects/${selectedProject.id}`);
+                  if (refreshed.ok) {
+                    const updatedProject = await refreshed.json();
+                    setSelectedProject(prev => prev ? {
+                      ...prev,
+                      speaker_data: updatedProject.speaker_data
+                    } : null);
+                  }
+                }
+              }}
+              onSpeakerMerge={async (sourceSpeakerId, targetSpeakerId) => {
+                if (!selectedProject?.id) return;
+                if (sourceSpeakerId === targetSpeakerId) return;
+
+                // Merge: delete source, reassign its segments to target
+                const response = await fetch(`/api/projects/${selectedProject.id}/speakers/${sourceSpeakerId}`, {
+                  method: 'PATCH',
+                  headers: { 'Content-Type': 'application/json' },
+                  body: JSON.stringify({
+                    action: 'reassign',
+                    reassignToSpeakerId: targetSpeakerId
+                  })
+                });
+
+                if (response.ok) {
+                  const refreshed = await fetch(`/api/projects/${selectedProject.id}`);
+                  if (refreshed.ok) {
+                    const updatedProject = await refreshed.json();
+                    setSelectedProject(prev => prev ? {
+                      ...prev,
+                      speaker_data: updatedProject.speaker_data
+                    } : null);
+                  }
                 }
               }}
               insights={insightsData}
@@ -2004,10 +2213,11 @@ export default function ProjectsPage() {
               takeaways={selectedProject?.key_takeaways || []}
               quotes={selectedProject?.social_quotes || []}
               tier={selectedProject?.performance_level || 'basic'}
+              contentLoading={selectedProject?.status === 'processing' || isProjectRefreshing}
               isOpen={contextSidebarOpen}
               onClose={() => setContextSidebarOpen(false)}
-              className={`flex-shrink-0 transition-all duration-300 ease-in-out ${
-                contextSidebarOpen ? 'w-72 lg:w-1/4' : 'w-0'
+              className={`flex-shrink-0 transition-all duration-300 ease-in-out overflow-hidden ${
+                contextSidebarOpen ? 'w-72 lg:w-1/4 min-w-[280px] opacity-100' : 'w-0 opacity-0'
               }`}
             />
           </div>
@@ -2036,6 +2246,20 @@ export default function ProjectsPage() {
           projects={exportProjects}
           onExport={handleExport}
         />
+
+        {/* Toast Notification */}
+        {toast && (
+          <div className={`fixed top-4 right-4 z-50 flex items-center gap-2.5 px-4 py-3 rounded-lg shadow-lg text-sm font-medium text-white animate-in slide-in-from-top-2 duration-200 ${
+            toast.type === 'success' ? 'bg-green-600' : 'bg-red-600'
+          }`}>
+            {toast.type === 'success'
+              ? <CheckCircle className="w-4 h-4 flex-shrink-0" />
+              : <AlertCircle className="w-4 h-4 flex-shrink-0" />
+            }
+            <span>{toast.message}</span>
+          </div>
+        )}
+
     </div>
   );
 }

@@ -695,5 +695,28 @@ export function getThemeCategories(): string[] {
   return Array.from(new Set(CONTENT_THEMES.map(theme => theme.category)));
 }
 
+// Curated subset of themes shown in the simplified modal UI
+export const CURATED_THEME_IDS: string[] = [
+  'professional',
+  'casual',
+  'educational',
+  'storytelling',
+  'witty',
+  'inspirational',
+  'bold',
+  'actionable',
+  'authentic',
+  'thoughtleader',
+  'datadriven',
+  'contrarian'
+];
+
+// Get only the curated themes for modal dropdowns
+export function getCuratedThemes(): ContentTheme[] {
+  return CURATED_THEME_IDS
+    .map(id => CONTENT_THEMES.find(t => t.id === id))
+    .filter((t): t is ContentTheme => t !== undefined);
+}
+
 // Default theme
 export const DEFAULT_THEME_ID = 'professional';

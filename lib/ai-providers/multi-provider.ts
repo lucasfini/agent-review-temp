@@ -32,22 +32,53 @@ export interface AICompletionResponse {
 }
 
 /**
- * Get AI completion from any supported provider
+ * Get AI completion from any supported provider with automatic fallback for missing models
  */
 export async function getAICompletion(options: AICompletionOptions): Promise<AICompletionResponse> {
   const provider = getProviderFromModel(options.model);
 
-  switch (provider) {
-    case 'openai':
-      return getOpenAICompletion(options);
-    case 'anthropic':
-      return getAnthropicCompletion(options);
-    case 'google':
-      return getGoogleCompletion(options);
-    case 'perplexity':
-      return getPerplexityCompletion(options);
-    default:
-      throw new Error(`Unsupported provider: ${provider}`);
+  try {
+    switch (provider) {
+      case 'openai':
+        return await getOpenAICompletion(options);
+      case 'anthropic':
+        return await getAnthropicCompletion(options);
+      case 'google':
+        return await getGoogleCompletion(options);
+      case 'perplexity':
+        return await getPerplexityCompletion(options);
+      default:
+        throw new Error(`Unsupported provider: ${provider}`);
+    }
+  } catch (error: any) {
+    // Check for model not found errors to provide fallback
+    const errorMessage = error.message || '';
+    const isModelNotFound = 
+      errorMessage.includes('model_not_found') || 
+      errorMessage.includes('not_found') || 
+      errorMessage.includes('does not exist');
+
+    if (isModelNotFound && options.model.startsWith('gpt-')) {
+      const fallbackModel = options.model.includes('mini') || options.model.includes('nano') 
+        ? 'gpt-4o-mini' 
+        : 'gpt-4o';
+      
+      if (options.model !== fallbackModel) {
+        console.warn(`[AI] Model ${options.model} not found. Falling back to ${fallbackModel}`);
+        return await getOpenAICompletion({ ...options, model: fallbackModel });
+      }
+    }
+    
+    // Fallback for futuristic Anthropic models
+    if (isModelNotFound && options.model.startsWith('claude-')) {
+      const fallbackModel = 'claude-3-5-sonnet-20240620';
+      if (options.model !== fallbackModel) {
+        console.warn(`[AI] Model ${options.model} not found. Falling back to ${fallbackModel}`);
+        return await getAnthropicCompletion({ ...options, model: fallbackModel });
+      }
+    }
+
+    throw error;
   }
 }
 
@@ -68,11 +99,12 @@ function getProviderFromModel(modelId: string): string {
 async function getOpenAICompletion(options: AICompletionOptions): Promise<AICompletionResponse> {
   const openai = new OpenAI({ apiKey: process.env.OPENAI_API_KEY });
 
+  const isGpt5Family = options.model.startsWith('gpt-5');
   const completion = await openai.chat.completions.create({
     model: options.model,
     messages: options.messages as any,
-    temperature: options.temperature ?? 0.7,
-    max_tokens: options.maxTokens ?? 4096,
+    ...(isGpt5Family ? {} : { temperature: options.temperature ?? 0.7 }),
+    max_completion_tokens: options.maxTokens ?? 4096,
     top_p: options.topP ?? 1,
     response_format: options.responseFormat,
   });

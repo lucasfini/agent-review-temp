@@ -97,9 +97,8 @@ ${transcriptionText.slice(0, 80000)}`;
 
   try {
     const response = await openai.chat.completions.create({
-      model: 'gpt-4o-mini',
-      max_tokens: 2000,
-      temperature: 0.2,
+      model: 'gpt-5-nano',
+      max_completion_tokens: 6000,
       response_format: { type: "json_object" },
       messages: [
         {
@@ -118,7 +117,7 @@ ${transcriptionText.slice(0, 80000)}`;
         userId: options.userId,
         projectId: options.projectId,
         response,
-        modelName: 'gpt-4o-mini',
+        modelName: 'gpt-5-nano',
         purpose: 'Chapter Detection',
         shouldDebit: true
       });

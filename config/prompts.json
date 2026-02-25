@@ -2,9 +2,9 @@
   "audioRepurpose": {
     "insightExtraction": {
       "id": "insight_extraction",
-      "model": "gpt-4o-mini",
+      "model": "gpt-5-nano",
       "temperature": 0.2,
-      "max_tokens": 4000,
+      "max_tokens": 16000,
       "response_format": { "type": "json_object" },
       "params": {
         "maxTranscriptChars": 100000,
@@ -78,28 +78,28 @@
     },
     "narrativeCoverage": {
       "id": "narrative_coverage_analysis",
-      "model": "claude-sonnet-4-5-20250929",
+      "model": "gpt-5-mini",
       "temperature": 0.2,
-      "max_tokens": 3000,
+      "max_tokens": 16000,
       "prompt": "You are an editorial analyst. Given a podcast transcript (and a short summary if available), produce a structured JSON object describing narrative coverage.\n\nRequirements:\n- Return ONLY valid JSON (no markdown fences).\n- If the transcript does not provide enough context to determine a numeric field, set it to null instead of guessing.\n- JSON structure:\n\ncoverage_window: ${coverageWindow}\ntopics: [\n  {\n    id: kebab_case_id,\n    label: Human readable topic,\n    keywords: [keyword, secondary],\n    mentionCount: number,\n    sentimentScore: number between -1 and 1,\n    shareOfVoice: 0-1,\n    relatedCtas: [cta_id],\n    assetsCovered: [summary, quotes]\n  }\n]\nctas: [\n  {\n    id: cta_id,\n    label: CTA label,\n    mentionCount: number,\n    cadenceDays: number,\n    sentimentScore: number between -1 and 1\n  }\n]\nopportunities: [\n  {\n    type: underrepresented | overindexed | debt | cta-gap | balanced,\n    label: Opportunity title,\n    topicId: optional topic id,\n    severity: low | medium | high,\n    summary: Short explanation,\n    recommendedAction: Specific follow-up,\n    supportingTopics: [topic ids]\n  }\n]\nnotes: Optional analyst notes\n\n--- TOPIC EXTRACTION GUIDELINES ---\n\nTOPIC QUALITY STANDARDS:\n\n1. Topics should be THEMATIC and CONCEPTUAL, not single common words:\n   ✓ GOOD: \"vaccine safety research\", \"henry ford study results\", \"scientific censorship\", \"AI regulation debate\"\n   ✗ BAD: \"think\", \"like\", \"about\", \"what\", \"study\", \"research\" (too generic)\n\n2. Topics should have CONTEXT and SPECIFICITY:\n   ✓ GOOD: \"remote work productivity\", \"startup funding strategies\", \"climate change policy\"\n   ✗ BAD: \"work\", \"money\", \"weather\"\n\n3. Each topic represents a DISTINCT CONVERSATION THEME:\n   - Topics are multi-sentence discussions, not isolated word mentions\n   - Look for clusters of related keywords and concepts\n   - Ask: Would this make sense as a podcast chapter title?\n\n4. AVOID extracting these as topics:\n   - Filler words: think, like, just, really, very, actually, basically\n   - Pure pronouns: I, we, you, they\n   - Generic actions: make, take, get, go, see\n   - Single abstract nouns: time, thing, way, stuff\n   - Common verbs alone: said, asked, want, need\n\n5. CTAs should be ACTIONABLE and SPECIFIC:\n   ✓ GOOD: \"Subscribe to newsletter\", \"Join premium membership\"\n   ✗ BAD: \"Click here\", \"Check it out\"\n\n--- END GUIDELINES ---\n\n- Limit topics to ${maxTopics} entries focusing on the clearest themes.\n- Mention counts should be relative estimates; set to 0 if unsure.\n- Share of voice values should sum to roughly 1.\n- Always include at least one opportunity entry even if it is balanced feedback.\n\nContext:\n- Project: ${projectTitle}\n- Tier: ${tier}\n- Goals and guardrails: ${goalsText}\n- Transcript slice (<= ${MAX_TRANSCRIPT_CHARS} chars):\n${transcriptSlice}${summarySection}"
     },
     "speakerNameExtraction": {
       "id": "speaker_name_extraction_gpt",
-      "model": "gpt-4o",
+      "model": "gpt-5-mini",
       "temperature": 0.0,
-      "max_tokens": 2000,
+      "max_tokens": 4000,
       "top_p": 1,
       "system": "You are a strict information extraction system. If information is not explicitly present in the input, return null or 'unknown'. You must not infer, assume, or use outside knowledge. Output valid JSON only.",
       "userPrompt": "You are given a transcript that has already been split into speakers by a speech diarization system.\n\nTASK:\n1. Identify the real name of each speaker ONLY if explicitly stated.\n2. Do NOT assign names based on assumptions or external knowledge.\n\nRULES FOR NAME EXTRACTION:\n- Accept only explicit evidence:\n  • Self-introductions (\"My name is Alice\", \"I'm Bob Smith\")\n  • Introductions by others (\"Today we're joined by Carol\", \"Welcome, Dan\")\n  • Direct address (\"Alice, what do you think?\" followed by Alice responding)\n- Do NOT guess names.\n- Do NOT assign the same name to multiple speakers unless explicitly stated.\n- If no name is stated, return null.\n- Do NOT extract show titles, locations, or companies as names.\n\nOUTPUT FORMAT (JSON ONLY):\n{\n  \"speakers\": {\n    \"Speaker_A\": { \"name\": \"Full Name or null\", \"confidence\": 0.0-1.0, \"evidence\": \"quote\" },\n    \"Speaker_B\": { \"name\": \"Full Name or null\", \"confidence\": 0.0-1.0, \"evidence\": \"quote\" }\n  }\n}\n\nUTTERANCES:\n${utterances}"
     },
     "speakerRoleClassification": {
       "id": "speaker_role_classification_gpt",
-      "model": "gpt-4o",
+      "model": "gpt-5-nano",
       "temperature": 0.0,
-      "max_tokens": 1500,
+      "max_tokens": 4000,
       "top_p": 1,
-      "system": "You are a strict information extraction system. If information is not explicitly present in the input, return 'unknown'. You must not infer, assume, or use outside knowledge. Output valid JSON only.",
-      "userPrompt": "You are given speakers from a diarized transcript. Assign ONE conversational role to each speaker based ONLY on observable behavior.\n\nALLOWED ROLES:\nhost, co_host, guest, interviewer, moderator, panelist, narrator, storyteller, ad_reader, sponsor_voice, promo_voice, call_to_action, expert_commentator, audience_question, unknown\n\nRULES FOR ROLE CLASSIFICATION:\n- Use conversational behavior ONLY (question patterns, introduction style, speaking time, etc.)\n- Assign exactly ONE role per speaker.\n- If evidence is insufficient, return 'unknown'.\n- Do NOT guess or infer based on topics discussed.\n- Do NOT use external knowledge about people.\n\nOUTPUT FORMAT (JSON ONLY):\n{\n  \"speakers\": {\n    \"Speaker_A\": { \"role\": \"role\", \"confidence\": 0.0-1.0, \"evidence\": [\"quote1\", \"quote2\"] },\n    \"Speaker_B\": { \"role\": \"role\", \"confidence\": 0.0-1.0, \"evidence\": [\"quote1\", \"quote2\"] }\n  }\n}\n\nSPEAKER UTTERANCES:\n${utterances}"
+      "system": "You are a conversational role classifier for audio transcripts. Infer each speaker's role from their observable speech patterns and behavioral statistics. Output valid JSON only.",
+      "userPrompt": "Assign ONE conversational role to each speaker based on their speech patterns and behavioral stats.\n\nBEHAVIORAL STATS (when provided):\n- handoffs_given: how many times this speaker introduced or yielded the floor to another speaker\n- handoffs_received: how many times another speaker yielded the floor to this one\n- avg_turn_seconds: average speaking turn length\n\nROLE GUIDANCE:\n- moderator: introduces others (handoffs_given >> handoffs_received), short turns, manages timing\n- host: leads conversation, opens/closes, may interview guests\n- guest: answers questions, self-introduces, longer turns\n- interviewer: asks most questions, rarely answers them\n- panelist: one of several equals responding to questions\n- co_host: shares host duties\n- unknown: insufficient evidence\n\nALLOWED ROLES:\nhost, co_host, guest, interviewer, moderator, panelist, narrator, storyteller, ad_reader, sponsor_voice, promo_voice, call_to_action, expert_commentator, audience_question, unknown\n\nRULES:\n- Assign exactly ONE role per speaker.\n- Prefer specific roles over 'unknown' when behavioral stats or speech patterns clearly indicate a role.\n- Do NOT use external knowledge about people's identities.\n\nOUTPUT FORMAT (JSON ONLY):\n{\n  \"speakers\": {\n    \"Speaker_A\": { \"role\": \"role\", \"confidence\": 0.0-1.0, \"evidence\": [\"quote or stat\"] },\n    \"Speaker_B\": { \"role\": \"role\", \"confidence\": 0.0-1.0, \"evidence\": [\"quote or stat\"] }\n  }\n}\n\nSPEAKER DATA:\n${utterances}"
     }
   }
 }

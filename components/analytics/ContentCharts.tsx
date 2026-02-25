@@ -220,24 +220,42 @@ export function ContentMixSection({ contentBreakdown, topTopics }: ContentMixDat
     color: ['#3b82f6', '#10b981', '#f59e0b', '#8b5cf6', '#ec4899'][idx % 5]
   }))
 
+  const totalContent = donutData.reduce((sum, d) => sum + d.value, 0)
+  const donutSummary = donutData.length > 0
+    ? `Content mix: ${donutData.map(d => `${d.name} ${d.value}`).join(', ')}. Total: ${totalContent}.`
+    : 'No content data available.'
+
+  const topicSummary = barListData.length > 0
+    ? `Top topics: ${barListData.map(d => `${d.name} ${d.value} mentions`).join(', ')}.`
+    : 'No topic data available.'
+
   return (
     <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
       {/* Donut Chart - Content Mix */}
-      <div className="bg-white rounded-xl border border-gray-100 p-5">
+      <div className="bg-white rounded-xl border border-gray-100 p-5" role="region" aria-label="Content mix breakdown">
         <h3 className="text-sm font-semibold text-gray-900 mb-4">Content Mix</h3>
-        <DonutChart data={donutData} />
+        <div role="img" aria-label={donutSummary}>
+          <DonutChart data={donutData} />
+        </div>
+        {totalContent === 0 && (
+          <p className="text-sm text-gray-500 text-center py-4">
+            No content generated yet. Generate content from your transcribed projects to see a breakdown here.
+          </p>
+        )}
       </div>
 
       {/* Bar List - Top Topics */}
-      <div className="bg-white rounded-xl border border-gray-100 p-5">
+      <div className="bg-white rounded-xl border border-gray-100 p-5" role="region" aria-label="Top performing topics">
         <h3 className="text-sm font-semibold text-gray-900 mb-4">Top Performing Topics</h3>
-        <BarList
-          data={barListData}
-          valueFormatter={(v) => `${v} mentions`}
-        />
+        <div role="img" aria-label={topicSummary}>
+          <BarList
+            data={barListData}
+            valueFormatter={(v) => `${v} mentions`}
+          />
+        </div>
         {topTopics.length === 0 && (
           <p className="text-sm text-gray-500 text-center py-8">
-            Run coverage analysis to see topic performance.
+            No topics detected yet. Run analytics on your transcribed projects to discover topic performance.
           </p>
         )}
       </div>

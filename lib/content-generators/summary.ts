@@ -70,46 +70,38 @@ export async function generatePodcastSummary(
     }
   }
 
-  const prompt = `You are an expert editorial writer for a high-end publication like The Atlantic or Wired. Your task is to write a deeply insightful, human-sounding summary of the provided transcript.
+  const prompt = `Write an unbiased, factual summary of this transcript. Think of it as cliff notes — a reader should walk away knowing exactly what was discussed, what positions were stated, and what conclusions were reached, without any narrative framing or storytelling.
 
-STRICT TONE GUIDELINES:
+RULES:
 
-Kill the "AI Voice": Do NOT start with "In this episode," "The podcast discusses," or "The speakers explore." Start immediately with the most compelling idea or tension found in the conversation.
+1. Be FACTUAL and NEUTRAL. Report what was said, not a story about what was said.
+2. NEVER start with "In a world," "In this episode," "The podcast explores," or any scene-setting intro. Start with the first substantive point.
+3. NO narrative language: avoid "journey," "tapestry," "delve," "unpack," "landscape," "navigate," "comprehensive," "leverage," "testament," "realm," "paradigm."
+4. NO editorializing. Do not add your own opinion, moral judgments, or dramatic framing. If speakers disagreed, state both positions neutrally.
+5. Use PLAIN, DIRECT language. Write like a Wikipedia article or a meeting minutes document, not a magazine feature.
+6. Attribute claims to speakers by name when possible. "Smith argued X. Jones countered with Y."
+7. Third person only. No "we" or "you."
 
-Vary Sentence Rhythm: Avoid consistent sentence lengths. Use a mix of short, punchy observations and longer, flowing explanatory sentences.
+STRUCTURE:
 
-No Fluff: Avoid words like "delve," "tapestry," "comprehensive," "leverage," or "testament."
-
-The "So What?" Factor: Don't just list what was said; explain why it matters or what the underlying conflict/insight was.
-
-Third Person Only: Maintain a professional distance.
-
-STRUCTURE REQUIREMENTS:
-
-Length: 800 - 1000 words.
-
-Format: 3-5 distinct paragraphs.
-
-Separation: Use double newlines between paragraphs.
-
-Prose Style: Write like Perplexity Discover—direct, clear, and highly scannable, but with a sophisticated vocabulary.
-
-Bolding: You may bold one key phrase per paragraph if it represents a major "aha!" moment.
+- Length: 600–900 words.
+- Format: 3–5 paragraphs, each covering a distinct topic or segment of the conversation.
+- Double newlines between paragraphs.
+- No bolding. No bullet points. Just clean prose.
 
 TRANSCRIPT CONTEXT:
 ${speakerInfo}${narrativeContext}
-Transcription (Pre-processed to remove ads):
+Transcript:
 ${sourceText.slice(0, 80000)}`;
 
   try {
     const response = await openai.chat.completions.create({
-      model: 'gpt-4o',
-      max_tokens: 2000,
-      temperature: 0.6,
+      model: 'gpt-5-mini',
+      max_completion_tokens: 8000,
       messages: [
         {
           role: 'system',
-          content: 'You are an expert editorial writer who produces natural, human-sounding summaries. Never use AI clichés or robotic language.'
+          content: 'You produce factual, unbiased summaries. Write like cliff notes — concise, neutral, informative. Never use narrative framing, AI clichés, or dramatic language. Report what was said, attribute it to speakers, and move on.'
         },
         {
           role: 'user',
@@ -123,7 +115,7 @@ ${sourceText.slice(0, 80000)}`;
         userId,
         projectId,
         response,
-        modelName: 'gpt-4o',
+        modelName: 'gpt-5-mini',
         purpose: 'Podcast Summary',
         shouldDebit: true
       });

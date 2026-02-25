@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { supabaseAdmin } from '@/lib/supabase/server';
 import type { ContentBlock } from '@/lib/content-types';
+import { initializeGenerationProgress } from '@/lib/generation-progress';
 
 export async function POST(request: NextRequest) {
   try {
@@ -53,6 +54,10 @@ export async function POST(request: NextRequest) {
     if (updateError) {
       console.error('[GENERATE-SELECTED] Failed to update project:', updateError);
     }
+
+    // Pre-create the progress row so the client polling loop doesn't falsely
+    // conclude "completed" before /api/generate-content has booted and inserted its own row.
+    await initializeGenerationProgress(projectId, blocks.length);
 
     // Start content generation process (async)
     const baseUrl = process.env.VERCEL_URL

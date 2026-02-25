@@ -25,23 +25,18 @@ export async function initializeGenerationProgress(
   totalBlocks: number
 ): Promise<void> {
   try {
-    // Delete any existing progress for this project
-    await (supabaseAdmin
-      .from('generation_progress') as any)
-      .delete()
-      .eq('project_id', projectId);
-
-    // Create new progress entry
+    // Upsert so this is idempotent — safe to call from both generate-selected-content
+    // (pre-creation, before fire-and-forget) and generate-content (actual worker).
     const { error } = await (supabaseAdmin
       .from('generation_progress') as any)
-      .insert({
+      .upsert({
         project_id: projectId,
         status: 'preparing',
         completed_blocks: 0,
         total_blocks: totalBlocks,
         message: 'Preparing to generate content...',
         updated_at: new Date().toISOString()
-      });
+      }, { onConflict: 'project_id' });
 
     if (error) {
       console.error('[PROGRESS] Failed to initialize:', error);

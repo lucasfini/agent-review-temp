@@ -91,6 +91,19 @@ function groupOutputsByType(outputs: Output[]): Record<string, Output[]> {
   }, {} as Record<string, Output[]>);
 }
 
+function hasConversationData(speakerData: any): boolean {
+  if (!speakerData) return false;
+  if (typeof speakerData === 'string') {
+    try {
+      const parsed = JSON.parse(speakerData);
+      return Array.isArray(parsed?.segments) && parsed.segments.length > 0;
+    } catch {
+      return false;
+    }
+  }
+  return Array.isArray(speakerData?.segments) && speakerData.segments.length > 0;
+}
+
 export default function ExportModal({
   isOpen,
   onClose,
@@ -152,7 +165,7 @@ export default function ExportModal({
   const getAvailableCoreContent = (project: ProjectWithOutputs): CoreContentType[] => {
     const available: CoreContentType[] = [];
     if (project.transcription_text) available.push('transcript');
-    if (project.transcription_text && project.speaker_data) available.push('conversation');
+    if (hasConversationData(project.speaker_data)) available.push('conversation');
     if (project.ai_summary) available.push('summary');
     if (project.chapters && project.chapters.length > 0) available.push('chapters');
     if (project.key_takeaways && project.key_takeaways.length > 0) available.push('takeaways');
@@ -514,8 +527,8 @@ export default function ExportModal({
                     {getAvailableCoreContent(activeProject).map(contentType => {
                       const isSelected = selectedCoreContent[activeProject.id]?.has(contentType);
                       const config: Record<CoreContentType, { label: string; icon: any; description: string }> = {
-                        transcript: { label: 'Transcript', icon: FileText, description: 'Full transcription text' },
-                        conversation: { label: 'Conversation', icon: MessageCircle, description: 'Speaker-attributed dialogue' },
+                        transcript: { label: 'Raw Transcript', icon: FileText, description: 'Full transcription text' },
+                        conversation: { label: 'Conversation Transcript', icon: MessageCircle, description: 'Speakers + timestamps + roles' },
                         summary: { label: 'Summary', icon: Sparkles, description: 'AI-generated summary' },
                         chapters: { label: 'Chapters', icon: BookOpen, description: `${activeProject.chapters?.length || 0} chapters` },
                         takeaways: { label: 'Key Takeaways', icon: Lightbulb, description: `${activeProject.key_takeaways?.length || 0} insights` },

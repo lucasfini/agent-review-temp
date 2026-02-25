@@ -32,7 +32,9 @@ export type ConfidenceReason =
   | 'handoff_consensus'     // Handoff/address anchors produced consensus
   | 'acoustic_only'         // No direct anchors; assigned by cluster-level match only
   | 'conflicted_anchors'    // Multiple anchors disagree within the cluster
-  | 'posthoc_repair';       // Reconciliation pass changed the assignment
+  | 'posthoc_repair'        // Reconciliation pass changed the assignment
+  | 'transition_short'      // Very short segment at a speaker-change boundary
+  | 'role_mismatch';        // Segment duration inconsistent with speaker's role
 
 // First-class uncertainty state — downstream systems MUST respect this
 export type SegmentStatus = 'confirmed' | 'tentative' | 'uncertain';
@@ -61,6 +63,7 @@ export interface ScoredSegment {
   text: string;
   startTime: number;
   endTime: number;
+  embedding?: number[];
 }
 
 // ─────────────────────────────────────────────
@@ -112,7 +115,7 @@ export function scoreSegments(
     clusterSizes.set(seg.speakerId, (clusterSizes.get(seg.speakerId) || 0) + 1);
   }
 
-  return segments.map((seg, index) => {
+  const scored: ScoredSegment[] = segments.map((seg, index) => {
     const clusterId = seg.speakerId;
     const assignment = assignmentMap.get(clusterId);
     const myClusterAnchors = clusterAnchors.get(clusterId) || [];
@@ -124,7 +127,7 @@ export function scoreSegments(
 
     const confidence = weightedScore(factors);
     const reason = determineReason(mySegAnchors, myClusterAnchors, assignment);
-    const status = determineStatus(confidence, assignment, myClusterAnchors);
+    const status = determineStatus(confidence, assignment, myClusterAnchors, mySegAnchors);
 
     return {
       index,
@@ -142,7 +145,46 @@ export function scoreSegments(
       text: seg.text,
       startTime: seg.startTime,
       endTime: seg.endTime,
+      embedding: seg.embedding,
     };
+  });
+
+  // Second pass: detect transition_short and role_mismatch
+  // Only reclassifies segments that had no strong prior reason (acoustic_only or
+  // conflicted_anchors). Segments tagged posthoc_repair, temporal_continuation,
+  // strong_self_id, handoff_consensus, etc. are left unchanged.
+  return scored.map((s, i) => {
+    // Only reclassify segments with no strong prior reason
+    if (s.confidenceReason !== 'acoustic_only' && s.confidenceReason !== 'conflicted_anchors') {
+      return s;
+    }
+
+    const duration = s.endTime - s.startTime;
+
+    // transition_short: < 3s AND at a speaker-change boundary
+    if (duration < 3) {
+      const prevCluster = i > 0 ? scored[i - 1].clusterId : null;
+      const nextCluster = i < scored.length - 1 ? scored[i + 1].clusterId : null;
+      const atBoundary = prevCluster !== s.clusterId || nextCluster !== s.clusterId;
+      if (atBoundary) {
+        return { ...s, confidenceReason: 'transition_short' as ConfidenceReason, status: 'uncertain' as SegmentStatus, tentative: true };
+      }
+    }
+
+    // role_mismatch: host with anomalously long turn (> 120s)
+    // Guest short-turn rule removed — guests legitimately give brief acknowledgments
+    const assignment = assignmentMap.get(s.clusterId);
+    if (assignment) {
+      const rosterEntry = roster.find(r => r.id === assignment.identityId);
+      if (rosterEntry) {
+        const isHost = rosterEntry.role === 'host' || rosterEntry.role === 'co_host';
+        if (isHost && duration > 120) {
+          return { ...s, confidenceReason: 'role_mismatch' as ConfidenceReason, status: 'uncertain' as SegmentStatus, tentative: true };
+        }
+      }
+    }
+
+    return s;
   });
 }
 
@@ -221,8 +263,15 @@ function determineReason(
 function determineStatus(
   confidence: number,
   assignment: ClusterAssignment | undefined,
-  clusterAnchors: Anchor[]
+  clusterAnchors: Anchor[],
+  segAnchors?: Anchor[]
 ): SegmentStatus {
+  // Self-ID segments are confirmed regardless of contested cluster status.
+  // The speaker explicitly identified themselves — that's definitive.
+  if (segAnchors?.some(a => a.strength === 'strong' && a.direction === 'self')) {
+    return 'confirmed';
+  }
+
   // Below threshold → always uncertain
   if (confidence < CONFIDENCE_THRESHOLD) return 'uncertain';
 
@@ -286,6 +335,9 @@ function computeFactors(
       if (agreeing === total && total >= 2) anchorAgreement = 1.0;
       if (agreeing < total * 0.5) anchorAgreement = 0.3;
     }
+  } else if (assignment && clusterAnchors.length === 0) {
+    // Anchor-free but assigned: vacuously no conflicts — treat as neutral-positive
+    anchorAgreement = 0.7;
   } else if (!assignment) {
     anchorAgreement = 0.2;
   }
@@ -296,7 +348,8 @@ function computeFactors(
 
   if (assignment?.bindStrength === 'hard') {
     acousticConsistency = 0.9;
-  } else if (assignment?.contested) {
+  } else if (assignment?.contested && clusterAnchors.length > 0) {
+    // Genuine conflict: contested assignment AND there are anchors pointing elsewhere
     acousticConsistency = 0.35;
   } else if (clusterSize >= 5) {
     acousticConsistency = 0.85;
@@ -304,6 +357,14 @@ function computeFactors(
     acousticConsistency = 0.75;
   } else if (clusterSize === 1) {
     acousticConsistency = 0.4;
+  }
+
+  // ── Self-ID override for acoustic consistency ──
+  // When a segment has a direct strong self-ID, the speaker explicitly identified
+  // themselves. Dirty/contested cluster status shouldn't drag down their confidence.
+  const hasDirectSelfId = segAnchors.some(a => a.strength === 'strong' && a.direction === 'self');
+  if (hasDirectSelfId && acousticConsistency < 0.7) {
+    acousticConsistency = 0.7;
   }
 
   // ── 4. Role Consistency ──

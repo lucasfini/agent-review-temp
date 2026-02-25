@@ -52,7 +52,7 @@ export interface UseModelSelectionOptions {
 export function useModelSelection({
   transcriptionText,
   selectedContentTypes,
-  defaultModelId = 'gpt-4o',
+  defaultModelId = 'gpt-5-mini',
   onModelChange,
   onCostChange
 }: UseModelSelectionOptions) {

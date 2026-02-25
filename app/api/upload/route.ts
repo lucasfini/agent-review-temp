@@ -4,6 +4,8 @@ import { supabaseAdmin } from '@/lib/supabase/server';
 import { updateProcessingProgress } from '@/lib/progress-tracker';
 import { computeAudioFingerprint } from '@/lib/audio-fingerprint';
 import { getCachedTranscription, applyCachedTranscriptionToProject } from '@/lib/transcription-cache';
+import * as http from 'http';
+import * as https from 'https';
 
 // Configure route to accept large file uploads
 export const maxDuration = 300; // 5 minutes timeout for upload
@@ -20,6 +22,45 @@ declare global {
     originalName: string;
     size: number;
   }>;
+}
+
+/**
+ * Fire-and-forget HTTP POST using Node.js native http/https.
+ * Unlike global fetch (undici), the native module has no headersTimeout,
+ * so long-running routes like /api/transcribe (up to 5 minutes) won't
+ * cause a UND_ERR_HEADERS_TIMEOUT error.
+ */
+function fireAndForgetPost(
+  url: string,
+  body: object,
+  onSuccess: (statusCode: number, body: string) => void,
+  onError: (error: Error) => void
+): void {
+  const parsed = new URL(url);
+  const requestBody = JSON.stringify(body);
+  const isHttps = parsed.protocol === 'https:';
+  const transport = isHttps ? https : http;
+
+  const options = {
+    hostname: parsed.hostname,
+    port: parsed.port || (isHttps ? 443 : 80),
+    path: parsed.pathname + parsed.search,
+    method: 'POST',
+    headers: {
+      'Content-Type': 'application/json',
+      'Content-Length': Buffer.byteLength(requestBody),
+    },
+  };
+
+  const req = transport.request(options, (res) => {
+    let data = '';
+    res.on('data', (chunk) => { data += chunk; });
+    res.on('end', () => onSuccess(res.statusCode ?? 0, data));
+  });
+
+  req.on('error', onError);
+  req.write(requestBody);
+  req.end();
 }
 
 const MAX_FILE_SIZE = 500 * 1024 * 1024; // 500MB
@@ -649,37 +690,31 @@ export async function POST(request: NextRequest) {
           baseUrl = `https://${baseUrl}`;
         }
 
-        // Fire-and-forget background transcription job
-        fetch(`${baseUrl}/api/transcribe`, {
-          method: 'POST',
-          headers: {
-            'Content-Type': 'application/json',
-          },
-          body: JSON.stringify({
+        // Fire-and-forget background transcription job.
+        // Uses the native http/https module (no undici headersTimeout) so the
+        // 5-minute transcription route doesn't trigger UND_ERR_HEADERS_TIMEOUT.
+        fireAndForgetPost(
+          `${baseUrl}/api/transcribe`,
+          {
             projectId: project.id,
             fileName: fileName,
             fingerprint: audioFingerprint,
             performanceLevel,
             diarizationProvider,
             ...(speakerCount && { speakerCount })
-          })
-        })
-          .then(response => {
-            // Consume the response body to prevent "disturbed" errors
-            if (!response.ok) {
-              return response.text().then(text => {
-                console.error('Transcription start failed:', response.status, text);
-                // Mark project as failed so UI stops showing "processing"
-                (supabaseAdmin
-                  .from('projects') as any)
-                  .update({ status: 'failed', processing_stage: 'failed', processing_message: `Transcription failed: ${response.status}` })
-                  .eq('id', project.id)
-                  .then(() => console.log(`[UPLOAD] Marked project ${project.id} as failed`));
-              });
+          },
+          (statusCode, responseBody) => {
+            if (statusCode < 200 || statusCode >= 300) {
+              console.error('Transcription start failed:', statusCode, responseBody.slice(0, 200));
+              // Mark project as failed so UI stops showing "processing"
+              (supabaseAdmin
+                .from('projects') as any)
+                .update({ status: 'failed', processing_stage: 'failed', processing_message: `Transcription failed: ${statusCode}` })
+                .eq('id', project.id)
+                .then(() => console.log(`[UPLOAD] Marked project ${project.id} as failed`));
             }
-            return response.json().catch(() => null);
-          })
-          .catch(error => {
+          },
+          (error) => {
             console.error('Failed to start transcription:', error);
             // Mark project as failed so UI stops showing "uploading"
             (supabaseAdmin
@@ -687,7 +722,8 @@ export async function POST(request: NextRequest) {
               .update({ status: 'failed', processing_stage: 'failed', processing_message: `Failed to reach transcription service: ${error.message || error}` })
               .eq('id', project.id)
               .then(() => console.log(`[UPLOAD] Marked project ${project.id} as failed (fetch error)`));
-          });
+          }
+        );
       } else {
         console.warn('OpenAI API key not found, transcription skipped');
       }

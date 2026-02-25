@@ -96,9 +96,8 @@ ${transcriptionText.slice(0, 80000)}`;
 
   try {
     const response = await openai.chat.completions.create({
-      model: 'gpt-4o',
-      max_tokens: 1500,
-      temperature: 0.5,
+      model: 'gpt-5-mini',
+      max_completion_tokens: 16000,
       messages: [
         {
           role: 'system',
@@ -116,7 +115,7 @@ ${transcriptionText.slice(0, 80000)}`;
         userId,
         projectId,
         response,
-        modelName: 'gpt-4o',
+        modelName: 'gpt-5-mini',
         purpose: 'Social Quotes',
         shouldDebit: true
       });

@@ -188,14 +188,16 @@ function GoalCard({ goal, progress, onToggleStatus, onArchive }: GoalCardProps) 
           <button
             type="button"
             onClick={onToggleStatus}
+            aria-label={`${goal.status === 'active' ? 'Pause' : 'Activate'} goal: ${goal.topic_label}`}
             className="text-xs font-medium text-gray-600 hover:text-gray-900"
           >
             {goal.status === 'active' ? 'Pause' : 'Activate'}
           </button>
-          <span className="text-gray-300">|</span>
+          <span className="text-gray-300" aria-hidden="true">|</span>
           <button
             type="button"
             onClick={onArchive}
+            aria-label={`Archive goal: ${goal.topic_label}`}
             className="text-xs font-medium text-red-600 hover:text-red-800"
           >
             Archive
@@ -265,10 +267,11 @@ function CreateGoalForm({ onSave, suggestedGoals, isSaving, error, onOpenExample
       {/* Form */}
       <form onSubmit={handleSubmit} className="space-y-4">
         <div>
-          <label className="block text-sm font-medium text-gray-700 mb-1.5">
+          <label htmlFor="goal-label" className="block text-sm font-medium text-gray-700 mb-1.5">
             Goal Label
           </label>
           <input
+            id="goal-label"
             type="text"
             value={form.label}
             onChange={(e) => setForm(f => ({ ...f, label: e.target.value.slice(0, 80) }))}
@@ -278,10 +281,11 @@ function CreateGoalForm({ onSave, suggestedGoals, isSaving, error, onOpenExample
         </div>
 
         <div>
-          <label className="block text-sm font-medium text-gray-700 mb-1.5">
+          <label htmlFor="goal-type" className="block text-sm font-medium text-gray-700 mb-1.5">
             Goal Type
           </label>
           <select
+            id="goal-type"
             value={form.type}
             onChange={(e) => setForm(f => ({ ...f, type: e.target.value }))}
             className="w-full px-3 py-2 text-sm border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500"
@@ -297,10 +301,11 @@ function CreateGoalForm({ onSave, suggestedGoals, isSaving, error, onOpenExample
 
         <div className="grid grid-cols-2 gap-4">
           <div>
-            <label className="block text-sm font-medium text-gray-700 mb-1.5">
+            <label htmlFor="goal-target" className="block text-sm font-medium text-gray-700 mb-1.5">
               Target Mentions
             </label>
             <input
+              id="goal-target"
               type="number"
               min={0}
               value={form.target}
@@ -309,10 +314,11 @@ function CreateGoalForm({ onSave, suggestedGoals, isSaving, error, onOpenExample
             />
           </div>
           <div>
-            <label className="block text-sm font-medium text-gray-700 mb-1.5">
+            <label htmlFor="goal-cadence" className="block text-sm font-medium text-gray-700 mb-1.5">
               Cadence (days)
             </label>
             <input
+              id="goal-cadence"
               type="number"
               min={1}
               value={form.cadence}
@@ -323,7 +329,7 @@ function CreateGoalForm({ onSave, suggestedGoals, isSaving, error, onOpenExample
         </div>
 
         {error && (
-          <p className="text-sm text-red-600">{error}</p>
+          <p role="alert" className="text-sm text-red-600">{error}</p>
         )}
 
         <div className="flex gap-3">
@@ -337,6 +343,7 @@ function CreateGoalForm({ onSave, suggestedGoals, isSaving, error, onOpenExample
           <button
             type="button"
             onClick={onOpenExamples}
+            aria-label="Browse example goals"
             className="px-4 py-2.5 text-sm font-medium text-gray-700 bg-gray-100 rounded-lg hover:bg-gray-200 transition-colors"
           >
             <BookOpen className="h-4 w-4" />
@@ -364,23 +371,8 @@ export function GoalsSection({
 }: GoalsSectionProps) {
   const [isSheetOpen, setIsSheetOpen] = useState(false)
 
-  // Calculate mock progress for demo (you would replace with real data)
   const getProgressForGoal = (goalId: string): GoalProgress | undefined => {
-    const existing = goalProgress.find(p => p.goalId === goalId)
-    if (existing) return existing
-
-    // Generate mock progress for demo
-    const goal = goals.find(g => g.id === goalId)
-    if (!goal) return undefined
-
-    const target = goal.target_mentions || 1
-    const current = Math.floor(Math.random() * (target + 2))
-    return {
-      goalId,
-      currentMentions: current,
-      targetMentions: target,
-      progressPercent: Math.min(100, (current / target) * 100)
-    }
+    return goalProgress.find(p => p.goalId === goalId)
   }
 
   const activeGoals = goals.filter(g => g.status !== 'archived')

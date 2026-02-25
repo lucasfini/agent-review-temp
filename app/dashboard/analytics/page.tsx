@@ -9,13 +9,18 @@ import {
   Target,
   Calendar,
   Lightbulb,
-  BookOpen
+  BookOpen,
+  Upload,
+  BarChart3,
+  AlertCircle,
+  Loader2
 } from 'lucide-react';
 import { useAuth } from '@/lib/auth/context';
 import { supabase } from '@/lib/supabase/client';
+import { useCoverageProgress } from '@/lib/context/coverage-progress';
 
 // New analytics components
-import { KPIGrid, generateSparklineData } from '@/components/analytics/KPIGrid';
+import { KPIGrid } from '@/components/analytics/KPIGrid';
 import { ContentMixSection } from '@/components/analytics/ContentCharts';
 import { GoalsSection } from '@/components/analytics/GoalsSection';
 import { InsightsGrid } from '@/components/analytics/InsightsGrid';
@@ -106,6 +111,7 @@ interface AnalyticsData {
   totalOutputs: number;
   totalProcessingTime: number;
   estimatedCosts: number;
+  totalAiSpend: number;
   recentActivity: Array<{
     id: string;
     title: string;
@@ -130,6 +136,21 @@ interface AnalyticsData {
     records: InsightRecord[];
     summary: InsightsSummary;
   };
+  rawOutputs: Array<{ id: string; project_id: string; ai_cost_usd: number; created_at: string }>;
+  // Real computed data
+  trends: {
+    projects: TrendData;
+    outputs: TrendData;
+    processing: TrendData;
+    spend: TrendData;
+  };
+  sparklines: {
+    projects: SparklinePoint[];
+    outputs: SparklinePoint[];
+    processing: SparklinePoint[];
+    spend: SparklinePoint[];
+  };
+  goalProgress: GoalProgressEntry[];
 }
 
 interface TopicHeatEntry {
@@ -194,6 +215,132 @@ const CURATED_GOAL_PRESETS = [
 // ============================================================================
 // HELPER FUNCTIONS
 // ============================================================================
+
+// ============================================================================
+// SPARKLINE / TREND / GOAL-PROGRESS HELPERS
+// ============================================================================
+
+interface SparklinePoint {
+  value: number;
+}
+
+interface TrendData {
+  value: number;
+  direction: 'up' | 'down' | 'neutral';
+  label: string;
+}
+
+interface GoalProgressEntry {
+  goalId: string;
+  currentMentions: number;
+  targetMentions: number;
+  progressPercent: number;
+}
+
+/**
+ * Bucket records by created_at into 6 time periods and count per bucket.
+ */
+function computeSparklineFromDates(
+  records: Array<{ created_at: string }>,
+  timeRange: '7d' | '30d' | '90d'
+): SparklinePoint[] {
+  const buckets = 6;
+  const now = Date.now();
+  const rangeDays = timeRange === '7d' ? 7 : timeRange === '30d' ? 30 : 90;
+  const rangeMs = rangeDays * 24 * 60 * 60 * 1000;
+  const bucketSize = rangeMs / buckets;
+
+  const counts = new Array(buckets).fill(0);
+  for (const record of records) {
+    const age = now - new Date(record.created_at).getTime();
+    if (age > rangeMs || age < 0) continue;
+    const idx = Math.min(buckets - 1, Math.floor((rangeMs - age) / bucketSize));
+    counts[idx]++;
+  }
+  return counts.map(value => ({ value }));
+}
+
+/**
+ * Bucket records by created_at and sum a numeric field per bucket.
+ */
+function computeSparklineFromValues(
+  records: Array<{ created_at: string; value: number }>,
+  timeRange: '7d' | '30d' | '90d'
+): SparklinePoint[] {
+  const buckets = 6;
+  const now = Date.now();
+  const rangeDays = timeRange === '7d' ? 7 : timeRange === '30d' ? 30 : 90;
+  const rangeMs = rangeDays * 24 * 60 * 60 * 1000;
+  const bucketSize = rangeMs / buckets;
+
+  const sums = new Array(buckets).fill(0);
+  for (const record of records) {
+    const age = now - new Date(record.created_at).getTime();
+    if (age > rangeMs || age < 0) continue;
+    const idx = Math.min(buckets - 1, Math.floor((rangeMs - age) / bucketSize));
+    sums[idx] += record.value;
+  }
+  return sums.map(value => ({ value }));
+}
+
+/**
+ * Period-over-period comparison: returns { value (%), direction, label }.
+ */
+function computeTrend(current: number, previous: number): TrendData {
+  if (previous === 0 && current === 0) {
+    return { value: 0, direction: 'neutral', label: 'no change' };
+  }
+  if (previous === 0) {
+    return { value: 100, direction: 'up', label: 'vs last period' };
+  }
+  const pct = Math.round(((current - previous) / previous) * 100);
+  if (pct === 0) return { value: 0, direction: 'neutral', label: 'no change' };
+  return {
+    value: Math.abs(pct),
+    direction: pct > 0 ? 'up' : 'down',
+    label: 'vs last period'
+  };
+}
+
+/**
+ * Cross-reference goals against coverage snapshot topics/CTAs to compute real mention counts.
+ */
+function computeAllGoalProgress(
+  goals: NarrativeGoalRecord[],
+  snapshots: CoverageSnapshotRecord[]
+): GoalProgressEntry[] {
+  return goals.map(goal => {
+    const label = (goal.topic_label || '').toLowerCase();
+    let mentions = 0;
+
+    for (const snap of snapshots) {
+      const topics = Array.isArray(snap.topics) ? snap.topics : [];
+      const ctas = Array.isArray(snap.ctas) ? snap.ctas : [];
+
+      for (const topic of topics) {
+        const topicLabel = String(topic.label || topic.id || '').toLowerCase();
+        if (topicLabel === label || topicLabel.includes(label) || label.includes(topicLabel)) {
+          mentions += Number(topic.mentionCount || 1);
+        }
+      }
+
+      for (const cta of ctas) {
+        const ctaLabel = String(cta.label || cta.id || '').toLowerCase();
+        if (ctaLabel === label || ctaLabel.includes(label) || label.includes(ctaLabel)) {
+          mentions += Number(cta.mentionCount || 1);
+        }
+      }
+    }
+
+    const target = goal.target_mentions || 1;
+    return {
+      goalId: goal.id,
+      currentMentions: mentions,
+      targetMentions: target,
+      progressPercent: Math.min(100, Math.round((mentions / target) * 100))
+    };
+  });
+}
 
 function summarizeInsights(insightRecords: InsightRecord[]): InsightsSummary {
   if (!insightRecords || insightRecords.length === 0) {
@@ -378,6 +525,9 @@ function ProjectSwitcher({
       <button
         type="button"
         onClick={() => setIsOpen(!isOpen)}
+        aria-haspopup="listbox"
+        aria-expanded={isOpen}
+        aria-label={`Filter projects: ${selectedProject ? selectedProject.title : 'All Projects'}`}
         className={`inline-flex items-center gap-2 px-4 py-2 text-sm font-medium rounded-lg transition-colors ${
           selectedProject
             ? 'bg-blue-50 text-blue-700'
@@ -393,9 +543,15 @@ function ProjectSwitcher({
       {isOpen && (
         <>
           <div className="fixed inset-0 z-10" onClick={() => setIsOpen(false)} />
-          <div className="absolute left-0 mt-2 w-64 bg-white border border-gray-200 rounded-lg shadow-lg z-20 max-h-80 overflow-y-auto">
+          <div
+            role="listbox"
+            aria-label="Select project"
+            className="absolute left-0 mt-2 w-64 bg-white border border-gray-200 rounded-lg shadow-lg z-20 max-h-80 overflow-y-auto"
+          >
             <button
               type="button"
+              role="option"
+              aria-selected={!selectedProjectId}
               onClick={() => {
                 onSelect(null);
                 setIsOpen(false);
@@ -411,6 +567,8 @@ function ProjectSwitcher({
               <button
                 key={project.id}
                 type="button"
+                role="option"
+                aria-selected={selectedProjectId === project.id}
                 onClick={() => {
                   onSelect(project.id);
                   setIsOpen(false);
@@ -445,19 +603,20 @@ function ExampleGoalsModal({
   if (!isOpen) return null;
 
   return (
-    <div className="fixed inset-0 z-50 overflow-y-auto">
+    <div className="fixed inset-0 z-50 overflow-y-auto" role="dialog" aria-modal="true" aria-labelledby="example-goals-title">
       <div className="flex min-h-full items-center justify-center p-4">
         <div className="fixed inset-0 bg-black/30" onClick={onClose} />
         <div className="relative bg-white rounded-xl shadow-2xl max-w-2xl w-full max-h-[80vh] overflow-hidden">
           <div className="flex items-center justify-between p-4 border-b border-gray-200">
             <div className="flex items-center gap-2">
               <BookOpen className="h-5 w-5 text-indigo-600" />
-              <h2 className="text-lg font-semibold text-gray-900">Example Goals Library</h2>
+              <h2 id="example-goals-title" className="text-lg font-semibold text-gray-900">Example Goals Library</h2>
             </div>
             <button
               type="button"
               onClick={onClose}
               className="p-1 rounded-full hover:bg-gray-100"
+              aria-label="Close example goals"
             >
               <X className="h-5 w-5 text-gray-500" />
             </button>
@@ -541,8 +700,8 @@ export default function AnalyticsPage() {
   const [archivingGoal, setArchivingGoal] = useState<string | null>(null);
   const [exampleGoalsModalOpen, setExampleGoalsModalOpen] = useState(false);
   const [selectedSnapshotId, setSelectedSnapshotId] = useState<string | null>(null);
-
-
+  const [bannerDismissed, setBannerDismissed] = useState(false);
+  const { runningCoverageIds, startCoverage, stopCoverage } = useCoverageProgress();
 
   useEffect(() => {
     if (user) {
@@ -560,55 +719,51 @@ export default function AnalyticsPage() {
       }
 
       const now = new Date();
-      let startDate: Date | null = null;
+      const rangeDays = timeRange === '7d' ? 7 : timeRange === '30d' ? 30 : 90;
+      const startDate = new Date(now.getTime() - rangeDays * 24 * 60 * 60 * 1000);
+      const prevStartDate = new Date(startDate.getTime() - rangeDays * 24 * 60 * 60 * 1000);
 
-      switch (timeRange) {
-        case '7d':
-          startDate = new Date(now.getTime() - 7 * 24 * 60 * 60 * 1000);
-          break;
-        case '30d':
-          startDate = new Date(now.getTime() - 30 * 24 * 60 * 60 * 1000);
-          break;
-        case '90d':
-          startDate = new Date(now.getTime() - 90 * 24 * 60 * 60 * 1000);
-          break;
-      }
-
-      // Fetch projects
-      let projectsQuery = supabase
+      // Fetch current period projects
+      const { data: projects, error: projectsError } = await supabase
         .from('projects')
         .select('*')
         .eq('user_id', user.id)
-        .order('created_at', { ascending: false });
-
-      if (startDate) {
-        projectsQuery = projectsQuery.gte('created_at', startDate.toISOString());
-      }
-
-      const { data: projects, error: projectsError } = await projectsQuery as { data: any[] | null; error: any };
+        .gte('created_at', startDate.toISOString())
+        .order('created_at', { ascending: false }) as { data: any[] | null; error: any };
 
       if (projectsError) {
         console.error('Error fetching projects:', projectsError);
         return;
       }
 
-      // Fetch outputs
-      let outputsQuery = supabase
+      // Fetch current period outputs
+      const { data: outputs, error: outputsError } = await supabase
         .from('outputs')
         .select('*')
         .eq('user_id', user.id)
-        .order('created_at', { ascending: false });
-
-      if (startDate) {
-        outputsQuery = outputsQuery.gte('created_at', startDate.toISOString());
-      }
-
-      const { data: outputs, error: outputsError } = await outputsQuery as { data: any[] | null; error: any };
+        .gte('created_at', startDate.toISOString())
+        .order('created_at', { ascending: false }) as { data: any[] | null; error: any };
 
       if (outputsError) {
         console.error('Error fetching outputs:', outputsError);
         return;
       }
+
+      // Fetch previous period projects (lightweight — just for trend comparison)
+      const { data: prevProjects } = await supabase
+        .from('projects')
+        .select('id, created_at, processing_time_seconds')
+        .eq('user_id', user.id)
+        .gte('created_at', prevStartDate.toISOString())
+        .lt('created_at', startDate.toISOString()) as { data: any[] | null; error: any };
+
+      // Fetch previous period outputs (lightweight)
+      const { data: prevOutputs } = await supabase
+        .from('outputs')
+        .select('id, ai_cost_usd, created_at')
+        .eq('user_id', user.id)
+        .gte('created_at', prevStartDate.toISOString())
+        .lt('created_at', startDate.toISOString()) as { data: any[] | null; error: any };
 
       // Fetch coverage snapshots
       const { data: coverageSnapshots, error: coverageError } = await supabase
@@ -637,7 +792,7 @@ export default function AnalyticsPage() {
       // Fetch insights
       let insights: any[] | null = null;
       if (projects && projects.length > 0) {
-        const projectIds = projects.map(p => p.id);
+        const projectIds = projects.map((p: any) => p.id);
         const { data: insightsData, error: insightsError } = await supabase
           .from('insights')
           .select('id, project_id, entity_id, label, category, confidence, cost_usd, created_at')
@@ -651,50 +806,87 @@ export default function AnalyticsPage() {
         }
       }
 
-      // Process analytics data
-      const totalProjects = projects?.length || 0;
-      const totalOutputs = outputs?.length || 0;
-      const totalProcessingTime = projects?.reduce((sum, p) => sum + (p.processing_time_seconds || 0), 0) || 0;
-      const estimatedCosts = (outputs?.length || 0) * 0.05;
+      // ---- Compute real values ----
+      const safeProjects = projects || [];
+      const safeOutputs = outputs || [];
+      const safePrevProjects = prevProjects || [];
+      const safePrevOutputs = prevOutputs || [];
+
+      const totalProjects = safeProjects.length;
+      const totalOutputs = safeOutputs.length;
+      const totalProcessingTime = safeProjects.reduce((sum: number, p: any) => sum + (p.processing_time_seconds || 0), 0);
+
+      // Real AI spend: sum output ai_cost_usd + coverage snapshot costs + insight costs
+      const outputAiCost = safeOutputs.reduce((sum: number, o: any) => sum + Number(o.ai_cost_usd || 0), 0);
+      const coverageSnapshotData = coverageSnapshots || [];
+      const snapshotAiCost = coverageSnapshotData.reduce(
+        (sum: number, s: any) => sum + Number(s.ai_cost_usd || s.ai_usage?.costUsd || 0), 0
+      );
+      const insightRecords = insights || [];
+      const insightAiCost = insightRecords.reduce((sum: number, i: any) => sum + Number(i.cost_usd || 0), 0);
+      const realAiSpend = outputAiCost + snapshotAiCost + insightAiCost;
+      // Fallback to flat estimate only if all real costs are 0
+      const totalAiSpend = realAiSpend > 0 ? realAiSpend : safeOutputs.length * 0.05;
+
+      // Previous period totals for trends
+      const prevTotalProjects = safePrevProjects.length;
+      const prevTotalOutputs = safePrevOutputs.length;
+      const prevProcessingTime = safePrevProjects.reduce((sum: number, p: any) => sum + (p.processing_time_seconds || 0), 0);
+      const prevAiSpend = safePrevOutputs.reduce((sum: number, o: any) => sum + Number(o.ai_cost_usd || 0), 0);
+
+      // Real trends
+      const trends = {
+        projects: computeTrend(totalProjects, prevTotalProjects),
+        outputs: computeTrend(totalOutputs, prevTotalOutputs),
+        processing: computeTrend(totalProcessingTime, prevProcessingTime),
+        spend: computeTrend(totalAiSpend, prevAiSpend || (safePrevOutputs.length * 0.05))
+      };
+
+      // Real sparklines
+      const sparklines = {
+        projects: computeSparklineFromDates(safeProjects, timeRange),
+        outputs: computeSparklineFromDates(safeOutputs, timeRange),
+        processing: computeSparklineFromValues(
+          safeProjects.map((p: any) => ({ created_at: p.created_at, value: p.processing_time_seconds || 0 })),
+          timeRange
+        ),
+        spend: computeSparklineFromValues(
+          safeOutputs.map((o: any) => ({ created_at: o.created_at, value: Number(o.ai_cost_usd || 0.05) })),
+          timeRange
+        )
+      };
 
       // Content breakdown
       const contentBreakdown: Record<string, number> = {};
-      outputs?.forEach(output => {
+      safeOutputs.forEach((output: any) => {
         const type = output.type || 'unknown';
         contentBreakdown[type] = (contentBreakdown[type] || 0) + 1;
       });
 
       // Platform stats
       const platformStats: Record<string, number> = {};
-      outputs?.forEach(output => {
+      safeOutputs.forEach((output: any) => {
         const platform = output.platform || 'general';
         platformStats[platform] = (platformStats[platform] || 0) + 1;
       });
 
       // Recent activity
-      const recentActivity = projects?.slice(0, 10).map(project => ({
+      const recentActivity = safeProjects.slice(0, 10).map((project: any) => ({
         id: project.id,
         title: project.title,
         action: project.status === 'completed' ? 'Completed transcription' :
                 project.status === 'processing' ? 'Processing audio' : 'Uploaded',
         timestamp: project.created_at,
         status: project.status
-      })) || [];
+      }));
 
-      const monthlyStats = [
-        { month: 'Jan', projects: Math.floor(totalProjects * 0.1), outputs: Math.floor(totalOutputs * 0.1) },
-        { month: 'Feb', projects: Math.floor(totalProjects * 0.15), outputs: Math.floor(totalOutputs * 0.15) },
-        { month: 'Mar', projects: Math.floor(totalProjects * 0.2), outputs: Math.floor(totalOutputs * 0.2) },
-        { month: 'Apr', projects: Math.floor(totalProjects * 0.25), outputs: Math.floor(totalOutputs * 0.25) },
-        { month: 'May', projects: Math.floor(totalProjects * 0.3), outputs: Math.floor(totalOutputs * 0.3) },
-        { month: 'Jun', projects: totalProjects, outputs: totalOutputs },
-      ];
-
-      const coverageSnapshotData = coverageSnapshots || [];
       const coverageGoalData = coverageGoals || [];
       const coverageSummary = summarizeCoverage(coverageSnapshotData, coverageGoalData);
 
-      const projectSummaries: ProjectSummary[] = (projects || []).map(project => ({
+      // Real goal progress
+      const goalProgress = computeAllGoalProgress(coverageGoalData, coverageSnapshotData);
+
+      const projectSummaries: ProjectSummary[] = safeProjects.map((project: any) => ({
         id: project.id,
         title: project.title,
         status: project.status,
@@ -703,17 +895,17 @@ export default function AnalyticsPage() {
         transcription_text: project.transcription_text
       }));
 
-      const insightRecords = insights || [];
       const insightsSummary = summarizeInsights(insightRecords);
 
       setAnalytics({
         totalProjects,
         totalOutputs,
         totalProcessingTime,
-        estimatedCosts,
+        estimatedCosts: totalAiSpend,
+        totalAiSpend,
         recentActivity,
         contentBreakdown,
-        monthlyStats,
+        monthlyStats: [],
         platformStats,
         coverage: {
           snapshots: coverageSnapshotData,
@@ -724,7 +916,16 @@ export default function AnalyticsPage() {
         insights: {
           records: insightRecords,
           summary: insightsSummary
-        }
+        },
+        trends,
+        sparklines,
+        goalProgress,
+        rawOutputs: safeOutputs.map((o: any) => ({
+          id: o.id,
+          project_id: o.project_id,
+          ai_cost_usd: Number(o.ai_cost_usd || 0),
+          created_at: o.created_at
+        }))
       });
     } catch (error) {
       console.error('Error fetching analytics:', error);
@@ -789,6 +990,32 @@ export default function AnalyticsPage() {
     return snapshots.filter(s => selectedProjectIds.includes(s.project_id)).slice(0, 10);
   }, [analytics, selectedProjectIds]);
 
+  const projectTitleMap = useMemo(() => {
+    const map: Record<string, string> = {};
+    for (const p of (analytics?.projectsSummary || [])) {
+      map[p.id] = p.title;
+    }
+    return map;
+  }, [analytics?.projectsSummary]);
+
+  const filteredAiSpend = useMemo(() => {
+    if (!analytics) return 0;
+    const filteredOutputs = projectIdFromUrl
+      ? analytics.rawOutputs.filter(o => o.project_id === projectIdFromUrl)
+      : analytics.rawOutputs;
+    const filteredSnapshots = projectIdFromUrl
+      ? analytics.coverage.snapshots.filter(s => s.project_id === projectIdFromUrl)
+      : analytics.coverage.snapshots;
+    const filteredInsights = projectIdFromUrl
+      ? analytics.insights.records.filter(i => i.project_id === projectIdFromUrl)
+      : analytics.insights.records;
+    const outputCost = filteredOutputs.reduce((sum, o) => sum + o.ai_cost_usd, 0);
+    const snapshotCost = filteredSnapshots.reduce((sum, s) => sum + Number(s.ai_cost_usd || s.ai_usage?.costUsd || 0), 0);
+    const insightCost = filteredInsights.reduce((sum, i) => sum + Number(i.cost_usd || 0), 0);
+    const realSpend = outputCost + snapshotCost + insightCost;
+    return realSpend > 0 ? realSpend : filteredOutputs.length * 0.05;
+  }, [analytics, projectIdFromUrl]);
+
   // Stale detection logic
   const isStale = useMemo(() => {
     if (!analytics?.coverage?.snapshots?.length) return false;
@@ -819,6 +1046,15 @@ export default function AnalyticsPage() {
     if (timestamps.length === 0) return null;
     return new Date(Math.max(...timestamps)).toISOString();
   }, [analytics?.coverage?.goals]);
+
+  // Projects with transcription but no coverage snapshot
+  const unanalyzedProjects = useMemo(() => {
+    if (!analytics?.projectsSummary || !analytics?.coverage?.snapshots) return [];
+    const analyzedProjectIds = new Set(analytics.coverage.snapshots.map(s => s.project_id));
+    return analytics.projectsSummary.filter(
+      p => p.transcription_text && p.transcription_text.length > 0 && !analyzedProjectIds.has(p.id)
+    );
+  }, [analytics]);
 
   const displayedOpportunities = useMemo(() => {
     if (selectedSnapshotId && analytics?.coverage?.snapshots) {
@@ -945,21 +1181,25 @@ export default function AnalyticsPage() {
   };
 
   const handleRunCoverage = async (projectId: string) => {
+    const title = projectTitleMap[projectId] || projectId;
+    startCoverage(projectId, title);
     try {
-      // Optimistic update or loading state could be added here
       const response = await fetch(`/api/projects/${projectId}/run-coverage`, {
-        method: 'POST'
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ userId: user?.id, force: true })
       });
-      
+
       if (!response.ok) {
         throw new Error('Failed to run coverage analysis');
       }
-      
+
       // Refresh analytics data to show new snapshot
       await fetchAnalytics();
     } catch (error) {
       console.error('Error running coverage:', error);
-      alert('Failed to run analysis. Please try again.');
+    } finally {
+      stopCoverage(projectId);
     }
   };
 
@@ -989,11 +1229,27 @@ export default function AnalyticsPage() {
     );
   }
 
-  if (!analytics) {
+  if (!analytics || analytics.totalProjects === 0) {
     return (
-      <div className="p-6">
-        <div className="max-w-3xl mx-auto text-center">
-          <p className="text-gray-600">No analytics data available yet. Upload your first project to see insights.</p>
+      <div className="p-6 bg-gray-50 min-h-screen">
+        <div className="max-w-lg mx-auto text-center pt-20">
+          <div className="mx-auto w-16 h-16 rounded-2xl bg-blue-50 flex items-center justify-center mb-6">
+            <BarChart3 className="h-8 w-8 text-blue-600" />
+          </div>
+          <h1 className="text-2xl font-bold text-gray-900 mb-3">No analytics yet</h1>
+          <p className="text-gray-600 mb-2">
+            Upload and transcribe your first podcast or audio file to unlock analytics.
+          </p>
+          <p className="text-sm text-gray-500 mb-8">
+            You&apos;ll see real KPI trends, content breakdowns, topic coverage, narrative goal tracking, and AI-driven insights — all computed from your actual data.
+          </p>
+          <button
+            onClick={() => router.push('/dashboard/upload')}
+            className="inline-flex items-center gap-2 px-6 py-3 text-sm font-medium text-white bg-blue-600 rounded-lg hover:bg-blue-700 transition-colors"
+          >
+            <Upload className="h-4 w-4" />
+            Upload your first project
+          </button>
         </div>
       </div>
     );
@@ -1045,17 +1301,18 @@ export default function AnalyticsPage() {
         {/* ================================================================== */}
         <KPIGrid
           totalProjects={analytics.totalProjects}
-          projectsTrend={{ value: 12, direction: 'up', label: 'vs last period' }}
-          projectsSparkline={generateSparklineData(analytics.totalProjects)}
+          projectsTrend={analytics.trends.projects}
+          projectsSparkline={analytics.sparklines.projects}
           totalOutputs={analytics.totalOutputs}
-          outputsTrend={{ value: 8, direction: 'up', label: 'vs last period' }}
-          outputsSparkline={generateSparklineData(analytics.totalOutputs)}
+          outputsTrend={analytics.trends.outputs}
+          outputsSparkline={analytics.sparklines.outputs}
           processingTime={formatDuration(analytics.totalProcessingTime)}
-          processingTrend={{ value: 5, direction: 'down', label: 'faster' }}
-          processingSparkline={generateSparklineData(analytics.totalProcessingTime / 60)}
-          aiSpend={formatCurrency(analytics.estimatedCosts)}
-          spendTrend={{ value: 3, direction: 'up', label: 'vs last period' }}
-          spendSparkline={generateSparklineData(analytics.estimatedCosts * 100)}
+          processingTrend={analytics.trends.processing}
+          processingSparkline={analytics.sparklines.processing}
+          aiSpend={formatCurrency(filteredAiSpend)}
+          aiSpendLabel={projectIdFromUrl ? 'AI Spend (this project)' : 'Est. AI Spend'}
+          spendTrend={analytics.trends.spend}
+          spendSparkline={analytics.sparklines.spend}
         />
 
         {/* ================================================================== */}
@@ -1067,13 +1324,67 @@ export default function AnalyticsPage() {
         />
 
         {/* ================================================================== */}
+        {/* Unanalyzed Projects Banner */}
+        {/* ================================================================== */}
+        {!bannerDismissed && unanalyzedProjects.length > 0 && (
+          <div className="bg-blue-50 border border-blue-200 rounded-xl p-4 flex items-start gap-3" role="alert">
+            <AlertCircle className="h-5 w-5 text-blue-600 flex-shrink-0 mt-0.5" />
+            <div className="flex-1 min-w-0">
+              <h4 className="text-sm font-semibold text-blue-900">
+                {unanalyzedProjects.length} project{unanalyzedProjects.length !== 1 ? 's' : ''} ready for analysis
+              </h4>
+              <p className="text-sm text-blue-800 mt-1">
+                These projects have transcriptions but haven&apos;t been analyzed yet. Run analytics to see topic coverage and insights.
+              </p>
+              <div className="flex flex-wrap gap-2 mt-3">
+                {unanalyzedProjects.slice(0, 3).map(project => (
+                  <button
+                    key={project.id}
+                    onClick={() => handleRunCoverage(project.id)}
+                    disabled={runningCoverageIds.has(project.id)}
+                    className="inline-flex items-center gap-1 px-3 py-1.5 text-xs font-medium text-blue-700 bg-white border border-blue-200 rounded-lg hover:bg-blue-100 transition-colors disabled:opacity-60 disabled:cursor-not-allowed"
+                    aria-label={`Run analytics on ${project.title}`}
+                  >
+                    {runningCoverageIds.has(project.id) ? (
+                      <Loader2 className="h-3 w-3 animate-spin" />
+                    ) : (
+                      <BarChart3 className="h-3 w-3" />
+                    )}
+                    <span className="truncate max-w-[150px]">
+                      {runningCoverageIds.has(project.id) ? 'Analyzing...' : (project.title || 'Untitled')}
+                    </span>
+                  </button>
+                ))}
+                {unanalyzedProjects.length > 3 && (
+                  <span className="text-xs text-blue-600 self-center">
+                    +{unanalyzedProjects.length - 3} more
+                  </span>
+                )}
+              </div>
+            </div>
+            <button
+              type="button"
+              onClick={() => setBannerDismissed(true)}
+              className="flex-shrink-0 p-1 rounded hover:bg-blue-100 transition-colors"
+              aria-label="Dismiss banner"
+            >
+              <X className="h-4 w-4 text-blue-600" />
+            </button>
+          </div>
+        )}
+
+        {/* ================================================================== */}
         {/* ROW 3: Tab Section (Insights & Goals) */}
         {/* ================================================================== */}
-        <div className="bg-white rounded-xl shadow-sm border border-gray-100">
+        <div className="bg-white rounded-xl shadow-sm border border-gray-100" role="region" aria-label="Insights and goals">
           {/* Tab Header */}
           <div className="border-b border-gray-100 p-1">
-            <nav className="flex gap-1">
+            <nav className="flex gap-1" role="tablist" aria-label="Analytics sections">
               <button
+                id="tab-insights"
+                role="tab"
+                aria-selected={activeTab === 'insights'}
+                aria-controls="tabpanel-insights"
                 onClick={() => setActiveTab('insights')}
                 className={`flex items-center gap-2 px-4 py-2.5 text-sm font-medium rounded-lg transition-colors ${
                   activeTab === 'insights'
@@ -1085,6 +1396,10 @@ export default function AnalyticsPage() {
                 Insights & Gaps
               </button>
               <button
+                id="tab-goals"
+                role="tab"
+                aria-selected={activeTab === 'goals'}
+                aria-controls="tabpanel-goals"
                 onClick={() => setActiveTab('goals')}
                 className={`flex items-center gap-2 px-4 py-2.5 text-sm font-medium rounded-lg transition-colors ${
                   activeTab === 'goals'
@@ -1099,33 +1414,33 @@ export default function AnalyticsPage() {
           </div>
 
           {/* Tab Content */}
-          <div className="p-6">
-            {activeTab === 'insights' && (
-              <>
-                <InsightsHeader 
-                  snapshots={coverageTimeline}
-                  selectedSnapshotId={selectedSnapshotId}
-                  onSelectSnapshot={setSelectedSnapshotId}
-                  isStale={isStale}
-                  goalsLastModified={goalsLastModified}
-                  onRerunAnalysis={() => {
-                    const latest = coverageTimeline[0];
-                    if (latest) handleRunCoverage(latest.project_id);
-                  }}
-                />
-                <InsightsGrid
-                  opportunities={displayedOpportunities}
-                  projectIdFilter={projectIdFromUrl}
-                  formatRelativeDate={formatRelativeDate}
-                  goals={coverageGoals}
-                />
-              </>
-            )}
+          {activeTab === 'insights' && (
+            <div id="tabpanel-insights" role="tabpanel" aria-labelledby="tab-insights" className="p-6">
+              <InsightsHeader
+                snapshots={coverageTimeline}
+                selectedSnapshotId={selectedSnapshotId}
+                onSelectSnapshot={setSelectedSnapshotId}
+                isStale={isStale}
+                goalsLastModified={goalsLastModified}
+                onRerunAnalysis={() => {
+                  const latest = coverageTimeline[0];
+                  if (latest) handleRunCoverage(latest.project_id);
+                }}
+              />
+              <InsightsGrid
+                opportunities={displayedOpportunities}
+                projectIdFilter={projectIdFromUrl}
+                formatRelativeDate={formatRelativeDate}
+                goals={coverageGoals}
+              />
+            </div>
+          )}
 
-            {activeTab === 'goals' && (
+          {activeTab === 'goals' && (
+            <div id="tabpanel-goals" role="tabpanel" aria-labelledby="tab-goals" className="p-6">
               <GoalsSection
                 goals={coverageGoals}
-                goalProgress={[]}
+                goalProgress={analytics.goalProgress}
                 onSaveGoal={saveGoal}
                 onToggleStatus={handleToggleGoalStatus}
                 onArchive={handleArchiveGoal}
@@ -1134,8 +1449,8 @@ export default function AnalyticsPage() {
                 isSaving={goalSaving}
                 error={goalError}
               />
-            )}
-          </div>
+            </div>
+          )}
         </div>
 
         {/* Example Goals Modal */}

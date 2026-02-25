@@ -17,7 +17,9 @@
 import type { SpeakerSegment } from '@/lib/types';
 
 export interface RosterEntry {
+  id?: string;
   name: string;
+  role?: string;
   aliases?: string[];
   priority?: number;
 }
@@ -149,6 +151,20 @@ function normalizeName(name: string): string {
   return name.toLowerCase().trim().replace(/\s+/g, ' ');
 }
 
+const NAME_STOPWORDS = new Set([
+  'you','your','our','and','the','to','for','with','from','this','that','these','those','we','us','they','them',
+  'a','an','in','on','at','by','of','is','are','will','can','go','ahead','move','next','first','last'
+]);
+
+function isValidNameCandidate(raw: string): boolean {
+  const tokens = raw.split(/\s+/).filter(Boolean);
+  if (tokens.length < 1 || tokens.length > 3) return false;
+  const hasLongToken = tokens.some(t => t.length >= 3);
+  if (!hasLongToken) return false;
+  if (tokens.some(t => NAME_STOPWORDS.has(t.toLowerCase()))) return false;
+  return tokens.every(t => /^[A-Za-z'-.]+$/.test(t));
+}
+
 /**
  * Generates all possible aliases from a full name
  * "Emily Donjong" -> ["emily donjong", "emily", "donjong", "e. donjong", "emily d."]
@@ -182,6 +198,13 @@ function generateAliases(fullName: string): string[] {
   return aliases;
 }
 
+function buildAliases(entry: RosterEntry): string[] {
+  const aliases = new Set<string>();
+  for (const alias of generateAliases(entry.name)) aliases.add(alias);
+  for (const alias of entry.aliases || []) aliases.add(normalizeName(alias));
+  return [...aliases];
+}
+
 /**
  * Checks if a text contains any alias of a roster entry (case-insensitive)
  */
@@ -189,11 +212,7 @@ function textContainsAlias(text: string, roster: RosterEntry[], logger: DebugLog
   const normalizedText = text.toLowerCase();
 
   for (const entry of roster) {
-    // Generate all aliases for this roster entry
-    const allAliases = [
-      ...generateAliases(entry.name),
-      ...(entry.aliases || []).map(a => normalizeName(a)),
-    ];
+    const allAliases = buildAliases(entry);
 
     for (const alias of allAliases) {
       // Word boundary check - the alias should be a complete word/phrase
@@ -224,6 +243,10 @@ function findRosterMatch(
 ): { entry: RosterEntry; matchType: 'exact' | 'fuzzy' | 'alias' | 'partial' } | null {
   const normalizedInput = normalizeName(detectedName);
   logger.log('ROSTER-MATCH', `Attempting to match "${detectedName}" (normalized: "${normalizedInput}")`);
+  if (!isValidNameCandidate(detectedName)) {
+    logger.log('FILTER', `Rejected candidate "${detectedName}" as invalid name`);
+    return null;
+  }
 
   // 1. Exact full name match
   for (const entry of roster) {
@@ -235,7 +258,7 @@ function findRosterMatch(
 
   // 2. First name only match (input is just first name, roster has full name)
   for (const entry of roster) {
-    const entryAliases = generateAliases(entry.name);
+    const entryAliases = buildAliases(entry);
     for (const alias of entryAliases) {
       if (alias === normalizedInput) {
         logger.log('MATCH', `Alias match: "${detectedName}" → "${entry.name}" via alias "${alias}"`, { matchType: 'alias' });
@@ -246,12 +269,11 @@ function findRosterMatch(
 
   // 3. Explicit aliases from roster
   for (const entry of roster) {
-    if (entry.aliases) {
-      for (const alias of entry.aliases) {
-        if (normalizeName(alias) === normalizedInput) {
-          logger.log('MATCH', `Explicit alias match: "${detectedName}" → "${entry.name}" via alias "${alias}"`, { matchType: 'alias' });
-          return { entry, matchType: 'alias' };
-        }
+    const entryAliases = buildAliases(entry);
+    for (const alias of entryAliases) {
+      if (normalizeName(alias) === normalizedInput) {
+        logger.log('MATCH', `Explicit alias match: "${detectedName}" → "${entry.name}" via alias "${alias}"`, { matchType: 'alias' });
+        return { entry, matchType: 'alias' };
       }
     }
   }
@@ -260,8 +282,7 @@ function findRosterMatch(
   for (const entry of roster) {
     const candidates = [
       entry.name,
-      ...(entry.aliases || []),
-      ...generateAliases(entry.name),
+      ...buildAliases(entry),
     ];
 
     for (const candidate of candidates) {
@@ -483,6 +504,7 @@ function scanForRosterNameMention(
     let match;
     while ((match = regex.exec(text)) !== null) {
       const mentionedName = match[1];
+      if (!isValidNameCandidate(mentionedName)) continue;
       logger.log('SCAN', `Pattern matched name: "${mentionedName}" from phrase: "${match[0]}"`);
 
       const rosterMatch = findRosterMatch(mentionedName, roster, logger);

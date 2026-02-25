@@ -49,6 +49,7 @@ export interface ContentType {
   // Strict content limits
   limits?: ContentLimits;
   attentionSpan?: string; // Human-readable attention span
+  maxCount?: number; // Maximum quantity user can request in the modal
 }
 
 export const CONTENT_TYPES: ContentType[] = [
@@ -72,7 +73,8 @@ export const CONTENT_TYPES: ContentType[] = [
       unit: 'characters',
       hardLimit: true
     },
-    attentionSpan: '8 seconds per post'
+    attentionSpan: '8 seconds per post',
+    maxCount: 8
   },
   {
     id: 'linkedin_posts',
@@ -94,7 +96,8 @@ export const CONTENT_TYPES: ContentType[] = [
       unit: 'characters',
       hardLimit: true
     },
-    attentionSpan: '3 minutes (professional browsing)'
+    attentionSpan: '3 minutes (professional browsing)',
+    maxCount: 6
   },
   {
     id: 'instagram_content',
@@ -116,7 +119,8 @@ export const CONTENT_TYPES: ContentType[] = [
       unit: 'characters',
       hardLimit: true
     },
-    attentionSpan: '10 seconds per slide'
+    attentionSpan: '10 seconds per slide',
+    maxCount: 3
   },
   {
     id: 'blog_post',
@@ -138,7 +142,8 @@ export const CONTENT_TYPES: ContentType[] = [
       unit: 'words',
       hardLimit: true
     },
-    attentionSpan: '6-8 minutes (committed reading)'
+    attentionSpan: '6-8 minutes (committed reading)',
+    maxCount: 3
   },
   {
     id: 'newsletter',
@@ -160,7 +165,8 @@ export const CONTENT_TYPES: ContentType[] = [
       unit: 'words',
       hardLimit: true
     },
-    attentionSpan: '3-5 minutes (inbox environment)'
+    attentionSpan: '3-5 minutes (inbox environment)',
+    maxCount: 2
   },
   {
     id: 'show_notes',
@@ -182,7 +188,8 @@ export const CONTENT_TYPES: ContentType[] = [
       unit: 'words',
       hardLimit: true
     },
-    attentionSpan: '2-3 minutes (scanning for info)'
+    attentionSpan: '2-3 minutes (scanning for info)',
+    maxCount: 1
   },
   {
     id: 'quote_graphics',
@@ -204,7 +211,8 @@ export const CONTENT_TYPES: ContentType[] = [
       unit: 'words',
       hardLimit: true
     },
-    attentionSpan: '3-5 seconds (quick visual scan)'
+    attentionSpan: '3-5 seconds (quick visual scan)',
+    maxCount: 6
   }
 ];
 
@@ -263,6 +271,31 @@ export function generateContentBlocks(defaultTheme: string = 'professional'): Co
 // Get all blocks for a specific content type
 export function getBlocksByContentType(contentTypeId: string, allBlocks: ContentBlock[]): ContentBlock[] {
   return allBlocks.filter(block => block.contentTypeId === contentTypeId);
+}
+
+// Generate ContentBlock[] from a quantity map (used by the redesigned modal)
+export function generateBlocksFromQuantities(
+  quantities: Record<string, { count: number; theme: string }>
+): ContentBlock[] {
+  const blocks: ContentBlock[] = [];
+
+  for (const [typeId, { count, theme }] of Object.entries(quantities)) {
+    const contentType = getContentTypeById(typeId);
+    if (!contentType || count <= 0) continue;
+
+    for (let i = 1; i <= count; i++) {
+      blocks.push({
+        id: `${typeId}_${i}`,
+        contentTypeId: typeId,
+        blockNumber: i,
+        name: `${contentType.name.replace(/s$/, '')} #${i}`,
+        enabled: true,
+        theme
+      });
+    }
+  }
+
+  return blocks;
 }
 
 // Calculate cost for enabled blocks

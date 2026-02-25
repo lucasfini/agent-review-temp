@@ -1,7 +1,12 @@
 'use client';
 
 import { useMemo } from 'react';
-import type { UsageTrend } from '@/lib/usage-data';
+interface UsageTrend {
+  date: string;
+  minutesProcessed: number;
+  filesUploaded: number;
+  avgProcessingTime: number;
+}
 
 interface UsageChartProps {
   data: UsageTrend[];
