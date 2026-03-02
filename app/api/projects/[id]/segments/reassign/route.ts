@@ -30,7 +30,7 @@ export async function PATCH(
     // Fetch current project data
     const { data: project, error: fetchError } = await supabaseAdmin
       .from('projects')
-      .select('speaker_data')
+      .select('speaker_data, user_id')
       .eq('id', projectId)
       .single();
 
@@ -42,7 +42,16 @@ export async function PATCH(
       );
     }
 
-    const speakerData = (project as { speaker_data: any }).speaker_data;
+    // Demo account guard
+    const projectUserId = (project as { speaker_data: any; user_id: string }).user_id;
+    if (projectUserId) {
+      const { data: { user: projectUser } } = await supabaseAdmin.auth.admin.getUserById(projectUserId);
+      if (projectUser?.email === process.env.DEMO_EMAIL) {
+        return NextResponse.json({ error: 'Demo account is read-only' }, { status: 403 });
+      }
+    }
+
+    const speakerData = (project as { speaker_data: any; user_id: string }).speaker_data;
 
     if (!speakerData || !speakerData.segments || !speakerData.speakers) {
       return NextResponse.json(

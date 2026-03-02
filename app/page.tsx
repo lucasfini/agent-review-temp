@@ -32,7 +32,7 @@ const STEPS = [
   {
     n: '03',
     title: 'Generate Your Content Suite',
-    description: 'Instantly generate 15+ pieces — threads, posts, newsletters, show notes — all formatted for the right platform.',
+    description: 'Instantly generate 8 content formats — X threads, LinkedIn posts, newsletters, show notes, and more — each optimized for its platform.',
     Icon: Zap,
     accent: 'bg-indigo-500',
     ring: 'ring-indigo-500/20',
@@ -300,7 +300,7 @@ function AppMockup() {
           <div className="p-6">
             <div className="flex items-center justify-between mb-5">
               <span className="text-xs font-semibold text-white/80">Generated Content</span>
-              <span className="text-[10px] bg-emerald-500/15 text-emerald-400 border border-emerald-400/20 px-2 py-0.5 rounded-full">15 pieces ready</span>
+              <span className="text-[10px] bg-emerald-500/15 text-emerald-400 border border-emerald-400/20 px-2 py-0.5 rounded-full">8 formats ready</span>
             </div>
 
             <div className="space-y-3">
@@ -329,7 +329,7 @@ function AppMockup() {
                     <div key={i} className={`w-5 h-5 ${c} rounded-full border-2 border-slate-800`} />
                   ))}
                 </div>
-                <span className="text-[11px] text-white/35">+13 more content pieces</span>
+                <span className="text-[11px] text-white/35">all 8 formats</span>
               </div>
             </div>
           </div>
@@ -371,9 +371,9 @@ function Hero() {
             Start Repurposing Free
             <ArrowRight className="h-4 w-4" />
           </Link>
-          <a href="#how-it-works" className="inline-flex items-center gap-2 text-white/70 hover:text-white font-medium px-6 py-3.5 rounded-xl border border-white/15 hover:border-white/30 transition-colors">
-            See how it works
-          </a>
+          <Link href="/auth/demo" className="inline-flex items-center gap-2 text-white/80 hover:text-white font-medium px-6 py-3.5 rounded-xl border border-white/25 hover:border-white/50 hover:bg-white/5 transition-colors">
+            Try Demo →
+          </Link>
         </div>
 
         <div className="motion-safe:animate-fade-up-600 motion-safe:animate-float-slow">
@@ -537,8 +537,8 @@ function OutputShowcase() {
 
           {/* Total callout card */}
           <div className="bg-gradient-to-br from-blue-600 to-violet-600 rounded-2xl p-5 flex flex-col justify-center motion-safe:animate-fade-up-400 hover:scale-[1.01] transition-transform">
-            <div className="text-4xl font-bold text-white mb-1">15+</div>
-            <div className="text-blue-100 font-semibold text-sm mb-2">Content pieces</div>
+            <div className="text-4xl font-bold text-white mb-1">8</div>
+            <div className="text-blue-100 font-semibold text-sm mb-2">Content formats</div>
             <div className="text-blue-200/70 text-xs leading-relaxed">
               Generated from a single recording, formatted for every platform.
             </div>
@@ -652,7 +652,7 @@ function FinalCTA() {
         </div>
 
         <div className="mt-12 flex items-center justify-center gap-10 text-sm">
-          {[['15+', 'Content types'], ['5 min', 'Per episode'], ['No subscription', 'Pay as you go']].map(([stat, label], idx) => (
+          {[['8', 'Content formats'], ['5 min', 'Per episode'], ['No subscription', 'Pay as you go']].map(([stat, label], idx) => (
             <div key={stat} className={`text-center motion-safe:animate-fade-in${idx === 1 ? '-200' : idx === 2 ? '-400' : ''}`}>
               <div className="font-bold text-white text-base">{stat}</div>
               <div className="text-blue-300/60 text-xs mt-0.5">{label}</div>

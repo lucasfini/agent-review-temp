@@ -85,7 +85,9 @@ export async function POST(request: NextRequest) {
       angle: body.angle,
       cleaned_narrative_summary: body.cleaned_narrative_summary,
       transcript: body.transcript,
-      speaker_data: body.speaker_data
+      speaker_data: body.speaker_data,
+      userId: body.user_id,
+      projectId: body.project_id,
     };
 
     let result: Partial<StrictJSONEngineOutput>;

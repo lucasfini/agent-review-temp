@@ -150,6 +150,9 @@ interface ContextSidebarProps {
   onDeleteOutput?: (outputId: string) => void;
   deletingOutput?: string | null;
   onGenerateContent?: () => void;
+
+  /** When true, hides all write actions (demo mode) */
+  readOnly?: boolean;
 }
 
 // Helper to format duration
@@ -160,6 +163,10 @@ function formatDuration(seconds: number): string {
 }
 
 // Output card helpers
+function resolveOutputKind(output: Output): string {
+  return output.metadata?.originalOutputType || output.type || '';
+}
+
 function getOutputPlatformMeta(output: Output): { letter: string; iconStyle: string } {
   const rawPlatform = (output.metadata?.platform || output.platform || '').toLowerCase();
   if (rawPlatform.includes('twitter') || rawPlatform.includes('x thread') || rawPlatform === 'x')
@@ -174,6 +181,11 @@ function getOutputPlatformMeta(output: Output): { letter: string; iconStyle: str
     return { letter: '@', iconStyle: 'bg-green-600 text-white border-green-500' };
   if (rawPlatform.includes('show notes'))
     return { letter: '♪', iconStyle: 'bg-indigo-600 text-white border-indigo-500' };
+  const kind = resolveOutputKind(output);
+  if (kind === 'blog_post')        return { letter: 'B',  iconStyle: 'bg-orange-600 text-white border-orange-500' };
+  if (kind === 'email_newsletter') return { letter: '@',  iconStyle: 'bg-green-600 text-white border-green-500' };
+  if (kind === 'show_notes')       return { letter: '♪',  iconStyle: 'bg-indigo-600 text-white border-indigo-500' };
+  if (kind === 'quote_graphic')    return { letter: '\u201c', iconStyle: 'bg-violet-600 text-white border-violet-500' };
   const displayName = output.metadata?.platform || output.platform || 'G';
   return { letter: displayName.charAt(0).toUpperCase(), iconStyle: 'bg-slate-700 text-white border-slate-600' };
 }
@@ -187,6 +199,16 @@ function getOutputSubtitle(output: Output): string {
   return `${output.content.length.toLocaleString()} characters`;
 }
 
+const KIND_LABELS: Record<string, string> = {
+  twitter_thread:    'X Thread',
+  linkedin_post:     'LinkedIn Post',
+  instagram_caption: 'Instagram Post',
+  blog_post:         'Blog Post',
+  email_newsletter:  'Email Newsletter',
+  show_notes:        'Show Notes',
+  quote_graphic:     'Quote Graphic',
+};
+
 function getPlatformDisplayName(output: Output): string {
   if (output.metadata?.platform && output.metadata.platform !== 'General') {
     return output.metadata.platform;
@@ -194,6 +216,8 @@ function getPlatformDisplayName(output: Output): string {
   if (output.metadata?.platform_label) {
     return output.metadata.platform_label;
   }
+  const kind = resolveOutputKind(output);
+  if (KIND_LABELS[kind]) return KIND_LABELS[kind];
   switch (output.platform) {
     case 'twitter': return 'X';
     case 'linkedin': return 'LinkedIn';
@@ -275,6 +299,7 @@ export function ContextSidebar({
   onDeleteOutput,
   deletingOutput,
   onGenerateContent,
+  readOnly = false,
 }: ContextSidebarProps) {
   const [activeTab, setActiveTab] = useState<TabId>('speakers');
   const [expandedSections, setExpandedSections] = useState<Set<string>>(new Set(['speakers']));
@@ -507,6 +532,7 @@ export function ContextSidebar({
         'flex flex-col h-full bg-slate-900 border-l border-slate-800',
         className
       )}
+      data-tour="sidebar-panel"
       aria-hidden={!isOpen}
     >
       {/* Tab Navigation - Wrapping and centered */}
@@ -516,6 +542,25 @@ export function ContextSidebar({
             <button
               key={tab.id}
               onClick={() => setActiveTab(tab.id)}
+              data-tour={
+                tab.id === 'review'
+                  ? 'sidebar-tab-review'
+                  : tab.id === 'speakers'
+                  ? 'sidebar-tab-speakers'
+                  : tab.id === 'content'
+                  ? 'sidebar-tab-content'
+                  : tab.id === 'insights'
+                  ? 'sidebar-tab-insights'
+                  : tab.id === 'summary'
+                  ? 'sidebar-tab-summary'
+                  : tab.id === 'chapters'
+                  ? 'sidebar-tab-chapters'
+                  : tab.id === 'takeaways'
+                  ? 'sidebar-tab-takeaways'
+                  : tab.id === 'quotes'
+                  ? 'sidebar-tab-quotes'
+                  : undefined
+              }
               className={cn(
                 'flex items-center gap-1.5 px-2.5 py-1.5 text-xs font-medium rounded-lg transition-all whitespace-nowrap',
                 activeTab === tab.id
@@ -544,7 +589,7 @@ export function ContextSidebar({
       <div className="flex-1 overflow-y-auto">
         {/* Speakers Tab */}
         {activeTab === 'speakers' && (
-          <div className="p-4 space-y-3">
+          <div className="p-4 space-y-3" data-tour="speakers-panel">
             {speakerList.length === 0 ? (
               <div className="text-center py-12 text-slate-500">
                 <Users className="w-10 h-10 mx-auto mb-3 text-slate-300" />
@@ -885,7 +930,7 @@ export function ContextSidebar({
               </div>
             ) : (
               <div className="space-y-3">
-                {outputs.map((output) => {
+                {outputs.map((output, index) => {
                   const platformMeta = getOutputPlatformMeta(output);
                   const toneLabel = output.metadata?.ui_metadata?.theme_label
                     || output.metadata?.theme_label
@@ -895,6 +940,7 @@ export function ContextSidebar({
                   return (
                     <div
                       key={output.id}
+                      {...(index === 0 ? { 'data-tour': 'content-output' } : {})}
                       onClick={() => {
                         setExpandedOutputs((prev) => {
                           const next = new Set(prev);
@@ -923,7 +969,7 @@ export function ContextSidebar({
                       </div>
 
                       {/* Content Snippet */}
-                      <p className={`text-slate-400 text-xs italic leading-relaxed ${isExpanded ? 'line-clamp-none' : 'line-clamp-2'}`}>
+                      <p className={`text-white text-sm italic leading-relaxed whitespace-pre-wrap ${isExpanded ? 'line-clamp-none' : 'line-clamp-2'}`}>
                         {output.content}
                       </p>
 
@@ -958,21 +1004,23 @@ export function ContextSidebar({
                         >
                           <Download className="h-3.5 w-3.5" />
                         </button>
-                        <button
-                          onClick={(e) => {
-                            e.stopPropagation();
-                            onDeleteOutput?.(output.id);
-                          }}
-                          disabled={deletingOutput === output.id}
-                          className="p-1.5 text-slate-500 hover:text-red-400 hover:bg-red-900/20 rounded transition-colors disabled:opacity-50"
-                          title="Delete"
-                        >
-                          {deletingOutput === output.id ? (
-                            <Loader2 className="h-3.5 w-3.5 animate-spin" />
-                          ) : (
-                            <Trash2 className="h-3.5 w-3.5" />
-                          )}
-                        </button>
+                        {!readOnly && (
+                          <button
+                            onClick={(e) => {
+                              e.stopPropagation();
+                              onDeleteOutput?.(output.id);
+                            }}
+                            disabled={deletingOutput === output.id}
+                            className="p-1.5 text-slate-500 hover:text-red-400 hover:bg-red-900/20 rounded transition-colors disabled:opacity-50"
+                            title="Delete"
+                          >
+                            {deletingOutput === output.id ? (
+                              <Loader2 className="h-3.5 w-3.5 animate-spin" />
+                            ) : (
+                              <Trash2 className="h-3.5 w-3.5" />
+                            )}
+                          </button>
+                        )}
                       </div>
                     </div>
                   );
@@ -984,7 +1032,7 @@ export function ContextSidebar({
 
         {/* Insights Tab */}
         {activeTab === 'insights' && (
-          <div className="h-full">
+          <div className="h-full" data-tour="insights-panel">
             {hasInsights ? (
               /* Display insights if they exist */
               <InsightsSidebar
@@ -1039,10 +1087,10 @@ export function ContextSidebar({
 
         {/* Review Tab */}
         {activeTab === 'review' && (
-          <div className="p-3 space-y-3">
+          <div className="p-3 space-y-3" data-tour="review-panel">
 
             {/* AI touch-up controls */}
-            {selectedCount > 0 && (
+            {!readOnly && selectedCount > 0 && (
               <div className="flex flex-col gap-1.5">
                 <button
                   onClick={onAiTouchup}
@@ -1062,7 +1110,7 @@ export function ContextSidebar({
             )}
 
             {/* AI Touch-up preview */}
-            {touchupPreview && (
+            {!readOnly && touchupPreview && (
               <div className="p-3 rounded-xl border border-violet-800/30 bg-violet-900/20 space-y-2">
                 <div className="flex items-center justify-between">
                   <span className="text-xs font-semibold text-violet-900">
@@ -1234,7 +1282,7 @@ export function ContextSidebar({
 
         {/* Summary Tab */}
         {activeTab === 'summary' && (
-          <div className="p-4">
+          <div className="p-4" data-tour="summary-panel">
             {summary ? (
               <div className="prose prose-sm max-w-none">
                 {summary.split('\n\n').map((paragraph, idx) => (
@@ -1262,7 +1310,7 @@ export function ContextSidebar({
 
         {/* Chapters Tab */}
         {activeTab === 'chapters' && (
-          <div className="p-3">
+          <div className="p-3" data-tour="chapters-panel">
             {chapters.length > 0 ? (
               <div className="space-y-2">
                 {chapters.map((chapter, idx) => (
@@ -1313,7 +1361,7 @@ export function ContextSidebar({
 
         {/* Takeaways Tab */}
         {activeTab === 'takeaways' && (
-          <div className="p-3">
+          <div className="p-3" data-tour="takeaways-panel">
             {takeaways.length > 0 ? (
               <div className="space-y-2">
                 {takeaways.map((item, idx) => (
@@ -1355,7 +1403,7 @@ export function ContextSidebar({
 
         {/* Quotes Tab */}
         {activeTab === 'quotes' && (
-          <div className="p-3">
+          <div className="p-3" data-tour="quotes-panel">
             {quotes.length > 0 ? (
               <div className="space-y-2">
                 {quotes.map((quote, idx) => (

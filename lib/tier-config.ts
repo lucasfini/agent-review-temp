@@ -81,7 +81,7 @@ export const TIER_PRICING: Record<TierLevel, TierPricing> = {
 
   pro: {
     baseTranscriptionPerHour: 0.27,
-    estimatedAIProcessingPerHour: 0.051, // Name extraction + Summary
+    estimatedAIProcessingPerHour: 0.051, // GPT-5-mini: speaker naming + summary
     totalPerHour: 0.321,
     totalWithMarkup: 0.44,
     markupPercentage: 35
@@ -89,7 +89,7 @@ export const TIER_PRICING: Record<TierLevel, TierPricing> = {
 
   premium: {
     baseTranscriptionPerHour: 0.27,
-    estimatedAIProcessingPerHour: 0.11, // All AI features
+    estimatedAIProcessingPerHour: 0.11, // GPT-5: roles/chapters/takeaways/quotes/insights
     totalPerHour: 0.38,
     totalWithMarkup: 0.52,
     markupPercentage: 35

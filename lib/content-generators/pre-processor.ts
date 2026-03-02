@@ -1,6 +1,7 @@
 // Pre-processing "Signal-Only" Engine using GPT-4o-mini
 // Cleans transcript and extracts main narrative arc before content generation
 import OpenAI from 'openai';
+import { trackOpenAIUsage } from '@/lib/billing/track-usage';
 
 export interface NarrativeMetadata {
   main_topic: string;
@@ -27,9 +28,12 @@ export async function preProcessTranscript(
   transcriptionText: string,
   options: {
     speakerContext?: Record<string, { name: string; role?: string }>;
+    userId?: string;
+    projectId?: string;
+    apiKey?: string;
   } = {}
 ): Promise<PreProcessResult> {
-  const apiKey = process.env.OPENAI_API_KEY;
+  const apiKey = options.apiKey || process.env.OPENAI_API_KEY;
   if (!apiKey) {
     throw new Error('OPENAI_API_KEY not configured');
   }
@@ -124,6 +128,17 @@ ${transcriptionText.slice(0, 100000)}`;
     console.log(`[PRE-PROCESSOR] 🎯 Key Tensions: ${metadata.key_tensions.length}`);
     console.log(`[PRE-PROCESSOR] 🚫 Ad Segments Found: ${metadata.ad_segments_found.length}`);
     console.log(`[PRE-PROCESSOR] 📊 Tokens: ${response.usage?.prompt_tokens || 0} in, ${response.usage?.completion_tokens || 0} out`);
+
+    // Track usage (fire-and-forget)
+    if (options.userId) {
+      trackOpenAIUsage({
+        userId: options.userId,
+        projectId: options.projectId,
+        response,
+        modelName: 'gpt-5-nano',
+        purpose: 'transcript pre-processing',
+      }).catch(err => console.error('[PRE-PROCESSOR] Failed to track usage:', err));
+    }
 
     if (metadata.ad_segments_found.length > 0) {
       console.log(`[PRE-PROCESSOR] 🛑 Filtering out ads: ${metadata.ad_segments_found.join(', ')}`);

@@ -164,7 +164,10 @@ export default function ContentSelectionModal({
 
   return (
     <div className="fixed inset-0 z-[60] bg-black/20 flex items-center justify-center px-4 py-6">
-      <div className="relative w-full max-w-2xl bg-slate-900 rounded-lg border border-slate-700 max-h-[90vh] flex flex-col overflow-hidden shadow-xl">
+      <div
+        className="relative w-full max-w-2xl bg-slate-900 rounded-lg border border-slate-700 max-h-[90vh] flex flex-col overflow-hidden shadow-xl"
+        data-tour="generate-modal"
+      >
         {/* Header */}
         <div className="px-5 py-4 border-b border-slate-700">
           <div className="flex items-center justify-between">
@@ -178,6 +181,7 @@ export default function ContentSelectionModal({
               onClick={onClose}
               disabled={isGenerating}
               className="text-slate-500 hover:text-slate-400 p-1"
+              data-tour="generate-close"
             >
               <X className="w-5 h-5" />
             </button>
@@ -195,7 +199,18 @@ export default function ContentSelectionModal({
             return (
               <div key={section.id}>
                 {/* Section header */}
-                <div className="flex items-center gap-2 mb-3">
+                <div
+                  className="flex items-center gap-2 mb-3"
+                  data-tour={
+                    section.id === 'social'
+                      ? 'generate-section-social'
+                      : section.id === 'longform'
+                      ? 'generate-section-longform'
+                      : section.id === 'support'
+                      ? 'generate-section-support'
+                      : undefined
+                  }
+                >
                   <span className="text-xs font-semibold text-slate-500 uppercase tracking-wider">
                     {section.label}
                   </span>
@@ -284,7 +299,7 @@ export default function ContentSelectionModal({
         </div>
 
         {/* Footer */}
-        <div className="px-5 py-3 border-t border-slate-700 bg-slate-800/50 flex items-center justify-between">
+        <div className="px-5 py-3 border-t border-slate-700 bg-slate-800/50 flex items-center justify-between" data-tour="generate-footer">
           <div className="text-xs text-slate-400 font-medium tabular-nums">
             {totalItems} {totalItems === 1 ? 'item' : 'items'}
             {totalCost > 0 && <span className="ml-1">· ~{formatCost(totalCost)}</span>}
@@ -301,6 +316,7 @@ export default function ContentSelectionModal({
               onClick={handleGenerate}
               disabled={isGenerating || totalItems === 0}
               className="inline-flex items-center px-4 py-1.5 bg-blue-600 text-white text-sm font-medium rounded hover:bg-blue-700 disabled:opacity-50 disabled:cursor-not-allowed shadow-sm"
+              data-tour="generate-confirm"
             >
               {isGenerating ? (
                 <>

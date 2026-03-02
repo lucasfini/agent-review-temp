@@ -1,6 +1,8 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { supabaseAdmin } from '@/lib/supabase/server';
 import OpenAI from 'openai';
+import { trackOpenAIUsage } from '@/lib/billing/track-usage';
+import { getOpenAIApiKeyForUser } from '@/lib/openai/consent';
 
 // Force dynamic to prevent caching
 export const dynamic = 'force-dynamic';
@@ -59,7 +61,7 @@ export async function POST(
     // Fetch current project data
     const { data: project, error: fetchError } = await supabaseAdmin
       .from('projects')
-      .select('speaker_data')
+      .select('speaker_data, user_id')
       .eq('id', projectId)
       .single();
 
@@ -67,7 +69,16 @@ export async function POST(
       return NextResponse.json({ error: 'Project not found' }, { status: 404 });
     }
 
-    const rawSpeakerData = (project as { speaker_data: any }).speaker_data;
+    const rawSpeakerData = (project as { speaker_data: any; user_id: string }).speaker_data;
+    const userId = (project as { speaker_data: any; user_id: string }).user_id;
+
+    // Demo account guard
+    if (userId) {
+      const { data: { user: projectUser } } = await supabaseAdmin.auth.admin.getUserById(userId);
+      if (projectUser?.email === process.env.DEMO_EMAIL) {
+        return NextResponse.json({ error: 'Demo account is read-only' }, { status: 403 });
+      }
+    }
     const speakerData = typeof rawSpeakerData === 'string'
       ? JSON.parse(rawSpeakerData)
       : rawSpeakerData;
@@ -336,7 +347,11 @@ Respond with ONLY valid JSON:
 ]}`;
 
     // Call GPT-4o with JSON mode for reliable structured output
-    const openai = new OpenAI({ apiKey: process.env.OPENAI_API_KEY });
+    const apiKey = await getOpenAIApiKeyForUser(userId);
+    if (!apiKey) {
+      throw new Error('OPENAI_API_KEY not configured');
+    }
+    const openai = new OpenAI({ apiKey });
     const completion = await openai.chat.completions.create({
       model: TOUCHUP_MODEL,
       response_format: { type: 'json_object' },
@@ -345,6 +360,17 @@ Respond with ONLY valid JSON:
     });
 
     const rawText = completion.choices[0]?.message?.content ?? '';
+
+    // Track usage (fire-and-forget)
+    if (userId) {
+      trackOpenAIUsage({
+        userId,
+        projectId,
+        response: completion,
+        modelName: TOUCHUP_MODEL,
+        purpose: 'segment touchup',
+      }).catch(err => console.error('[touchup] Failed to track usage:', err));
+    }
 
     // Parse GPT-4o's JSON response
     let claudeSuggestions: Array<{ index: number; speakerId: string; reason: string; confidence?: number }> = [];

@@ -102,6 +102,7 @@ CREATE TABLE IF NOT EXISTS credit_transactions (
   -- References
   usage_event_id UUID REFERENCES usage_events(id) ON DELETE SET NULL,
   payment_id TEXT, -- Stripe payment intent ID or similar
+  invoice_number TEXT, -- Stripe invoice ID/number for purchases/refunds
   admin_user_id UUID REFERENCES auth.users(id) ON DELETE SET NULL,
 
   -- Context
@@ -121,6 +122,7 @@ CREATE INDEX IF NOT EXISTS idx_credit_transactions_usage_event ON credit_transac
 COMMENT ON TABLE credit_transactions IS 'Complete audit log of all credit balance changes';
 COMMENT ON COLUMN credit_transactions.amount IS 'Change amount: positive for credits added, negative for debits';
 COMMENT ON COLUMN credit_transactions.transaction_type IS 'purchase=Stripe, bonus=promo, debit=usage, admin_adjustment=manual';
+COMMENT ON COLUMN credit_transactions.invoice_number IS 'Stripe invoice number/id for payment transactions';
 
 -- ============================================================================
 -- Row Level Security (RLS)

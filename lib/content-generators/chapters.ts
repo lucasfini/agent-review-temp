@@ -30,9 +30,10 @@ export async function detectPodcastChapters(
     speakerContext?: Record<string, { name: string; role?: string }>;
     userId?: string;
     projectId?: string;
+    apiKey?: string;
   } = {}
 ): Promise<ChaptersResult> {
-  const apiKey = process.env.OPENAI_API_KEY;
+  const apiKey = options.apiKey || process.env.OPENAI_API_KEY;
   if (!apiKey) {
     throw new Error('OPENAI_API_KEY not configured');
   }

@@ -35,12 +35,14 @@ import { supabase } from '@/lib/supabase/client';
 import { KPICard, CollapsibleStatsRow } from '@/components/ui/kpi-card';
 import { Badge } from '@/components/ui/badge';
 import { cn } from '@/lib/utils';
+import { DemoTour } from '@/components/demo/DemoTour';
 
 // ============================================================================
 // TYPES
 // ============================================================================
 
 type ProjectType = 'DEBATE' | 'INTERVIEW' | 'PODCAST' | 'MONOLOGUE' | 'OTHER';
+const HUB_PAGE_SIZE = 10;
 
 interface Project {
   id: string;
@@ -226,7 +228,7 @@ function EmptyState() {
 // ============================================================================
 
 export default function ProjectHubPage() {
-  const { user } = useAuth();
+  const { user, isDemoMode } = useAuth();
   const [projects, setProjects] = useState<Project[]>([]);
   const [outputs, setOutputs] = useState<Output[]>([]);
   const [loading, setLoading] = useState(true);
@@ -236,6 +238,7 @@ export default function ProjectHubPage() {
   const [sortBy, setSortBy] = useState<'recent' | 'oldest' | 'name'>('recent');
   const [showFilters, setShowFilters] = useState(false);
   const [deletingId, setDeletingId] = useState<string | null>(null);
+  const [hubPage, setHubPage] = useState(1);
 
   // Fetch data
   useEffect(() => {
@@ -279,8 +282,20 @@ export default function ProjectHubPage() {
     const completedProjects = projects.filter(p => p.status === 'completed').length;
     const totalProcessingTime = projects.reduce((sum, p) => sum + (p.processing_time_seconds || 0), 0);
     const totalAudioMinutes = projects.reduce((sum, p) => sum + ((p.audio_duration || 0) / 60), 0);
-    // Estimate time saved: 10x multiplier (1 hour audio = 10 hours manual work)
-    const timeSavedHours = Math.round(totalAudioMinutes / 60 * 10);
+    // Time saved = transcription time (5× audio) + per-piece content creation time
+    const CONTENT_TIME_MINUTES: Record<string, number> = {
+      twitter_thread:    30,
+      linkedin_post:     45,
+      instagram_caption: 20,
+      blog_post:         120,
+      email_newsletter:  90,
+      show_notes:        45,
+      quote_graphic:     15,
+    };
+    const contentMinutes = outputs.reduce(
+      (sum, o) => sum + (CONTENT_TIME_MINUTES[o.type] ?? 30), 0
+    );
+    const timeSavedHours = Math.round((totalAudioMinutes * 5 + contentMinutes) / 60);
 
     return {
       totalProjects: projects.length,
@@ -330,6 +345,26 @@ export default function ProjectHubPage() {
 
     return result;
   }, [projects, searchTerm, statusFilter, tierFilter, sortBy]);
+
+  const totalPages = useMemo(
+    () => Math.max(1, Math.ceil(filteredProjects.length / HUB_PAGE_SIZE)),
+    [filteredProjects.length]
+  );
+
+  const pagedProjects = useMemo(() => {
+    const start = (hubPage - 1) * HUB_PAGE_SIZE;
+    return filteredProjects.slice(start, start + HUB_PAGE_SIZE);
+  }, [filteredProjects, hubPage]);
+
+  useEffect(() => {
+    setHubPage(1);
+  }, [searchTerm, statusFilter, tierFilter, sortBy]);
+
+  useEffect(() => {
+    if (hubPage > totalPages) {
+      setHubPage(totalPages);
+    }
+  }, [hubPage, totalPages]);
 
   // Output counts by project
   const outputCountByProject = useMemo(() => {
@@ -404,7 +439,7 @@ export default function ProjectHubPage() {
 
         {/* Collapsible Stats Row */}
         <CollapsibleStatsRow title="Key Metrics">
-          <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
+          <div data-tour="hub-stats" className="grid grid-cols-2 md:grid-cols-4 gap-4">
             <KPICard
               title="Total Projects"
               value={stats.totalProjects}
@@ -437,7 +472,7 @@ export default function ProjectHubPage() {
         </CollapsibleStatsRow>
 
         {/* Filters & Search Bar */}
-        <div className="bg-slate-900 rounded-lg border border-slate-800 shadow-sm">
+        <div data-tour="hub-filters" className="bg-slate-900 rounded-lg border border-slate-800 shadow-sm">
           <div className="p-4 border-b border-slate-800">
             <div className="flex flex-col sm:flex-row gap-3">
               {/* Search */}
@@ -535,7 +570,7 @@ export default function ProjectHubPage() {
               </div>
             )
           ) : (
-            <div className="overflow-x-auto">
+            <div data-tour="hub-grid" className="overflow-x-auto">
               <table className="w-full text-sm">
                 <thead>
                   <tr className="border-b border-slate-800 bg-slate-800/40">
@@ -549,7 +584,7 @@ export default function ProjectHubPage() {
                   </tr>
                 </thead>
                 <tbody className="divide-y divide-slate-800">
-                  {filteredProjects.map((project) => (
+                  {pagedProjects.map((project) => (
                     <tr
                       key={project.id}
                       className="hover:bg-slate-800/50 transition-colors group"
@@ -634,12 +669,46 @@ export default function ProjectHubPage() {
 
           {/* Footer with count */}
           {filteredProjects.length > 0 && (
-            <div className="px-4 py-3 border-t border-slate-800 bg-slate-800/30 text-xs text-slate-500">
-              Showing {filteredProjects.length} of {projects.length} projects
+            <div className="px-4 py-3 border-t border-slate-800 bg-slate-800/30 text-xs text-slate-500 flex items-center justify-between">
+              <div>
+                Showing {pagedProjects.length} of {filteredProjects.length} projects
+              </div>
+              {totalPages > 1 && (
+                <div className="flex items-center gap-2">
+                  <span className="text-xs text-slate-500">
+                    Page {hubPage} of {totalPages}
+                  </span>
+                  <button
+                    type="button"
+                    onClick={() => setHubPage(hubPage - 1)}
+                    disabled={hubPage <= 1}
+                    className={`px-2.5 py-1.5 text-xs font-medium rounded border transition-colors ${
+                      hubPage <= 1
+                        ? 'border-slate-800 text-slate-600 cursor-not-allowed'
+                        : 'border-slate-700 text-slate-300 hover:bg-slate-800'
+                    }`}
+                  >
+                    Previous
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => setHubPage(hubPage + 1)}
+                    disabled={hubPage >= totalPages}
+                    className={`px-2.5 py-1.5 text-xs font-medium rounded border transition-colors ${
+                      hubPage >= totalPages
+                        ? 'border-slate-800 text-slate-600 cursor-not-allowed'
+                        : 'border-slate-700 text-slate-300 hover:bg-slate-800'
+                    }`}
+                  >
+                    Next
+                  </button>
+                </div>
+              )}
             </div>
           )}
         </div>
       </div>
+      {isDemoMode && <DemoTour chapter="hub" />}
     </div>
   );
 }

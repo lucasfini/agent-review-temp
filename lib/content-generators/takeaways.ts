@@ -28,9 +28,10 @@ export async function extractKeyTakeaways(
     speakerContext?: Record<string, { name: string; role?: string }>;
     userId?: string;
     projectId?: string;
+    apiKey?: string;
   } = {}
 ): Promise<TakeawaysResult> {
-  const apiKey = process.env.OPENAI_API_KEY;
+  const apiKey = options.apiKey || process.env.OPENAI_API_KEY;
   if (!apiKey) {
     throw new Error('OPENAI_API_KEY not configured');
   }

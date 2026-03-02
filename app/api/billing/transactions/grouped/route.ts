@@ -19,6 +19,7 @@ interface GroupedTransaction {
   reason: string;
   projectTitle?: string;
   balanceAfter: number;
+  invoiceNumber?: string | null;
   childCount?: number;
   children?: { reason: string; amount: number; createdAt: string }[];
 }
@@ -145,6 +146,7 @@ export async function GET(request: NextRequest) {
         amount: Number(tx.amount),
         reason: tx.reason || getDefaultReason(tx.transaction_type),
         balanceAfter: Number(tx.balance_after),
+        invoiceNumber: tx.invoice_number ?? null,
       });
     }
 

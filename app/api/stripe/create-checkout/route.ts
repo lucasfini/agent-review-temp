@@ -34,24 +34,42 @@ export async function POST(request: NextRequest) {
       return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
     }
 
+    // Demo account guard
+    if (user.email === process.env.DEMO_EMAIL) {
+      return NextResponse.json({ error: 'Demo account is read-only' }, { status: 403 });
+    }
+
     // Parse request body
     const body = await request.json();
-    const { packageId } = body;
+    const { packageId, customAmount } = body;
 
     // Validate package
-    if (!packageId || !(packageId in PACKAGES)) {
+    if (!packageId || (!(packageId in PACKAGES) && packageId !== 'custom')) {
       return NextResponse.json(
         { error: 'Invalid package selected' },
         { status: 400 }
       );
     }
 
-    const pkg = PACKAGES[packageId as keyof typeof PACKAGES];
+    let pkg = PACKAGES[packageId as keyof typeof PACKAGES];
+    if (packageId === 'custom') {
+      const amount = Number(customAmount);
+      if (!Number.isFinite(amount) || amount < 5) {
+        return NextResponse.json(
+          { error: 'Custom amount must be at least $5' },
+          { status: 400 }
+        );
+      }
+      pkg = { amount, price: amount, bonus: 0 };
+    }
+
     const totalCredits = pkg.amount + pkg.bonus;
+    const unitAmountCents = Math.round(pkg.price * 100);
 
     // Create Stripe checkout session
     const session = await stripe.checkout.sessions.create({
       payment_method_types: ['card'],
+      invoice_creation: { enabled: true },
       line_items: [
         {
           price_data: {
@@ -60,10 +78,12 @@ export async function POST(request: NextRequest) {
               name: `${pkg.amount} Credits`,
               description: pkg.bonus > 0
                 ? `${pkg.amount} credits + ${pkg.bonus} bonus credits`
-                : `${pkg.amount} credits`,
+                : packageId === 'custom'
+                  ? `Custom credit purchase`
+                  : `${pkg.amount} credits`,
               images: [], // Optional: Add your logo URL here
             },
-            unit_amount: pkg.price * 100, // Convert to cents
+            unit_amount: unitAmountCents, // Convert to cents
           },
           quantity: 1,
         },
@@ -74,9 +94,9 @@ export async function POST(request: NextRequest) {
       metadata: {
         userId: user.id,
         packageId,
-        creditsAmount: totalCredits.toString(),
-        baseAmount: pkg.amount.toString(),
-        bonusAmount: pkg.bonus.toString(),
+        creditsAmount: totalCredits.toFixed(2),
+        baseAmount: pkg.amount.toFixed(2),
+        bonusAmount: pkg.bonus.toFixed(2),
       },
       customer_email: user.email,
     });

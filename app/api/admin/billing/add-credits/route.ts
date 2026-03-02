@@ -6,6 +6,7 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { supabaseAdmin } from '@/lib/supabase/server';
 import { adminAddCredits } from '@/lib/billing/admin';
+import { isAdminEmail } from '@/lib/admin-access';
 
 export async function POST(request: NextRequest) {
   try {
@@ -25,10 +26,7 @@ export async function POST(request: NextRequest) {
       return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
     }
 
-    // TODO: Add proper admin check
-    // For now, this is just a placeholder - you should verify the user is an admin
-    // Example: Check if user.email matches admin list or has admin role in database
-    const isAdmin = true; // REPLACE WITH ACTUAL ADMIN CHECK
+    const isAdmin = isAdminEmail(user.email);
 
     if (!isAdmin) {
       return NextResponse.json({ error: 'Forbidden - Admin access required' }, { status: 403 });

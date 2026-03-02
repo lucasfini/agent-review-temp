@@ -3,12 +3,16 @@
 import { createContext, useContext, useEffect, useState } from 'react';
 import { User, Session } from '@supabase/supabase-js';
 import { supabase } from '@/lib/supabase/client';
+import { isDemoUser } from '@/lib/demo-mode';
 
 interface AuthContextType {
   user: User | null;
   session: Session | null;
   loading: boolean;
-  signUp: (email: string, password: string, name?: string) => Promise<{ error: any }>;
+  isDemoMode: boolean;
+  signUp: (email: string, password: string, name?: string, consents?: {
+    openaiDataSharingOptIn?: boolean;
+  }) => Promise<{ error: any }>;
   signIn: (email: string, password: string) => Promise<{ error: any }>;
   signInWithGoogle: () => Promise<{ error: any }>;
   signOut: () => Promise<{ error: any }>;
@@ -36,19 +40,49 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
         setSession(session);
         setUser(session?.user ?? null);
         setLoading(false);
+
+        if (event === 'SIGNED_IN' && session?.user) {
+          try {
+            const pending = typeof window !== 'undefined'
+              ? window.localStorage.getItem('signup_consents')
+              : null;
+            if (pending) {
+              const parsed = JSON.parse(pending);
+              const now = new Date().toISOString();
+              await supabase.auth.updateUser({
+                data: {
+                  terms_accepted_at: parsed.termsAcceptedAt || now,
+                  privacy_accepted_at: parsed.privacyAcceptedAt || now,
+                  openai_data_sharing_opt_in: Boolean(parsed.openaiOptIn),
+                  openai_data_sharing_opt_in_at: parsed.openaiOptIn ? (parsed.openaiOptInAt || now) : null,
+                }
+              });
+              window.localStorage.removeItem('signup_consents');
+            }
+          } catch (error) {
+            console.warn('[AUTH] Failed to persist signup consents:', error);
+          }
+        }
       }
     );
 
     return () => subscription.unsubscribe();
   }, []);
 
-  const signUp = async (email: string, password: string, name?: string) => {
+  const signUp = async (email: string, password: string, name?: string, consents?: { openaiDataSharingOptIn?: boolean }) => {
+    const now = new Date().toISOString();
     const { error } = await supabase.auth.signUp({
       email,
       password,
       options: {
         emailRedirectTo: `${window.location.origin}/auth/callback`,
-        data: name ? { full_name: name } : undefined,
+        data: {
+          ...(name ? { full_name: name } : {}),
+          terms_accepted_at: now,
+          privacy_accepted_at: now,
+          openai_data_sharing_opt_in: Boolean(consents?.openaiDataSharingOptIn),
+          openai_data_sharing_opt_in_at: consents?.openaiDataSharingOptIn ? now : null,
+        },
       },
     });
     return { error };
@@ -82,6 +116,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
       user,
       session,
       loading,
+      isDemoMode: isDemoUser(user),
       signUp,
       signIn,
       signInWithGoogle,

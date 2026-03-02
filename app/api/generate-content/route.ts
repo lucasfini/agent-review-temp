@@ -13,6 +13,7 @@ import {
   failGenerationProgress
 } from '@/lib/generation-progress';
 import { getAICompletion, type AIMessage } from '@/lib/ai-providers/multi-provider';
+import { getOpenAIApiKeyForUser } from '@/lib/openai/consent';
 
 /**
  * Parse JSON response from AI, stripping markdown code fences and conversational filler
@@ -329,7 +330,8 @@ async function getStoryAngles(
   cleanedSummary: string,
   model: string,
   userId?: string,
-  projectId?: string
+  projectId?: string,
+  openaiApiKey?: string
 ): Promise<string[]> {
   console.log(`[STORY ANGLES] 🎯 Identifying distinct narrative angles using ${model}...`);
 
@@ -339,6 +341,7 @@ async function getStoryAngles(
       temperature: 0.2,
       maxTokens: 8000,
       responseFormat: { type: "json_object" },
+      openaiApiKey,
       messages: [
         {
           role: 'system',
@@ -454,6 +457,15 @@ export async function POST(request: NextRequest) {
     if (!userId) {
       console.warn('[BILLING] Could not find user_id for project:', projectId);
     }
+    const openaiApiKey = await getOpenAIApiKeyForUser(userId || undefined);
+
+    // Demo account guard
+    if (userId) {
+      const { data: { user: projectUser } } = await supabaseAdmin.auth.admin.getUserById(userId);
+      if (projectUser?.email === process.env.DEMO_EMAIL) {
+        return NextResponse.json({ error: 'Demo account is read-only' }, { status: 403 });
+      }
+    }
 
     // Use selected model or default to GPT-4o
     const modelToUse = modelId || 'gpt-5-mini';
@@ -466,7 +478,12 @@ export async function POST(request: NextRequest) {
 
     // Step 1: Pre-process transcript to extract signal and filter noise
     const preProcessStartTime = Date.now();
-    const preProcessResult = await preProcessTranscript(transcription, { speakerContext: speakerData });
+    const preProcessResult = await preProcessTranscript(transcription, {
+      speakerContext: speakerData,
+      userId,
+      projectId,
+      apiKey: openaiApiKey || undefined,
+    });
     const narrativeMetadata = preProcessResult.metadata;
     const preProcessTime = Date.now() - preProcessStartTime;
     console.log(`[PRE-PROCESSOR] ✅ Completed in ${preProcessTime}ms`);
@@ -478,7 +495,8 @@ export async function POST(request: NextRequest) {
       narrativeMetadata,
       modelToUse,
       userId,
-      projectId
+      projectId,
+      openaiApiKey || undefined
     );
     const analysisTime = Date.now() - analysisStartTime;
     console.log(`[ANALYSIS] ✅ Completed in ${analysisTime}ms`);
@@ -514,7 +532,8 @@ export async function POST(request: NextRequest) {
           narrativeMetadata,
           modelToUse,
           userId,
-          projectId
+          projectId,
+          openaiApiKey || undefined
         );
         generatedContent.push(...content);
 
@@ -582,7 +601,8 @@ async function analyzeContent(
   narrativeMetadata: NarrativeMetadata,
   model: string,
   userId?: string,
-  projectId?: string
+  projectId?: string,
+  openaiApiKey?: string
 ): Promise<ContentAnalysis> {
   // Build context from pre-processor results
   let narrativeContext = '';
@@ -627,7 +647,8 @@ ${transcription.slice(0, 80000)}`;
     }],
     temperature: 0.3,
     maxTokens: 4000,
-    responseFormat: { type: "json_object" }
+    responseFormat: { type: "json_object" },
+    openaiApiKey
   });
 
   // Mock response for tracking
@@ -680,7 +701,8 @@ async function generateBlockContent(
   narrativeMetadata: NarrativeMetadata,
   model: string,
   userId?: string,
-  projectId?: string
+  projectId?: string,
+  openaiApiKey?: string
 ): Promise<any[]> {
   const theme = getThemeById(block.theme);
   if (!theme) {
@@ -689,19 +711,19 @@ async function generateBlockContent(
 
   switch (block.contentTypeId) {
     case 'twitter_threads':
-      return await generateTwitterThread(block, transcription, analysis, narrativeMetadata, theme, model, userId, projectId);
+      return await generateTwitterThread(block, transcription, analysis, narrativeMetadata, theme, model, userId, projectId, openaiApiKey);
     case 'linkedin_posts':
-      return await generateLinkedInPost(block, transcription, analysis, narrativeMetadata, theme, model, userId, projectId);
+      return await generateLinkedInPost(block, transcription, analysis, narrativeMetadata, theme, model, userId, projectId, openaiApiKey);
     case 'instagram_content':
-      return await generateInstagramCarousel(block, transcription, analysis, narrativeMetadata, theme, model, userId, projectId);
+      return await generateInstagramCarousel(block, transcription, analysis, narrativeMetadata, theme, model, userId, projectId, openaiApiKey);
     case 'blog_post':
-      return await generateBlogPost(block, transcription, analysis, narrativeMetadata, theme, model, userId, projectId);
+      return await generateBlogPost(block, transcription, analysis, narrativeMetadata, theme, model, userId, projectId, openaiApiKey);
     case 'newsletter':
-      return await generateNewsletter(block, transcription, analysis, narrativeMetadata, theme, model, userId, projectId);
+      return await generateNewsletter(block, transcription, analysis, narrativeMetadata, theme, model, userId, projectId, openaiApiKey);
     case 'show_notes':
-      return await generateShowNotes(block, transcription, analysis, narrativeMetadata, theme, model, userId, projectId);
+      return await generateShowNotes(block, transcription, analysis, narrativeMetadata, theme, model, userId, projectId, openaiApiKey);
     case 'quote_graphics':
-      return await generateQuoteGraphic(block, analysis, theme, model, userId, projectId);
+      return await generateQuoteGraphic(block, analysis, theme, model, userId, projectId, openaiApiKey);
     default:
       throw new Error(`Unknown content type: ${block.contentTypeId}`);
   }
@@ -716,11 +738,12 @@ async function generateTwitterThread(
   theme: ContentTheme,
   model: string,
   userId?: string,
-  projectId?: string
+  projectId?: string,
+  openaiApiKey?: string
 ): Promise<any[]> {
   // Step 1: Get 3 distinct story angles from cleaned summary
   const cleanedSummary = narrativeMetadata.cleaned_narrative_summary || transcription.substring(0, 10000);
-  const storyAngles = await getStoryAngles(cleanedSummary, model, userId, projectId);
+  const storyAngles = await getStoryAngles(cleanedSummary, model, userId, projectId, openaiApiKey);
 
   // Step 2: Select angle based on block number (cycle through angles)
   const angleIndex = (block.blockNumber - 1) % storyAngles.length;
@@ -769,7 +792,8 @@ ${theme.promptModifier}
     ],
     temperature: 0.7,
     maxTokens: 16000,
-    responseFormat: { type: "json_object" }
+    responseFormat: { type: "json_object" },
+    openaiApiKey
   });
 
   // Mock response for tracking
@@ -862,7 +886,8 @@ async function generateLinkedInPost(
   theme: ContentTheme,
   model: string,
   userId?: string,
-  projectId?: string
+  projectId?: string,
+  openaiApiKey?: string
 ): Promise<any[]> {
   const insights = analysis.actionable_insights.sort((a, b) => b.value - a.value);
   const insightIndex = (block.blockNumber - 1) % insights.length;
@@ -914,7 +939,8 @@ ${theme.promptModifier}
     ],
     temperature: 0.7,
     maxTokens: 16000,
-    responseFormat: { type: "json_object" }
+    responseFormat: { type: "json_object" },
+    openaiApiKey
   });
 
   // Mock response for tracking
@@ -985,7 +1011,8 @@ async function generateInstagramCarousel(
   theme: ContentTheme,
   model: string,
   userId?: string,
-  projectId?: string
+  projectId?: string,
+  openaiApiKey?: string
 ): Promise<any[]> {
   // Step 1: Extract angle from narrative metadata
   const instagramAngle = narrativeMetadata.single_angle || analysis.keyTopics[0] || theme.name;
@@ -1048,7 +1075,8 @@ ${theme.promptModifier}
     ],
     temperature: 0.7,
     maxTokens: 16000,
-    responseFormat: { type: "json_object" }
+    responseFormat: { type: "json_object" },
+    openaiApiKey
   });
 
   // Mock response for tracking
@@ -1144,7 +1172,8 @@ async function generateBlogPost(
   theme: ContentTheme,
   model: string,
   userId?: string,
-  projectId?: string
+  projectId?: string,
+  openaiApiKey?: string
 ): Promise<any[]> {
   // Step 1: Extract angle from narrative metadata
   const blogAngle = narrativeMetadata.single_angle || analysis.keyTopics[0] || theme.name;
@@ -1200,7 +1229,8 @@ ${theme.promptModifier}
     ],
     temperature: 0.7,
     maxTokens: 16000,
-    responseFormat: { type: "json_object" }
+    responseFormat: { type: "json_object" },
+    openaiApiKey
   });
 
   // Mock response for tracking
@@ -1271,7 +1301,8 @@ async function generateNewsletter(
   theme: ContentTheme,
   model: string,
   userId?: string,
-  projectId?: string
+  projectId?: string,
+  openaiApiKey?: string
 ): Promise<any[]> {
   // Step 1: Extract angle from narrative metadata
   const newsletterAngle = narrativeMetadata.single_angle || analysis.keyTopics[0] || theme.name;
@@ -1336,7 +1367,8 @@ ${theme.promptModifier}
     ],
     temperature: 0.7,
     maxTokens: 16000,
-    responseFormat: { type: "json_object" }
+    responseFormat: { type: "json_object" },
+    openaiApiKey
   });
 
   // Mock response for tracking
@@ -1410,7 +1442,8 @@ async function generateShowNotes(
   theme: ContentTheme,
   model: string,
   userId?: string,
-  projectId?: string
+  projectId?: string,
+  openaiApiKey?: string
 ): Promise<any[]> {
   // Step 1: Extract angle from narrative metadata
   const showNotesAngle = narrativeMetadata.single_angle || analysis.keyTopics[0] || 'Episode Summary';
@@ -1472,7 +1505,8 @@ FORBIDDEN: Darktrace, recruitment agencies, sponsor websites, promo codes.
     ],
     temperature: 0.7,
     maxTokens: 16000,
-    responseFormat: { type: "json_object" }
+    responseFormat: { type: "json_object" },
+    openaiApiKey
   });
 
   // Mock response for tracking
@@ -1563,7 +1597,8 @@ async function generateQuoteGraphic(
   theme: ContentTheme,
   model: string,
   userId?: string,
-  projectId?: string
+  projectId?: string,
+  _openaiApiKey?: string
 ): Promise<any[]> {
   const quotes = analysis.quotes.slice(0, 10);
   const quoteIndex = (block.blockNumber - 1) % quotes.length;

@@ -1,10 +1,14 @@
 "use client";
 
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useRef } from 'react';
 import Link from 'next/link';
 import { usePathname, useRouter, useSearchParams } from 'next/navigation';
 import { useAuth } from '@/lib/auth/context';
+import { isDemoUser } from '@/lib/demo-mode';
+import { isAdminEmail } from '@/lib/admin-access';
+import { isPipelineDocAllowed } from '@/lib/pipeline-doc-access';
 import { supabase } from '@/lib/supabase/client';
+import { createPortal } from 'react-dom';
 import {
   LayoutGrid,
   Upload,
@@ -18,6 +22,9 @@ import {
   X,
   Mic,
   Clock,
+  Shield,
+  ChevronUp,
+  ChevronDown,
 } from 'lucide-react';
 
 type NavItemDef = {
@@ -25,11 +32,13 @@ type NavItemDef = {
   href: string;
   icon: React.ElementType;
   settingsSection?: string;
+  tourAttr?: string;
 };
 
 type RecentProject = { id: string; title: string };
 
 const PREMIUM_RATE_PER_HOUR = 0.52;
+const TOOLTIP_OFFSET_PX = 8;
 
 function calculatePowerTime(balance: number): string {
   const totalMinutes = Math.floor((balance / PREMIUM_RATE_PER_HOUR) * 60);
@@ -37,6 +46,37 @@ function calculatePowerTime(balance: number): string {
   const minutes = totalMinutes % 60;
   if (hours === 0) return `${minutes}m`;
   return `${hours}h ${minutes}m`;
+}
+
+function TooltipOverlay({
+  label,
+  anchorRect,
+  visible,
+}: {
+  label: string;
+  anchorRect: DOMRect | null;
+  visible: boolean;
+}) {
+  if (!visible || !anchorRect) return null;
+
+  const style: React.CSSProperties = {
+    position: 'fixed',
+    top: anchorRect.top - TOOLTIP_OFFSET_PX,
+    left: anchorRect.left + anchorRect.width / 2,
+    transform: 'translate(-50%, -100%)',
+    zIndex: 1000,
+    pointerEvents: 'none',
+  };
+
+  return createPortal(
+    <div
+      style={style}
+      className="rounded-md bg-slate-900 border border-slate-700 px-2 py-1 text-xs text-slate-100 shadow-lg whitespace-nowrap"
+    >
+      {label}
+    </div>,
+    document.body
+  );
 }
 
 const sections: Array<{ label: string; items: NavItemDef[] }> = [
@@ -59,7 +99,7 @@ const sections: Array<{ label: string; items: NavItemDef[] }> = [
     items: [
       { name: 'General', href: '/dashboard/settings', icon: User, settingsSection: 'general' },
       { name: 'Billing', href: '/dashboard/settings?section=billing', icon: CreditCard, settingsSection: 'billing' },
-      { name: 'Usage', href: '/dashboard/settings?section=usage', icon: BarChart3, settingsSection: 'usage' },
+      { name: 'Usage', href: '/dashboard/settings?section=usage', icon: BarChart3, settingsSection: 'usage', tourAttr: 'usage-tab' },
     ],
   },
 ];
@@ -69,30 +109,150 @@ function NavItem({
   isActive,
   onClick,
   mobile = false,
+  isCollapsed = false,
 }: {
   item: NavItemDef;
   isActive: boolean;
   onClick?: () => void;
   mobile?: boolean;
+  isCollapsed?: boolean;
 }) {
   const Icon = item.icon;
+  const anchorRef = useRef<HTMLAnchorElement | null>(null);
+  const [showTooltip, setShowTooltip] = useState(false);
+  const [anchorRect, setAnchorRect] = useState<DOMRect | null>(null);
+
+  const updateRect = () => {
+    if (!anchorRef.current) return;
+    setAnchorRect(anchorRef.current.getBoundingClientRect());
+  };
+
+  useEffect(() => {
+    if (!showTooltip) return;
+    updateRect();
+    const handleReposition = () => updateRect();
+    window.addEventListener('scroll', handleReposition, true);
+    window.addEventListener('resize', handleReposition);
+    return () => {
+      window.removeEventListener('scroll', handleReposition, true);
+      window.removeEventListener('resize', handleReposition);
+    };
+  }, [showTooltip]);
   return (
     <Link
+      ref={anchorRef}
       href={item.href}
       onClick={onClick}
-      className={`group flex items-center gap-3 px-3 ${mobile ? 'py-3 text-base' : 'py-2.5 text-sm'} font-medium rounded-xl transition-colors ${
+      onMouseEnter={() => {
+        if (!isCollapsed) return;
+        updateRect();
+        setShowTooltip(true);
+      }}
+      onMouseLeave={() => setShowTooltip(false)}
+      {...(item.tourAttr ? { 'data-tour': item.tourAttr } : {})}
+      className={`group flex items-center ${isCollapsed ? 'justify-center' : 'gap-3'} px-3 ${mobile ? 'py-3 text-base' : 'py-2.5 text-sm'} font-medium rounded-xl transition-colors ${
         isActive
           ? 'bg-blue-600/10 text-blue-400'
           : 'text-slate-400 hover:bg-slate-800 hover:text-slate-200'
       }`}
     >
       <Icon
-        className={`flex-shrink-0 ${mobile ? 'h-5 w-5' : 'h-4 w-4'} ${
+        className={`flex-shrink-0 ${mobile ? 'h-5 w-5' : isCollapsed ? 'h-5 w-5' : 'h-4 w-4'} ${
           isActive ? 'text-blue-400' : 'text-slate-500 group-hover:text-slate-300'
         }`}
       />
-      {item.name}
+      {isCollapsed && (
+        <TooltipOverlay
+          label={item.name}
+          anchorRect={anchorRect}
+          visible={showTooltip}
+        />
+      )}
+      {!isCollapsed && item.name}
     </Link>
+  );
+}
+
+function TooltipIconButton({
+  href,
+  onClick,
+  label,
+  title,
+  icon,
+}: {
+  href?: string;
+  onClick?: () => void;
+  label: string;
+  title?: string;
+  icon: React.ReactNode;
+}) {
+  const anchorRef = useRef<HTMLAnchorElement | HTMLButtonElement | null>(null);
+  const [showTooltip, setShowTooltip] = useState(false);
+  const [anchorRect, setAnchorRect] = useState<DOMRect | null>(null);
+
+  const updateRect = () => {
+    if (!anchorRef.current) return;
+    setAnchorRect(anchorRef.current.getBoundingClientRect());
+  };
+
+  useEffect(() => {
+    if (!showTooltip) return;
+    updateRect();
+    const handleReposition = () => updateRect();
+    window.addEventListener('scroll', handleReposition, true);
+    window.addEventListener('resize', handleReposition);
+    return () => {
+      window.removeEventListener('scroll', handleReposition, true);
+      window.removeEventListener('resize', handleReposition);
+    };
+  }, [showTooltip]);
+
+  const content = (
+    <>
+      {icon}
+      <TooltipOverlay
+        label={label}
+        anchorRect={anchorRect}
+        visible={showTooltip}
+      />
+    </>
+  );
+
+  if (href) {
+    return (
+      <Link
+        ref={anchorRef}
+        href={href}
+        onClick={onClick}
+        onMouseEnter={() => {
+          updateRect();
+          setShowTooltip(true);
+        }}
+        onMouseLeave={() => setShowTooltip(false)}
+        className="p-2 rounded-lg text-slate-400 hover:text-slate-200 hover:bg-slate-800"
+        title={title}
+        aria-label={label}
+      >
+        {content}
+      </Link>
+    );
+  }
+
+  return (
+    <button
+      ref={anchorRef}
+      onClick={onClick}
+      onMouseEnter={() => {
+        updateRect();
+        setShowTooltip(true);
+      }}
+      onMouseLeave={() => setShowTooltip(false)}
+      className="p-2 rounded-lg text-slate-400 hover:text-slate-200 hover:bg-slate-800"
+      title={title}
+      aria-label={label}
+    >
+      {content}
+    </button>
   );
 }
 
@@ -108,6 +268,12 @@ function SidebarContent({
   recentProjects,
   onSignOut,
   onNavClick,
+  isCollapsed,
+  onToggleCollapse,
+  isDemo,
+  canSeeAdmin,
+  canSeePipeline,
+  navSections,
 }: {
   pathname: string;
   activeSettingsSection: string | null;
@@ -120,8 +286,15 @@ function SidebarContent({
   recentProjects: RecentProject[];
   onSignOut: () => void;
   onNavClick?: () => void;
+  isCollapsed: boolean;
+  onToggleCollapse?: () => void;
+  isDemo?: boolean;
+  canSeeAdmin: boolean;
+  canSeePipeline: boolean;
+  navSections: Array<{ label: string; items: NavItemDef[] }>;
 }) {
   const isFreePlan = balance === null && !isLoadingBalance;
+  const [isAdminOpen, setIsAdminOpen] = useState(true);
 
   const isActive = (item: NavItemDef): boolean => {
     if (item.settingsSection) {
@@ -136,20 +309,36 @@ function SidebarContent({
   return (
     <div className="flex flex-col h-full">
       {/* Logo */}
-      <div className="flex-shrink-0 px-4 pt-6 pb-4">
-        <Link href={user ? '/dashboard/hub' : '/'} className="flex items-center gap-2">
+      <div className={`flex-shrink-0 px-4 pt-6 pb-4 ${isCollapsed ? 'flex flex-col items-center gap-2' : 'flex items-center justify-between'}`}>
+        <Link
+          href={user ? '/dashboard/hub' : '/'}
+          className={`flex items-center ${isCollapsed ? '' : 'gap-2'}`}
+          title={isCollapsed ? 'AudioRepurpose' : undefined}
+        >
           <Mic className="h-7 w-7 text-blue-600" />
-          <span className="text-lg font-bold text-slate-50">AudioRepurpose</span>
+          {!isCollapsed && (
+            <span className="text-lg font-bold text-slate-50">AudioRepurpose</span>
+          )}
         </Link>
+        {onToggleCollapse && (
+          <TooltipIconButton
+            onClick={onToggleCollapse}
+            label={isCollapsed ? 'Expand menu' : 'Collapse menu'}
+            title={isCollapsed ? 'Expand menu' : 'Collapse menu'}
+            icon={<Menu className="h-5 w-5" />}
+          />
+        )}
       </div>
 
       {/* Grouped Navigation */}
-      <nav className="flex-1 px-3 overflow-y-auto space-y-5">
-        {sections.map((section) => (
+      <nav className="flex-1 px-3 overflow-y-auto overflow-x-visible space-y-5">
+        {navSections.map((section) => (
           <div key={section.label}>
-            <p className="px-3 mb-1 text-[10px] font-semibold tracking-widest text-slate-600 uppercase">
-              {section.label}
-            </p>
+            {!isCollapsed && (
+              <p className="px-3 mb-1 text-[10px] font-semibold tracking-widest text-slate-600 uppercase">
+                {section.label}
+              </p>
+            )}
             <div className="space-y-0.5">
               {section.items.map((item) => (
                 <NavItem
@@ -157,11 +346,12 @@ function SidebarContent({
                   item={item}
                   isActive={isActive(item)}
                   onClick={onNavClick}
+                  isCollapsed={isCollapsed}
                 />
               ))}
             </div>
             {/* Recent Projects — injected below the WORKSPACE section */}
-            {section.label === 'WORKSPACE' && recentProjects.length > 0 && (
+            {!isCollapsed && section.label === 'WORKSPACE' && recentProjects.length > 0 && (
               <div className="mt-5">
                 <p className="text-slate-500 text-[10px] font-bold uppercase tracking-widest mb-2 px-2">
                   Recent Projects
@@ -197,71 +387,155 @@ function SidebarContent({
             )}
           </div>
         ))}
+
+        {canSeeAdmin && (
+          <div>
+            {!isCollapsed && (
+              <p className="px-3 mb-1 text-[10px] font-semibold tracking-widest text-slate-600 uppercase">
+                ADMIN
+              </p>
+            )}
+            <button
+              type="button"
+              onClick={() => setIsAdminOpen((prev) => !prev)}
+              className={`w-full flex items-center ${isCollapsed ? 'justify-center' : 'justify-between'} px-3 py-2.5 text-sm font-medium rounded-xl transition-colors text-slate-400 hover:bg-slate-800 hover:text-slate-200`}
+            >
+              <span className={`flex items-center ${isCollapsed ? '' : 'gap-3'}`}>
+                <Shield className={`flex-shrink-0 ${isCollapsed ? 'h-5 w-5' : 'h-4 w-4'} text-slate-500`} />
+                {!isCollapsed && 'Admin'}
+              </span>
+              {!isCollapsed && (
+                isAdminOpen
+                  ? <ChevronUp className="h-4 w-4 text-slate-500" />
+                  : <ChevronDown className="h-4 w-4 text-slate-500" />
+              )}
+            </button>
+
+            {isAdminOpen && (
+              <div className="mt-1 space-y-0.5">
+                <NavItem
+                  item={{ name: 'Overview', href: '/dashboard/admin', icon: LayoutGrid }}
+                  isActive={isActive({ name: 'Overview', href: '/dashboard/admin', icon: LayoutGrid })}
+                  onClick={onNavClick}
+                  isCollapsed={isCollapsed}
+                />
+                <NavItem
+                  item={{ name: 'Users', href: '/dashboard/admin/users', icon: User }}
+                  isActive={isActive({ name: 'Users', href: '/dashboard/admin/users', icon: User })}
+                  onClick={onNavClick}
+                  isCollapsed={isCollapsed}
+                />
+                <NavItem
+                  item={{ name: 'Data', href: '/dashboard/admin/data', icon: FileText }}
+                  isActive={isActive({ name: 'Data', href: '/dashboard/admin/data', icon: FileText })}
+                  onClick={onNavClick}
+                  isCollapsed={isCollapsed}
+                />
+                <NavItem
+                  item={{ name: 'Monitoring', href: '/dashboard/admin/monitoring', icon: BarChart3 }}
+                  isActive={isActive({ name: 'Monitoring', href: '/dashboard/admin/monitoring', icon: BarChart3 })}
+                  onClick={onNavClick}
+                  isCollapsed={isCollapsed}
+                />
+                {canSeePipeline && (
+                  <NavItem
+                    item={{ name: 'Pipeline', href: '/dashboard/pipeline', icon: FileText }}
+                    isActive={isActive({ name: 'Pipeline', href: '/dashboard/pipeline', icon: FileText })}
+                    onClick={onNavClick}
+                    isCollapsed={isCollapsed}
+                  />
+                )}
+              </div>
+            )}
+          </div>
+        )}
       </nav>
 
       {/* Bottom Area */}
       <div className="flex-shrink-0 px-3 pb-4 pt-4">
-        {/* Production Power Wallet Card */}
-        <div className="bg-slate-800/40 border border-slate-700/50 rounded-2xl p-4 mb-3">
-          <p className="text-slate-500 text-[10px] font-bold uppercase tracking-widest">
-            Production Power
-          </p>
-          <p className="text-slate-50 font-bold text-xl mt-1">
-            {isLoadingBalance
-              ? <span className="text-slate-600">—</span>
-              : balance !== null
-              ? `$${balance.toFixed(2)}`
-              : 'Free Plan'}
-          </p>
-          {balance !== null && !isLoadingBalance && (
-            <div className="flex items-center gap-1.5 text-blue-400 text-xs font-medium mt-1">
-              <span className="relative flex h-2 w-2">
-                <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-green-400 opacity-75"></span>
-                <span className="relative inline-flex rounded-full h-2 w-2 bg-green-500"></span>
-              </span>
-              ≈ {calculatePowerTime(balance)} power
+        {isCollapsed ? (
+          <div className="flex flex-col items-center gap-2">
+            <TooltipIconButton
+              onClick={onSignOut}
+              label="Sign Out"
+              title="Sign Out"
+              icon={<LogOut className="h-5 w-5" />}
+            />
+          </div>
+        ) : (
+          <>
+            {/* Production Power Wallet Card */}
+            <div data-tour="credit-balance" className="bg-slate-800/40 border border-slate-700/50 rounded-2xl p-4 mb-3">
+              <p className="text-slate-500 text-[10px] font-bold uppercase tracking-widest">
+                Production Power
+              </p>
+              <p className="text-slate-50 font-bold text-xl mt-1">
+                {isLoadingBalance
+                  ? <span className="text-slate-600">—</span>
+                  : balance !== null
+                  ? `$${balance.toFixed(2)}`
+                  : 'Free Plan'}
+              </p>
+              {balance !== null && !isLoadingBalance && (
+                <div className="flex items-center gap-1.5 text-blue-400 text-xs font-medium mt-1">
+                  <span className="relative flex h-2 w-2">
+                    <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-green-400 opacity-75"></span>
+                    <span className="relative inline-flex rounded-full h-2 w-2 bg-green-500"></span>
+                  </span>
+                  ≈ {calculatePowerTime(balance)} power
+                </div>
+              )}
+              {!isDemo && (
+                <Link
+                  href="/dashboard/settings?section=billing"
+                  onClick={onNavClick}
+                  className={`flex items-center justify-center w-full py-2.5 rounded-xl text-xs font-semibold transition-all shadow-sm mt-3 ${
+                    isLowBalance
+                      ? 'bg-amber-500/10 text-amber-500 border border-amber-500/20 hover:bg-amber-500/20'
+                      : 'bg-blue-600 text-white hover:bg-blue-700'
+                  }`}
+                >
+                  {isLowBalance ? '+ Top Up' : '+ Add Credits'}
+                </Link>
+              )}
             </div>
-          )}
-          <Link
-            href="/dashboard/settings?section=billing"
-            onClick={onNavClick}
-            className={`flex items-center justify-center w-full py-2.5 rounded-xl text-xs font-semibold transition-all shadow-sm mt-3 ${
-              isLowBalance
-                ? 'bg-amber-500/10 text-amber-500 border border-amber-500/20 hover:bg-amber-500/20'
-                : 'bg-blue-600 text-white hover:bg-blue-700'
-            }`}
-          >
-            {isLowBalance ? '+ Top Up' : '+ Add Credits'}
-          </Link>
-        </div>
 
-        {/* Profile with Sign Out */}
-        <div className="flex items-center gap-3 p-3 bg-slate-900 border border-slate-700 rounded-xl hover:border-slate-600 transition-colors">
-          <Link
-            href="/dashboard/settings"
-            onClick={onNavClick}
-            className="flex items-center gap-3 flex-1 min-w-0"
-          >
-            <div className="flex-shrink-0 h-9 w-9 rounded-full bg-violet-500 flex items-center justify-center text-white text-sm font-semibold">
-              {user?.email?.[0]?.toUpperCase() || 'U'}
+            {/* Profile with Sign Out */}
+            <div className="flex items-center gap-3 p-3 bg-slate-900 border border-slate-700 rounded-xl hover:border-slate-600 transition-colors">
+              <Link
+                href="/dashboard/settings"
+                onClick={onNavClick}
+                className="flex items-center gap-3 flex-1 min-w-0"
+              >
+                <div className="flex-shrink-0 h-9 w-9 rounded-full bg-violet-500 flex items-center justify-center text-white text-sm font-semibold">
+                  {user?.email?.[0]?.toUpperCase() || 'U'}
+                </div>
+                <p className="text-sm font-medium text-slate-200 truncate">{user?.email}</p>
+              </Link>
+              <button
+                onClick={onSignOut}
+                className="flex-shrink-0 p-1.5 text-slate-500 hover:text-slate-200 hover:bg-slate-800 rounded-lg transition-colors"
+                title="Sign Out"
+              >
+                <LogOut className="h-4 w-4" />
+              </button>
             </div>
-            <p className="text-sm font-medium text-slate-200 truncate">{user?.email}</p>
-          </Link>
-          <button
-            onClick={onSignOut}
-            className="flex-shrink-0 p-1.5 text-slate-500 hover:text-slate-200 hover:bg-slate-800 rounded-lg transition-colors"
-            title="Sign Out"
-          >
-            <LogOut className="h-4 w-4" />
-          </button>
-        </div>
+          </>
+        )}
       </div>
     </div>
   );
 }
 
-export default function DashboardNav() {
+export default function DashboardNav({
+  isCollapsed,
+  onCollapseChange,
+}: {
+  isCollapsed?: boolean;
+  onCollapseChange?: (next: boolean) => void;
+} = {}) {
   const [isMobileMenuOpen, setIsMobileMenuOpen] = useState(false);
+  const [localCollapsed, setLocalCollapsed] = useState(false);
   const [balance, setBalance] = useState<number | null>(null);
   const [isLoadingBalance, setIsLoadingBalance] = useState(true);
   const [recentProjects, setRecentProjects] = useState<RecentProject[]>([]);
@@ -269,12 +543,17 @@ export default function DashboardNav() {
   const searchParams = useSearchParams();
   const router = useRouter();
   const { user, session, signOut } = useAuth();
+  const isDemo = isDemoUser(user as { email?: string } | null);
+  const canSeePipeline = isPipelineDocAllowed(user?.email);
+  const canSeeAdmin = isAdminEmail(user?.email);
 
   const activeSettingsSection = pathname.startsWith('/dashboard/settings')
     ? (searchParams.get('section') || 'general')
     : null;
 
   const activeProjectId = searchParams.get('id');
+  const collapsed = isCollapsed ?? localCollapsed;
+  const setCollapsed = onCollapseChange ?? setLocalCollapsed;
 
   useEffect(() => {
     const fetchBalance = async () => {
@@ -312,8 +591,22 @@ export default function DashboardNav() {
 
   const handleSignOut = async () => {
     await signOut();
-    router.push('/');
+    router.push('/auth/login');
   };
+
+  const navSections = sections.map((section) => ({
+    ...section,
+    items: [...section.items],
+  }));
+
+  if (canSeePipeline) {
+    const accountSection = navSections.find((section) => section.label === 'ACCOUNT');
+    accountSection?.items.push({
+      name: 'Pipeline',
+      href: '/dashboard/pipeline',
+      icon: FileText,
+    });
+  }
 
   const isLowBalance = balance !== null && balance < 5;
   const balanceDisplay = isLoadingBalance
@@ -333,13 +626,19 @@ export default function DashboardNav() {
     balanceDisplay,
     recentProjects,
     onSignOut: handleSignOut,
+    isCollapsed: collapsed,
+    onToggleCollapse: () => setCollapsed(!collapsed),
+    isDemo,
+    canSeeAdmin,
+    canSeePipeline,
+    navSections,
   };
 
   return (
     <>
       {/* Desktop Sidebar */}
-      <div className="hidden md:flex md:w-64 md:flex-col md:fixed md:inset-y-0">
-        <div className="flex flex-col flex-grow bg-slate-950 border-r border-slate-800 overflow-hidden">
+      <div className={`hidden md:flex md:flex-col md:fixed md:inset-y-0 transition-all duration-200 ${collapsed ? 'md:w-20' : 'md:w-64'}`}>
+        <div className="flex flex-col flex-grow bg-slate-950 border-r border-slate-800 overflow-visible">
           <SidebarContent {...sharedProps} />
         </div>
       </div>

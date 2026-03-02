@@ -2,7 +2,7 @@
  * Usage Tracking Utilities
  *
  * Convenience wrappers for tracking AI service usage and billing credits.
- * Provides simple functions to instrument OpenAI, Anthropic, and other AI calls.
+ * Provides simple functions to instrument OpenAI (gpt-5, gpt-5-mini, gpt-5-nano, gpt-4o, gpt-4o-mini) and AssemblyAI calls.
  */
 
 import { calculateServiceCost, calculateTokenCost } from './cost-map';
@@ -40,7 +40,9 @@ export function extractOpenAIUsage(response: any): OpenAIUsage {
 }
 
 /**
- * Map a model name to the correct cost-map service keys
+ * Map a model name to the correct cost-map service keys.
+ * More-specific checks (gpt-5-nano, gpt-5-mini) must come before the
+ * catch-all (gpt-5) because all three strings contain "gpt-5".
  */
 function getOpenAIServiceKeys(modelName: string): { input: string; output: string } {
   if (modelName.includes('gpt-5-nano')) return { input: 'openai_gpt5_nano_input', output: 'openai_gpt5_nano_output' };
@@ -55,7 +57,7 @@ function getOpenAIServiceKeys(modelName: string): { input: string; output: strin
 /**
  * Track OpenAI usage with correct per-model pricing
  *
- * Supports gpt-5, gpt-5-mini, gpt-5-nano, gpt-4o, gpt-4o-mini with separate rates.
+ * Supports gpt-5, gpt-5-mini, gpt-5-nano, gpt-4o, and gpt-4o-mini with separate rates.
  * Handles cached input tokens at 50% discount.
  *
  * @param userId - User to bill
@@ -86,7 +88,7 @@ export async function trackOpenAIUsage(params: {
 
   // Determine service keys based on model
   const { input: inputServiceKey, output: outputServiceKey } = getOpenAIServiceKeys(modelName);
-  // Cached input: gpt-5 family doesn't expose cached keys, fall back to same as input
+  // Cached input tokens use the same rate key (50% discount applied in calculateServiceCost)
   const cachedInputServiceKey = inputServiceKey;
 
   // Calculate costs for uncached input, cached input, and output separately

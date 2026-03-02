@@ -37,6 +37,19 @@ export async function POST(request: NextRequest) {
       );
     }
 
+    // Demo account guard
+    const { data: projectWithUser } = await supabaseAdmin
+      .from('projects')
+      .select('user_id')
+      .eq('id', projectId)
+      .single() as { data: { user_id: string } | null };
+    if (projectWithUser?.user_id) {
+      const { data: { user: projectUser } } = await supabaseAdmin.auth.admin.getUserById(projectWithUser.user_id);
+      if (projectUser?.email === process.env.DEMO_EMAIL) {
+        return NextResponse.json({ error: 'Demo account is read-only' }, { status: 403 });
+      }
+    }
+
     // Extract unique content type IDs for database tracking
     const selectedContentTypes = Array.from(
       new Set(blocks.map((b: ContentBlock) => b.contentTypeId))

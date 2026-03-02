@@ -24,6 +24,7 @@ import { InsufficientCreditError } from '@/lib/billing/credit';
 import { autoCorrectSpeakers, applySpeakerCorrections } from '@/lib/utils/autoCorrectSpeakers';
 import { classifyProjectTypeWithAI, type ProjectType } from '@/lib/utils/classifyProjectType';
 import { correctDebateSpeakers, applyDebateCorrectionToSpeakerData, summarizeDebateCorrections } from '@/lib/utils/correctDebateSpeakers';
+import { getOpenAIApiKeyForUser } from '@/lib/openai/consent';
 
 // Allow this function to run for up to 5 minutes (300 seconds)
 export const maxDuration = 300;
@@ -195,6 +196,7 @@ async function runBackgroundContentTasks(params: {
           transcriptContext: finalTranscription,
           userId,
           projectId,
+          apiKey: openaiApiKey || undefined,
         }
       );
 
@@ -224,7 +226,8 @@ async function runBackgroundContentTasks(params: {
       const summary = await generatePodcastSummary(finalTranscription, {
         speakerContext,
         userId,
-        projectId
+        projectId,
+        apiKey: openaiApiKey || undefined,
       });
       await markSuccess('summary', { ai_summary: summary.summary });
     } catch (error: any) {
@@ -239,7 +242,8 @@ async function runBackgroundContentTasks(params: {
       const chapters = await detectPodcastChapters(finalTranscription, transcriptionSegments, {
         speakerContext,
         userId,
-        projectId
+        projectId,
+        apiKey: openaiApiKey || undefined,
       });
       await markSuccess('chapters', { chapters: chapters.chapters });
     } catch (error: any) {
@@ -254,7 +258,8 @@ async function runBackgroundContentTasks(params: {
       const takeaways = await extractKeyTakeaways(finalTranscription, {
         speakerContext,
         userId,
-        projectId
+        projectId,
+        apiKey: openaiApiKey || undefined,
       });
       await markSuccess('takeaways', { key_takeaways: takeaways.takeaways });
     } catch (error: any) {
@@ -269,7 +274,8 @@ async function runBackgroundContentTasks(params: {
       const quotes = await extractSocialQuotes(finalTranscription, {
         speakerContext,
         userId,
-        projectId
+        projectId,
+        apiKey: openaiApiKey || undefined,
       });
       await markSuccess('quotes', { social_quotes: quotes.quotes });
     } catch (error: any) {
@@ -371,6 +377,7 @@ export async function POST(request: NextRequest) {
       };
 
     const hasCache = existingProject && existingProject.transcription_text;
+    const openaiApiKey = await getOpenAIApiKeyForUser(existingProject?.user_id);
 
     if (hasCache) {
       console.log('[TRANSCRIPTION] ♻️ Cache detected - skipping transcription, will apply tier features only');
@@ -664,7 +671,7 @@ export async function POST(request: NextRequest) {
         finalTranscription,
         speakerSegments, // Use RAW segments, not LLM-processed ones
         {
-          openaiApiKey: process.env.OPENAI_API_KEY,
+          openaiApiKey,
           userId: existingProject?.user_id,
           projectId,
         }
@@ -686,7 +693,7 @@ export async function POST(request: NextRequest) {
 
     // ============================================================
     // STEP 3: LLM PIPELINE (Always runs first)
-    // GPT-4o extracts speaker names → GPT-4o-mini reassigns segments
+    // GPT-5 extracts speaker names → GPT-5-nano reassigns segments
     // This provides the ROSTER that debate correction needs
     // ============================================================
     let speakersWithNames = detectedSpeakers;
@@ -712,7 +719,7 @@ export async function POST(request: NextRequest) {
     if (features.nameExtraction || features.aiSummary) {
       console.log(`\n========================================`);
       console.log(`[LLM] 🤖 STEP 1: Running LLM Pipeline (Always First)`);
-      console.log(`[LLM] Using GPT-4o (intelligence) + GPT-4o-mini (reassignment)`);
+      console.log(`[LLM] Using GPT-5 (intelligence) + GPT-5-nano (reassignment)`);
       console.log(`[LLM] Purpose: Extract speaker names to build roster`);
       console.log(`========================================\n`);
 
@@ -722,16 +729,16 @@ export async function POST(request: NextRequest) {
           await updateProcessingProgress(projectId, {
             stage: 'name_extraction' as ProcessingStage,
             progress: 0,
-            message: 'Running speaker attribution (GPT + Claude)...'
+            message: 'Running speaker attribution (GPT-5 + GPT-5-nano)...'
           });
 
           console.log('[AI] 📝 Starting refactored speaker attribution pipeline...');
 
-          // Run refactored pipeline: GPT-4o (intelligence) → GPT-4o-mini (reassignment)
+          // Run refactored pipeline: GPT-5 (intelligence) → GPT-5-nano (reassignment)
           const { runRefactoredSpeakerPipeline } = await import('@/lib/refactored-speaker-pipeline');
 
           const pipelineResult = await runRefactoredSpeakerPipeline(speakerSegments, {
-            openaiApiKey: process.env.OPENAI_API_KEY,
+            openaiApiKey,
             userId: existingProject?.user_id,
             projectId,
             filename: fileName, // Pass filename for priming
@@ -740,11 +747,17 @@ export async function POST(request: NextRequest) {
             projectType,
             mappingMode: 'csp',
             hasPresetRoster: hasRoster,
+            presetRoster: hasRoster
+              ? existingProject!.preset_speakers!.map((s: any) => ({
+                  name: s.name,
+                  role: s.role ?? null,
+                }))
+              : undefined,
           });
 
           // Use GPT's authoritative speaker data
           speakersWithNames = pipelineResult.speakerData.speakers;
-          reassignedSegments = pipelineResult.segments; // Use GPT-4o-mini reassigned segments
+          reassignedSegments = pipelineResult.segments; // Use GPT-5-nano reassigned segments
           pipelineDiagnostics = pipelineResult.diagnostics;
           console.log(`[PIPELINE] Mapper used: ${pipelineResult.diagnostics?.mapperUsed || 'unknown'}`);
 
@@ -767,10 +780,10 @@ export async function POST(request: NextRequest) {
 
           // Log pipeline results
           console.log(`[AI] ✅ Pipeline complete:`);
-          console.log(`  - GPT-4o identified ${pipelineResult.speakers.length} authoritative speakers`);
-          console.log(`  - GPT-4o-mini reassigned: ${pipelineResult.segments.length} segments`);
+          console.log(`  - GPT-5 identified ${pipelineResult.speakers.length} authoritative speakers`);
+          console.log(`  - GPT-5-nano reassigned: ${pipelineResult.segments.length} segments`);
           console.log(`  - LLM Roster extracted: ${llmExtractedRoster.map(r => r.name).join(', ') || '(none)'}`);
-          console.log(`  - Cost: ~$0.015-0.03 (GPT-4o + GPT-4o-mini)`);
+          console.log(`  - Cost: ~$0.015-0.03 (GPT-5 + GPT-5-nano)`);
 
           pipelineResult.speakers.forEach(speaker => {
             console.log(`    ${speaker.id}: ${speaker.name || '(unnamed)'} [${speaker.role}]`);
@@ -780,7 +793,7 @@ export async function POST(request: NextRequest) {
           await updateProcessingProgress(projectId, {
             stage: 'name_extraction' as ProcessingStage,
             progress: 100,
-            message: `Identified ${pipelineResult.speakers.length} speakers (GPT-4o + GPT-4o-mini)`
+            message: `Identified ${pipelineResult.speakers.length} speakers (GPT-5 + GPT-5-nano)`
           });
         } catch (error: any) {
           console.error('[AI] ⚠️ Refactored pipeline failed:', error.message);
@@ -803,7 +816,12 @@ export async function POST(request: NextRequest) {
           ])
         );
 
-        const preProcessResult = await preProcessTranscript(finalTranscription, { speakerContext });
+        const preProcessResult = await preProcessTranscript(finalTranscription, {
+          speakerContext,
+          userId: existingProject?.user_id,
+          projectId,
+          apiKey: openaiApiKey || undefined,
+        });
         narrativeMetadata = preProcessResult.metadata;
         console.log('[AI] ✅ Pre-processing complete');
       } catch (error: any) {

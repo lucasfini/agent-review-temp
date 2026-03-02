@@ -236,3 +236,76 @@
 .dashboard-page ::-webkit-scrollbar-thumb:hover {
   background: #475569;
 }
+
+/* ── Driver.js dark theme overrides ────────────────────────────────────── */
+.driver-popover {
+  --driver-popover-bg-color: #1e293b;
+  --driver-popover-text-color: #f1f5f9;
+  --driver-popover-border-color: #334155;
+  --driver-overlay-color: rgba(0, 0, 0, 0.75);
+  background-color: #1e293b !important;
+  color: #f1f5f9 !important;
+  border: 1px solid #334155 !important;
+  border-radius: 0.75rem !important;
+  min-width: 320px !important;
+  width: 420px !important;
+  max-width: 92vw !important;
+}
+.driver-popover-title {
+  color: #f8fafc !important;
+  font-size: 0.95rem !important;
+  font-weight: 600 !important;
+}
+.driver-popover-description {
+  color: #cbd5e1 !important;
+  font-size: 0.8rem !important;
+  line-height: 1.6 !important;
+}
+.driver-popover-footer .driver-popover-btn-disabled {
+  color: #475569 !important;
+}
+.driver-popover-footer {
+  flex-wrap: wrap !important;
+  gap: 0.5rem !important;
+}
+.driver-popover-progress-text {
+  flex: 1 1 100% !important;
+}
+.driver-popover-navigation-btns {
+  flex: 1 1 100% !important;
+  justify-content: flex-end !important;
+  gap: 0.5rem !important;
+}
+.driver-popover-next-btn,
+.driver-popover-done-btn {
+  background-color: #3b82f6 !important;
+  color: #fff !important;
+  border: none !important;
+  border-radius: 0.5rem !important;
+  font-size: 0.8rem !important;
+  font-weight: 500 !important;
+  padding: 0.375rem 0.875rem !important;
+}
+.driver-popover-next-btn:hover,
+.driver-popover-done-btn:hover {
+  background-color: #2563eb !important;
+}
+.driver-popover-prev-btn {
+  background-color: transparent !important;
+  color: #94a3b8 !important;
+  border: 1px solid #334155 !important;
+  border-radius: 0.5rem !important;
+  font-size: 0.8rem !important;
+  padding: 0.375rem 0.875rem !important;
+}
+.driver-popover-prev-btn:hover {
+  color: #f1f5f9 !important;
+  border-color: #475569 !important;
+}
+.driver-popover-progress-text {
+  color: #64748b !important;
+  font-size: 0.75rem !important;
+}
+.driver-overlay {
+  background: rgba(0, 0, 0, 0.75) !important;
+}

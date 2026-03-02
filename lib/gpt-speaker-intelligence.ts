@@ -40,8 +40,9 @@ EVIDENCE HIERARCHY (strongest to weakest):
 
 NEVER EXTRACT AS SPEAKERS:
 - Locations: "New York", "Washington D.C."
-- Organizations: "The White House", "NBC News", "The New York Times"
+- Organizations: "The White House", "NBC News", "The New York Times", "Nvidia", "Salesforce"
 - Show names: "Pod Save America", "The Daily Show"
+- Transition Phrases: "Nvidia here", "the market today", "this week"
 - Historical figures quoted but not present
 - People mentioned in third person only ("John said last week...")
 - Names from ad reads unless they also appear in main content
@@ -52,6 +53,12 @@ The first 1-2 minutes often contain sponsor reads. Signs:
 - "Use code [X] for discount..."
 - Website URLs, promotional language
 If a voice ONLY appears in promotional content, classify as role=advertiser.
+
+TRANSITION RULE:
+Hosts often end an introduction with a topic or company name:
+  "Joining us is Gil Luria... I want to start with Nvidia here."
+In this case, Gil Luria is the speaker. "Nvidia here" is the TOPIC.
+ALWAYS prioritize a human name mentioned earlier in the introduction over a proper noun at the very end of the introduction.
 
 OUTRO/CLOSING BIO RULE:
 Many podcast hosts read a biographical summary of the guest near the END of the episode, in third person:
@@ -70,7 +77,7 @@ Speaker diarization software occasionally misattributes 1-2 segments to the wron
 NAME VALIDATION:
 - A valid name is 1-3 words (max 4 for rare cases like "Mary Jane Watson Parker")
 - NEVER extract phrases, clauses, or sentence fragments as names
-- Invalid: "in full support of", "so happy to share the stage", "speaking now is"
+- Invalid: "in full support of", "so happy to share the stage", "speaking now is", "Nvidia here"
 - If you cannot isolate a clean name, set name to null
 - For debate/panel MODERATORS: if no personal name is explicitly stated, use null.
   Do NOT use institutional titles (e.g. "MSU president", "dean of students",
@@ -96,10 +103,11 @@ KEY RULES:
 
 3. CONSOLIDATION: One person = one speaker ID. If "Jessica" and "Jess" are the same person, merge them.
 
-4. NAME EXTRACTION: Only extract FULL PROPER NAMES:
+4. NAME EXTRACTION: Only extract FULL PROPER NAMES of HUMANS:
    - Valid: "Olami Olaleri", "Sam Harris", "Dr. Jane Smith", "JJ"
-   - INVALID: Adjectives ("Nigerian", "American"), possessives ("your second"), phrases ("the one"), descriptors ("student", "candidate")
+   - INVALID: Company names ("Nvidia", "Salesforce"), Adjectives ("Nigerian", "American"), possessives ("your second"), phrases ("the one"), descriptors ("student", "candidate")
    - If you see "My name is Olami" but also "I'm Nigerian" → extract "Olami", NOT "Nigerian"
+   - If a host says "Joining us is Gil Luria... let's start with Nvidia here", the speaker's name is "Gil Luria", NOT "Nvidia".
    - If you cannot extract a clean proper name, set name to null
 
 5. SPEAKER COUNT: The audio diarization detected {{CLUSTER_COUNT}} distinct voice clusters.
@@ -169,6 +177,7 @@ export async function identifySpeakersWithGPT(
     projectId?: string;
     filename?: string;
     speakerCount?: number;
+    presetRoster?: Array<{ name: string; role?: string | null }>;
   } = {}
 ): Promise<GPTSpeakerIntelligenceResult> {
   const apiKey = options.apiKey || process.env.OPENAI_API_KEY;
@@ -191,6 +200,27 @@ export async function identifySpeakersWithGPT(
   let userPrompt = GPT_USER_PROMPT_TEMPLATE.replace('{{UTTERANCES}}', utteranceContext);
   userPrompt = userPrompt.replace(/\{\{CLUSTER_COUNT\}\}/g, String(clusterCount));
   userPrompt = userPrompt.replace('{{FILENAME}}', filename);
+
+  // Inject KNOWN SPEAKERS block if a preset roster was provided
+  if (options.presetRoster && options.presetRoster.length > 0) {
+    const rosterLines = options.presetRoster.map((s, i) => {
+      const roleStr = s.role ? ` [${s.role}]` : '';
+      return `${i + 1}. ${s.name}${roleStr}`;
+    });
+    const knownSpeakersBlock = [
+      'KNOWN SPEAKERS (pre-identified by the uploader — use these names in your output):',
+      ...rosterLines,
+      '',
+      'For each detected speaker cluster, check whether the transcript contains evidence',
+      '(self-introduction, introduction by another speaker, or name mentions in their own',
+      'segments) that links them to one of the above names. If so, use that exact name.',
+      'Remaining speakers not covered by the roster should still be identified normally.',
+      '',
+    ].join('\n');
+    userPrompt = userPrompt.replace('\nTRANSCRIPT:\n', '\n' + knownSpeakersBlock + '\nTRANSCRIPT:\n');
+    const rosterNames = options.presetRoster.map(s => s.name).join(', ');
+    console.log(`[GPT INTELLIGENCE] Injecting preset roster: ${rosterNames}`);
+  }
 
   // Handle EXPECTED_SPEAKER_COUNT conditional block
   if (options.speakerCount) {
@@ -486,7 +516,8 @@ function validateGPTSpeakers(speakers: GPTSpeaker[]): string[] {
     { pattern: /\b(new york|new jersey|los angeles|boston|chicago|london|paris|washington)\b/i, type: 'location' },
     { pattern: /\b(nbc|cnn|fox news|bbc|npr|msnbc|abc|cbs)\b/i, type: 'network' },
     { pattern: /\b(pod save america|the daily show|the bugle|raging moderates)\b/i, type: 'show' },
-    { pattern: /\b(leicester square|madison square|comedy store|theatre|theater)\b/i, type: 'venue' }
+    { pattern: /\b(leicester square|madison square|comedy store|theatre|theater)\b/i, type: 'venue' },
+    { pattern: /\b(nvidia|microsoft|apple|google|amazon|meta|tesla|salesforce)\b/i, type: 'company' }
   ];
 
   for (const speaker of speakers) {
@@ -534,7 +565,7 @@ function validateGPTSpeakers(speakers: GPTSpeaker[]): string[] {
 // from being treated as valid initials/nicknames.
 const COMMON_NON_NAME_WORDS = new Set([
   // Prepositions and conjunctions
-  'in', 'on', 'at', 'to', 'by', 'of', 'or', 'an', 'as', 'if', 'so', 'no', 'up',
+  'in', 'on', 'at', 'to', 'by', 'of', 'or', 'an', 'as', 'if', 'so', 'no', 'up', 'here',
   // Pronouns
   'me', 'we', 'he', 'us', 'it', 'my',
   // Short verbs
@@ -575,7 +606,7 @@ function isValidSpeakerName(name: string): boolean {
   const stopwords = new Set([
     // Articles and conjunctions
     'the', 'a', 'an', 'and', 'or', 'of', 'to', 'for', 'with', 'on', 'in', 'at',
-    'by', 'from', 'this', 'that', 'these', 'those',
+    'by', 'from', 'this', 'that', 'these', 'those', 'here',
     // Possessives
     'my', 'your', 'his', 'her', 'their', 'our',
     // Modals and verbs

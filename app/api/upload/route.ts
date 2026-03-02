@@ -4,6 +4,13 @@ import { supabaseAdmin } from '@/lib/supabase/server';
 import { updateProcessingProgress } from '@/lib/progress-tracker';
 import { computeAudioFingerprint } from '@/lib/audio-fingerprint';
 import { getCachedTranscription, applyCachedTranscriptionToProject } from '@/lib/transcription-cache';
+import {
+  MAX_FILE_SIZE_BYTES,
+  LARGE_FILE_THRESHOLD_BYTES,
+  ESTIMATED_BITRATE_BPS,
+  ALLOWED_TYPES,
+  ALLOWED_EXTENSIONS,
+} from '@/lib/upload-constants';
 import * as http from 'http';
 import * as https from 'https';
 
@@ -62,19 +69,6 @@ function fireAndForgetPost(
   req.write(requestBody);
   req.end();
 }
-
-const MAX_FILE_SIZE = 500 * 1024 * 1024; // 500MB
-const ALLOWED_TYPES = [
-  'audio/mpeg',
-  'audio/wav', 
-  'audio/mp4',
-  'audio/m4a',
-  'audio/flac',
-  'audio/ogg',
-  'audio/webm'
-];
-
-const ALLOWED_EXTENSIONS = ['.mp3', '.wav', '.m4a', '.flac', '.ogg', '.webm'];
 
 type PerformanceLevel = 'basic' | 'pro' | 'premium';
 
@@ -162,7 +156,7 @@ export async function POST(request: NextRequest) {
     }
 
     // File size validation
-    if (file.size > MAX_FILE_SIZE) {
+    if (file.size > MAX_FILE_SIZE_BYTES) {
       return NextResponse.json(
         { error: 'File size exceeds 500MB limit' },
         { status: 400 }
@@ -185,7 +179,7 @@ export async function POST(request: NextRequest) {
     const sanitizedBaseName = sanitizeFileName(file.name);
 
     // Get file duration (we'll estimate it for now, can be improved later)
-    const estimatedDuration = Math.round(file.size / (128000 / 8)); // Rough estimate based on 128kbps
+    const estimatedDuration = Math.round(file.size / (ESTIMATED_BITRATE_BPS / 8)); // Rough estimate
 
     const fileArrayBuffer = await file.arrayBuffer();
     const fileBuffer = Buffer.from(fileArrayBuffer);
@@ -215,6 +209,11 @@ export async function POST(request: NextRequest) {
         message: 'Demo upload successful (please sign up for full functionality)',
         demo: true
       });
+    }
+
+    // Demo account guard
+    if (user.email === process.env.DEMO_EMAIL) {
+      return NextResponse.json({ error: 'Demo account is read-only' }, { status: 403 });
     }
 
     console.log('Authenticated user:', user.id);
@@ -372,7 +371,7 @@ export async function POST(request: NextRequest) {
 
       // For large files (>25MB), skip Supabase Storage and use in-memory only
       // This avoids timeout issues with Supabase Storage
-      const isLargeFile = file.size > 25 * 1024 * 1024;
+      const isLargeFile = file.size > LARGE_FILE_THRESHOLD_BYTES;
 
       if (isLargeFile) {
         console.log(`Large file detected (${(file.size / 1024 / 1024).toFixed(2)}MB) - using in-memory storage only`);

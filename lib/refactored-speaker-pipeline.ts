@@ -266,6 +266,7 @@ export async function runRefactoredSpeakerPipeline(
     projectType?: string;
     mappingMode?: 'csp' | 'llm';
     hasPresetRoster?: boolean;
+    presetRoster?: Array<{ name: string; role?: string | null }>;
   } = {}
 ): Promise<RefactoredPipelineResult> {
   console.log('\n========================================');
@@ -297,7 +298,8 @@ export async function runRefactoredSpeakerPipeline(
       userId: options.userId,
       projectId: options.projectId,
       filename: options.filename,
-      speakerCount: options.speakerCount
+      speakerCount: options.speakerCount,
+      presetRoster: options.presetRoster,
     });
 
     console.log(`\n✓ Pass 1 complete: ${gptResult.speakers.length} authoritative speakers identified`);
@@ -1163,6 +1165,22 @@ export async function runRefactoredSpeakerPipeline(
   }
 
   // ============================================
+  // POST-PROCESS: INTRO-HANDOFF CONFIDENCE CORRECTION
+  // ============================================
+  console.log('\n--- POST-PROCESS: INTRO-HANDOFF CONFIDENCE CORRECTION ---\n');
+
+  const introHandoffConfResult = correctIntroHandoffConfidence(
+    mappingResult.segments,
+    gptResult.speakers
+  );
+  if (introHandoffConfResult.corrected > 0) {
+    mappingResult.segments = introHandoffConfResult.segments;
+    console.log(`[INTRO-HANDOFF CONF] Elevated ${introHandoffConfResult.corrected} uncertain segment(s) → tentative (handoff_consensus)`);
+  } else {
+    console.log('[INTRO-HANDOFF CONF] No uncertain intro-handoff segments to correct');
+  }
+
+  // ============================================
   // BUILD FINAL OUTPUT
   // ============================================
 
@@ -1375,7 +1393,8 @@ function normalizeSpeakerName(name: string): string {
 
 const INTRO_STOPWORDS = new Set([
   'you','your','our','and','the','to','for','with','from','this','that','these','those','we','us','they','them',
-  'a','an','in','on','at','by','of','is','are','will','can','go','ahead','move','next','first','last'
+  'a','an','in','on','at','by','of','is','are','will','can','go','ahead','move','next','first','last',
+  'here','there','now','today','back'   // prevent "Nvidia here", "Tesla there", etc.
 ]);
 
 function isValidIntroNameCandidate(raw: string): boolean {
@@ -1384,7 +1403,8 @@ function isValidIntroNameCandidate(raw: string): boolean {
   const hasLongToken = tokens.some(t => t.length >= 3);
   if (!hasLongToken) return false;
   if (tokens.some(t => INTRO_STOPWORDS.has(t.toLowerCase()))) return false;
-  return tokens.every(t => /^[A-Za-z'-.]+$/.test(t));
+  if (!tokens.every(t => /^[A-Za-z'-.]+$/.test(t))) return false;
+  return isPlausibleHumanName(raw);   // final gate: must look like a real person's name
 }
 
 function extractIntroHandoffNames(
@@ -2571,6 +2591,45 @@ function sanitizeSponsorName(raw: string): string {
   }
 
   return name || 'Unknown Sponsor';
+}
+
+// ============================================
+// POST-PROCESS: INTRO-HANDOFF CONFIDENCE CORRECTION
+// ============================================
+// Speakers seeded via intro-handoff patterns ("we are speaking with Ian Bremmer")
+// often have no linguistic anchors in their AssemblyAI cluster, so the
+// confidence-scoring system gives them acoustic_only scores that fall below
+// CONFIDENCE_THRESHOLD. The intro phrase is itself a strong handoff signal, so
+// we elevate those segments above the uncertain floor with handoff_consensus.
+function correctIntroHandoffConfidence(
+  segments: SpeakerSegment[],
+  roster: GPTSpeaker[]
+): { segments: SpeakerSegment[]; corrected: number } {
+  const UNCERTAIN_FLOOR = 0.65;
+
+  const introHandoffIds = new Set(
+    roster.filter(s => s.source === 'intro_handoff').map(s => s.id)
+  );
+
+  if (introHandoffIds.size === 0) return { segments, corrected: 0 };
+
+  let corrected = 0;
+  const updated = segments.map(seg => {
+    const finalId = (seg as any).finalSpeakerId || seg.speakerId;
+    if (!introHandoffIds.has(finalId)) return seg;
+    if ((seg.confidence ?? 0) >= 0.6) return seg;            // already above threshold
+    if ((seg as any).status === 'confirmed') return seg;      // don't touch confirmed
+
+    corrected++;
+    return {
+      ...seg,
+      confidence: Math.max(seg.confidence ?? 0, UNCERTAIN_FLOOR),
+      status: 'tentative' as const,
+      confidenceReason: 'handoff_consensus' as const,
+    };
+  });
+
+  return { segments: updated, corrected };
 }
 
 /**

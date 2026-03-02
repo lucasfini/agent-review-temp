@@ -1,9 +1,12 @@
 "use client";
 
 import { useState, useCallback, useEffect, useRef } from 'react';
-import { Upload, FileAudio, X, AlertCircle, CheckCircle, Clock, History, Trash2, Eye, FileVideo, Loader2, ChevronDown, ChevronUp } from 'lucide-react';
+import { Upload, FileAudio, X, AlertCircle, CheckCircle, Clock, History, Trash2, Eye, FileVideo, Loader2, ChevronDown, ChevronUp, Lightbulb, Users, Mic, Pencil, Lock } from 'lucide-react';
+import Link from 'next/link';
 import { supabase } from '@/lib/supabase/client';
+import { LARGE_FILE_THRESHOLD_BYTES, UPLOAD_TIMEOUT_MS } from '@/lib/upload-constants';
 import { useAuth } from '@/lib/auth/context';
+import { DemoTour } from '@/components/demo/DemoTour';
 import { calculateOverallProgress, getStageDisplayName, type ProcessingStage } from '@/lib/tier-progress-config';
 import { SpeakerRosterForm, type RosterSpeaker } from '@/components/SpeakerRosterForm';
 import { useAudioExtractor } from '@/lib/hooks/useAudioExtractor';
@@ -11,6 +14,7 @@ import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogDescription } f
 
 type PerformanceLevel = 'basic' | 'pro' | 'premium';
 type IntegrationProvider = 'zoom' | 'microsoft';
+const HISTORY_PAGE_SIZE = 10;
 
 interface IntegrationStatus {
   provider: IntegrationProvider;
@@ -86,23 +90,23 @@ const TIER_OPTIONS: { id: PerformanceLevel; label: string; accuracy: string; cos
   {
     id: 'basic',
     label: 'Basic',
-    accuracy: 'Standard accuracy',
+    accuracy: 'AssemblyAI Universal-1',
     cost: '$0.37/hr',
-    description: 'Transcription + speakers + educational insights with research links',
+    description: 'Fast transcription + diarization with no AI enhancement.',
   },
   {
     id: 'pro',
     label: 'Pro',
-    accuracy: 'Enhanced accuracy',
+    accuracy: 'GPT-5 + GPT-5-nano + GPT-5-mini',
     cost: '$0.44/hr',
-    description: 'Basic + AI summary + named speakers + insight definitions',
+    description: 'GPT-5 builds the speaker roster, GPT-5-nano maps segments, GPT-5-mini generates the episode summary.',
   },
   {
     id: 'premium',
     label: 'Premium',
-    accuracy: 'Maximum accuracy',
+    accuracy: 'GPT-5 + GPT-5-nano + GPT-5-mini',
     cost: '$0.52/hr',
-    description: 'Pro + roles + chapters + takeaways + quotes + deep insights',
+    description: 'GPT-5 builds the speaker roster, GPT-5-nano handles roles/chapters/takeaways, GPT-5-mini generates summaries + quotes.',
   },
 ];
 
@@ -112,6 +116,9 @@ export default function UploadPage() {
   const [uploadHistory, setUploadHistory] = useState<UploadHistory[]>([]);
   const [showHistory, setShowHistory] = useState(true);
   const [historyLoading, setHistoryLoading] = useState(true);
+  const [historyPage, setHistoryPage] = useState(1);
+  const [historyTotalCount, setHistoryTotalCount] = useState(0);
+  const [historyTotalPages, setHistoryTotalPages] = useState(1);
   const [activeProjects, setActiveProjects] = useState<ActiveProject[]>([]);
   const [activeProjectsLoading, setActiveProjectsLoading] = useState(false);
   const [performanceLevel, setPerformanceLevel] = useState<PerformanceLevel>('premium');
@@ -119,7 +126,7 @@ export default function UploadPage() {
   const [rosterSpeakers, setRosterSpeakers] = useState<RosterSpeaker[]>([]);
   const [speakerCount, setSpeakerCount] = useState<number | undefined>(undefined);
   const [recommendedSpeakerCount, setRecommendedSpeakerCount] = useState<number | undefined>(undefined);
-  const [showAdvancedOptions, setShowAdvancedOptions] = useState(false);
+  const [showAdvancedOptions, setShowAdvancedOptions] = useState(true);
   const [confirmDeleteId, setConfirmDeleteId] = useState<string | null>(null);
   const [integrations, setIntegrations] = useState<IntegrationStatus[]>([]);
   const [integrationsLoading, setIntegrationsLoading] = useState(false);
@@ -139,7 +146,7 @@ export default function UploadPage() {
   const dragCounterRef = useRef(0);
 
   const { extractAudio } = useAudioExtractor();
-  const { user, session } = useAuth();
+  const { user, session, isDemoMode } = useAuth();
 
   // Heuristic to estimate speaker count from title
   const estimateSpeakerCountFromTitle = (filename: string): number | undefined => {
@@ -178,7 +185,8 @@ export default function UploadPage() {
 
   useEffect(() => {
     if (user) {
-      fetchUploadHistory();
+      setHistoryPage(1);
+      fetchUploadHistory(1);
       fetchIntegrations();
       fetchActiveProjects();
     }
@@ -275,23 +283,34 @@ export default function UploadPage() {
     }
   };
 
-  const fetchUploadHistory = async () => {
+  const fetchUploadHistory = async (page = historyPage) => {
     try {
       if (!user?.id) return;
       setHistoryLoading(true);
-      const { data, error } = await supabase
+      const offset = (page - 1) * HISTORY_PAGE_SIZE;
+      const { data, error, count } = await supabase
         .from('projects')
-        .select('id, title, audio_file_name, audio_file_size, audio_duration, status, created_at, processing_completed_at')
+        .select('id, title, audio_file_name, audio_file_size, audio_duration, status, created_at, processing_completed_at', { count: 'exact' })
         .eq('user_id', user.id)
         .in('status', ['completed', 'failed'])
         .order('created_at', { ascending: false })
-        .limit(20) as { data: any[] | null; error: any };
+        .range(offset, offset + HISTORY_PAGE_SIZE - 1) as { data: any[] | null; error: any; count?: number | null };
 
       if (error) {
         console.error('Error fetching upload history:', error);
         return;
       }
 
+      const total = count ?? 0;
+      const totalPages = Math.max(1, Math.ceil(total / HISTORY_PAGE_SIZE));
+      if (page > totalPages && totalPages > 0) {
+        setHistoryPage(totalPages);
+        await fetchUploadHistory(totalPages);
+        return;
+      }
+
+      setHistoryTotalCount(total);
+      setHistoryTotalPages(totalPages);
       setUploadHistory((data || []).filter(item => item.status === 'completed' || item.status === 'failed'));
     } catch (error) {
       console.error('Failed to fetch upload history:', error);
@@ -359,8 +378,8 @@ export default function UploadPage() {
         return;
       }
 
-      setUploadHistory(prev => prev.filter(item => item.id !== projectId));
       setConfirmDeleteId(null);
+      await fetchUploadHistory(historyPage);
     } catch (error) {
       console.error('Failed to delete upload:', error);
       setConfirmDeleteId(null);
@@ -399,6 +418,12 @@ export default function UploadPage() {
       default:
         return <Clock className="h-5 w-5 text-slate-500" />;
     }
+  };
+
+  const handleHistoryPageChange = (nextPage: number) => {
+    if (nextPage < 1 || nextPage > historyTotalPages) return;
+    setHistoryPage(nextPage);
+    fetchUploadHistory(nextPage);
   };
 
   const onDragEnter = useCallback((e: React.DragEvent) => {
@@ -635,7 +660,7 @@ export default function UploadPage() {
         } : f)
       );
 
-      if (uploadedFile.file.size > 25 * 1024 * 1024) {
+      if (uploadedFile.file.size > LARGE_FILE_THRESHOLD_BYTES) {
         console.log(`Large file detected: ${fileSizeMB}MB - this may take a while`);
       }
 
@@ -672,7 +697,7 @@ export default function UploadPage() {
       }, 2000);
 
       const controller = new AbortController();
-      const timeoutId = setTimeout(() => controller.abort(), 300000); // 5 minute timeout
+      const timeoutId = setTimeout(() => controller.abort(), UPLOAD_TIMEOUT_MS);
 
       const response = await fetch('/api/upload', {
         method: 'POST',
@@ -863,8 +888,26 @@ export default function UploadPage() {
           </p>
         </div>
 
+        {/* Demo overlay */}
+        {isDemoMode && (
+          <div className="mb-6 bg-amber-950/50 border border-amber-700/50 rounded-xl p-4 flex items-start gap-3">
+            <div className="flex-shrink-0 h-8 w-8 bg-amber-500/20 rounded-lg flex items-center justify-center mt-0.5">
+              <Eye className="h-4 w-4 text-amber-400" />
+            </div>
+            <div>
+              <p className="text-sm font-semibold text-amber-300">Demo accounts cannot upload audio</p>
+              <p className="text-xs text-amber-400/70 mt-0.5">
+                Sign up to process your own recordings and generate content.
+              </p>
+              <Link href="/auth/signup" className="inline-block mt-2 text-xs font-semibold text-white bg-amber-600 hover:bg-amber-500 px-3 py-1.5 rounded-lg transition-colors">
+                Sign Up Free →
+              </Link>
+            </div>
+          </div>
+        )}
+
         {/* Processing Quality — compact tab toggle, always visible above drop zone */}
-        <div className="mb-5">
+        <div data-tour="tier-selector" className="mb-5">
           <p className="text-sm font-semibold text-slate-100 mb-2">Processing quality</p>
           <div className="grid grid-cols-3 gap-2">
             {TIER_OPTIONS.map((option) => (
@@ -888,6 +931,37 @@ export default function UploadPage() {
                 <p className="text-[11px] text-slate-400 leading-snug">{option.description}</p>
               </button>
             ))}
+          </div>
+        </div>
+
+        {/* Tips for Best Results */}
+        <div className="bg-blue-900/10 border border-blue-500/20 rounded-xl p-4 mb-6">
+          <div className="flex items-center gap-2 mb-3">
+            <Lightbulb className="w-4 h-4 text-blue-400 flex-shrink-0" />
+            <span className="text-sm font-semibold text-blue-400">Tips for Best Results</span>
+          </div>
+          <div className="grid grid-cols-3 gap-4">
+            <div className="flex gap-2.5">
+              <Users className="w-4 h-4 text-blue-400 flex-shrink-0 mt-0.5" />
+              <div>
+                <p className="text-xs font-semibold text-slate-300 mb-0.5">Speaker Count</p>
+                <p className="text-xs text-slate-400 leading-relaxed">Working with 5+ speakers? Manually setting the &apos;Number of Speakers&apos; below drastically improves accuracy for debates and panels.</p>
+              </div>
+            </div>
+            <div className="flex gap-2.5">
+              <Pencil className="w-4 h-4 text-blue-400 flex-shrink-0 mt-0.5" />
+              <div>
+                <p className="text-xs font-semibold text-slate-300 mb-0.5">Naming</p>
+                <p className="text-xs text-slate-400 leading-relaxed">Descriptive filenames like &quot;Interview with [Name]&quot; help our AI automatically identify and name your guests.</p>
+              </div>
+            </div>
+            <div className="flex gap-2.5">
+              <Mic className="w-4 h-4 text-blue-400 flex-shrink-0 mt-0.5" />
+              <div>
+                <p className="text-xs font-semibold text-slate-300 mb-0.5">Audio Quality</p>
+                <p className="text-xs text-slate-400 leading-relaxed">For the best transcription, ensure speakers are close to their mics and background noise is minimal.</p>
+              </div>
+            </div>
           </div>
         </div>
 
@@ -916,13 +990,13 @@ export default function UploadPage() {
         </div>
 
         {activeTab === 'local' && (
-          <div className="mb-6">
+          <div data-tour="upload-zone" className="mb-6">
             <div
               className={`relative border-2 border-dashed rounded-xl transition-all ${
                 isDragActive
                   ? 'border-blue-400 bg-blue-900/20 scale-[1.005]'
                   : 'border-slate-600 bg-slate-900 hover:border-slate-500 hover:bg-slate-800/50'
-              }`}
+              } ${isDemoMode ? 'pointer-events-none opacity-50' : ''}`}
               onDragEnter={onDragEnter}
               onDragLeave={onDragLeave}
               onDragOver={onDragOver}
@@ -1013,7 +1087,7 @@ export default function UploadPage() {
         )}
 
         {activeTab === 'integrations' && (
-          <div className="mb-8">
+          <div data-tour="integrations" className="mb-8">
             <div className="flex items-center justify-between mb-4">
               <div>
                 <h2 className="text-lg font-semibold text-slate-50">Import from apps</h2>
@@ -1292,6 +1366,10 @@ export default function UploadPage() {
                 <p className="text-xs text-slate-400 mt-0.5 mb-2">
                   If you know how many speakers are in your audio, set it here (2–12). Leave on auto-detect if unsure.
                 </p>
+                <p className="text-xs text-blue-400/80 mb-2 flex items-center gap-1.5">
+                  <Users className="w-3 h-3 flex-shrink-0" />
+                  <span>Crucial for debates: Specifying the exact count prevents the AI from merging distinct voices into a single speaker ID.</span>
+                </p>
                 <div className="flex items-center gap-3 flex-wrap">
                   <select
                     id="speaker-count"
@@ -1321,10 +1399,16 @@ export default function UploadPage() {
               </div>
 
               {/* Speaker Roster */}
-              <SpeakerRosterForm
-                speakers={rosterSpeakers}
-                onChange={setRosterSpeakers}
-              />
+              <div data-tour="speaker-roster">
+                <p className="text-xs text-blue-400/80 mb-3 flex items-center gap-1.5">
+                  <Pencil className="w-3 h-3 flex-shrink-0" />
+                  <span>Assigning names and roles here (e.g., Host, Guest) helps the AI match voices to identities from the very first second.</span>
+                </p>
+                <SpeakerRosterForm
+                  speakers={rosterSpeakers}
+                  onChange={setRosterSpeakers}
+                />
+              </div>
             </div>
           )}
         </div>
@@ -1442,9 +1526,10 @@ export default function UploadPage() {
                   </p>
                 </div>
               ) : (
-                <div className="divide-y divide-slate-800">
-                  {uploadHistory.map((item) => (
-                    <div key={item.id} className="p-4 hover:bg-slate-800/50 transition-colors">
+                <>
+                  <div className="divide-y divide-slate-800">
+                    {uploadHistory.map((item) => (
+                      <div key={item.id} className="p-4 hover:bg-slate-800/50 transition-colors">
                       <div className="flex items-center justify-between">
                         <div className="flex items-center space-x-3 flex-1 min-w-0">
                           <div className="flex-shrink-0">
@@ -1519,8 +1604,46 @@ export default function UploadPage() {
                         </div>
                       </div>
                     </div>
-                  ))}
-                </div>
+                    ))}
+                  </div>
+
+                  {historyTotalPages > 1 && (
+                    <div className="flex items-center justify-between px-4 py-3 border-t border-slate-800">
+                      <div className="text-xs text-slate-500">
+                        Page {historyPage} of {historyTotalPages}
+                        {historyTotalCount > 0 && (
+                          <span className="ml-1">· {historyTotalCount} uploads</span>
+                        )}
+                      </div>
+                      <div className="flex items-center gap-2">
+                        <button
+                          type="button"
+                          onClick={() => handleHistoryPageChange(historyPage - 1)}
+                          disabled={historyPage <= 1}
+                          className={`px-2.5 py-1.5 text-xs font-medium rounded border transition-colors ${
+                            historyPage <= 1
+                              ? 'border-slate-800 text-slate-600 cursor-not-allowed'
+                              : 'border-slate-700 text-slate-300 hover:bg-slate-800'
+                          }`}
+                        >
+                          Previous
+                        </button>
+                        <button
+                          type="button"
+                          onClick={() => handleHistoryPageChange(historyPage + 1)}
+                          disabled={historyPage >= historyTotalPages}
+                          className={`px-2.5 py-1.5 text-xs font-medium rounded border transition-colors ${
+                            historyPage >= historyTotalPages
+                              ? 'border-slate-800 text-slate-600 cursor-not-allowed'
+                              : 'border-slate-700 text-slate-300 hover:bg-slate-800'
+                          }`}
+                        >
+                          Next
+                        </button>
+                      </div>
+                    </div>
+                  )}
+                </>
               )}
             </div>
           )}
@@ -1592,6 +1715,7 @@ export default function UploadPage() {
         </Dialog>
 
       </div>
+      {isDemoMode && <DemoTour chapter="upload" />}
     </div>
   );
 }

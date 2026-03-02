@@ -8,6 +8,8 @@ import DashboardNav from '@/components/dashboard/nav';
 import { Loader2 } from 'lucide-react';
 import { CoverageProgressProvider } from '@/lib/context/coverage-progress';
 import { CoverageBanner } from '@/app/dashboard/_banners/coverage-banner';
+import { DemoBanner } from '@/components/demo/DemoBanner';
+import { WelcomeModal } from '@/components/demo/WelcomeModal';
 
 interface ActiveUpload {
   id: string;
@@ -24,15 +26,26 @@ export default function DashboardLayout({
 }: {
   children: React.ReactNode;
 }) {
-  const { user, loading } = useAuth();
+  const { user, loading, isDemoMode } = useAuth();
+  const [showWelcomeModal, setShowWelcomeModal] = useState(false);
   const router = useRouter();
   const [activeUploads, setActiveUploads] = useState<ActiveUpload[]>([]);
+  const [isSidebarCollapsed, setIsSidebarCollapsed] = useState(false);
 
   useEffect(() => {
     if (!loading && !user) {
-      router.push('/auth/signup');
+      router.push('/auth/login');
     }
   }, [user, loading, router]);
+
+  // Show welcome modal for demo users on first visit
+  useEffect(() => {
+    if (!isDemoMode) return;
+    const seen = localStorage.getItem('demoWelcomeSeen');
+    if (!seen) {
+      setShowWelcomeModal(true);
+    }
+  }, [isDemoMode]);
 
   // Poll for in-progress uploads/transcriptions across the whole session
   useEffect(() => {
@@ -75,13 +88,18 @@ export default function DashboardLayout({
 
   return (
     <CoverageProgressProvider>
-      <div className="h-screen flex overflow-hidden bg-slate-950">
+      <div className="h-screen flex flex-col overflow-hidden bg-slate-950">
+        {isDemoMode && <DemoBanner />}
+        <div className="flex flex-1 overflow-hidden">
         <Suspense fallback={<div className="hidden md:block md:w-64 md:flex-shrink-0" />}>
-          <DashboardNav />
+          <DashboardNav
+            isCollapsed={isSidebarCollapsed}
+            onCollapseChange={setIsSidebarCollapsed}
+          />
         </Suspense>
 
         {/* Main content */}
-        <div className="flex flex-col w-0 flex-1 overflow-hidden md:ml-64">
+        <div className={`flex flex-col w-0 flex-1 overflow-hidden ${isSidebarCollapsed ? 'md:ml-20' : 'md:ml-64'}`}>
           <main className="flex-1 relative overflow-y-auto focus:outline-none">
             {children}
           </main>
@@ -89,7 +107,7 @@ export default function DashboardLayout({
 
         {/* Global upload/transcription progress banner */}
         {activeUploads.length > 0 && (
-          <div className="fixed bottom-0 left-0 right-0 md:left-64 z-50 bg-gray-900 text-white px-6 py-3 flex items-center gap-4 shadow-lg">
+          <div className={`fixed bottom-0 left-0 right-0 ${isSidebarCollapsed ? 'md:left-20' : 'md:left-64'} z-50 bg-gray-900 text-white px-6 py-3 flex items-center gap-4 shadow-lg`}>
             <Loader2 className="h-4 w-4 animate-spin flex-shrink-0 text-blue-400" />
             <div className="flex-1 min-w-0">
               <p className="text-sm font-medium truncate">
@@ -117,7 +135,33 @@ export default function DashboardLayout({
 
         {/* Coverage analysis banner — survives navigation via context */}
         <CoverageBanner />
+        </div>
       </div>
+
+      {/* Demo welcome modal */}
+      {isDemoMode && (
+        <WelcomeModal
+          isOpen={showWelcomeModal}
+          onClose={() => {
+            localStorage.setItem('demoWelcomeSeen', '1');
+            setShowWelcomeModal(false);
+          }}
+        />
+      )}
+
+      {/* Floating restart tour button — demo only */}
+      {isDemoMode && (
+        <button
+          onClick={() => {
+            localStorage.removeItem('demoWelcomeSeen');
+            setShowWelcomeModal(true);
+          }}
+          className="fixed bottom-6 right-6 z-50 bg-blue-600 hover:bg-blue-700 text-white text-sm px-3 py-2 rounded-full shadow-lg transition-colors"
+          title="Restart guided tour"
+        >
+          🗺 Tour
+        </button>
+      )}
     </CoverageProgressProvider>
   );
 }

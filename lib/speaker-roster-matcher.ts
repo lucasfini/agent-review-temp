@@ -15,7 +15,7 @@ export interface RosterMatchResult {
   detectedSpeakerId: string;
   rosterSpeaker: PresetSpeaker;
   confidence: number;
-  matchMethod: 'self_intro' | 'speaking_time' | 'introduced_by_other' | 'keyword_freq' | 'speaker_order';
+  matchMethod: 'self_intro' | 'speaking_time' | 'introduced_by_other' | 'keyword_freq' | 'speaker_order' | 'force_assigned';
   evidence: string[];
 }
 
@@ -134,7 +134,7 @@ export async function matchSpeakersToRoster(
       }
     }
 
-    if (bestMatch && bestMatch.score >= 2) {
+    if (bestMatch && bestMatch.score >= 1) {
       matches.push({
         detectedSpeakerId: detectedId,
         rosterSpeaker: bestMatch.roster,
@@ -168,6 +168,32 @@ export async function matchSpeakersToRoster(
     matchedDetectedIds.add(finalUnmatchedDetected[i]);
     matchedRosterIds.add(finalUnmatchedRoster[i].id);
     console.log(`[ROSTER MATCH] ✓ Order fallback: "${finalUnmatchedDetected[i]}" → "${finalUnmatchedRoster[i].name}"`);
+  }
+
+  // FORCE-ASSIGN PASS: guarantee every roster speaker appears in the output
+  // Any roster name still unmatched after Pass 5 is assigned to the highest-speaking-time
+  // unmatched detected speaker. This ensures the user's explicitly provided names always appear.
+  const forceUnmatchedRoster = roster.filter(r => !matchedRosterIds.has(r.id));
+  if (forceUnmatchedRoster.length > 0) {
+    console.log(`[ROSTER MATCH] Force-assign: ${forceUnmatchedRoster.length} roster speaker(s) still unmatched`);
+    const forceUnmatchedDetected = Object.entries(detectedSpeakers)
+      .filter(([id]) => !matchedDetectedIds.has(id))
+      .sort(([, a], [, b]) => b.totalDuration - a.totalDuration);
+
+    for (let i = 0; i < Math.min(forceUnmatchedDetected.length, forceUnmatchedRoster.length); i++) {
+      const [detectedId] = forceUnmatchedDetected[i];
+      const rosterSpeaker = forceUnmatchedRoster[i];
+      matches.push({
+        detectedSpeakerId: detectedId,
+        rosterSpeaker,
+        confidence: 0.50,
+        matchMethod: 'force_assigned',
+        evidence: [`Force-assigned: no transcript evidence found, matched by speaking duration`]
+      });
+      matchedDetectedIds.add(detectedId);
+      matchedRosterIds.add(rosterSpeaker.id);
+      console.log(`[ROSTER MATCH] Force-assigning unmatched roster speaker: ${rosterSpeaker.name} → ${detectedId}`);
+    }
   }
 
   console.log(`[ROSTER MATCH] Complete: ${matches.length} matches from ${Object.keys(detectedSpeakers).length} detected speakers`);

@@ -7,6 +7,7 @@ import { FileText, Clock, CheckCircle, AlertCircle, Eye, Download, Share2, Refre
 import { DropdownMenu, DropdownMenuItem, DropdownMenuSeparator } from '@/components/ui/dropdown-menu';
 import { useAuth } from '@/lib/auth/context';
 import { supabase } from '@/lib/supabase/client';
+import { DemoTour } from '@/components/demo/DemoTour';
 import { useCoverageProgress } from '@/lib/context/coverage-progress';
 import ContentSelectionModal from '@/components/ContentSelectionModal';
 import ExportModal, { type ExportPayload } from '@/components/ExportModal';
@@ -116,6 +117,7 @@ export default function ProjectsPage() {
   const [contextSidebarOpen, setContextSidebarOpen] = useState(true);
   const [activeSpeakerId, setActiveSpeakerId] = useState<string | null>(null);
   const [activeInsightId, setActiveInsightId] = useState<string | null>(null);
+  const isCenterWide = !projectsSidebarOpen && !contextSidebarOpen;
 
   // Export selection state
   const [selectionMode, setSelectionMode] = useState(false);
@@ -160,7 +162,7 @@ export default function ProjectsPage() {
   const [applyingTouchup, setApplyingTouchup] = useState(false);
   const [scrollToSegmentIndex, setScrollToSegmentIndex] = useState<number | null>(null);
 
-  const { user } = useAuth();
+  const { user, isDemoMode } = useAuth();
   const searchParams = useSearchParams();
   const router = useRouter();
 
@@ -324,6 +326,25 @@ export default function ProjectsPage() {
     () => parseSpeakerData(selectedProject?.speaker_data),
     [selectedProject?.speaker_data]
   );
+
+  useEffect(() => {
+    const handler = () => {
+      if (!selectedProject) return;
+      setSelectedProjectForGeneration(selectedProject);
+      setShowContentSelection(true);
+    };
+    window.addEventListener('demoOpenGenerateContent', handler as EventListener);
+    return () => window.removeEventListener('demoOpenGenerateContent', handler as EventListener);
+  }, [selectedProject]);
+
+  const premiumFeaturedId = useMemo(() => {
+    const target = projects.find(
+      p => p.performance_level === 'premium' && p.title?.includes('Future of Work Roundtable')
+    );
+    if (target) return target.id;
+    const firstPremium = projects.find(p => p.performance_level === 'premium');
+    return firstPremium?.id ?? null;
+  }, [projects]);
 
   const accuracyPercent = useMemo(() => {
     if (!parsedSpeakerData) return null;
@@ -1623,6 +1644,7 @@ export default function ProjectsPage() {
         <div className="flex flex-1 overflow-hidden">
             {/* LEFT COLUMN: Projects List (25% on desktop) - Collapsible */}
             <aside
+              data-tour="project-sidebar"
               className={`flex-shrink-0 transition-all duration-300 ease-in-out border-r border-slate-800 bg-slate-900 flex flex-col overflow-hidden ${
                 projectsSidebarOpen
                   ? 'w-80 lg:w-1/4 min-w-[280px] opacity-100'
@@ -1796,6 +1818,7 @@ export default function ProjectsPage() {
                     return (
                     <div
                       key={project.id}
+                      {...(project.id === premiumFeaturedId ? { 'data-tour': 'premium-project' } : {})}
                       className={`group p-4 rounded-xl transition-colors cursor-pointer border overflow-hidden ${
                         selectionMode && isProjectSelected
                           ? 'bg-blue-900/20 border-blue-400'
@@ -1885,40 +1908,42 @@ export default function ProjectsPage() {
                         </div>
 
                         {/* Hover Actions */}
-                        <div className="flex items-center gap-1 opacity-0 group-hover:opacity-100 transition-opacity">
-                          {project.status === 'completed' && project.transcription_text && (
+                        {!isDemoMode && (
+                          <div className="flex items-center gap-1 opacity-0 group-hover:opacity-100 transition-opacity">
+                            {project.status === 'completed' && project.transcription_text && (
+                              <button
+                                onClick={(e) => {
+                                  e.stopPropagation();
+                                  handleGenerateContent(project);
+                                }}
+                                disabled={generatingProjects.has(project.id)}
+                                className="p-1 text-slate-500 hover:text-blue-600 transition-colors rounded hover:bg-blue-900/20"
+                                title={generatingProjects.has(project.id) ? "Generating..." : "Generate content"}
+                              >
+                                {generatingProjects.has(project.id) ? (
+                                  <Loader2 className="h-3.5 w-3.5 animate-spin text-blue-600" />
+                                ) : (
+                                  <Zap className="h-3.5 w-3.5" />
+                                )}
+                              </button>
+                            )}
                             <button
                               onClick={(e) => {
                                 e.stopPropagation();
-                                handleGenerateContent(project);
+                                handleDeleteProject(project.id);
                               }}
-                              disabled={generatingProjects.has(project.id)}
-                              className="p-1 text-slate-500 hover:text-blue-600 transition-colors rounded hover:bg-blue-900/20"
-                              title={generatingProjects.has(project.id) ? "Generating..." : "Generate content"}
+                              disabled={deletingProject === project.id}
+                              className="p-1 text-slate-500 hover:text-red-600 transition-colors rounded hover:bg-red-900/20"
+                              title="Delete project"
                             >
-                              {generatingProjects.has(project.id) ? (
-                                <Loader2 className="h-3.5 w-3.5 animate-spin text-blue-600" />
+                              {deletingProject === project.id ? (
+                                <Loader2 className="h-3.5 w-3.5 animate-spin" />
                               ) : (
-                                <Zap className="h-3.5 w-3.5" />
+                                <Trash2 className="h-3.5 w-3.5" />
                               )}
                             </button>
-                          )}
-                          <button
-                            onClick={(e) => {
-                              e.stopPropagation();
-                              handleDeleteProject(project.id);
-                            }}
-                            disabled={deletingProject === project.id}
-                            className="p-1 text-slate-500 hover:text-red-600 transition-colors rounded hover:bg-red-900/20"
-                            title="Delete project"
-                          >
-                            {deletingProject === project.id ? (
-                              <Loader2 className="h-3.5 w-3.5 animate-spin" />
-                            ) : (
-                              <Trash2 className="h-3.5 w-3.5" />
-                            )}
-                          </button>
-                        </div>
+                          </div>
+                        )}
                       </div>
                           </>
                         );
@@ -1971,11 +1996,15 @@ export default function ProjectsPage() {
                             onBlur={handleSaveProjectTitle}
                             disabled={savingTitle}
                             autoFocus
-                            className="bg-slate-800/50 text-slate-300 px-4 py-1.5 rounded-lg text-sm border border-blue-500/50 outline-none max-w-2xl w-full text-center"
+                            className={`bg-slate-800/50 text-slate-300 px-4 py-1.5 rounded-lg text-sm border border-blue-500/50 outline-none w-full text-center ${
+                              isCenterWide ? 'max-w-none' : 'max-w-2xl'
+                            }`}
                           />
                         ) : (
                           <button
-                            className="group flex items-center gap-2 bg-slate-800/50 text-slate-300 px-4 py-1.5 rounded-lg text-sm hover:bg-slate-800 transition-colors max-w-2xl truncate border border-transparent hover:border-slate-700"
+                            className={`group flex items-center justify-center gap-2 bg-slate-800/50 text-slate-300 px-4 py-1.5 rounded-lg text-sm hover:bg-slate-800 transition-colors w-full truncate border border-transparent hover:border-slate-700 ${
+                              isCenterWide ? 'max-w-none' : 'max-w-2xl'
+                            }`}
                             onClick={() => { setEditingTitleValue(selectedProject.title); setEditingProjectTitle(true); }}
                             title="Click to rename"
                           >
@@ -2024,6 +2053,7 @@ export default function ProjectsPage() {
                           trigger={
                             <button
                               type="button"
+                              data-tour="export-btn"
                               className="p-1.5 text-slate-500 hover:text-slate-400 hover:bg-slate-800 rounded-lg transition-colors"
                             >
                               <MoreHorizontal className="w-4 h-4" />
@@ -2052,21 +2082,23 @@ export default function ProjectsPage() {
                             {refreshing ? 'Refreshing...' : 'Refresh'}
                           </DropdownMenuItem>
                         </DropdownMenu>
-                        <button
-                          onClick={() => handleGenerateContent(selectedProject)}
-                          disabled={generatingProjects.has(selectedProject.id)}
-                          className={`inline-flex items-center gap-1.5 px-3.5 py-1.5 text-sm font-medium rounded-lg transition-colors disabled:opacity-60 disabled:cursor-not-allowed ${
-                            generatingProjects.has(selectedProject.id)
-                              ? 'bg-blue-900/20 text-blue-400'
-                              : 'bg-blue-600 text-white hover:bg-blue-700'
-                          }`}
-                        >
-                          {generatingProjects.has(selectedProject.id) ? (
-                            <><Loader2 className="w-4 h-4 animate-spin" />Generating...</>
-                          ) : (
-                            <><Zap className="w-4 h-4" />Generate</>
-                          )}
-                        </button>
+                        {!isDemoMode && (
+                          <button
+                            onClick={() => handleGenerateContent(selectedProject)}
+                            disabled={generatingProjects.has(selectedProject.id)}
+                            className={`inline-flex items-center gap-1.5 px-3.5 py-1.5 text-sm font-medium rounded-lg transition-colors disabled:opacity-60 disabled:cursor-not-allowed ${
+                              generatingProjects.has(selectedProject.id)
+                                ? 'bg-blue-900/20 text-blue-400'
+                                : 'bg-blue-600 text-white hover:bg-blue-700'
+                            }`}
+                          >
+                            {generatingProjects.has(selectedProject.id) ? (
+                              <><Loader2 className="w-4 h-4 animate-spin" />Generating...</>
+                            ) : (
+                              <><Zap className="w-4 h-4" />Generate</>
+                            )}
+                          </button>
+                        )}
                         <button
                           onClick={() => setContextSidebarOpen(!contextSidebarOpen)}
                           className="hidden lg:flex p-1.5 text-slate-400 hover:text-slate-300 hover:bg-slate-800 rounded-md transition-colors"
@@ -2084,7 +2116,7 @@ export default function ProjectsPage() {
                     {/* Transcript Panel */}
                     <div className="flex flex-col min-h-0 overflow-hidden">
                       {/* Panel Header */}
-                      <div className="flex-shrink-0 flex items-center justify-between px-4 py-3 border-b border-slate-800 bg-slate-900/50">
+                      <div data-tour="transcript-header" className="flex-shrink-0 flex items-center justify-between px-4 py-3 border-b border-slate-800 bg-slate-900/50">
                         <div className="flex items-center gap-2">
                           <BarChart2 className="w-4 h-4 text-blue-400" />
                           <span className="text-slate-100 font-semibold text-sm">Transcript</span>
@@ -2099,6 +2131,7 @@ export default function ProjectsPage() {
                                 <Clock className="w-3 h-3" />
                               </label>
                               <button
+                                data-tour="view-toggle"
                                 onClick={() => setReaderView(v => !v)}
                                 className={`flex items-center gap-1 text-xs px-2 py-0.5 rounded-full border transition-colors ${
                                   readerView ? 'border-blue-800/30 bg-blue-900/20 text-blue-400' : 'border-slate-700 text-slate-500 hover:text-slate-400'
@@ -2355,6 +2388,7 @@ export default function ProjectsPage() {
               }}
               isOpen={contextSidebarOpen}
               onClose={() => setContextSidebarOpen(false)}
+              readOnly={isDemoMode}
               className={`flex-shrink-0 transition-all duration-300 ease-in-out overflow-hidden ${
                 contextSidebarOpen ? 'w-72 lg:w-1/4 min-w-[280px] opacity-100' : 'w-0 opacity-0'
               }`}
@@ -2399,6 +2433,7 @@ export default function ProjectsPage() {
           </div>
         )}
 
+        {isDemoMode && <DemoTour chapter="projects" />}
     </div>
   );
 }

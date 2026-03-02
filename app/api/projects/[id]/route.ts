@@ -175,6 +175,19 @@ export async function DELETE(
 
     console.log(`[API] DELETE /api/projects/${projectId}`);
 
+    // Demo account guard
+    const { data: projectForDelete } = await supabaseAdmin
+      .from('projects')
+      .select('user_id')
+      .eq('id', projectId)
+      .single() as { data: { user_id: string } | null };
+    if (projectForDelete?.user_id) {
+      const { data: { user: projectUser } } = await supabaseAdmin.auth.admin.getUserById(projectForDelete.user_id);
+      if (projectUser?.email === process.env.DEMO_EMAIL) {
+        return NextResponse.json({ error: 'Demo account is read-only' }, { status: 403 });
+      }
+    }
+
     // Delete project (cascade will handle related records)
     const { error } = await supabaseAdmin
       .from('projects')

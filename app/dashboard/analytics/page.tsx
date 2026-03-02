@@ -16,6 +16,7 @@ import {
   Loader2
 } from 'lucide-react';
 import { useAuth } from '@/lib/auth/context';
+import { DemoTour } from '@/components/demo/DemoTour';
 import { supabase } from '@/lib/supabase/client';
 import { useCoverageProgress } from '@/lib/context/coverage-progress';
 
@@ -682,7 +683,7 @@ function ExampleGoalsModal({
 export default function AnalyticsPage() {
   const router = useRouter();
   const searchParams = useSearchParams();
-  const { user } = useAuth();
+  const { user, isDemoMode } = useAuth();
 
   // URL-based project filter
   const projectIdFromUrl = searchParams.get('projectId');
@@ -1299,6 +1300,7 @@ export default function AnalyticsPage() {
         {/* ================================================================== */}
         {/* ROW 1: KPI Cards with Sparklines */}
         {/* ================================================================== */}
+        <div data-tour="analytics-kpis">
         <KPIGrid
           totalProjects={analytics.totalProjects}
           projectsTrend={analytics.trends.projects}
@@ -1314,6 +1316,7 @@ export default function AnalyticsPage() {
           spendTrend={analytics.trends.spend}
           spendSparkline={analytics.sparklines.spend}
         />
+        </div>
 
         {/* ================================================================== */}
         {/* ROW 2: Content Mix + Top Topics */}
@@ -1397,6 +1400,7 @@ export default function AnalyticsPage() {
               </button>
               <button
                 id="tab-goals"
+                data-tour="analytics-goals"
                 role="tab"
                 aria-selected={activeTab === 'goals'}
                 aria-controls="tabpanel-goals"
@@ -1415,7 +1419,7 @@ export default function AnalyticsPage() {
 
           {/* Tab Content */}
           {activeTab === 'insights' && (
-            <div id="tabpanel-insights" role="tabpanel" aria-labelledby="tab-insights" className="p-6">
+            <div id="tabpanel-insights" data-tour="analytics-coverage" role="tabpanel" aria-labelledby="tab-insights" className="p-6">
               <InsightsHeader
                 snapshots={coverageTimeline}
                 selectedSnapshotId={selectedSnapshotId}
@@ -1463,6 +1467,7 @@ export default function AnalyticsPage() {
           }}
         />
       </div>
+      {isDemoMode && <DemoTour chapter="analytics" />}
     </div>
   );
 }

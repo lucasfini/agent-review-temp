@@ -33,6 +33,7 @@ import { cn } from '@/lib/utils';
 import { useAuth } from '@/lib/auth/context';
 import CreditPackages from '@/components/billing/credit-packages';
 import { estimateTranscriptionCost } from '@/lib/billing/cost-map';
+import { supabase } from '@/lib/supabase/client';
 
 // ============================================================================
 // TYPES
@@ -54,6 +55,7 @@ interface GroupedTransaction {
   reason: string;
   projectTitle?: string;
   balanceAfter: number;
+  invoiceNumber?: string | null;
   childCount?: number;
   children?: { reason: string; amount: number; createdAt: string }[];
 }
@@ -251,6 +253,8 @@ export default function UnifiedSettings({ userId, userEmail }: UnifiedSettingsPr
   const [integrations, setIntegrations] = useState<IntegrationStatus[]>([]);
   const [integrationsLoading, setIntegrationsLoading] = useState(false);
   const [integrationsError, setIntegrationsError] = useState<string | null>(null);
+  const [dataSharingOptIn, setDataSharingOptIn] = useState<boolean | null>(null);
+  const [dataSharingSaving, setDataSharingSaving] = useState(false);
 
   const TRANSACTIONS_PER_PAGE = 10;
 
@@ -314,6 +318,19 @@ export default function UnifiedSettings({ userId, userEmail }: UnifiedSettingsPr
 
     fetchIntegrations();
   }, [session?.access_token]);
+
+  useEffect(() => {
+    const fetchConsent = async () => {
+      try {
+        const { data } = await supabase.auth.getUser();
+        const optIn = Boolean(data.user?.user_metadata?.openai_data_sharing_opt_in);
+        setDataSharingOptIn(optIn);
+      } catch (error) {
+        console.warn('Failed to load data sharing preference:', error);
+      }
+    };
+    fetchConsent();
+  }, []);
 
   // Fetch usage data
   useEffect(() => {
@@ -445,12 +462,13 @@ export default function UnifiedSettings({ userId, userEmail }: UnifiedSettingsPr
 
   const handleExportTransactions = () => {
     const csv = [
-      ['Date', 'Type', 'Amount', 'Reason'],
+      ['Date', 'Type', 'Amount', 'Reason', 'Invoice Number'],
       ...transactions.map(t => [
         new Date(t.createdAt).toISOString(),
         t.transactionType,
         t.amount.toFixed(4),
-        t.reason
+        t.reason,
+        t.invoiceNumber || ''
       ])
     ].map(row => row.join(',')).join('\n');
 
@@ -473,6 +491,26 @@ export default function UnifiedSettings({ userId, userEmail }: UnifiedSettingsPr
       }
       return next;
     });
+  };
+
+  const handleToggleDataSharing = async () => {
+    if (dataSharingOptIn === null) return;
+    setDataSharingSaving(true);
+    try {
+      const next = !dataSharingOptIn;
+      const now = new Date().toISOString();
+      await supabase.auth.updateUser({
+        data: {
+          openai_data_sharing_opt_in: next,
+          openai_data_sharing_opt_in_at: next ? now : null,
+        }
+      });
+      setDataSharingOptIn(next);
+    } catch (error) {
+      console.error('Failed to update data sharing preference:', error);
+    } finally {
+      setDataSharingSaving(false);
+    }
   };
 
   const startOAuth = async (provider: IntegrationProvider) => {
@@ -614,6 +652,41 @@ export default function UnifiedSettings({ userId, userEmail }: UnifiedSettingsPr
                       <Save className="h-4 w-4" />
                     )}
                     Save Changes
+                  </button>
+                </div>
+              </CardContent>
+            </Card>
+
+            {/* Data & AI Preferences */}
+            <Card>
+              <CardHeader>
+                <CardTitle>Data & AI</CardTitle>
+                <CardDescription>
+                  Control whether your data is shared with OpenAI for free token benefits
+                </CardDescription>
+              </CardHeader>
+              <CardContent className="space-y-4">
+                <div className="flex items-start justify-between gap-4">
+                  <div>
+                    <p className="text-sm font-medium text-slate-200">
+                      Share data with OpenAI (opt-in)
+                    </p>
+                    <p className="text-xs text-slate-500 mt-1 max-w-md">
+                      If enabled, we will route your AI processing through the OpenAI project with data sharing enabled.
+                      You can change this anytime.
+                    </p>
+                  </div>
+                  <button
+                    type="button"
+                    onClick={handleToggleDataSharing}
+                    disabled={dataSharingSaving || dataSharingOptIn === null}
+                    className={`px-3 py-2 text-xs font-semibold rounded-lg border transition-colors ${
+                      dataSharingOptIn
+                        ? 'bg-emerald-900/20 border-emerald-700 text-emerald-300'
+                        : 'bg-slate-800 border-slate-700 text-slate-300'
+                    } ${dataSharingSaving ? 'opacity-50 cursor-not-allowed' : 'hover:bg-slate-700/50'}`}
+                  >
+                    {dataSharingOptIn ? 'Opted In' : 'Not Opted In'}
                   </button>
                 </div>
               </CardContent>
@@ -798,6 +871,7 @@ export default function UnifiedSettings({ userId, userEmail }: UnifiedSettingsPr
                               <th className="text-left font-medium text-slate-400 px-6 py-3">Date</th>
                               <th className="text-left font-medium text-slate-400 px-6 py-3">Type</th>
                               <th className="text-left font-medium text-slate-400 px-6 py-3">Description</th>
+                              <th className="text-left font-medium text-slate-400 px-6 py-3">Invoice</th>
                               <th className="text-right font-medium text-slate-400 px-6 py-3">Amount</th>
                             </tr>
                           </thead>
@@ -840,6 +914,9 @@ export default function UnifiedSettings({ userId, userEmail }: UnifiedSettingsPr
                                           ({transaction.childCount} items)
                                         </span>
                                       )}
+                                    </td>
+                                    <td className="px-6 py-3 text-slate-300">
+                                      {isGrouped ? '-' : (transaction.invoiceNumber || '-')}
                                     </td>
                                     <td className={cn(
                                       "px-6 py-3 text-right font-semibold",

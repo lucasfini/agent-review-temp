@@ -180,6 +180,8 @@ export async function debitCredit(
   options?: {
     reason?: string;
     metadata?: Record<string, unknown>;
+    transactionType?: 'debit' | 'refund';
+    invoiceNumber?: string;
   }
 ): Promise<{
   success: true;
@@ -226,8 +228,9 @@ export async function debitCredit(
       amount: -amount, // Negative for debit
       balance_before: balance,
       balance_after: result.new_balance,
-      transaction_type: 'debit',
+      transaction_type: options?.transactionType || 'debit',
       usage_event_id: usageEventId,
+      invoice_number: options?.invoiceNumber,
       reason: options?.reason,
       metadata: options?.metadata || {},
     } as any)
@@ -261,6 +264,7 @@ export async function addCredit(
   transactionType: 'purchase' | 'bonus' | 'refund' | 'admin_adjustment' = 'purchase',
   options?: {
     paymentId?: string;
+    invoiceNumber?: string;
     adminUserId?: string;
     reason?: string;
     metadata?: Record<string, unknown>;
@@ -298,6 +302,7 @@ export async function addCredit(
       balance_after: result.new_balance,
       transaction_type: transactionType,
       payment_id: options?.paymentId,
+      invoice_number: options?.invoiceNumber,
       admin_user_id: options?.adminUserId,
       reason: options?.reason,
       metadata: options?.metadata || {},

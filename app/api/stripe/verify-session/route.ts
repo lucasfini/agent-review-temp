@@ -94,8 +94,20 @@ export async function POST(request: NextRequest) {
 
     console.log(`Processing payment verification for user ${user.id}: $${creditsAmount} credits`);
 
+    let invoiceNumber: string | undefined;
+    if (session.invoice) {
+      try {
+        const invoiceId = typeof session.invoice === 'string' ? session.invoice : session.invoice.id;
+        const invoice = await stripe.invoices.retrieve(invoiceId);
+        invoiceNumber = invoice.number || invoice.id;
+      } catch (error) {
+        console.warn(`[STRIPE] Unable to resolve invoice for session ${session.id}:`, error);
+      }
+    }
+
     const result = await addCredit(user.id, creditsAmount, 'purchase', {
       paymentId: session.payment_intent as string,
+      invoiceNumber,
       reason: `Stripe purchase: ${packageId} package (verified on success page)`,
       metadata: {
         sessionId: session.id,

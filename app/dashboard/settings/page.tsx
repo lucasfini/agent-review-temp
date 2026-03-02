@@ -9,9 +9,10 @@
 import { Suspense } from 'react';
 import { useAuth } from '@/lib/auth/context';
 import UnifiedSettings from './unified-settings';
+import { DemoTour } from '@/components/demo/DemoTour';
 
 export default function SettingsPage() {
-  const { user, loading } = useAuth();
+  const { user, loading, isDemoMode } = useAuth();
 
   if (loading) {
     return (
@@ -59,6 +60,7 @@ export default function SettingsPage() {
           </Suspense>
         </div>
       </div>
+      {isDemoMode && <DemoTour chapter="settings" />}
     </div>
   );
 }

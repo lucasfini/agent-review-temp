@@ -50,13 +50,14 @@ export async function classifySpeakerRoles(
     transcriptContext?: string;
     userId?: string;
     projectId?: string;
+    apiKey?: string;
   } = {}
 ): Promise<Record<string, SpeakerRoleClassification>> {
   if (!speakers || Object.keys(speakers).length === 0) {
     return {};
   }
 
-  const apiKey = process.env.OPENAI_API_KEY;
+  const apiKey = options.apiKey || process.env.OPENAI_API_KEY;
   if (!apiKey) {
     console.warn('[SPEAKER ROLES] ⚠️ Missing OPENAI_API_KEY, skipping role classification.');
     return {};

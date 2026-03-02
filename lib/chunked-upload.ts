@@ -16,7 +16,7 @@ export interface ChunkedUploadOptions {
   onChunkComplete?: (chunkIndex: number, totalChunks: number) => void;
 }
 
-const DEFAULT_OPTIONS: Required<ChunkedUploadOptions> = {
+export const CHUNKED_UPLOAD_DEFAULTS: Required<ChunkedUploadOptions> = {
   chunkSizeMB: 10, // 10MB chunks
   maxRetries: 3,
   retryDelayMs: 1000,
@@ -27,7 +27,9 @@ const DEFAULT_OPTIONS: Required<ChunkedUploadOptions> = {
 /**
  * Check if file needs chunked upload
  */
-export function needsChunkedUpload(fileSizeBytes: number, chunkSizeMB: number = 25): boolean {
+export const CHUNKED_UPLOAD_THRESHOLD_MB = 25;
+
+export function needsChunkedUpload(fileSizeBytes: number, chunkSizeMB: number = CHUNKED_UPLOAD_THRESHOLD_MB): boolean {
   const chunkSizeBytes = chunkSizeMB * 1024 * 1024;
   return fileSizeBytes > chunkSizeBytes;
 }
@@ -66,7 +68,7 @@ export async function uploadFileWithChunking(
   uploadUrl: string,
   options: ChunkedUploadOptions = {}
 ): Promise<{ success: boolean; uploadId?: string; error?: string }> {
-  const opts = { ...DEFAULT_OPTIONS, ...options };
+  const opts = { ...CHUNKED_UPLOAD_DEFAULTS, ...options };
 
   try {
     // Check if chunking is needed

@@ -133,6 +133,8 @@ export default function SignupPage() {
   const [isGoogleLoading, setIsGoogleLoading] = useState(false);
   const [error, setError] = useState('');
   const [isSuccess, setIsSuccess] = useState(false);
+  const [termsAccepted, setTermsAccepted] = useState(false);
+  const [openaiOptIn, setOpenaiOptIn] = useState(false);
 
   const { signUp, signInWithGoogle } = useAuth();
   const router = useRouter();
@@ -154,7 +156,12 @@ export default function SignupPage() {
       return;
     }
 
-    const { error } = await signUp(email, password, name.trim() || undefined);
+    const { error } = await signUp(
+      email,
+      password,
+      name.trim() || undefined,
+      { openaiDataSharingOptIn: openaiOptIn }
+    );
 
     if (error) {
       if (error.message?.includes('email') || error.message?.includes('confirmation')) {
@@ -171,6 +178,17 @@ export default function SignupPage() {
   const handleGoogle = async () => {
     setIsGoogleLoading(true);
     setError('');
+    try {
+      const now = new Date().toISOString();
+      window.localStorage.setItem('signup_consents', JSON.stringify({
+        termsAcceptedAt: now,
+        privacyAcceptedAt: now,
+        openaiOptIn,
+        openaiOptInAt: openaiOptIn ? now : null,
+      }));
+    } catch (e) {
+      console.warn('Failed to store signup consents:', e);
+    }
     const { error } = await signInWithGoogle();
     if (error) {
       setError(error.message);
@@ -224,7 +242,7 @@ export default function SignupPage() {
           <button
             type="button"
             onClick={handleGoogle}
-            disabled={isGoogleLoading || isLoading}
+            disabled={isGoogleLoading || isLoading || !termsAccepted}
             className="w-full flex items-center justify-center gap-3 py-3 px-4 bg-slate-900 border border-slate-700 rounded-xl text-sm font-medium text-slate-200 hover:bg-slate-800 focus:outline-none focus:ring-2 focus:ring-blue-500 focus:ring-offset-2 focus:ring-offset-slate-950 disabled:opacity-50 disabled:cursor-not-allowed transition-colors motion-safe:animate-fade-up-400 hover:shadow-[0_0_20px_rgba(59,130,246,0.25)]"
           >
             {isGoogleLoading ? (
@@ -344,9 +362,42 @@ export default function SignupPage() {
               </div>
             )}
 
+            <div className="space-y-3">
+              <label className="flex items-start gap-3 text-sm text-slate-400">
+                <input
+                  type="checkbox"
+                  checked={termsAccepted}
+                  onChange={(e) => setTermsAccepted(e.target.checked)}
+                  className="mt-1 h-4 w-4 rounded border-slate-700 bg-slate-900 text-blue-500 focus:ring-blue-500"
+                />
+                <span>
+                  I agree to the{' '}
+                  <Link href="/terms" className="text-blue-400 hover:text-blue-300">
+                    Terms
+                  </Link>{' '}
+                  and{' '}
+                  <Link href="/privacy" className="text-blue-400 hover:text-blue-300">
+                    Privacy Policy
+                  </Link>.
+                </span>
+              </label>
+
+              <label className="flex items-start gap-3 text-sm text-slate-400">
+                <input
+                  type="checkbox"
+                  checked={openaiOptIn}
+                  onChange={(e) => setOpenaiOptIn(e.target.checked)}
+                  className="mt-1 h-4 w-4 rounded border-slate-700 bg-slate-900 text-blue-500 focus:ring-blue-500"
+                />
+                <span>
+                  Opt in to share data with OpenAI to receive free tokens. We will only share data if you opt in.
+                </span>
+              </label>
+            </div>
+
             <button
               type="submit"
-              disabled={isLoading || isGoogleLoading}
+              disabled={isLoading || isGoogleLoading || !termsAccepted}
               className="w-full bg-blue-600 text-white py-3 rounded-xl text-sm font-semibold hover:bg-blue-700 focus:outline-none focus:ring-2 focus:ring-blue-500 focus:ring-offset-2 focus:ring-offset-slate-950 disabled:opacity-50 disabled:cursor-not-allowed transition-colors mt-2"
             >
               {isLoading ? (

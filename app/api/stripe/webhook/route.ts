@@ -5,7 +5,7 @@
 
 import { NextRequest, NextResponse } from 'next/server';
 import Stripe from 'stripe';
-import { addCredit } from '@/lib/billing/credit';
+import { addCredit, debitCredit } from '@/lib/billing/credit';
 import { supabaseAdmin } from '@/lib/supabase/server';
 
 const stripe = new Stripe(process.env.STRIPE_SECRET_KEY!, {
@@ -102,9 +102,22 @@ async function handleCheckoutComplete(session: Stripe.Checkout.Session) {
 
     console.log(`Processing payment for user ${userId}: $${creditsAmount} credits`);
 
+    // Resolve invoice number from Stripe if available
+    let invoiceNumber: string | undefined;
+    if (session.invoice) {
+      try {
+        const invoiceId = typeof session.invoice === 'string' ? session.invoice : session.invoice.id;
+        const invoice = await stripe.invoices.retrieve(invoiceId);
+        invoiceNumber = invoice.number || invoice.id;
+      } catch (error) {
+        console.warn(`[STRIPE] Unable to resolve invoice for session ${session.id}:`, error);
+      }
+    }
+
     // Add credits to user account
     const result = await addCredit(userId, creditsAmount, 'purchase', {
       paymentId: session.payment_intent as string,
+      invoiceNumber,
       reason: `Stripe purchase: ${packageId} package`,
       metadata: {
         sessionId: session.id,
@@ -133,13 +146,70 @@ async function handleRefund(charge: Stripe.Charge) {
 
     console.log(`Processing refund for payment: ${paymentIntent}`);
 
-    // TODO: Implement refund logic
-    // This would involve:
-    // 1. Finding the original credit transaction by payment_id
-    // 2. Deducting the refunded amount from user's balance
-    // 3. Creating a new transaction with type 'refund' (negative amount)
+    if (!paymentIntent) {
+      console.warn('[STRIPE] Refund missing payment_intent, skipping');
+      return;
+    }
 
-    console.warn('Refund handling not fully implemented yet');
+    const { data: originalTx } = await supabaseAdmin
+      .from('credit_transactions')
+      .select('id, user_id, amount, invoice_number, payment_id')
+      .eq('payment_id', paymentIntent)
+      .eq('transaction_type', 'purchase')
+      .maybeSingle();
+
+    if (!originalTx) {
+      console.warn(`[STRIPE] No original purchase found for payment_intent ${paymentIntent}`);
+      return;
+    }
+
+    const refundId = charge.refunds?.data?.[0]?.id || charge.id;
+    if (refundId) {
+      const { data: existingRefund } = await supabaseAdmin
+        .from('credit_transactions')
+        .select('id')
+        .eq('payment_id', paymentIntent)
+        .eq('transaction_type', 'refund')
+        .contains('metadata', { refundId })
+        .maybeSingle();
+
+      if (existingRefund) {
+        console.log(`[STRIPE] Refund ${refundId} already processed, skipping`);
+        return;
+      }
+    }
+
+    const refundedCents = charge.amount_refunded || 0;
+    const totalCents = charge.amount || 0;
+    if (!totalCents || refundedCents <= 0) {
+      console.warn('[STRIPE] Refund amount is zero, skipping');
+      return;
+    }
+
+    const ratio = refundedCents / totalCents;
+    const originalCredits = Number(originalTx.amount);
+    const refundCredits = Number((originalCredits * ratio).toFixed(4));
+
+    if (refundCredits <= 0) {
+      console.warn('[STRIPE] Computed refund credits is zero, skipping');
+      return;
+    }
+
+    await debitCredit(originalTx.user_id, refundCredits, undefined, {
+      transactionType: 'refund',
+      invoiceNumber: originalTx.invoice_number || undefined,
+      reason: 'Stripe refund',
+      metadata: {
+        refundId,
+        paymentIntent,
+        refundedAmount: refundedCents / 100,
+        originalAmount: totalCents / 100,
+        refundRatio: ratio,
+        chargeId: charge.id,
+      },
+    });
+
+    console.log(`[STRIPE] Refunded ${refundCredits} credits for ${paymentIntent}`);
   } catch (error) {
     console.error('Error in handleRefund:', error);
     throw error;

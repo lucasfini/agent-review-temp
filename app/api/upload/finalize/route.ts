@@ -3,6 +3,7 @@ import { Buffer } from 'buffer';
 import { supabaseAdmin } from '@/lib/supabase/server';
 import { computeAudioFingerprint } from '@/lib/audio-fingerprint';
 import { getCachedTranscription, applyCachedTranscriptionToProject } from '@/lib/transcription-cache';
+import { ESTIMATED_BITRATE_BPS } from '@/lib/upload-constants';
 
 // Import the upload sessions map from the chunk route
 // In production, you'd want to use Redis or another persistent store
@@ -128,7 +129,7 @@ export async function POST(request: NextRequest) {
 
     // Create project record
     const projectTitle = fileName.replace(/\.[^/.]+$/, '').replace(/[_\-\+\[\]]/g, ' ').trim();
-    const estimatedDuration = Math.round(totalSize / (128000 / 8)); // Rough estimate
+    const estimatedDuration = Math.round(totalSize / (ESTIMATED_BITRATE_BPS / 8)); // Rough estimate
 
     const sanitizedBaseName = sanitizeFileName(fileName);
 

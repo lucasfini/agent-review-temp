@@ -6,6 +6,7 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { supabaseAdmin } from '@/lib/supabase/server';
 import { getUserBillingSummary, auditUserBalance } from '@/lib/billing/admin';
+import { isAdminEmail } from '@/lib/admin-access';
 
 export async function GET(request: NextRequest) {
   try {
@@ -25,8 +26,7 @@ export async function GET(request: NextRequest) {
       return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
     }
 
-    // TODO: Add proper admin check
-    const isAdmin = true; // REPLACE WITH ACTUAL ADMIN CHECK
+    const isAdmin = isAdminEmail(user.email);
 
     if (!isAdmin) {
       return NextResponse.json({ error: 'Forbidden - Admin access required' }, { status: 403 });

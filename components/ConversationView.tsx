@@ -823,9 +823,9 @@ export default function ConversationView({
       </div>
 
       {/* Conversation Segments */}
-      <div className="flex-1 overflow-y-auto px-4 pb-4">
+      <div className="flex-1 overflow-y-auto px-4 pb-4" data-tour="conversation-feed">
         <div className="space-y-4">
-        {filteredSegments.map(({ segment, index: segmentIndex }) => {
+        {filteredSegments.map(({ segment, index: segmentIndex }, loopIdx) => {
           const segmentSpeakerId = resolveSpeakerId(segment);
           const speaker = speakers[segmentSpeakerId];
 
@@ -854,6 +854,7 @@ export default function ConversationView({
             <div
               key={`${segmentSpeakerId}-${segmentIndex}`}
               id={`segment-${segmentIndex}`}
+              {...(loopIdx === 0 ? { 'data-tour': 'speaker-bubble' } : {})}
               className={`flex space-x-3 p-4 rounded-xl transition-colors border group ${
                 isSelected ? 'bg-blue-900/20 border-blue-800/30' : 'bg-slate-900/80 border-slate-800 hover:border-slate-700'
               }`}

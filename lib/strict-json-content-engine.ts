@@ -11,6 +11,7 @@
  */
 
 import Anthropic from '@anthropic-ai/sdk';
+import { trackAnthropicUsage } from '@/lib/billing/track-usage';
 
 // ============================================================================
 // TYPE DEFINITIONS
@@ -75,6 +76,8 @@ export interface StrictJSONEngineInput {
   cleaned_narrative_summary: string;
   transcript?: string;
   speaker_data?: Record<string, { name: string; role?: string }>;
+  userId?: string;
+  projectId?: string;
 }
 
 export interface StrictJSONEngineOutput {
@@ -449,6 +452,17 @@ export async function generateStrictJSONContent(
 
     console.log(`[STRICT-JSON] 📊 Tokens: ${response.usage.input_tokens} in, ${response.usage.output_tokens} out`);
 
+    // Track usage (fire-and-forget)
+    if (input.userId) {
+      trackAnthropicUsage({
+        userId: input.userId,
+        projectId: input.projectId,
+        response,
+        modelName: 'sonnet-4.5',
+        purpose: 'strict JSON content generation (all 4 types)',
+      }).catch(err => console.error('[STRICT-JSON] Failed to track usage:', err));
+    }
+
     // Split response by separator
     const parts = responseText.split('---JSON_SEPARATOR---').map(p => p.trim()).filter(p => p.length > 0);
 
@@ -525,6 +539,16 @@ Output format:
     messages: [{ role: 'user', content: prompt }]
   });
 
+  if (input.userId) {
+    trackAnthropicUsage({
+      userId: input.userId,
+      projectId: input.projectId,
+      response,
+      modelName: 'sonnet-4.5',
+      purpose: 'show notes generation',
+    }).catch(err => console.error('[STRICT-JSON] Failed to track show notes usage:', err));
+  }
+
   const text = response.content[0].type === 'text' ? response.content[0].text : '{}';
   return validateShowNotes(parseStrictJSON(text, 'Show Notes'));
 }
@@ -571,6 +595,16 @@ Output format:
     messages: [{ role: 'user', content: prompt }]
   });
 
+  if (input.userId) {
+    trackAnthropicUsage({
+      userId: input.userId,
+      projectId: input.projectId,
+      response,
+      modelName: 'sonnet-4.5',
+      purpose: 'email newsletter generation',
+    }).catch(err => console.error('[STRICT-JSON] Failed to track email newsletter usage:', err));
+  }
+
   const text = response.content[0].type === 'text' ? response.content[0].text : '{}';
   return validateEmailNewsletter(parseStrictJSON(text, 'Email Newsletter'));
 }
@@ -616,6 +650,16 @@ Output format:
     messages: [{ role: 'user', content: prompt }]
   });
 
+  if (input.userId) {
+    trackAnthropicUsage({
+      userId: input.userId,
+      projectId: input.projectId,
+      response,
+      modelName: 'sonnet-4.5',
+      purpose: 'blog post generation',
+    }).catch(err => console.error('[STRICT-JSON] Failed to track blog post usage:', err));
+  }
+
   const text = response.content[0].type === 'text' ? response.content[0].text : '{}';
   return validateBlogPost(parseStrictJSON(text, 'Blog Post'));
 }
@@ -660,6 +704,16 @@ Output format:
     max_tokens: 1000,
     messages: [{ role: 'user', content: prompt }]
   });
+
+  if (input.userId) {
+    trackAnthropicUsage({
+      userId: input.userId,
+      projectId: input.projectId,
+      response,
+      modelName: 'sonnet-4.5',
+      purpose: 'quote graphic generation',
+    }).catch(err => console.error('[STRICT-JSON] Failed to track quote graphic usage:', err));
+  }
 
   const text = response.content[0].type === 'text' ? response.content[0].text : '{}';
   return validateQuoteGraphic(parseStrictJSON(text, 'Quote Graphic'));

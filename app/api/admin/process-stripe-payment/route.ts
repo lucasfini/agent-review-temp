@@ -8,6 +8,7 @@ import { NextRequest, NextResponse } from 'next/server';
 import Stripe from 'stripe';
 import { supabaseAdmin } from '@/lib/supabase/server';
 import { addCredit } from '@/lib/billing/credit';
+import { isAdminEmail } from '@/lib/admin-access';
 
 const stripe = new Stripe(process.env.STRIPE_SECRET_KEY!, {
   apiVersion: '2025-10-29.clover',
@@ -26,6 +27,9 @@ export async function POST(request: NextRequest) {
 
     if (authError || !user) {
       return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
+    }
+    if (!isAdminEmail(user.email)) {
+      return NextResponse.json({ error: 'Forbidden - Admin access required' }, { status: 403 });
     }
 
     // Parse request body
@@ -97,8 +101,20 @@ export async function POST(request: NextRequest) {
 
     console.log(`Processing ${creditsAmount} credits for user ${userId}`);
 
+    let invoiceNumber: string | undefined;
+    if (session.invoice) {
+      try {
+        const invoiceId = typeof session.invoice === 'string' ? session.invoice : session.invoice.id;
+        const invoice = await stripe.invoices.retrieve(invoiceId);
+        invoiceNumber = invoice.number || invoice.id;
+      } catch (error) {
+        console.warn(`[STRIPE] Unable to resolve invoice for session ${session.id}:`, error);
+      }
+    }
+
     const result = await addCredit(userId, creditsAmount, 'purchase', {
       paymentId: session.payment_intent as string,
+      invoiceNumber,
       reason: `Stripe purchase: ${packageId} package (admin processed)`,
       metadata: {
         sessionId: session.id,
