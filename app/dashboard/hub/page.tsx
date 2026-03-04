@@ -36,6 +36,8 @@ import { KPICard, CollapsibleStatsRow } from '@/components/ui/kpi-card';
 import { Badge } from '@/components/ui/badge';
 import { cn } from '@/lib/utils';
 import { DemoTour } from '@/components/demo/DemoTour';
+import { toast } from 'sonner';
+import ConfirmModal from '@/components/ui/confirm-modal';
 
 // ============================================================================
 // TYPES
@@ -238,6 +240,7 @@ export default function ProjectHubPage() {
   const [sortBy, setSortBy] = useState<'recent' | 'oldest' | 'name'>('recent');
   const [showFilters, setShowFilters] = useState(false);
   const [deletingId, setDeletingId] = useState<string | null>(null);
+  const [pendingDeleteId, setPendingDeleteId] = useState<string | null>(null);
   const [hubPage, setHubPage] = useState(1);
 
   // Fetch data
@@ -375,26 +378,31 @@ export default function ProjectHubPage() {
     return counts;
   }, [outputs]);
 
-  // Delete handler
-  const handleDelete = async (projectId: string) => {
+  // Delete handler — opens confirmation modal
+  const handleDelete = (projectId: string) => {
     if (!user?.id) return;
-    if (!confirm('Delete this project? This cannot be undone.')) return;
-    setDeletingId(projectId);
+    setPendingDeleteId(projectId);
+  };
 
+  const confirmDelete = async () => {
+    if (!pendingDeleteId || !user?.id) return;
+    setDeletingId(pendingDeleteId);
     try {
       const { error } = await supabase
         .from('projects')
         .delete()
-        .eq('id', projectId)
+        .eq('id', pendingDeleteId)
         .eq('user_id', user.id);
 
       if (error) throw error;
-      setProjects(prev => prev.filter(p => p.id !== projectId));
+      setProjects(prev => prev.filter(p => p.id !== pendingDeleteId));
+      toast.success('Project deleted');
     } catch (error) {
       console.error('Delete failed:', error);
-      alert('Failed to delete project');
+      toast.error('Failed to delete project');
     } finally {
       setDeletingId(null);
+      setPendingDeleteId(null);
     }
   };
 
@@ -419,6 +427,15 @@ export default function ProjectHubPage() {
 
   return (
     <div className="p-6">
+      <ConfirmModal
+        isOpen={!!pendingDeleteId}
+        onClose={() => setPendingDeleteId(null)}
+        onConfirm={confirmDelete}
+        title="Delete Project"
+        description="This will permanently delete the project and all its generated content. This cannot be undone."
+        confirmText="Delete"
+        isDestructive
+      />
       <div className="max-w-7xl mx-auto space-y-6">
         {/* Header */}
         <div className="flex items-center justify-between">

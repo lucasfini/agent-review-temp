@@ -8,6 +8,7 @@
 import { useState } from 'react';
 import { useAuth } from '@/lib/auth/context';
 import { CheckCircle, XCircle, Loader2 } from 'lucide-react';
+import { toast } from 'sonner';
 
 export default function ProcessPaymentsPage() {
   const { session } = useAuth();
@@ -17,14 +18,14 @@ export default function ProcessPaymentsPage() {
 
   const handleProcess = async () => {
     if (!session?.access_token) {
-      alert('Not authenticated');
+      toast.error('Not authenticated');
       return;
     }
 
     const ids = sessionIds.split('\n').map(id => id.trim()).filter(id => id);
 
     if (ids.length === 0) {
-      alert('Please enter at least one session ID');
+      toast.error('Please enter at least one session ID');
       return;
     }
 

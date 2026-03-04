@@ -52,6 +52,7 @@ export interface CreditTransaction {
   transactionType: 'purchase' | 'bonus' | 'refund' | 'debit' | 'admin_adjustment';
   usageEventId?: string;
   paymentId?: string;
+  invoiceNumber?: string; // Stripe invoice ID — only present on purchases/refunds, never on debits
   reason?: string;
   metadata: Record<string, unknown>;
   createdAt: string;
@@ -519,6 +520,7 @@ export async function getTransactionHistory(
     transactionType: row.transaction_type,
     usageEventId: row.usage_event_id,
     paymentId: row.payment_id,
+    invoiceNumber: row.invoice_number || undefined,
     reason: row.reason,
     metadata: row.metadata,
     createdAt: row.created_at,

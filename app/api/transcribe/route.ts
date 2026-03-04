@@ -729,12 +729,11 @@ export async function POST(request: NextRequest) {
                       Array.isArray(existingProject.preset_speakers) &&
                       existingProject.preset_speakers.length > 0;
 
-    // Infer speakerCount from roster if not explicitly provided
-    // This ensures the pipeline respects the roster size as a ceiling
-    let effectiveSpeakerCount = speakerCount;
+    // Do not infer speakerCount from preset roster size.
+    // A partial roster (e.g. 2 names for a 5-speaker file) should not constrain GPT extraction.
+    const effectiveSpeakerCount = speakerCount;
     if (!effectiveSpeakerCount && hasRoster) {
-      effectiveSpeakerCount = existingProject.preset_speakers!.length;
-      console.log(`[TRANSCRIPTION] 💡 Inferred expected speakers from roster: ${effectiveSpeakerCount}`);
+      console.log('[TRANSCRIPTION] Preset roster detected; speakerCount left unset so GPT can discover additional speakers');
     }
 
     // PRO tier and above: Run LLM Pipeline FIRST (before any branching)

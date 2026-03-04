@@ -950,7 +950,7 @@ export default function ConversationView({
               }`}
               onClick={(e) => {
                 const target = e.target as HTMLElement;
-                if (target.closest('button, input, a, label')) return;
+                if (target.closest('button, input, a, label, select')) return;
                 seekAndPlay(segment.startTime);
               }}
             >

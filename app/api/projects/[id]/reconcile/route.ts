@@ -108,7 +108,10 @@ export async function POST(
       if (!featureEnabled) return;
       if (aiProcessing[flag]) return; // already done
 
-      if (dbContent) {
+      // FIX: treat empty arrays (DB default '[]'::jsonb) as missing content
+      const hasContent = Array.isArray(dbContent) ? dbContent.length > 0 : !!dbContent;
+
+      if (hasContent) {
         // Content is present but flag wasn't written — fix flag only, no billing
         flagFixed.push(flag as string);
       } else {

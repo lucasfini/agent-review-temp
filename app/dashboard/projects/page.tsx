@@ -5,6 +5,7 @@ import Link from 'next/link';
 import { useSearchParams, useRouter } from 'next/navigation';
 import { FileText, Clock, CheckCircle, AlertCircle, Eye, Download, Share2, RefreshCw, Trash2, Zap, Play, MessageCircle, Crown, Star, Sparkles, BookOpen, Lightbulb, MessageSquare, PanelLeftClose, PanelLeftOpen, Search, Filter, Loader2, CheckSquare, Square, ListChecks, X, PanelRightOpen, PanelRightClose, ScanSearch, MoreHorizontal, Users, Mic, Radio, User, HelpCircle, Copy, Pencil, BarChart2 } from 'lucide-react';
 import { DropdownMenu, DropdownMenuItem, DropdownMenuSeparator } from '@/components/ui/dropdown-menu';
+import ConfirmModal from '@/components/ui/confirm-modal';
 import { useAuth } from '@/lib/auth/context';
 import { supabase } from '@/lib/supabase/client';
 import { DemoTour } from '@/components/demo/DemoTour';
@@ -101,6 +102,7 @@ export default function ProjectsPage() {
   const [loading, setLoading] = useState(true);
   const [refreshing, setRefreshing] = useState(false);
   const [deletingProject, setDeletingProject] = useState<string | null>(null);
+  const [pendingDeleteProjectId, setPendingDeleteProjectId] = useState<string | null>(null);
   const [showContentSelection, setShowContentSelection] = useState(false);
   const [selectedProjectForGeneration, setSelectedProjectForGeneration] = useState<Project | null>(null);
   const [generatingProjects, setGeneratingProjects] = useState<Set<string>>(new Set());
@@ -998,7 +1000,7 @@ export default function ProjectsPage() {
       console.log('[EXPORT] Success:', result.message);
     } else {
       console.error('[EXPORT] Failed:', result.message);
-      alert(`Export failed: ${result.message}`);
+      showToast(`Export failed: ${result.message}`);
     }
 
     // Exit selection mode after export
@@ -1035,12 +1037,15 @@ export default function ProjectsPage() {
     }
   };
 
-  const handleDeleteProject = async (projectId: string) => {
+  const handleDeleteProject = (projectId: string) => {
     if (!user?.id) return;
-    if (!confirm('Are you sure you want to delete this project? This will also delete all generated content and cannot be undone.')) {
-      return;
-    }
+    setPendingDeleteProjectId(projectId);
+  };
 
+  const confirmDeleteProject = async () => {
+    const projectId = pendingDeleteProjectId;
+    if (!projectId || !user?.id) return;
+    setPendingDeleteProjectId(null);
     setDeletingProject(projectId);
 
     try {
@@ -1114,6 +1119,8 @@ export default function ProjectsPage() {
         setSelectedProject(null);
         setOutputs([]);
       }
+
+      showToast('Project deleted', 'success');
 
     } catch (error) {
       console.error('Failed to delete project:', error);
@@ -1738,6 +1745,15 @@ export default function ProjectsPage() {
 
   return (
     <div className="dashboard-page flex flex-col h-screen w-full overflow-hidden bg-slate-950">
+      <ConfirmModal
+        isOpen={!!pendingDeleteProjectId}
+        onClose={() => setPendingDeleteProjectId(null)}
+        onConfirm={confirmDeleteProject}
+        title="Delete Project"
+        description="This will permanently delete the project and all its generated content. This cannot be undone."
+        confirmText="Delete"
+        isDestructive
+      />
       {/* Sticky Header Bar */}
       <header className="flex-shrink-0 h-12 bg-slate-900 border-b border-slate-700 px-6 flex items-center justify-between">
         <div className="flex items-center gap-3">

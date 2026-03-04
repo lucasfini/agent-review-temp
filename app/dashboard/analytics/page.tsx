@@ -19,6 +19,8 @@ import { useAuth } from '@/lib/auth/context';
 import { DemoTour } from '@/components/demo/DemoTour';
 import { supabase } from '@/lib/supabase/client';
 import { useCoverageProgress } from '@/lib/context/coverage-progress';
+import { toast } from 'sonner';
+import ConfirmModal from '@/components/ui/confirm-modal';
 
 // New analytics components
 import { KPIGrid } from '@/components/analytics/KPIGrid';
@@ -699,6 +701,7 @@ export default function AnalyticsPage() {
   const [goalSaving, setGoalSaving] = useState(false);
   const [goalError, setGoalError] = useState('');
   const [archivingGoal, setArchivingGoal] = useState<string | null>(null);
+  const [pendingArchiveGoal, setPendingArchiveGoal] = useState<{ id: string; label: string } | null>(null);
   const [exampleGoalsModalOpen, setExampleGoalsModalOpen] = useState(false);
   const [selectedSnapshotId, setSelectedSnapshotId] = useState<string | null>(null);
   const [bannerDismissed, setBannerDismissed] = useState(false);
@@ -1165,10 +1168,14 @@ export default function AnalyticsPage() {
     }
   };
 
-  const handleArchiveGoal = async (goalId: string, goalLabel: string) => {
+  const handleArchiveGoal = (goalId: string, goalLabel: string) => {
     if (!user?.id) return;
-    if (!confirm(`Archive goal "${goalLabel}"?`)) return;
+    setPendingArchiveGoal({ id: goalId, label: goalLabel });
+  };
 
+  const confirmArchiveGoal = async () => {
+    if (!pendingArchiveGoal || !user?.id) return;
+    const { id: goalId, label: goalLabel } = pendingArchiveGoal;
     setArchivingGoal(goalId);
     try {
       const { error } = await supabase
@@ -1180,10 +1187,12 @@ export default function AnalyticsPage() {
 
       if (error) throw new Error(error.message);
       await fetchAnalytics();
+      toast.success(`Goal "${goalLabel}" archived`);
     } catch (error: any) {
-      alert(`Failed to archive goal: ${error.message}`);
+      toast.error(`Failed to archive goal: ${error.message}`);
     } finally {
       setArchivingGoal(null);
+      setPendingArchiveGoal(null);
     }
   };
 
@@ -1268,6 +1277,15 @@ export default function AnalyticsPage() {
 
   return (
     <div className="p-4 lg:p-6 bg-slate-800/50 min-h-screen">
+      <ConfirmModal
+        isOpen={!!pendingArchiveGoal}
+        onClose={() => setPendingArchiveGoal(null)}
+        onConfirm={confirmArchiveGoal}
+        title="Archive Goal"
+        description={pendingArchiveGoal ? `Archive "${pendingArchiveGoal.label}"? It will be hidden from your active goals list.` : undefined}
+        confirmText="Archive"
+        isDestructive={false}
+      />
       <div className="max-w-7xl mx-auto space-y-6">
 
         {/* ================================================================== */}

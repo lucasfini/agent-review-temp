@@ -147,7 +147,8 @@ function detectConflictingSelfIds(
  */
 function findOrphanedSelfIds(
   segments: SpeakerSegment[],
-  roster: GPTSpeaker[]
+  roster: GPTSpeaker[],
+  lockedPresetNames: Set<string> = new Set()
 ): Array<{ name: string; clusterId: string; segmentIndex: number; text: string }> {
   const rosterNames = new Set(
     roster.map(r => r.name?.toLowerCase().trim()).filter(Boolean) as string[]
@@ -173,6 +174,9 @@ function findOrphanedSelfIds(
         }
 
         const normalized = extractedName.toLowerCase().trim();
+        if (isLockedPresetName(normalized, lockedPresetNames)) {
+          break;
+        }
 
         // Check if this name is in the roster
         if (!rosterNames.has(normalized)) {
@@ -183,7 +187,7 @@ function findOrphanedSelfIds(
             rosterName.split(/\s+/)[0] === firstName
           );
 
-          if (!hasPartialMatch && !seenOrphans.has(normalized)) {
+          if (!hasPartialMatch && !isLockedPresetName(firstName, lockedPresetNames) && !seenOrphans.has(normalized)) {
             orphans.push({
               name: extractedName,
               clusterId: seg.speakerId,
@@ -291,6 +295,8 @@ export async function runRefactoredSpeakerPipeline(
   console.log('--- PASS 1: GPT SPEAKER INTELLIGENCE ---\n');
 
   let gptResult: GPTSpeakerIntelligenceResult;
+  const lockedPresetEntries = normalizePresetRosterEntries(options.presetRoster);
+  const lockedPresetNames = new Set(lockedPresetEntries.map(s => normalizeSpeakerName(s.name)));
   try {
     gptResult = await identifySpeakersWithGPT(segments, {
       apiKey: options.openaiApiKey,
@@ -323,6 +329,13 @@ export async function runRefactoredSpeakerPipeline(
       console.log('[PIPELINE] Debate intro seeding: no new speakers added');
     }
     console.log(`[PIPELINE] Intro window end: ${introWindow.endTimeSeconds}s (${introWindow.reason})`);
+  }
+
+  // --- PRESET ROSTER ENFORCEMENT (authoritative names) ---
+  if (options.hasPresetRoster && lockedPresetEntries.length > 0) {
+    const presetMerge = enforcePresetRosterSpeakers(gptResult.speakers, lockedPresetEntries);
+    gptResult.speakers = presetMerge.roster;
+    console.log(`[PIPELINE] Preset roster enforcement: exact=${presetMerge.exactMatches}, replaced=${presetMerge.replacedExisting}, added=${presetMerge.added}`);
   }
 
   // --- ENFORCE ROSTER CONSTRAINTS (Garbage Filter + Dedup + Target Cap) ---
@@ -409,7 +422,7 @@ export async function runRefactoredSpeakerPipeline(
   // and dynamically create speaker entries for them
   console.log(`\n--- PASS 1.5: ORPHANED SELF-ID RECOVERY & DIRTY CLUSTER DETECTION ---\n`);
 
-  const orphanedSpeakers = findOrphanedSelfIds(segments, gptResult.speakers);
+  const orphanedSpeakers = findOrphanedSelfIds(segments, gptResult.speakers, lockedPresetNames);
 
   if (orphanedSpeakers.length > 0) {
     console.warn(`[ORPHAN RECOVERY] Found ${orphanedSpeakers.length} self-identified speakers NOT in GPT roster:`);
@@ -454,6 +467,9 @@ export async function runRefactoredSpeakerPipeline(
       // Check if all these names are in the roster
       const missingNames = conflict.names.filter(name => {
         const normalized = name.toLowerCase().trim();
+        if (isLockedPresetName(normalized, lockedPresetNames)) {
+          return false;
+        }
         return !gptResult.speakers.some(s => s.name?.toLowerCase().trim() === normalized);
       });
 
@@ -622,7 +638,7 @@ export async function runRefactoredSpeakerPipeline(
 
       // Case 1: Speaker with host/co_host role AND no/partial name
       let hostToName = gptResult.speakers.find(
-        s => (s.role === 'host' || s.role === 'co_host') && isIncompleteName(s.name)
+        s => !isPresetRosterSpeaker(s) && (s.role === 'host' || s.role === 'co_host') && isIncompleteName(s.name)
       );
 
       // Case 2: No host-role speaker found — look for an unknown-role speaker
@@ -630,7 +646,7 @@ export async function runRefactoredSpeakerPipeline(
       if (!hostToName) {
         const knownFirstName = filenameHost.split(' ')[0].toLowerCase();
         hostToName = gptResult.speakers.find(
-          s => s.role === 'unknown' && (
+          s => !isPresetRosterSpeaker(s) && s.role === 'unknown' && (
             !s.name ||
             s.name.trim().toLowerCase() === knownFirstName
           )
@@ -678,7 +694,7 @@ export async function runRefactoredSpeakerPipeline(
 
         if (guestSpeaker) {
           // Skip only if this speaker already has the correct name
-          const alreadyCorrect = guestSpeaker.name === filenameGuest;
+          const alreadyCorrect = guestSpeaker.name === filenameGuest || isPresetRosterSpeaker(guestSpeaker);
 
           if (!alreadyCorrect) {
             // Clear this name from any other speaker first.
@@ -686,7 +702,7 @@ export async function runRefactoredSpeakerPipeline(
             // If we don't clear it, two speakers end up with the same name, which causes
             // post-processing (cluster loyalty / dirty cluster resolution) to merge them.
             for (const other of gptResult.speakers) {
-              if (other.id !== guestCandidateId && other.name === filenameGuest) {
+              if (other.id !== guestCandidateId && !isPresetRosterSpeaker(other) && other.name === filenameGuest) {
                 console.log(`[HEURISTIC] ⚠️ Clearing "${filenameGuest}" from ${other.id} — GPT wrongly assigned it; heuristic correcting`);
                 other.name = null;
               }
@@ -705,7 +721,8 @@ export async function runRefactoredSpeakerPipeline(
         // first name from patterns like "Thank you, Scott" in the guest's own segments.
         // This fires regardless of alreadyCorrect — it only affects truly nameless speakers.
         const namelessOthers = gptResult.speakers.filter(s => !s.name && s.id !== guestCandidateId);
-        if (namelessOthers.length > 0) {
+        const editableNamelessOthers = namelessOthers.filter(s => !isPresetRosterSpeaker(s));
+        if (editableNamelessOthers.length > 0) {
           const guestText = mappingResult.segments
             .filter(s => (s.finalSpeakerId || s.speakerId) === guestCandidateId)
             .map(s => (s as any).text || '')
@@ -726,11 +743,11 @@ export async function runRefactoredSpeakerPipeline(
           const top = Object.entries(nameCounts).sort((a, b) => b[1] - a[1])[0];
           if (top) {
             const [hostFirstName, count] = top;
-            const target = namelessOthers[0];
+            const target = editableNamelessOthers[0];
             console.log(`[HEURISTIC] 💡 Naming ${target.id} as "${hostFirstName}" via "Thank you, ${hostFirstName}" vocative in guest segments (${count}x)`);
             target.name = hostFirstName;
           } else {
-            console.log(`[HEURISTIC] No vocative address found in guest segments — ${namelessOthers.map(s => s.id).join(', ')} remain unnamed`);
+            console.log(`[HEURISTIC] No vocative address found in guest segments — ${editableNamelessOthers.map(s => s.id).join(', ')} remain unnamed`);
           }
         }
       }
@@ -1220,8 +1237,10 @@ export async function runRefactoredSpeakerPipeline(
     if (unclaimedModerators.length === 1) {
       const mod = unclaimedModerators[0];
       const given = (mod.profile as any)?.behavioral?.handoffGivenCount ?? '?';
-      mod.role = 'host';
-      if (!mod.name) mod.name = 'Moderator';
+      if (!isPresetRosterSpeaker(mod)) {
+        mod.role = 'host';
+        if (!mod.name) mod.name = 'Moderator';
+      }
       console.log(`[DEBATE] 🎙️ Deterministic moderator: ${mod.id} → role=host (handoffs_given=${given}, received=0)`);
     } else if (unclaimedModerators.length > 1) {
       // Tie-break: most handoffs given wins
@@ -1230,8 +1249,10 @@ export async function runRefactoredSpeakerPipeline(
         const bg = (best.profile as any)?.behavioral?.handoffGivenCount ?? 0;
         return sg > bg ? s : best;
       });
-      top.role = 'host';
-      if (!top.name) top.name = 'Moderator';
+      if (!isPresetRosterSpeaker(top)) {
+        top.role = 'host';
+        if (!top.name) top.name = 'Moderator';
+      }
       console.log(`[DEBATE] 🎙️ Deterministic moderator (tie-break): ${top.id} → role=host`);
     }
   }
@@ -1389,6 +1410,114 @@ function detectIntroWindowEndTime(
 
 function normalizeSpeakerName(name: string): string {
   return name.toLowerCase().trim().replace(/\s+/g, ' ');
+}
+
+function isPresetRosterSpeaker(speaker: GPTSpeaker): boolean {
+  return speaker.source === 'preset_roster';
+}
+
+function isLockedPresetName(candidate: string, lockedPresetNames: Set<string>): boolean {
+  const normalized = normalizeSpeakerName(candidate);
+  if (lockedPresetNames.has(normalized)) {
+    return true;
+  }
+  for (const locked of lockedPresetNames) {
+    if (firstNamesSoundAlike(normalized, locked)) {
+      return true;
+    }
+  }
+  return false;
+}
+
+function normalizePresetRosterEntries(
+  presetRoster?: Array<{ name: string; role?: string | null }>
+): Array<{ name: string; role?: GPTSpeaker['role'] }> {
+  if (!presetRoster || presetRoster.length === 0) {
+    return [];
+  }
+
+  const validRoles = new Set<GPTSpeaker['role']>([
+    'host', 'co_host', 'candidate', 'guest', 'advertiser', 'narrator', 'quoted_audio', 'unknown'
+  ]);
+  const seen = new Set<string>();
+  const normalized: Array<{ name: string; role?: GPTSpeaker['role'] }> = [];
+
+  for (const entry of presetRoster) {
+    const name = (entry?.name || '').trim();
+    if (!name) continue;
+    const key = normalizeSpeakerName(name);
+    if (seen.has(key)) continue;
+    seen.add(key);
+    const role = entry.role && validRoles.has(entry.role as GPTSpeaker['role'])
+      ? (entry.role as GPTSpeaker['role'])
+      : undefined;
+    normalized.push({ name, role });
+  }
+
+  return normalized;
+}
+
+function enforcePresetRosterSpeakers(
+  roster: GPTSpeaker[],
+  presetEntries: Array<{ name: string; role?: GPTSpeaker['role'] }>
+): {
+  roster: GPTSpeaker[];
+  exactMatches: number;
+  replacedExisting: number;
+  added: number;
+} {
+  let exactMatches = 0;
+  let replacedExisting = 0;
+  let added = 0;
+  const working = [...roster];
+
+  const findByExactName = (name: string) =>
+    working.find(s => s.name && normalizeSpeakerName(s.name) === normalizeSpeakerName(name));
+
+  for (const preset of presetEntries) {
+    const exact = findByExactName(preset.name);
+    if (exact) {
+      exact.source = 'preset_roster';
+      if (preset.role) {
+        exact.role = preset.role;
+      }
+      exact.confidence = Math.max(exact.confidence, 0.99);
+      exactMatches++;
+      continue;
+    }
+
+    const replacement = working.find(s =>
+      !isPresetRosterSpeaker(s) && (
+        !s.name ||
+        /^speaker\s*\d+$/i.test(s.name) ||
+        s.name.toLowerCase().trim() === 'unknown' ||
+        firstNamesSoundAlike(s.name, preset.name) ||
+        decideDuplicateName(s.name, preset.name).kind === 'hard'
+      )
+    );
+
+    if (replacement) {
+      replacement.name = preset.name;
+      if (preset.role) {
+        replacement.role = preset.role;
+      }
+      replacement.source = 'preset_roster';
+      replacement.confidence = Math.max(replacement.confidence, 0.99);
+      replacedExisting++;
+      continue;
+    }
+
+    working.push({
+      id: `speaker_${working.length + 1}`,
+      name: preset.name,
+      role: preset.role || 'guest',
+      confidence: 0.99,
+      source: 'preset_roster',
+    });
+    added++;
+  }
+
+  return { roster: working, exactMatches, replacedExisting, added };
 }
 
 const INTRO_STOPWORDS = new Set([
@@ -1690,6 +1819,7 @@ function deduplicateRosterByPhonetics(speakers: GPTSpeaker[]): GPTSpeaker[] {
 
       // Skip if either has already been merged away
       if (mergeMap.has(a.id) || mergeMap.has(b.id)) continue;
+      if (isPresetRosterSpeaker(a) || isPresetRosterSpeaker(b)) continue;
 
       if (firstNamesSoundAlike(a.name!, b.name!)) {
         // Keep the one with higher confidence; merge the other into it
@@ -1733,6 +1863,10 @@ function enforceRosterConstraints(
   const cleaned: GPTSpeaker[] = [];
 
   for (const speaker of working) {
+    if (isPresetRosterSpeaker(speaker)) {
+      cleaned.push(speaker);
+      continue;
+    }
     if (!speaker.name) {
       // null name is fine — it means "unnamed speaker", keep it
       cleaned.push(speaker);
@@ -1798,6 +1932,7 @@ function enforceRosterConstraints(
       const other = working[j];
       if (absorbedIds.has(other.id)) continue;
       if (!speaker.name || !other.name) continue;
+      if (isPresetRosterSpeaker(speaker) || isPresetRosterSpeaker(other)) continue;
 
       const decision = decideDuplicateName(speaker.name, other.name);
       if (decision.kind === 'hard') {
@@ -1823,11 +1958,16 @@ function enforceRosterConstraints(
   // STEP 3: Target Count Enforcement (hard cap)
   // -----------------------------------------------
   if (targetCount && targetCount > 0 && working.length > targetCount) {
-    // Already sorted by confidence desc from step 2
-    const retained = working.slice(0, targetCount);
-    const dropped = working.slice(targetCount);
+    const presets = working.filter(isPresetRosterSpeaker);
+    const nonPresets = working.filter(s => !isPresetRosterSpeaker(s));
+    const nonPresetSlots = Math.max(0, targetCount - presets.length);
+    const retainedNonPresets = nonPresets.slice(0, nonPresetSlots);
+    const retained = [...presets, ...retainedNonPresets];
+    const dropped = nonPresets.slice(nonPresetSlots);
 
-    const retainedIds = new Set(retained.map(s => s.id));
+    if (presets.length > targetCount) {
+      console.log(`[ENFORCE] Preset roster override: ${presets.length} locked preset speakers exceeds target ${targetCount}; preserving all presets`);
+    }
 
     for (const droppedSpeaker of dropped) {
       // Map each dropped speaker to the closest retained speaker by name similarity,
@@ -2643,6 +2783,9 @@ function cullDeadSpeakers(
   const activeIds = new Set(segments.map(s => s.speakerId));
 
   return speakers.filter(speaker => {
+    if (isPresetRosterSpeaker(speaker)) {
+      return true;
+    }
     const isAlive = activeIds.has(speaker.id);
     if (!isAlive) {
       console.log(`[CULL] Removing ghost speaker: ${speaker.id} (${speaker.name || 'unnamed'}) — 0 segments`);
@@ -2868,7 +3011,7 @@ function enforceClusterLoyalty(
       const alreadyHasCorrectedName = roster.some(s =>
         s.name != null && s.name.toLowerCase() === resolvedName.toLowerCase()
       );
-      if (!alreadyHasCorrectedName) {
+      if (!alreadyHasCorrectedName && !isPresetRosterSpeaker(matchedSpeaker)) {
         const oldName = matchedSpeaker.name || '';
         // Only upgrade if resolved name has more info
         if (resolvedName.split(/\s+/).length > (oldName.split(/\s+/).length || 0) ||
@@ -3584,7 +3727,7 @@ function mergeDuplicateUnknownSpeakers(
     const duplicates = sorted.slice(1);
 
     for (const dup of duplicates) {
-      if (isUnknownSpeakerEntry(dup)) {
+      if (isUnknownSpeakerEntry(dup) && !isPresetRosterSpeaker(dup)) {
         remap.set(dup.id, primary.id);
         mergedCount++;
       }
@@ -3610,6 +3753,7 @@ function mergeDuplicateUnknownSpeakers(
       const drop = keepA.id === a.id ? b : a;
 
       if (!remap.has(drop.id)) {
+        if (isPresetRosterSpeaker(drop) || isPresetRosterSpeaker(keepA)) continue;
         remap.set(drop.id, keepA.id);
         mergedCount++;
         console.log(`[MERGE] Fuzzy dedup: "${drop.name}" (${drop.id}) → "${keepA.name}" (${keepA.id})`);
