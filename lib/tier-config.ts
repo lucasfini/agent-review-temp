@@ -75,24 +75,24 @@ export const TIER_PRICING: Record<TierLevel, TierPricing> = {
     baseTranscriptionPerHour: 0.27, // AssemblyAI Universal
     estimatedAIProcessingPerHour: 0,
     totalPerHour: 0.27,
-    totalWithMarkup: 0.37,
-    markupPercentage: 35
+    totalWithMarkup: 0.39,
+    markupPercentage: 45
   },
 
   pro: {
     baseTranscriptionPerHour: 0.27,
     estimatedAIProcessingPerHour: 0.051, // GPT-5-mini: speaker naming + summary
     totalPerHour: 0.321,
-    totalWithMarkup: 0.44,
-    markupPercentage: 35
+    totalWithMarkup: 0.47,
+    markupPercentage: 45
   },
 
   premium: {
     baseTranscriptionPerHour: 0.27,
     estimatedAIProcessingPerHour: 0.11, // GPT-5: roles/chapters/takeaways/quotes/insights
     totalPerHour: 0.38,
-    totalWithMarkup: 0.52,
-    markupPercentage: 35
+    totalWithMarkup: 0.55,
+    markupPercentage: 45
   }
 };
 

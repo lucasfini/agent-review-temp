@@ -8,6 +8,7 @@
 // GPT-4o-mini: ~$0.0003/call (20x cheaper than Claude Sonnet)
 
 import OpenAI from 'openai';
+import { getOpenAIApiKeyForUser } from '@/lib/openai/consent';
 import { SpeakerSegment } from './types';
 import { GPTSpeaker } from './gpt-speaker-intelligence';
 import { trackOpenAIUsage } from '@/lib/billing/track-usage';
@@ -71,7 +72,7 @@ export async function mapSegmentsWithLLM(
     projectId?: string;
   } = {}
 ): Promise<LLMMappingResult> {
-  const apiKey = options.apiKey || process.env.OPENAI_API_KEY;
+  const apiKey = options.apiKey ?? await getOpenAIApiKeyForUser(options.userId);
   const model = options.model || 'gpt-5-nano';
 
   if (!apiKey) {

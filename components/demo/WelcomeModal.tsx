@@ -2,6 +2,7 @@
 
 import { useEffect, useRef } from 'react';
 import Link from 'next/link';
+import { usePathname, useRouter } from 'next/navigation';
 import { Mic, X, MapPin, Compass } from 'lucide-react';
 
 interface WelcomeModalProps {
@@ -12,6 +13,8 @@ interface WelcomeModalProps {
 
 export function WelcomeModal({ isOpen, onClose, onStartTour }: WelcomeModalProps) {
   const overlayRef = useRef<HTMLDivElement>(null);
+  const router = useRouter();
+  const pathname = usePathname();
 
   // Close on backdrop click
   const handleBackdropClick = (e: React.MouseEvent) => {
@@ -34,6 +37,10 @@ export function WelcomeModal({ isOpen, onClose, onStartTour }: WelcomeModalProps
     onStartTour?.();
     // Signal the hub to start the tour
     localStorage.setItem('demoTourChapter', 'hub');
+    if (pathname !== '/dashboard/hub') {
+      router.push('/dashboard/hub');
+      return;
+    }
     // Dispatch a custom event so the hub page can react without a full nav
     window.dispatchEvent(new CustomEvent('demoTourStart'));
   };
@@ -67,8 +74,7 @@ export function WelcomeModal({ isOpen, onClose, onStartTour }: WelcomeModalProps
 
         {/* Body */}
         <p className="text-slate-300 text-sm leading-relaxed mb-6">
-          You're viewing a live demo account with real AI-processed podcasts. Take the guided
-          tour to see every feature, or explore freely on your own.
+          Take the guided tour to see every feature, or explore freely on your own.
         </p>
 
         {/* Actions */}

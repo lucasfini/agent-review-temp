@@ -941,6 +941,7 @@ export function ContextSidebar({
                     <div
                       key={output.id}
                       {...(index === 0 ? { 'data-tour': 'content-output' } : {})}
+                      data-expanded={isExpanded ? 'true' : 'false'}
                       onClick={() => {
                         setExpandedOutputs((prev) => {
                           const next = new Set(prev);
@@ -1032,7 +1033,7 @@ export function ContextSidebar({
 
         {/* Insights Tab */}
         {activeTab === 'insights' && (
-          <div className="h-full" data-tour="insights-panel">
+          <div className="p-3 h-full" data-tour="insights-panel">
             {hasInsights ? (
               /* Display insights if they exist */
               <InsightsSidebar

@@ -1,4 +1,5 @@
 import OpenAI from 'openai';
+import { getOpenAIApiKeyForUser } from '@/lib/openai/consent';
 import { SpeakerSegment } from './types';
 import { prompts } from '@/lib/prompts/loader';
 import { trackOpenAIUsage } from '@/lib/billing/track-usage';
@@ -57,9 +58,9 @@ export async function classifySpeakerRoles(
     return {};
   }
 
-  const apiKey = options.apiKey || process.env.OPENAI_API_KEY;
+  const apiKey = options.apiKey ?? await getOpenAIApiKeyForUser(options.userId);
   if (!apiKey) {
-    console.warn('[SPEAKER ROLES] ⚠️ Missing OPENAI_API_KEY, skipping role classification.');
+    console.warn('[SPEAKER ROLES] ⚠️ OpenAI API key not configured, skipping role classification.');
     return {};
   }
 

@@ -13,6 +13,7 @@ import ContentSelectionModal from '@/components/ContentSelectionModal';
 import ExportModal, { type ExportPayload } from '@/components/ExportModal';
 import { exportContent } from '@/lib/export-utils';
 import ConversationView from '@/components/ConversationView';
+import { AudioPlayer } from '@/components/AudioPlayer';
 import { getSpeakerColor, getSpeakerDisplayName } from '@/lib/name-extraction';
 import TeamsStyleTranscript from '@/components/TeamsStyleTranscript';
 import ContextSidebar from '@/components/ContextSidebar';
@@ -71,6 +72,23 @@ interface Output {
   metadata?: any;
 }
 
+const SPEAKER_BADGE_CLASSES: Record<string, string> = {
+  blue: 'text-blue-300 bg-blue-900/30 border border-blue-800/40',
+  green: 'text-green-300 bg-green-900/25 border border-green-800/40',
+  purple: 'text-violet-300 bg-violet-900/30 border border-violet-800/40',
+  orange: 'text-orange-300 bg-orange-900/25 border border-orange-800/40',
+  pink: 'text-rose-300 bg-rose-900/25 border border-rose-800/40',
+  indigo: 'text-indigo-300 bg-indigo-900/30 border border-indigo-800/40',
+  slate: 'text-slate-300 bg-slate-800/60 border border-slate-700/60',
+};
+
+const getSpeakerBadgeClasses = (speakerId: string) => {
+  const colorClass = getSpeakerColor(speakerId);
+  const match = colorClass.match(/text-([a-z]+)-/);
+  const base = match?.[1] ?? 'slate';
+  return SPEAKER_BADGE_CLASSES[base] ?? SPEAKER_BADGE_CLASSES.slate;
+};
+
 export default function ProjectsPage() {
   const [projects, setProjects] = useState<Project[]>([]);
   const [selectedProject, setSelectedProject] = useState<Project | null>(null);
@@ -89,6 +107,11 @@ export default function ProjectsPage() {
   const [showFullTranscription, setShowFullTranscription] = useState(false);
   const [expandedOutputs, setExpandedOutputs] = useState<Set<string>>(new Set());
   const [readerView, setReaderView] = useState(false);
+  // Reader view follow-along state
+  const [readerActiveIndex, setReaderActiveIndex] = useState<number | null>(null);
+  const [readerAutoScrollPaused, setReaderAutoScrollPaused] = useState(false);
+  const readerScrollRef = useRef<HTMLDivElement>(null);
+  const isReaderScrollingRef = useRef(false);
   const [showTimestamps, setShowTimestamps] = useState(true);
   const [selectedSpeaker, setSelectedSpeaker] = useState<string | null>(null);
   const [projectsSidebarOpen, setProjectsSidebarOpen] = useState(true);
@@ -133,6 +156,9 @@ export default function ProjectsPage() {
 
   // Toast notification state
   const [toast, setToast] = useState<{ message: string; type: 'success' | 'error' } | null>(null);
+
+  // Reconcile (pipeline healing) state
+  const [isReconciling, setIsReconciling] = useState(false);
 
   // Project type filter
   const [typeFilter, setTypeFilter] = useState<'all' | ProjectType>('all');
@@ -261,18 +287,21 @@ export default function ProjectsPage() {
       }
 
       try {
-        const filePath = `${selectedProject.id}/${selectedProject.audio_file_name}`;
-        const { data, error } = await supabase.storage
-          .from('audio-files')
-          .createSignedUrl(filePath, 3600); // 1 hour expiry
+        const { data: { session } } = await supabase.auth.getSession();
+        const response = await fetch(`/api/projects/${selectedProject.id}/audio-url`, {
+          headers: session?.access_token
+            ? { Authorization: `Bearer ${session.access_token}` }
+            : {},
+        });
 
-        if (error) {
-          console.error('Failed to get signed URL:', error);
+        if (!response.ok) {
+          console.error('Failed to get audio URL:', await response.text());
           setAudioUrl(null);
           return;
         }
 
-        setAudioUrl(data.signedUrl);
+        const { signedUrl } = await response.json();
+        setAudioUrl(signedUrl);
       } catch (err) {
         console.error('Error fetching audio URL:', err);
         setAudioUrl(null);
@@ -327,6 +356,55 @@ export default function ProjectsPage() {
     [selectedProject?.speaker_data]
   );
 
+  // Reader view: sync active segment via timeupdate
+  useEffect(() => {
+    const audio = audioElementRef.current;
+    if (!audio || !readerView || !parsedSpeakerData?.segments?.length) return;
+    const segments = parsedSpeakerData.segments;
+    const onTimeUpdate = () => {
+      const t = audio.currentTime;
+      let found: number | null = null;
+      for (let i = 0; i < segments.length; i++) {
+        if (t >= (segments[i].startTime || 0) && t <= (segments[i].endTime || 0)) { found = i; break; }
+      }
+      setReaderActiveIndex(prev => prev === found ? prev : found);
+    };
+    audio.addEventListener('timeupdate', onTimeUpdate);
+    return () => audio.removeEventListener('timeupdate', onTimeUpdate);
+  }, [audioElementRef, readerView, parsedSpeakerData?.segments, audioUrl]);
+
+  // Reader view: auto-scroll to active segment
+  useEffect(() => {
+    if (!readerView || readerActiveIndex == null) return;
+    if (readerAutoScrollPaused || isReaderScrollingRef.current) return;
+    document.getElementById(`reader-segment-${readerActiveIndex}`)?.scrollIntoView({ behavior: 'smooth', block: 'center' });
+  }, [readerActiveIndex, readerView, readerAutoScrollPaused]);
+
+  // Reader view: detect manual scrolling to pause auto-scroll
+  useEffect(() => {
+    const container = readerScrollRef.current;
+    if (!container || !readerView) return;
+    const onScroll = () => {
+      isReaderScrollingRef.current = true;
+      setReaderAutoScrollPaused(true);
+    };
+    container.addEventListener('wheel', onScroll, { passive: true });
+    container.addEventListener('touchmove', onScroll, { passive: true });
+    return () => {
+      container.removeEventListener('wheel', onScroll);
+      container.removeEventListener('touchmove', onScroll);
+    };
+  }, [readerView]);
+
+  // Reset reader follow-along when switching into reader view
+  useEffect(() => {
+    if (readerView) {
+      isReaderScrollingRef.current = false;
+      setReaderAutoScrollPaused(false);
+      setReaderActiveIndex(null);
+    }
+  }, [readerView]);
+
   useEffect(() => {
     const handler = () => {
       if (!selectedProject) return;
@@ -336,6 +414,27 @@ export default function ProjectsPage() {
     window.addEventListener('demoOpenGenerateContent', handler as EventListener);
     return () => window.removeEventListener('demoOpenGenerateContent', handler as EventListener);
   }, [selectedProject]);
+
+  const resetSelectedProject = useCallback(() => {
+    setSelectedProject(null);
+    setOutputs([]);
+    setInsightsData([]);
+    setInsightsStatus({ count: 0, loading: false, generating: false });
+    setShowFullTranscription(false);
+    setInsightsSidebarOpen(false);
+    setTriggerInsightGeneration(0);
+    setSelectedProjectForGeneration(null);
+    setShowContentSelection(false);
+    router.push('/dashboard/projects');
+  }, [router]);
+
+  useEffect(() => {
+    const handler = () => {
+      resetSelectedProject();
+    };
+    window.addEventListener('demoCloseProject', handler as EventListener);
+    return () => window.removeEventListener('demoCloseProject', handler as EventListener);
+  }, [resetSelectedProject]);
 
   const premiumFeaturedId = useMemo(() => {
     const target = projects.find(
@@ -404,6 +503,52 @@ export default function ProjectsPage() {
 
     return () => clearInterval(interval);
   }, [selectedProject?.id, selectedProject?.status, insightsStatus.count, insightsStatus.generating]);
+
+  // ── Pipeline reconciliation: heal missing AI features after completion ──────
+  // Fires once when a completed project is opened. If any tier-owed content
+  // is missing, the reconcile endpoint silently regenerates only the gaps.
+  useEffect(() => {
+    if (!selectedProject?.id) return;
+    if (selectedProject.status !== 'completed') return;
+
+    const aiProcessing = (selectedProject as any).speaker_data?.detectionMetadata?.aiProcessing || {};
+    const tier = (selectedProject as any).performance_level || 'basic';
+
+    // Quick client-side check: are any expected features missing?
+    const tier2flags: Record<string, string[]> = {
+      pro:     ['summary'],
+      premium: ['summary', 'chapters', 'takeaways', 'quotes'],
+    };
+    const expected = tier2flags[tier] || [];
+    const hasMissing = expected.some((f) => !aiProcessing[f]);
+
+    if (!hasMissing) return;
+
+    let cancelled = false;
+    setIsReconciling(true);
+
+    fetch(`/api/projects/${selectedProject.id}/reconcile`, { method: 'POST' })
+      .then((res) => res.json())
+      .then((data) => {
+        if (cancelled) return;
+        setIsReconciling(false);
+        if (data.totalFixed > 0) {
+          // Refresh project data to pull in newly generated content
+          setProjects((prev) =>
+            prev.map((p) =>
+              p.id === selectedProject.id ? { ...p, _reconciled: Date.now() } as typeof p : p
+            )
+          );
+          showToast(`Repaired ${data.totalFixed} missing feature(s)`, 'success');
+        }
+      })
+      .catch(() => {
+        if (!cancelled) setIsReconciling(false);
+      });
+
+    return () => { cancelled = true; };
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [selectedProject?.id, selectedProject?.status]);
 
   const showToast = useCallback((message: string, type: 'success' | 'error' = 'error') => {
     setToast({ message, type });
@@ -943,19 +1088,19 @@ export default function ProjectsPage() {
         console.log(`[DELETE] Attempting to delete audio file: ${fileName}`);
 
         try {
-          const { data: removeData, error: storageError } = await supabase.storage
-            .from('audio-files')
-            .remove([fileName]);
-
-          if (storageError) {
-            console.error('[DELETE] Failed to delete audio file:', storageError);
-            // Continue anyway - don't block project deletion if storage cleanup fails
-          } else {
-            console.log('[DELETE] Audio file deleted successfully:', removeData);
-          }
+          const { data: { session } } = await supabase.auth.getSession();
+          await fetch(`/api/projects/${projectId}/audio`, {
+            method: 'DELETE',
+            headers: {
+              'Content-Type': 'application/json',
+              ...(session?.access_token ? { Authorization: `Bearer ${session.access_token}` } : {}),
+            },
+            body: JSON.stringify({ fileName }),
+          });
+          console.log('[DELETE] Audio file deleted from R2');
         } catch (storageError) {
-          console.error('[DELETE] Error deleting audio file:', storageError);
-          // Continue anyway - don't block project deletion if storage cleanup fails
+          console.error('[DELETE] Error deleting audio file from R2:', storageError);
+          // Continue anyway - don't block project deletion if R2 cleanup fails
         }
       } else {
         console.log('[DELETE] No audio file to delete for project:', projectId);
@@ -2016,6 +2161,12 @@ export default function ProjectsPage() {
 
                       {/* Right: Status + actions */}
                       <div className="flex items-center gap-2 flex-shrink-0">
+                        {isReconciling && (
+                          <div className="hidden sm:flex items-center gap-1.5 px-2.5 py-1 rounded-full bg-blue-500/10 text-blue-400 border border-blue-500/20 text-xs font-medium">
+                            <Loader2 className="w-3 h-3 animate-spin flex-shrink-0" />
+                            <span>Repairing&hellip;</span>
+                          </div>
+                        )}
                         {selectedProject.status === 'completed' && (
                           <div className="hidden sm:flex relative group">
                             <div className="flex items-center gap-1.5 px-2.5 py-1 rounded-full bg-emerald-500/10 text-emerald-400 border border-emerald-500/20 text-xs font-medium cursor-default whitespace-nowrap">
@@ -2181,29 +2332,55 @@ export default function ProjectsPage() {
 
                       {/* Audio Player */}
                       {audioUrl && (
-                        <div className="flex-shrink-0 px-4 py-2 bg-slate-900 border-b border-slate-800 flex justify-end">
-                          <audio ref={audioElementRef} src={audioUrl} controls className="h-8 w-48" preload="metadata" />
-                        </div>
+                        <AudioPlayer src={audioUrl} audioElementRef={audioElementRef} />
                       )}
 
                       {/* Transcript Body */}
-                      <div className="flex-1 min-h-0 overflow-y-auto">
+                      <div ref={readerScrollRef} className="flex-1 min-h-0 overflow-y-auto">
                         {parsedSpeakerData ? (
                           readerView ? (
-                            <div className="px-4 py-4 divide-y divide-slate-800/70">
+                            <div className="px-4 py-4 divide-y divide-slate-800/70 relative">
+                              {/* Resume follow-along button */}
+                              {readerAutoScrollPaused && (
+                                <div className="sticky top-2 z-10 flex justify-center mb-2 pointer-events-none">
+                                  <button
+                                    onClick={() => { isReaderScrollingRef.current = false; setReaderAutoScrollPaused(false); }}
+                                    className="pointer-events-auto flex items-center gap-1.5 px-3 py-1.5 text-[11px] font-medium text-slate-200 bg-slate-800/95 backdrop-blur-sm border border-slate-700 rounded-full shadow-lg hover:bg-slate-700 transition-colors"
+                                  >
+                                    ↓ Resume follow-along
+                                  </button>
+                                </div>
+                              )}
                               {parsedSpeakerData.segments.map((segment: any, i: number) => {
                                 const speakerId = segment.finalSpeakerId || segment.speakerId;
                                 const speaker = parsedSpeakerData.speakers[speakerId];
                                 const speakerName = speaker?.finalName || speaker?.fallbackName || speaker?.name || speakerId;
-                                const colorClass = getSpeakerColor(speakerId);
+                                const badgeClasses = getSpeakerBadgeClasses(speakerId);
                                 const mins = Math.floor((segment.startTime || 0) / 60);
                                 const secs = Math.floor((segment.startTime || 0) % 60);
                                 const timestamp = `${mins}:${secs.toString().padStart(2, '0')}`;
+                                const isActive = readerActiveIndex === i;
                                 return (
-                                  <div key={i} className="flex items-baseline gap-3 py-2.5">
+                                  <div
+                                    key={i}
+                                    id={`reader-segment-${i}`}
+                                    className={`flex items-baseline gap-3 py-2.5 px-2 -mx-2 rounded-lg cursor-pointer transition-all duration-300 ${
+                                      isActive
+                                        ? 'bg-blue-900/10 border-l-2 border-blue-500 pl-3 -ml-3 shadow-[inset_0_1px_0_0_rgba(255,255,255,0.05)]'
+                                        : 'hover:bg-slate-800/40'
+                                    }`}
+                                    onClick={() => {
+                                      const audio = audioElementRef.current;
+                                      if (!audio) return;
+                                      audio.currentTime = segment.startTime || 0;
+                                      isReaderScrollingRef.current = false;
+                                      setReaderAutoScrollPaused(false);
+                                      audio.play().catch(() => undefined);
+                                    }}
+                                  >
                                     <span className="flex-shrink-0 text-[11px] font-mono text-slate-500 w-9 select-none">{timestamp}</span>
-                                    <span className={`flex-shrink-0 text-[11px] font-semibold px-2 py-0.5 rounded-full ${colorClass}`}>{speakerName}</span>
-                                    <span className="text-[14px] text-slate-300 leading-relaxed">{segment.text}</span>
+                                    <span className={`flex-shrink-0 text-[11px] font-semibold px-2 py-0.5 rounded-full ${badgeClasses}`}>{speakerName}</span>
+                                    <span className={`text-[14px] leading-relaxed transition-colors duration-300 ${isActive ? 'text-slate-100' : 'text-slate-300'}`}>{segment.text}</span>
                                   </div>
                                 );
                               })}
@@ -2227,6 +2404,8 @@ export default function ProjectsPage() {
                               triggerInsightGeneration={triggerInsightGeneration}
                               insightsRefreshToken={insightsRefreshToken}
                               audioPlayerRef={audioPlayerRef}
+                              audioElementRef={audioElementRef}
+                              audioSrc={audioUrl}
                               showTimestamps={showTimestamps}
                               selectedSpeaker={selectedSpeaker}
                               selectedSegments={selectedSegments}

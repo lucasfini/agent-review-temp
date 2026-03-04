@@ -72,7 +72,17 @@ function getHubSteps(onNavigateToProjects: () => void) {
 function getProjectsSteps(
   onNavigateToUpload: () => void,
   handlers: {
+    closeProject: () => void;
     selectPremium: () => void;
+    selectReviewTab: () => void;
+    selectSpeakersTab: () => void;
+    selectContentTab: () => void;
+    selectInsightsTab: () => void;
+    selectSummaryTab: () => void;
+    selectChaptersTab: () => void;
+    selectTakeawaysTab: () => void;
+    selectQuotesTab: () => void;
+    showReview: () => void;
     showSpeakers: () => void;
     showContent: () => void;
     showInsights: () => void;
@@ -81,8 +91,11 @@ function getProjectsSteps(
     showTakeaways: () => void;
     showQuotes: () => void;
     expandFirstOutput: () => void;
+    collapseFirstOutput: () => void;
     openGenerateModal: () => void;
     closeGenerateModal: () => void;
+    openGenerateModalOnly: () => void;
+    closeGenerateModalOnly: () => void;
   }
 ) {
   return [
@@ -115,6 +128,7 @@ function getProjectsSteps(
           'This middle column is the transcript. It stays synced to speakers, timestamps, and selections.',
         side: 'left' as const,
         align: 'start' as const,
+        onPrevClick: handlers.closeProject,
       },
     },
     {
@@ -135,28 +149,40 @@ function getProjectsSteps(
           'This panel is where all AI analysis and generated content live. We will walk through each section.',
         side: 'left' as const,
         align: 'start' as const,
+        onNextClick: handlers.showReview,
       },
     },
     {
-      element: '[data-tour="sidebar-tab-review"]',
+      element: '[data-tour="review-panel"]',
       popover: {
-        title: 'Review',
+        title: 'Review Panel',
         description:
-          'Quickly audit low-confidence segments and resolve any speaker issues.',
-        side: 'bottom' as const,
+          'Review uncertain segments, request AI touch-ups, and apply fixes in one place.',
+        side: 'left' as const,
         align: 'start' as const,
         onNextClick: handlers.showSpeakers,
+        onHighlightStarted: (element) => {
+          handlers.selectReviewTab();
+          element?.scrollIntoView({ behavior: 'smooth', block: 'nearest' });
+          setTimeout(() => handlers.refresh(), 120);
+        },
       },
     },
     {
-      element: '[data-tour="sidebar-tab-speakers"]',
+      element: '[data-tour="speakers-panel"]',
       popover: {
-        title: 'Speakers',
+        title: 'Speaker Roster',
         description:
-          'See the speaker roster, roles, and segment counts at a glance.',
-        side: 'bottom' as const,
+          'Manage speaker names and roles, merge duplicates, and improve accuracy.',
+        side: 'left' as const,
         align: 'start' as const,
         onNextClick: handlers.showContent,
+        onPrevClick: handlers.selectReviewTab,
+        onHighlightStarted: (element) => {
+          handlers.selectSpeakersTab();
+          element?.scrollIntoView({ behavior: 'smooth', block: 'nearest' });
+          setTimeout(() => handlers.refresh(), 120);
+        },
       },
     },
     {
@@ -168,6 +194,8 @@ function getProjectsSteps(
         side: 'bottom' as const,
         align: 'end' as const,
         onNextClick: handlers.expandFirstOutput,
+        onPrevClick: handlers.selectSpeakersTab,
+        onHighlightStarted: handlers.selectContentTab,
       },
     },
     {
@@ -179,17 +207,25 @@ function getProjectsSteps(
         side: 'left' as const,
         align: 'start' as const,
         onNextClick: handlers.showInsights,
+        onPrevClick: handlers.collapseFirstOutput,
+        onHighlightStarted: handlers.selectContentTab,
       },
     },
     {
-      element: '[data-tour="sidebar-tab-insights"]',
+      element: '[data-tour="insights-panel"]',
       popover: {
-        title: 'Insights',
+        title: 'Insights Panel',
         description:
-          'Entities, tools, and themes extracted with sources and confidence.',
-        side: 'bottom' as const,
+          'Explore topics, gaps, and opportunities powered by AI analysis.',
+        side: 'left' as const,
         align: 'start' as const,
         onNextClick: handlers.showSummary,
+        onPrevClick: handlers.selectContentTab,
+        onHighlightStarted: (element) => {
+          handlers.selectInsightsTab();
+          element?.scrollIntoView({ behavior: 'smooth', block: 'nearest' });
+          setTimeout(() => handlers.refresh(), 120);
+        },
       },
     },
     {
@@ -201,6 +237,8 @@ function getProjectsSteps(
         side: 'left' as const,
         align: 'start' as const,
         onNextClick: handlers.showChapters,
+        onPrevClick: handlers.selectInsightsTab,
+        onHighlightStarted: handlers.selectSummaryTab,
       },
     },
     {
@@ -212,6 +250,8 @@ function getProjectsSteps(
         side: 'left' as const,
         align: 'start' as const,
         onNextClick: handlers.showTakeaways,
+        onPrevClick: handlers.selectSummaryTab,
+        onHighlightStarted: handlers.selectChaptersTab,
       },
     },
     {
@@ -223,6 +263,8 @@ function getProjectsSteps(
         side: 'left' as const,
         align: 'start' as const,
         onNextClick: handlers.showQuotes,
+        onPrevClick: handlers.selectChaptersTab,
+        onHighlightStarted: handlers.selectTakeawaysTab,
       },
     },
     {
@@ -233,6 +275,8 @@ function getProjectsSteps(
           'Pull-ready quotes with speaker attribution and timestamps.',
         side: 'left' as const,
         align: 'start' as const,
+        onPrevClick: handlers.selectTakeawaysTab,
+        onHighlightStarted: handlers.selectQuotesTab,
       },
     },
     {
@@ -252,8 +296,14 @@ function getProjectsSteps(
         title: 'Generate Content',
         description:
           'Pick exactly which assets you want to generate for this episode.',
-        side: 'over' as const,
+        side: 'right' as const,
         align: 'center' as const,
+        onPrevClick: handlers.closeGenerateModalOnly,
+        onHighlightStarted: (element) => {
+          handlers.openGenerateModalOnly();
+          element?.scrollIntoView({ behavior: 'smooth', block: 'nearest' });
+          setTimeout(() => handlers.refresh(), 200);
+        },
       },
     },
     {
@@ -305,12 +355,13 @@ function getProjectsSteps(
         side: 'over' as const,
         align: 'center' as const,
         onNextClick: onNavigateToUpload,
+        onPrevClick: handlers.openGenerateModalOnly,
       },
     },
   ];
 }
 
-function getUploadSteps(onNavigateToAnalytics: () => void) {
+function getUploadSteps(onNavigateToAnalytics: () => void, onNavigateToProjects: () => void) {
   return [
     {
       element: '[data-tour="upload-zone"]',
@@ -320,6 +371,7 @@ function getUploadSteps(onNavigateToAnalytics: () => void) {
           'Drag and drop any MP3, WAV, M4A, or M4B file. Up to 500MB. Processing typically takes 3–5 minutes per hour of audio.',
         side: 'bottom' as const,
         align: 'start' as const,
+        onPrevClick: onNavigateToProjects,
       },
     },
     {
@@ -333,6 +385,25 @@ function getUploadSteps(onNavigateToAnalytics: () => void) {
       },
     },
     {
+      element: '[data-tour="advanced-options"]',
+      popover: {
+        title: 'Advanced Options',
+        description:
+          'Tune speaker detection and pre-define speakers before upload for better accuracy.',
+        side: 'bottom' as const,
+        align: 'start' as const,
+        onHighlightStarted: (element) => {
+          const wrapper = document.querySelector('[data-tour="advanced-options"]') as HTMLElement | null;
+          const expanded = wrapper?.getAttribute('data-expanded') === 'true';
+          if (!expanded) {
+            const toggle = document.querySelector('[data-tour="advanced-options-toggle"]') as HTMLElement | null;
+            toggle?.click();
+          }
+          element?.scrollIntoView({ behavior: 'smooth', block: 'start' });
+        },
+      },
+    },
+    {
       element: '[data-tour="speaker-roster"]',
       popover: {
         title: 'Pre-Define Speakers',
@@ -340,6 +411,22 @@ function getUploadSteps(onNavigateToAnalytics: () => void) {
           "Optionally list the speakers' names and roles before uploading. This gives the AI a head start and improves attribution accuracy.",
         side: 'top' as const,
         align: 'start' as const,
+        onHighlightStarted: (element) => {
+          element?.scrollIntoView({ behavior: 'smooth', block: 'start' });
+        },
+      },
+    },
+    {
+      element: '[data-tour="upload-history"]',
+      popover: {
+        title: 'Upload History',
+        description:
+          'Track past uploads, statuses, and quickly jump back into any project.',
+        side: 'top' as const,
+        align: 'start' as const,
+        onHighlightStarted: (element) => {
+          element?.scrollIntoView({ behavior: 'smooth', block: 'center' });
+        },
       },
     },
     {
@@ -355,7 +442,16 @@ function getUploadSteps(onNavigateToAnalytics: () => void) {
   ];
 }
 
-function getAnalyticsSteps(onNavigateToSettings: () => void) {
+function getAnalyticsSteps(
+  onNavigateToSettings: () => void,
+  onNavigateToUpload: () => void,
+  handlers: {
+    showInsightsTab: () => void;
+    showGoalsTab: () => void;
+    advanceToGoalsPanel: () => void;
+    refresh: () => void;
+  }
+) {
   return [
     {
       element: '[data-tour="analytics-kpis"]',
@@ -365,16 +461,67 @@ function getAnalyticsSteps(onNavigateToSettings: () => void) {
           'Track cumulative content created, processing time, and average cost per episode over time.',
         side: 'bottom' as const,
         align: 'start' as const,
+        onPrevClick: onNavigateToUpload,
       },
     },
     {
-      element: '[data-tour="analytics-goals"]',
+      element: '[data-tour="analytics-controls"]',
+      popover: {
+        title: 'Filters & Time Range',
+        description:
+          'Slice analytics by project and time range to spot trends.',
+        side: 'bottom' as const,
+        align: 'start' as const,
+      },
+    },
+    {
+      element: '[data-tour="analytics-content-mix"]',
+      popover: {
+        title: 'Content Mix & Topics',
+        description:
+          'See how your content output is distributed and which topics dominate.',
+        side: 'bottom' as const,
+        align: 'start' as const,
+      },
+    },
+    {
+      element: '[data-tour="analytics-banner"]',
+      popover: {
+        title: 'Projects Ready for Analysis',
+        description:
+          'Run analytics on newly uploaded projects to unlock insights.',
+        side: 'bottom' as const,
+        align: 'start' as const,
+      },
+    },
+    {
+      element: '[data-tour="analytics-coverage"]',
+      popover: {
+        title: 'Insights & Gaps',
+        description:
+          'Review coverage opportunities and content gaps across your library.',
+        side: 'bottom' as const,
+        align: 'start' as const,
+        onNextClick: handlers.advanceToGoalsPanel,
+        onHighlightStarted: () => {
+          handlers.showInsightsTab();
+          setTimeout(() => handlers.refresh(), 120);
+        },
+      },
+    },
+    {
+      element: '[data-tour="analytics-goals-panel"]',
       popover: {
         title: 'Narrative Goals',
         description:
           'Set topics you want to own — "AI in healthcare", "leadership mindset" — and see which episodes cover them and how deeply.',
-        side: 'bottom' as const,
+        side: 'top' as const,
         align: 'start' as const,
+        onHighlightStarted: (element) => {
+          handlers.showGoalsTab();
+          element?.scrollIntoView({ behavior: 'smooth', block: 'nearest' });
+          setTimeout(() => handlers.refresh(), 120);
+        },
       },
     },
     {
@@ -390,14 +537,14 @@ function getAnalyticsSteps(onNavigateToSettings: () => void) {
   ];
 }
 
-function getSettingsSteps() {
+function getSettingsSteps(onNavigateToHub: () => void, onNavigateToSignup: () => void) {
   return [
     {
       element: '[data-tour="credit-balance"]',
       popover: {
         title: 'Pay-As-You-Go Credits',
         description:
-          'No subscriptions. Buy credits and use them as you process audio. Basic costs ~$0.37/hr. Premium costs ~$0.52/hr.',
+          'No subscriptions. Buy credits and use them as you process audio. Basic costs ~$0.39/hr. Premium costs ~$0.55/hr.',
         side: 'right' as const,
         align: 'start' as const,
       },
@@ -420,6 +567,10 @@ function getSettingsSteps() {
           'AudioRepurpose turns any recording into a month of content in minutes. Ready to try it with your own audio?',
         side: 'over' as const,
         align: 'center' as const,
+        prevBtnText: 'Done',
+        doneBtnText: 'Sign Up →',
+        onPrevClick: onNavigateToHub,
+        onNextClick: onNavigateToSignup,
       },
     },
   ];
@@ -459,6 +610,25 @@ export function DemoTour({ chapter, autoStart = true }: DemoTourProps) {
       el.scrollIntoView({ behavior: 'smooth', block: 'center' });
       el.click();
     };
+    const refreshHighlight = () => {
+      driverRef.current?.refresh?.();
+    };
+    const ensureContextSidebarOpen = () => {
+      const panel = document.querySelector('[data-tour="sidebar-panel"]') as HTMLElement | null;
+      if (panel && panel.offsetWidth > 0) return;
+      const toggle =
+        (document.querySelector('button[title="Show details panel"]') as HTMLElement | null) ||
+        (document.querySelector('button[title="Show details"]') as HTMLElement | null);
+      toggle?.click();
+    };
+    const activateTab = (selector: string, delayMs = 120) => {
+      ensureContextSidebarOpen();
+      const el = document.querySelector(selector) as HTMLElement | null;
+      if (!el) return;
+      el.scrollIntoView({ behavior: 'smooth', block: 'center' });
+      el.click();
+      setTimeout(() => refreshHighlight(), delayMs);
+    };
     const clickAndAdvance = (selector: string, delayMs = 0) => {
       clickSelector(selector);
       if (delayMs > 0) {
@@ -467,8 +637,21 @@ export function DemoTour({ chapter, autoStart = true }: DemoTourProps) {
         driverRef.current?.moveNext();
       }
     };
+    const closeProject = () => {
+      window.dispatchEvent(new CustomEvent('demoCloseProject'));
+    };
     const handlers = {
+      closeProject,
       selectPremium: () => clickAndAdvance('[data-tour="premium-project"]', 200),
+      selectReviewTab: () => activateTab('[data-tour="sidebar-tab-review"]'),
+      selectSpeakersTab: () => activateTab('[data-tour="sidebar-tab-speakers"]'),
+      selectContentTab: () => activateTab('[data-tour="sidebar-tab-content"]'),
+      selectInsightsTab: () => activateTab('[data-tour="sidebar-tab-insights"]'),
+      selectSummaryTab: () => activateTab('[data-tour="sidebar-tab-summary"]'),
+      selectChaptersTab: () => activateTab('[data-tour="sidebar-tab-chapters"]'),
+      selectTakeawaysTab: () => activateTab('[data-tour="sidebar-tab-takeaways"]'),
+      selectQuotesTab: () => activateTab('[data-tour="sidebar-tab-quotes"]'),
+      showReview: () => clickAndAdvance('[data-tour="sidebar-tab-review"]', 50),
       showSpeakers: () => clickAndAdvance('[data-tour="sidebar-tab-speakers"]', 50),
       showContent: () => clickAndAdvance('[data-tour="sidebar-tab-content"]', 50),
       showInsights: () => clickAndAdvance('[data-tour="sidebar-tab-insights"]', 50),
@@ -476,6 +659,10 @@ export function DemoTour({ chapter, autoStart = true }: DemoTourProps) {
       showChapters: () => clickAndAdvance('[data-tour="sidebar-tab-chapters"]', 50),
       showTakeaways: () => clickAndAdvance('[data-tour="sidebar-tab-takeaways"]', 50),
       showQuotes: () => clickAndAdvance('[data-tour="sidebar-tab-quotes"]', 50),
+      showInsightsTab: () => clickSelector('#tab-insights'),
+      showGoalsTab: () => clickSelector('#tab-goals'),
+      advanceToGoalsPanel: () => clickAndAdvance('#tab-goals', 80),
+      refresh: refreshHighlight,
       expandFirstOutput: () => {
         clickSelector('[data-tour="sidebar-tab-content"]');
         setTimeout(() => {
@@ -483,13 +670,25 @@ export function DemoTour({ chapter, autoStart = true }: DemoTourProps) {
           driverRef.current?.moveNext();
         }, 150);
       },
+      collapseFirstOutput: () => {
+        const el = document.querySelector('[data-tour="content-output"]') as HTMLElement | null;
+        if (el?.getAttribute('data-expanded') === 'true') {
+          el.click();
+        }
+      },
       openGenerateModal: () => {
         window.dispatchEvent(new CustomEvent('demoOpenGenerateContent'));
         setTimeout(() => driverRef.current?.moveNext(), 200);
       },
+      openGenerateModalOnly: () => {
+        window.dispatchEvent(new CustomEvent('demoOpenGenerateContent'));
+      },
       closeGenerateModal: () => {
         clickSelector('[data-tour="generate-close"]');
         setTimeout(() => driverRef.current?.moveNext(), 150);
+      },
+      closeGenerateModalOnly: () => {
+        clickSelector('[data-tour="generate-close"]');
       },
     };
 
@@ -501,36 +700,77 @@ export function DemoTour({ chapter, autoStart = true }: DemoTourProps) {
         steps = getProjectsSteps(() => navigateTo('/dashboard/upload', 'upload'), handlers);
         break;
       case 'upload':
-        steps = getUploadSteps(() => navigateTo('/dashboard/analytics', 'analytics'));
+        steps = getUploadSteps(
+          () => navigateTo('/dashboard/analytics', 'analytics'),
+          () => navigateTo('/dashboard/projects', 'projects')
+        );
         break;
       case 'analytics':
-        steps = getAnalyticsSteps(() => navigateTo('/dashboard/settings', 'settings'));
+        steps = getAnalyticsSteps(
+          () => navigateTo('/dashboard/settings?section=usage', 'settings'),
+          () => navigateTo('/dashboard/upload', 'upload'),
+          { showInsightsTab: handlers.showInsightsTab, showGoalsTab: handlers.showGoalsTab, advanceToGoalsPanel: handlers.advanceToGoalsPanel, refresh: handlers.refresh }
+        );
         break;
       case 'settings':
-        steps = getSettingsSteps();
+        steps = getSettingsSteps(
+          () => {
+            driverRef.current?.destroy();
+            driverRef.current = null;
+            localStorage.removeItem('demoTourChapter');
+            router.push('/dashboard/hub');
+          },
+          () => {
+            driverRef.current?.destroy();
+            driverRef.current = null;
+            localStorage.removeItem('demoTourChapter');
+            router.push('/auth/signup');
+          }
+        );
         break;
       default:
         return;
     }
+
+    // Resolve step elements lazily so targets that appear after navigation,
+    // tab switches, or modal opens can still be highlighted.
+    const lazySteps = steps.map((step: any) => {
+      if (!step.element) return step;
+      if (typeof step.element !== 'string') return step;
+      const selector = step.element;
+      return {
+        ...step,
+        element: () => document.querySelector(selector) || document.body,
+      };
+    });
 
     const driverInstance = driver({
       showProgress: true,
       animate: true,
       smoothScroll: true,
       allowClose: true,
+      overlayOpacity: 0.35,
+      stagePadding: 6,
+      stageRadius: 8,
       overlayClickBehavior: 'close',
       nextBtnText: 'Next →',
       prevBtnText: '← Back',
-      doneBtnText: 'Continue to next page →',
+      doneBtnText: 'Continue →',
       onDestroyStarted: () => {
         localStorage.removeItem('demoTourChapter');
         driverInstance.destroy();
       },
-      steps,
+      steps: lazySteps,
     });
 
     driverRef.current = driverInstance;
-    driverInstance.drive();
+    try {
+      driverInstance.drive();
+    } catch (err) {
+      console.warn('[DemoTour] driver.js failed to start:', err);
+      localStorage.removeItem('demoTourChapter');
+      startedRef.current = false;
+    }
   }, [chapter, navigateTo, router]);
 
   useEffect(() => {

@@ -3,6 +3,7 @@
 // GPT-4o-mini CANNOT infer new speakers, rename speakers, or create speakers
 
 import OpenAI from 'openai';
+import { getOpenAIApiKeyForUser } from '@/lib/openai/consent';
 import { SpeakerSegment } from './types';
 import { GPTSpeaker, isValidGPTSpeakerId } from './gpt-speaker-intelligence';
 
@@ -116,11 +117,12 @@ export async function reassignSegmentsWithGPT(
   options: {
     apiKey?: string;
     model?: string;
+    userId?: string;
   } = {}
 ): Promise<GPTReassignmentResult> {
-  const apiKey = options.apiKey || process.env.OPENAI_API_KEY;
+  const apiKey = options.apiKey ?? await getOpenAIApiKeyForUser(options.userId);
   if (!apiKey) {
-    throw new Error('OPENAI_API_KEY required for segment reassignment');
+    throw new Error('OpenAI API key not configured for segment reassignment');
   }
 
   const openai = new OpenAI({ apiKey, timeout: 45000 });

@@ -9,6 +9,7 @@
 // Uses GPT-4o-mini for cost efficiency (~$0.0003/call).
 
 import OpenAI from 'openai';
+import { getOpenAIApiKeyForUser } from '@/lib/openai/consent';
 import { SpeakerSegment } from './types';
 import { GPTSpeaker } from './gpt-speaker-intelligence';
 import { trackOpenAIUsage } from '@/lib/billing/track-usage';
@@ -175,9 +176,9 @@ export async function resolveDirtyCluster(
     projectId?: string;
   } = {}
 ): Promise<DirtyClusterResolutionResult> {
-  const apiKey = options.apiKey || process.env.OPENAI_API_KEY;
+  const apiKey = options.apiKey ?? await getOpenAIApiKeyForUser(options.userId);
   if (!apiKey) {
-    throw new Error('OPENAI_API_KEY required for dirty cluster resolution');
+    throw new Error('OpenAI API key not configured for dirty cluster resolution');
   }
 
   console.log(`[DIRTY CLUSTER] Resolving cluster: ${dirtyClusterLabel}`);

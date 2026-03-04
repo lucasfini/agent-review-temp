@@ -65,6 +65,10 @@ interface ConversationViewProps {
   insightsRefreshToken?: number;
   // Audio player ref for speaker sample playback
   audioPlayerRef?: RefObject<AudioPlayerRef | null>;
+  // Raw audio element ref for transcript sync
+  audioElementRef?: RefObject<HTMLAudioElement | null>;
+  // Audio src — used as a dep so timeupdate effect re-runs when audio becomes available
+  audioSrc?: string | null;
   showTimestamps?: boolean;
   selectedSpeaker?: string | null;
   // Lifted selection state (from ProjectsPage)
@@ -113,6 +117,8 @@ export default function ConversationView({
   triggerInsightGeneration,
   insightsRefreshToken,
   audioPlayerRef,
+  audioElementRef,
+  audioSrc,
   showTimestamps: controlledShowTimestamps,
   selectedSpeaker: controlledSelectedSpeaker,
   selectedSegments: externalSelectedSegments,
@@ -366,6 +372,74 @@ export default function ConversationView({
     if (scrollToSegmentIndex == null) return;
     document.getElementById(`segment-${scrollToSegmentIndex}`)?.scrollIntoView({ behavior: 'smooth', block: 'center' });
   }, [scrollToSegmentIndex]);
+
+  // Track which segment is currently being spoken during audio playback
+  const [activeSegmentIndex, setActiveSegmentIndex] = useState<number | null>(null);
+
+  // Scroll container ref + user-scroll detection
+  const transcriptContainerRef = useRef<HTMLDivElement>(null);
+  const isUserScrollingRef = useRef(false);
+  const [autoScrollPaused, setAutoScrollPaused] = useState(false);
+
+  const seekAndPlay = useCallback((time: number) => {
+    const audio = audioElementRef?.current;
+    if (!audio) return;
+    audio.currentTime = time;
+    // Resume auto-scroll when user clicks a segment
+    isUserScrollingRef.current = false;
+    setAutoScrollPaused(false);
+    audio.play().catch(() => undefined);
+  }, [audioElementRef]);
+
+  const resumeAutoScroll = useCallback(() => {
+    isUserScrollingRef.current = false;
+    setAutoScrollPaused(false);
+  }, []);
+
+  useEffect(() => {
+    const audio = audioElementRef?.current;
+    if (!audio) return;
+    const segments = speakerData?.segments;
+    if (!segments?.length) return;
+
+    const onTimeUpdate = () => {
+      const t = audio.currentTime;
+      let found: number | null = null;
+      for (let i = 0; i < segments.length; i++) {
+        if (t >= segments[i].startTime && t <= segments[i].endTime) {
+          found = i;
+          break;
+        }
+      }
+      setActiveSegmentIndex(prev => (prev === found ? prev : found));
+    };
+
+    audio.addEventListener('timeupdate', onTimeUpdate);
+    return () => audio.removeEventListener('timeupdate', onTimeUpdate);
+  }, [audioElementRef, speakerData?.segments, audioSrc]);
+
+  // Auto-scroll to the active segment while audio is playing
+  useEffect(() => {
+    if (activeSegmentIndex == null) return;
+    if (autoScrollPaused || isUserScrollingRef.current) return;
+    document.getElementById(`segment-${activeSegmentIndex}`)?.scrollIntoView({ behavior: 'smooth', block: 'center' });
+  }, [activeSegmentIndex, autoScrollPaused]);
+
+  // Detect manual user scrolling to pause auto-scroll
+  useEffect(() => {
+    const container = transcriptContainerRef.current;
+    if (!container) return;
+    const onUserScroll = () => {
+      isUserScrollingRef.current = true;
+      setAutoScrollPaused(true);
+    };
+    container.addEventListener('wheel', onUserScroll, { passive: true });
+    container.addEventListener('touchmove', onUserScroll, { passive: true });
+    return () => {
+      container.removeEventListener('wheel', onUserScroll);
+      container.removeEventListener('touchmove', onUserScroll);
+    };
+  }, []);
 
   // Fetch AI-powered insights from database
   useEffect(() => {
@@ -823,7 +897,18 @@ export default function ConversationView({
       </div>
 
       {/* Conversation Segments */}
-      <div className="flex-1 overflow-y-auto px-4 pb-4" data-tour="conversation-feed">
+      <div ref={transcriptContainerRef} className="flex-1 overflow-y-auto px-4 pb-4" data-tour="conversation-feed">
+        {/* Resume auto-scroll button — sticky at top when user has scrolled away */}
+        {autoScrollPaused && (
+          <div className="sticky top-2 z-10 flex justify-center mb-2 pointer-events-none">
+            <button
+              onClick={resumeAutoScroll}
+              className="pointer-events-auto flex items-center gap-1.5 px-3 py-1.5 text-[11px] font-medium text-slate-200 bg-slate-800/95 backdrop-blur-sm border border-slate-700 rounded-full shadow-lg hover:bg-slate-700 transition-colors"
+            >
+              ↓ Resume follow-along
+            </button>
+          </div>
+        )}
         <div className="space-y-4">
         {filteredSegments.map(({ segment, index: segmentIndex }, loopIdx) => {
           const segmentSpeakerId = resolveSpeakerId(segment);
@@ -843,6 +928,7 @@ export default function ConversationView({
           const colorClass = getSpeakerColor(segmentSpeakerId);
           const duration = segment.endTime - segment.startTime;
           const isSelected = externalSelectedSegments?.has(segmentIndex) ?? false;
+          const isActive = activeSegmentIndex === segmentIndex;
 
           // Additional safety: if speakerName is still empty/undefined, skip this segment
           if (!speakerName || speakerName.trim() === '') {
@@ -855,9 +941,18 @@ export default function ConversationView({
               key={`${segmentSpeakerId}-${segmentIndex}`}
               id={`segment-${segmentIndex}`}
               {...(loopIdx === 0 ? { 'data-tour': 'speaker-bubble' } : {})}
-              className={`flex space-x-3 p-4 rounded-xl transition-colors border group ${
-                isSelected ? 'bg-blue-900/20 border-blue-800/30' : 'bg-slate-900/80 border-slate-800 hover:border-slate-700'
+              className={`flex space-x-3 p-4 rounded-xl transition-all duration-300 border group cursor-pointer ${
+                isSelected
+                  ? 'bg-blue-900/20 border-blue-800/30'
+                  : isActive
+                  ? 'bg-blue-900/10 border-l-2 border-blue-500 shadow-[inset_0_1px_0_0_rgba(255,255,255,0.05)]'
+                  : 'bg-slate-900/80 border-slate-800 hover:border-slate-700'
               }`}
+              onClick={(e) => {
+                const target = e.target as HTMLElement;
+                if (target.closest('button, input, a, label')) return;
+                seekAndPlay(segment.startTime);
+              }}
             >
               {projectId && (
                 <div className="flex items-start pt-2">

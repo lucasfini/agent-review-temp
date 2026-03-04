@@ -1,5 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { Buffer } from 'buffer';
+import { PutObjectCommand } from '@aws-sdk/client-s3';
+import { r2Client, BUCKET_NAME } from '@/lib/r2';
 import { supabaseAdmin } from '@/lib/supabase/server';
 import { computeAudioFingerprint } from '@/lib/audio-fingerprint';
 import { getCachedTranscription, applyCachedTranscriptionToProject } from '@/lib/transcription-cache';
@@ -158,19 +160,20 @@ export async function POST(request: NextRequest) {
 
     console.log('Project created:', project.id);
 
-    // Upload assembled file to Supabase Storage
+    // Upload assembled file to R2
     const storageFileName = `${project.id}/${sanitizedBaseName}`;
 
-    const { data: uploadData, error: uploadError } = await supabaseAdmin.storage
-      .from('audio-files')
-      .upload(storageFileName, finalNodeBuffer, {
-        contentType: 'audio/mpeg',
-        upsert: false
-      });
+    try {
+      await r2Client.send(new PutObjectCommand({
+        Bucket: BUCKET_NAME,
+        Key: storageFileName,
+        Body: finalNodeBuffer,
+        ContentType: 'audio/mpeg',
+      }));
+      console.log('File uploaded to R2:', storageFileName);
+    } catch (uploadError: any) {
+      console.error('R2 upload error:', uploadError);
 
-    if (uploadError) {
-      console.error('Storage upload error:', uploadError);
-      
       // Clean up project record
       await supabaseAdmin
         .from('projects')
@@ -178,12 +181,10 @@ export async function POST(request: NextRequest) {
         .eq('id', project.id);
 
       return NextResponse.json(
-        { error: `Storage error: ${uploadError.message}` },
+        { error: `Storage error: ${uploadError?.message || 'R2 upload failed'}` },
         { status: 500 }
       );
     }
-
-    console.log('File uploaded to storage:', storageFileName);
 
     if (!global.uploadedFiles) {
       global.uploadedFiles = new Map();
@@ -238,8 +239,8 @@ export async function POST(request: NextRequest) {
     // Clean up upload session
     uploadSessions.delete(uploadId);
 
-    // Start transcription process if OpenAI key is available
-    if (process.env.OPENAI_API_KEY) {
+    // Start transcription process if any OpenAI key is available
+    if (process.env.OPENAI_API_KEY_NONOPTIN || process.env.OPENAI_API_KEY_OPTIN || process.env.OPENAI_API_KEY) {
       const diarizationProvider = (process.env.ASSEMBLYAI_API_KEY || process.env.ASSEMBLYAI_ACCESS_KEY) ? 'assemblyai' : 'deepgram';
       console.log(`[UPLOAD][CHUNKED] Starting transcription with provider: ${diarizationProvider}`);
 

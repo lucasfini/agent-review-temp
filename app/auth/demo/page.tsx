@@ -28,6 +28,8 @@ export default function DemoLoginPage() {
         return;
       }
 
+      // Ensure demo welcome modal shows on arrival
+      localStorage.removeItem('demoWelcomeSeen');
       router.push('/dashboard/hub');
     };
 

@@ -242,7 +242,7 @@ export default function SignupPage() {
           <button
             type="button"
             onClick={handleGoogle}
-            disabled={isGoogleLoading || isLoading || !termsAccepted}
+            disabled={isGoogleLoading || isLoading}
             className="w-full flex items-center justify-center gap-3 py-3 px-4 bg-slate-900 border border-slate-700 rounded-xl text-sm font-medium text-slate-200 hover:bg-slate-800 focus:outline-none focus:ring-2 focus:ring-blue-500 focus:ring-offset-2 focus:ring-offset-slate-950 disabled:opacity-50 disabled:cursor-not-allowed transition-colors motion-safe:animate-fade-up-400 hover:shadow-[0_0_20px_rgba(59,130,246,0.25)]"
           >
             {isGoogleLoading ? (
@@ -252,6 +252,12 @@ export default function SignupPage() {
             )}
             Continue with Google
           </button>
+          <p className="text-xs text-slate-500 text-center mt-2 motion-safe:animate-fade-up-400">
+            By continuing with Google you agree to our{' '}
+            <Link href="/terms" className="text-slate-400 hover:text-slate-300">Terms</Link>{' '}
+            and{' '}
+            <Link href="/privacy" className="text-slate-400 hover:text-slate-300">Privacy Policy</Link>.
+          </p>
 
           {/* OR divider */}
           <div className="flex items-center gap-3 my-6 motion-safe:animate-fade-up-400">

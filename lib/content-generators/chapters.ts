@@ -1,5 +1,6 @@
 // AI-powered chapter detection for podcasts using GPT-4o-mini
 import OpenAI from 'openai';
+import { getOpenAIApiKeyForUser } from '@/lib/openai/consent';
 import { TranscriptionSegment } from '../types';
 import { trackOpenAIUsage } from '@/lib/billing/track-usage';
 
@@ -33,9 +34,9 @@ export async function detectPodcastChapters(
     apiKey?: string;
   } = {}
 ): Promise<ChaptersResult> {
-  const apiKey = options.apiKey || process.env.OPENAI_API_KEY;
+  const apiKey = options.apiKey ?? await getOpenAIApiKeyForUser(options.userId);
   if (!apiKey) {
-    throw new Error('OPENAI_API_KEY not configured');
+    throw new Error('OpenAI API key not configured');
   }
 
   console.log('[CHAPTERS] 📚 Detecting chapter markers with GPT-4o-mini...');

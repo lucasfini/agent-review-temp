@@ -1,7 +1,7 @@
 "use client";
 
 import { useState, useCallback, useEffect, useRef } from 'react';
-import { Upload, FileAudio, X, AlertCircle, CheckCircle, Clock, History, Trash2, Eye, FileVideo, Loader2, ChevronDown, ChevronUp, Lightbulb, Users, Mic, Pencil, Lock } from 'lucide-react';
+import { Upload, FileAudio, X, AlertCircle, CheckCircle, Clock, History, Trash2, Eye, FileVideo, Loader2, ChevronDown, ChevronUp, Lightbulb, Users, Mic, Pencil, Lock, UserCircle, MoreHorizontal } from 'lucide-react';
 import Link from 'next/link';
 import { supabase } from '@/lib/supabase/client';
 import { LARGE_FILE_THRESHOLD_BYTES, UPLOAD_TIMEOUT_MS } from '@/lib/upload-constants';
@@ -91,21 +91,21 @@ const TIER_OPTIONS: { id: PerformanceLevel; label: string; accuracy: string; cos
     id: 'basic',
     label: 'Basic',
     accuracy: 'AssemblyAI Universal-1',
-    cost: '$0.37/hr',
+    cost: '$0.39/hr',
     description: 'Fast transcription + diarization with no AI enhancement.',
   },
   {
     id: 'pro',
     label: 'Pro',
     accuracy: 'GPT-5 + GPT-5-nano + GPT-5-mini',
-    cost: '$0.44/hr',
+    cost: '$0.47/hr',
     description: 'GPT-5 builds the speaker roster, GPT-5-nano maps segments, GPT-5-mini generates the episode summary.',
   },
   {
     id: 'premium',
     label: 'Premium',
     accuracy: 'GPT-5 + GPT-5-nano + GPT-5-mini',
-    cost: '$0.52/hr',
+    cost: '$0.55/hr',
     description: 'GPT-5 builds the speaker roster, GPT-5-nano handles roles/chapters/takeaways, GPT-5-mini generates summaries + quotes.',
   },
 ];
@@ -876,7 +876,7 @@ export default function UploadPage() {
 
   return (
     <div className="py-6">
-      <div className="max-w-4xl mx-auto px-4 sm:px-6 md:px-8">
+      <div className="max-w-6xl mx-auto px-4 sm:px-6 md:px-8">
 
         {/* Header */}
         <div className="mb-6">
@@ -887,6 +887,9 @@ export default function UploadPage() {
             Drop in an episode or clip — we'll handle transcription, speaker identification, and content generation.
           </p>
         </div>
+
+        <div className="flex gap-8 items-start">
+        <div className="flex-1 min-w-0">
 
         {/* Demo overlay */}
         {isDemoMode && (
@@ -931,37 +934,6 @@ export default function UploadPage() {
                 <p className="text-[11px] text-slate-400 leading-snug">{option.description}</p>
               </button>
             ))}
-          </div>
-        </div>
-
-        {/* Tips for Best Results */}
-        <div className="bg-blue-900/10 border border-blue-500/20 rounded-xl p-4 mb-6">
-          <div className="flex items-center gap-2 mb-3">
-            <Lightbulb className="w-4 h-4 text-blue-400 flex-shrink-0" />
-            <span className="text-sm font-semibold text-blue-400">Tips for Best Results</span>
-          </div>
-          <div className="grid grid-cols-3 gap-4">
-            <div className="flex gap-2.5">
-              <Users className="w-4 h-4 text-blue-400 flex-shrink-0 mt-0.5" />
-              <div>
-                <p className="text-xs font-semibold text-slate-300 mb-0.5">Speaker Count</p>
-                <p className="text-xs text-slate-400 leading-relaxed">Working with 5+ speakers? Manually setting the &apos;Number of Speakers&apos; below drastically improves accuracy for debates and panels.</p>
-              </div>
-            </div>
-            <div className="flex gap-2.5">
-              <Pencil className="w-4 h-4 text-blue-400 flex-shrink-0 mt-0.5" />
-              <div>
-                <p className="text-xs font-semibold text-slate-300 mb-0.5">Naming</p>
-                <p className="text-xs text-slate-400 leading-relaxed">Descriptive filenames like &quot;Interview with [Name]&quot; help our AI automatically identify and name your guests.</p>
-              </div>
-            </div>
-            <div className="flex gap-2.5">
-              <Mic className="w-4 h-4 text-blue-400 flex-shrink-0 mt-0.5" />
-              <div>
-                <p className="text-xs font-semibold text-slate-300 mb-0.5">Audio Quality</p>
-                <p className="text-xs text-slate-400 leading-relaxed">For the best transcription, ensure speakers are close to their mics and background noise is minimal.</p>
-              </div>
-            </div>
           </div>
         </div>
 
@@ -1333,11 +1305,12 @@ export default function UploadPage() {
         )}
 
         {/* Advanced Options — collapsible, out of the critical path */}
-        <div className="mb-8 border border-slate-700 rounded-lg overflow-hidden">
+        <div className="mb-8 border border-slate-700 rounded-lg overflow-hidden" data-tour="advanced-options" data-expanded={showAdvancedOptions ? 'true' : 'false'}>
           <button
             type="button"
             onClick={() => setShowAdvancedOptions(!showAdvancedOptions)}
             className="w-full flex items-center justify-between px-4 py-3 bg-slate-800/50 hover:bg-slate-800 transition-colors text-left"
+            data-tour="advanced-options-toggle"
           >
             <div className="flex items-center gap-2">
               <span className="text-sm font-semibold text-slate-300">Advanced Options</span>
@@ -1487,7 +1460,7 @@ export default function UploadPage() {
         )}
 
         {/* Upload History */}
-        <div className="mt-8">
+        <div className="mt-8" data-tour="upload-history">
           <div className="flex items-center justify-between mb-4">
             <div className="flex items-center space-x-2">
               <History className="h-5 w-5 text-slate-500" />
@@ -1524,6 +1497,37 @@ export default function UploadPage() {
                   <p className="mt-1 text-sm text-slate-400">
                     Your upload history will appear here once you start uploading.
                   </p>
+                  {isDemoMode && (
+                    <div className="mt-6 text-left">
+                      <div className="p-4 rounded-lg border border-slate-800 bg-slate-900/60">
+                        <div className="flex items-center justify-between">
+                          <div className="flex items-center space-x-3 flex-1 min-w-0">
+                            <div className="flex-shrink-0">
+                              {getStatusIcon('completed')}
+                            </div>
+                            <div className="flex-1 min-w-0">
+                              <h4 className="text-sm font-medium text-slate-50 truncate">
+                                Demo Upload: Future of Work Roundtable
+                              </h4>
+                              <div className="mt-0.5 flex items-center flex-wrap gap-x-2 gap-y-0.5 text-xs text-slate-500">
+                                <span>128 MB</span>
+                                <span>52 min</span>
+                                <span className="hidden sm:inline">{new Date().toLocaleDateString()}</span>
+                              </div>
+                            </div>
+                          </div>
+                          <div className="flex items-center space-x-2 flex-shrink-0 ml-3">
+                            <span className="hidden sm:inline-flex items-center px-2 py-0.5 rounded-full text-xs font-medium bg-emerald-900/20 text-emerald-300">
+                              Completed
+                            </span>
+                            <span className="p-1.5 text-blue-600 hover:text-blue-400 hover:bg-blue-900/20 rounded transition-colors" title="View project">
+                              <Eye className="h-4 w-4" />
+                            </span>
+                          </div>
+                        </div>
+                      </div>
+                    </div>
+                  )}
                 </div>
               ) : (
                 <>
@@ -1713,6 +1717,57 @@ export default function UploadPage() {
             </div>
           </DialogContent>
         </Dialog>
+
+        </div>{/* end main column */}
+
+        {/* Tips sidebar */}
+        <div className="w-52 flex-shrink-0 sticky top-6 hidden lg:block">
+          <div className="bg-blue-900/10 border border-blue-500/20 rounded-xl p-4">
+            <div className="flex items-center gap-2 mb-3">
+              <Lightbulb className="w-4 h-4 text-blue-400 flex-shrink-0" />
+              <span className="text-sm font-semibold text-blue-400">Tips</span>
+            </div>
+            <div className="space-y-4">
+              <div className="flex gap-2.5">
+                <Users className="w-4 h-4 text-blue-400 flex-shrink-0 mt-0.5" />
+                <div>
+                  <p className="text-xs font-semibold text-slate-300 mb-0.5">Speaker Count</p>
+                  <p className="text-xs text-slate-400 leading-relaxed">5+ speakers? Setting the count manually drastically improves accuracy for panels.</p>
+                </div>
+              </div>
+              <div className="flex gap-2.5">
+                <Pencil className="w-4 h-4 text-blue-400 flex-shrink-0 mt-0.5" />
+                <div>
+                  <p className="text-xs font-semibold text-slate-300 mb-0.5">Naming</p>
+                  <p className="text-xs text-slate-400 leading-relaxed">Filenames like &quot;Interview with [Name]&quot; help the AI identify guests automatically.</p>
+                </div>
+              </div>
+              <div className="flex gap-2.5">
+                <Mic className="w-4 h-4 text-blue-400 flex-shrink-0 mt-0.5" />
+                <div>
+                  <p className="text-xs font-semibold text-slate-300 mb-0.5">Audio Quality</p>
+                  <p className="text-xs text-slate-400 leading-relaxed">Keep speakers close to mics and minimize background noise for best transcription.</p>
+                </div>
+              </div>
+              <div className="flex gap-2.5">
+                <UserCircle className="w-4 h-4 text-blue-400 flex-shrink-0 mt-0.5" />
+                <div>
+                  <p className="text-xs font-semibold text-slate-300 mb-0.5">Spoken Names</p>
+                  <p className="text-xs text-slate-400 leading-relaxed">The AI names speakers only when they are explicitly introduced or addressed.</p>
+                </div>
+              </div>
+              <div className="flex gap-2.5">
+                <MoreHorizontal className="w-4 h-4 text-blue-400 flex-shrink-0 mt-0.5" />
+                <div>
+                  <p className="text-xs font-semibold text-slate-300 mb-0.5">Clear Turn-Taking</p>
+                  <p className="text-xs text-slate-400 leading-relaxed">Avoid talking over each other — overlapping speech reduces speaker separation accuracy.</p>
+                </div>
+              </div>
+            </div>
+          </div>
+        </div>
+
+        </div>{/* end flex layout */}
 
       </div>
       {isDemoMode && <DemoTour chapter="upload" />}

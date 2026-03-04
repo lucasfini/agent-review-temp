@@ -1,4 +1,6 @@
 import { Buffer } from 'buffer';
+import { PutObjectCommand } from '@aws-sdk/client-s3';
+import { r2Client, BUCKET_NAME } from '@/lib/r2';
 import { supabaseAdmin } from '@/lib/supabase/server';
 import { updateProcessingProgress } from '@/lib/progress-tracker';
 import { computeAudioFingerprint } from '@/lib/audio-fingerprint';
@@ -83,20 +85,16 @@ export async function importRecording(params: {
   const storagePath = `${project.id}/${sanitizedBaseName}`;
   const nodeBuffer = Buffer.from(buffer);
 
-  const isLargeFile = size > 25 * 1024 * 1024;
-  if (!isLargeFile) {
-    const { error: uploadError } = await supabaseAdmin.storage
-      .from('audio-files')
-      .upload(storagePath, nodeBuffer, {
-        contentType: contentType || 'application/octet-stream',
-        upsert: true,
-        duplex: 'half'
-      });
-
-    if (uploadError) {
-      await supabaseAdmin.from('projects').delete().eq('id', project.id);
-      throw new Error(uploadError.message || 'Failed to upload audio file');
-    }
+  try {
+    await r2Client.send(new PutObjectCommand({
+      Bucket: BUCKET_NAME,
+      Key: storagePath,
+      Body: nodeBuffer,
+      ContentType: contentType || 'application/octet-stream',
+    }));
+  } catch (uploadError: any) {
+    await supabaseAdmin.from('projects').delete().eq('id', project.id);
+    throw new Error(uploadError?.message || 'Failed to upload audio file to R2');
   }
 
   if (!global.uploadedFiles) {

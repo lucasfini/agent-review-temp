@@ -1,5 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server';
+import { DeleteObjectCommand } from '@aws-sdk/client-s3';
 import { supabaseAdmin } from '@/lib/supabase/server';
+import { r2Client, BUCKET_NAME } from '@/lib/r2';
 
 // ============================================================
 // FORCE DYNAMIC: Disable all caching for this route
@@ -178,9 +180,9 @@ export async function DELETE(
     // Demo account guard
     const { data: projectForDelete } = await supabaseAdmin
       .from('projects')
-      .select('user_id')
+      .select('user_id, audio_file_name')
       .eq('id', projectId)
-      .single() as { data: { user_id: string } | null };
+      .single() as { data: { user_id: string; audio_file_name: string | null } | null };
     if (projectForDelete?.user_id) {
       const { data: { user: projectUser } } = await supabaseAdmin.auth.admin.getUserById(projectForDelete.user_id);
       if (projectUser?.email === process.env.DEMO_EMAIL) {
@@ -200,6 +202,19 @@ export async function DELETE(
         { error: 'Failed to delete project', details: error.message },
         { status: 500 }
       );
+    }
+
+    // Clean up R2 file (non-fatal)
+    if (projectForDelete?.audio_file_name) {
+      try {
+        await r2Client.send(new DeleteObjectCommand({
+          Bucket: BUCKET_NAME,
+          Key: `${projectId}/${projectForDelete.audio_file_name}`,
+        }));
+        console.log(`[API] Deleted R2 file for project ${projectId}`);
+      } catch (r2Error) {
+        console.error(`[API] R2 cleanup failed for project ${projectId}:`, r2Error);
+      }
     }
 
     return NextResponse.json({ success: true });

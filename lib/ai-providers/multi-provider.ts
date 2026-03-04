@@ -98,7 +98,7 @@ function getProviderFromModel(modelId: string): string {
  * OpenAI completion
  */
 async function getOpenAICompletion(options: AICompletionOptions): Promise<AICompletionResponse> {
-  const openai = new OpenAI({ apiKey: options.openaiApiKey || process.env.OPENAI_API_KEY });
+  const openai = new OpenAI({ apiKey: options.openaiApiKey || process.env.OPENAI_API_KEY_NONOPTIN || process.env.OPENAI_API_KEY });
 
   const isGpt5Family = options.model.startsWith('gpt-5');
   const completion = await openai.chat.completions.create({

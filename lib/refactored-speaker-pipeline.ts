@@ -527,7 +527,7 @@ export async function runRefactoredSpeakerPipeline(
       console.log(`  Mappings: ${JSON.stringify(mappingResult.mappings)}`);
     } else {
       const llmResult = await mapSegmentsWithLLM(segments, gptResult.speakers, {
-        apiKey: options.openaiApiKey || process.env.OPENAI_API_KEY,
+        apiKey: options.openaiApiKey,
         userId: options.userId,
         projectId: options.projectId,
       });

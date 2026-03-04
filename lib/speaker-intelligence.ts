@@ -7,6 +7,7 @@
 // - One human = one speaker ID (consolidate aliases)
 
 import OpenAI from 'openai';
+import { getOpenAIApiKeyForUser } from '@/lib/openai/consent';
 import { SpeakerSegment } from './types';
 
 export type SpeakerRole =
@@ -106,11 +107,12 @@ export async function identifySpeakers(
     model?: string;
     projectTitle?: string;
     projectType?: ProjectType;
+    userId?: string;
   } = {}
 ): Promise<SpeakerIntelligenceResult> {
-  const apiKey = options.apiKey || process.env.OPENAI_API_KEY;
+  const apiKey = options.apiKey ?? await getOpenAIApiKeyForUser(options.userId);
   if (!apiKey) {
-    throw new Error('OpenAI API key required for speaker intelligence');
+    throw new Error('OpenAI API key not configured for speaker intelligence');
   }
 
   const openai = new OpenAI({ apiKey });

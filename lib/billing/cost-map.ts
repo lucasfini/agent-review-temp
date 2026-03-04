@@ -1,13 +1,13 @@
 /**
- * Cost Map - AI Service Pricing with 35% Margin
+ * Cost Map - AI Service Pricing with 45% Margin
  *
  * Enumerates all AI services used in the application with:
  * - Provider rates (raw cost from API providers)
- * - Margin-adjusted prices (with 35% markup)
+ * - Margin-adjusted prices (with 45% markup)
  * - Unit types and conversion helpers
  *
  * Pricing verified as of January 2025
- * Margin: 35% standard markup on all services
+ * Margin: 45% standard markup on all services
  */
 
 export type UnitType =
@@ -37,7 +37,7 @@ export interface ServiceCost {
   providerRateDisplay: string; // Human-readable rate (e.g., "$0.27/hour")
 
   // Margin-adjusted pricing (what we charge)
-  marginPercent: number; // Markup percentage (default 35%)
+  marginPercent: number; // Markup percentage (default 45%)
   billedRate: number; // Rate charged to user
   billedRateDisplay: string; // Human-readable billed rate
 
@@ -60,9 +60,9 @@ export const COST_MAP: Record<string, ServiceCost> = {
     unitType: 'seconds',
     providerRate: 0.000075, // $0.27/hour = $0.000075/second
     providerRateDisplay: '$0.27/hour',
-    marginPercent: 35,
-    billedRate: 0.00010125, // $0.000075 * 1.35
-    billedRateDisplay: '$0.3645/hour',
+    marginPercent: 45,
+    billedRate: 0.000075 * 1.45, // $0.000075 * 1.45
+    billedRateDisplay: '$0.3915/hour',
     notes: 'Universal-1 model. Includes speaker diarization for 95+ languages.',
   },
 
@@ -76,9 +76,9 @@ export const COST_MAP: Record<string, ServiceCost> = {
     unitType: 'input_tokens',
     providerRate: 2.50 / 1_000_000, // $2.50 per 1M tokens
     providerRateDisplay: '$2.50/1M tokens',
-    marginPercent: 35,
-    billedRate: (2.50 / 1_000_000) * 1.35,
-    billedRateDisplay: '$3.375/1M tokens',
+    marginPercent: 45,
+    billedRate: (2.50 / 1_000_000) * 1.45,
+    billedRateDisplay: '$3.625/1M tokens',
   },
 
   openai_gpt4o_output: {
@@ -88,9 +88,9 @@ export const COST_MAP: Record<string, ServiceCost> = {
     unitType: 'output_tokens',
     providerRate: 10.00 / 1_000_000, // $10 per 1M tokens
     providerRateDisplay: '$10/1M tokens',
-    marginPercent: 35,
-    billedRate: (10.00 / 1_000_000) * 1.35,
-    billedRateDisplay: '$13.50/1M tokens',
+    marginPercent: 45,
+    billedRate: (10.00 / 1_000_000) * 1.45,
+    billedRateDisplay: '$14.50/1M tokens',
   },
 
   openai_gpt4o_cached_input: {
@@ -100,9 +100,9 @@ export const COST_MAP: Record<string, ServiceCost> = {
     unitType: 'input_tokens',
     providerRate: 1.25 / 1_000_000, // $1.25 per 1M tokens (50% discount)
     providerRateDisplay: '$1.25/1M tokens',
-    marginPercent: 35,
-    billedRate: (1.25 / 1_000_000) * 1.35,
-    billedRateDisplay: '$1.6875/1M tokens',
+    marginPercent: 45,
+    billedRate: (1.25 / 1_000_000) * 1.45,
+    billedRateDisplay: '$1.8125/1M tokens',
   },
 
   // ============================================================================
@@ -115,9 +115,9 @@ export const COST_MAP: Record<string, ServiceCost> = {
     unitType: 'input_tokens',
     providerRate: 0.15 / 1_000_000, // $0.15 per 1M tokens
     providerRateDisplay: '$0.15/1M tokens',
-    marginPercent: 35,
-    billedRate: (0.15 / 1_000_000) * 1.35,
-    billedRateDisplay: '$0.2025/1M tokens',
+    marginPercent: 45,
+    billedRate: (0.15 / 1_000_000) * 1.45,
+    billedRateDisplay: '$0.2175/1M tokens',
   },
 
   openai_gpt4o_mini_output: {
@@ -127,9 +127,9 @@ export const COST_MAP: Record<string, ServiceCost> = {
     unitType: 'output_tokens',
     providerRate: 0.60 / 1_000_000, // $0.60 per 1M tokens
     providerRateDisplay: '$0.60/1M tokens',
-    marginPercent: 35,
-    billedRate: (0.60 / 1_000_000) * 1.35,
-    billedRateDisplay: '$0.81/1M tokens',
+    marginPercent: 45,
+    billedRate: (0.60 / 1_000_000) * 1.45,
+    billedRateDisplay: '$0.87/1M tokens',
   },
 
   openai_gpt4o_mini_cached_input: {
@@ -139,9 +139,9 @@ export const COST_MAP: Record<string, ServiceCost> = {
     unitType: 'input_tokens',
     providerRate: 0.075 / 1_000_000, // $0.075 per 1M tokens (50% discount)
     providerRateDisplay: '$0.075/1M tokens',
-    marginPercent: 35,
-    billedRate: (0.075 / 1_000_000) * 1.35,
-    billedRateDisplay: '$0.10125/1M tokens',
+    marginPercent: 45,
+    billedRate: (0.075 / 1_000_000) * 1.45,
+    billedRateDisplay: '$0.10875/1M tokens',
   },
 
   // ============================================================================
@@ -154,9 +154,9 @@ export const COST_MAP: Record<string, ServiceCost> = {
     unitType: 'input_tokens',
     providerRate: 5.00 / 1_000_000, // $5.00 per 1M tokens
     providerRateDisplay: '$5.00/1M tokens',
-    marginPercent: 35,
-    billedRate: (5.00 / 1_000_000) * 1.35,
-    billedRateDisplay: '$6.75/1M tokens',
+    marginPercent: 45,
+    billedRate: (5.00 / 1_000_000) * 1.45,
+    billedRateDisplay: '$7.25/1M tokens',
   },
 
   openai_gpt5_output: {
@@ -166,9 +166,9 @@ export const COST_MAP: Record<string, ServiceCost> = {
     unitType: 'output_tokens',
     providerRate: 20.00 / 1_000_000, // $20.00 per 1M tokens
     providerRateDisplay: '$20.00/1M tokens',
-    marginPercent: 35,
-    billedRate: (20.00 / 1_000_000) * 1.35,
-    billedRateDisplay: '$27.00/1M tokens',
+    marginPercent: 45,
+    billedRate: (20.00 / 1_000_000) * 1.45,
+    billedRateDisplay: '$29.00/1M tokens',
   },
 
   // ============================================================================
@@ -181,9 +181,9 @@ export const COST_MAP: Record<string, ServiceCost> = {
     unitType: 'input_tokens',
     providerRate: 0.80 / 1_000_000, // $0.80 per 1M tokens
     providerRateDisplay: '$0.80/1M tokens',
-    marginPercent: 35,
-    billedRate: (0.80 / 1_000_000) * 1.35,
-    billedRateDisplay: '$1.08/1M tokens',
+    marginPercent: 45,
+    billedRate: (0.80 / 1_000_000) * 1.45,
+    billedRateDisplay: '$1.16/1M tokens',
   },
 
   openai_gpt5_mini_output: {
@@ -193,9 +193,9 @@ export const COST_MAP: Record<string, ServiceCost> = {
     unitType: 'output_tokens',
     providerRate: 3.20 / 1_000_000, // $3.20 per 1M tokens
     providerRateDisplay: '$3.20/1M tokens',
-    marginPercent: 35,
-    billedRate: (3.20 / 1_000_000) * 1.35,
-    billedRateDisplay: '$4.32/1M tokens',
+    marginPercent: 45,
+    billedRate: (3.20 / 1_000_000) * 1.45,
+    billedRateDisplay: '$4.64/1M tokens',
   },
 
   // ============================================================================
@@ -208,9 +208,9 @@ export const COST_MAP: Record<string, ServiceCost> = {
     unitType: 'input_tokens',
     providerRate: 0.20 / 1_000_000, // $0.20 per 1M tokens
     providerRateDisplay: '$0.20/1M tokens',
-    marginPercent: 35,
-    billedRate: (0.20 / 1_000_000) * 1.35,
-    billedRateDisplay: '$0.27/1M tokens',
+    marginPercent: 45,
+    billedRate: (0.20 / 1_000_000) * 1.45,
+    billedRateDisplay: '$0.29/1M tokens',
   },
 
   openai_gpt5_nano_output: {
@@ -220,9 +220,9 @@ export const COST_MAP: Record<string, ServiceCost> = {
     unitType: 'output_tokens',
     providerRate: 0.80 / 1_000_000, // $0.80 per 1M tokens
     providerRateDisplay: '$0.80/1M tokens',
-    marginPercent: 35,
-    billedRate: (0.80 / 1_000_000) * 1.35,
-    billedRateDisplay: '$1.08/1M tokens',
+    marginPercent: 45,
+    billedRate: (0.80 / 1_000_000) * 1.45,
+    billedRateDisplay: '$1.16/1M tokens',
   },
 
   // ============================================================================
@@ -235,9 +235,9 @@ export const COST_MAP: Record<string, ServiceCost> = {
     unitType: 'input_tokens',
     providerRate: 3.00 / 1_000_000, // $3 per 1M tokens
     providerRateDisplay: '$3/1M tokens',
-    marginPercent: 35,
-    billedRate: (3.00 / 1_000_000) * 1.35,
-    billedRateDisplay: '$4.05/1M tokens',
+    marginPercent: 45,
+    billedRate: (3.00 / 1_000_000) * 1.45,
+    billedRateDisplay: '$4.35/1M tokens',
   },
 
   claude_sonnet_output: {
@@ -247,9 +247,9 @@ export const COST_MAP: Record<string, ServiceCost> = {
     unitType: 'output_tokens',
     providerRate: 15.00 / 1_000_000, // $15 per 1M tokens
     providerRateDisplay: '$15/1M tokens',
-    marginPercent: 35,
-    billedRate: (15.00 / 1_000_000) * 1.35,
-    billedRateDisplay: '$20.25/1M tokens',
+    marginPercent: 45,
+    billedRate: (15.00 / 1_000_000) * 1.45,
+    billedRateDisplay: '$21.75/1M tokens',
   },
 
   // ============================================================================
@@ -262,9 +262,9 @@ export const COST_MAP: Record<string, ServiceCost> = {
     unitType: 'input_tokens',
     providerRate: 1.00 / 1_000_000, // $1 per 1M tokens
     providerRateDisplay: '$1/1M tokens',
-    marginPercent: 35,
-    billedRate: (1.00 / 1_000_000) * 1.35,
-    billedRateDisplay: '$1.35/1M tokens',
+    marginPercent: 45,
+    billedRate: (1.00 / 1_000_000) * 1.45,
+    billedRateDisplay: '$1.45/1M tokens',
   },
 
   claude_haiku_output: {
@@ -274,9 +274,9 @@ export const COST_MAP: Record<string, ServiceCost> = {
     unitType: 'output_tokens',
     providerRate: 5.00 / 1_000_000, // $5 per 1M tokens
     providerRateDisplay: '$5/1M tokens',
-    marginPercent: 35,
-    billedRate: (5.00 / 1_000_000) * 1.35,
-    billedRateDisplay: '$6.75/1M tokens',
+    marginPercent: 45,
+    billedRate: (5.00 / 1_000_000) * 1.45,
+    billedRateDisplay: '$7.25/1M tokens',
   },
 
   // ============================================================================
@@ -289,9 +289,9 @@ export const COST_MAP: Record<string, ServiceCost> = {
     unitType: 'input_tokens',
     providerRate: 3.00 / 1_000_000, // $3 per 1M tokens
     providerRateDisplay: '$3/1M tokens',
-    marginPercent: 35,
-    billedRate: (3.00 / 1_000_000) * 1.35,
-    billedRateDisplay: '$4.05/1M tokens',
+    marginPercent: 45,
+    billedRate: (3.00 / 1_000_000) * 1.45,
+    billedRateDisplay: '$4.35/1M tokens',
   },
 
   perplexity_sonar_output: {
@@ -301,9 +301,9 @@ export const COST_MAP: Record<string, ServiceCost> = {
     unitType: 'output_tokens',
     providerRate: 15.00 / 1_000_000, // $15 per 1M tokens
     providerRateDisplay: '$15/1M tokens',
-    marginPercent: 35,
-    billedRate: (15.00 / 1_000_000) * 1.35,
-    billedRateDisplay: '$20.25/1M tokens',
+    marginPercent: 45,
+    billedRate: (15.00 / 1_000_000) * 1.45,
+    billedRateDisplay: '$21.75/1M tokens',
   },
 } as const;
 
@@ -401,14 +401,14 @@ export function getServicesByProvider(provider: Provider): ServiceCost[] {
 /**
  * Get total margin collected on a cost
  */
-export function calculateMarginAmount(rawCost: number, marginPercent: number = 35): number {
+export function calculateMarginAmount(rawCost: number, marginPercent: number = 45): number {
   return Number((rawCost * (marginPercent / 100)).toFixed(6));
 }
 
 /**
  * Apply margin to get billed cost
  */
-export function applyMargin(rawCost: number, marginPercent: number = 35): number {
+export function applyMargin(rawCost: number, marginPercent: number = 45): number {
   return Number((rawCost * (1 + marginPercent / 100)).toFixed(6));
 }
 

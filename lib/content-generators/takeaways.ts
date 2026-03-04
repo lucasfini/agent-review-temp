@@ -1,5 +1,6 @@
 // AI-powered key takeaways extraction using GPT-4o-mini
 import OpenAI from 'openai';
+import { getOpenAIApiKeyForUser } from '@/lib/openai/consent';
 import { trackOpenAIUsage } from '@/lib/billing/track-usage';
 
 export interface KeyTakeaway {
@@ -31,9 +32,9 @@ export async function extractKeyTakeaways(
     apiKey?: string;
   } = {}
 ): Promise<TakeawaysResult> {
-  const apiKey = options.apiKey || process.env.OPENAI_API_KEY;
+  const apiKey = options.apiKey ?? await getOpenAIApiKeyForUser(options.userId);
   if (!apiKey) {
-    throw new Error('OPENAI_API_KEY not configured');
+    throw new Error('OpenAI API key not configured');
   }
 
   // Adaptive takeaway count: reduce for shorter transcripts to avoid fluff

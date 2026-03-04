@@ -3,6 +3,7 @@
 // This service is AUTHORITATIVE - its output defines all valid speakers
 
 import OpenAI from 'openai';
+import { getOpenAIApiKeyForUser } from '@/lib/openai/consent';
 import { SpeakerSegment, SpeakerRole, SpeakerIdentityProfile } from './types';
 import { trackOpenAIUsage } from '@/lib/billing/track-usage';
 
@@ -180,9 +181,9 @@ export async function identifySpeakersWithGPT(
     presetRoster?: Array<{ name: string; role?: string | null }>;
   } = {}
 ): Promise<GPTSpeakerIntelligenceResult> {
-  const apiKey = options.apiKey || process.env.OPENAI_API_KEY;
+  const apiKey = options.apiKey ?? await getOpenAIApiKeyForUser(options.userId);
   if (!apiKey) {
-    throw new Error('OPENAI_API_KEY required for speaker intelligence');
+    throw new Error('OpenAI API key not configured for speaker intelligence');
   }
 
   const openai = new OpenAI({ apiKey, timeout: 120000 });

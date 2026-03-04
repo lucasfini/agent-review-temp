@@ -52,13 +52,10 @@ function InsightCard({ opportunity, showProject, formatRelativeDate, status }: I
   return (
     <div
       className={cn(
-        "rounded-xl p-4 transition-all hover:shadow-md relative",
-        isPaused ? "opacity-50 bg-slate-800/50 border border-slate-700" :
-        isGap
-          ? "bg-red-900/20 border border-red-100"
-          : isMedium
-          ? "bg-amber-900/20 border border-amber-100"
-          : "bg-green-900/20 border border-green-100"
+        "group rounded-xl p-4 transition-all relative bg-slate-950 border shadow-sm",
+        isPaused
+          ? "opacity-60 grayscale-[50%] border-slate-800/40"
+          : "border-slate-800/60 hover:border-slate-700 hover:shadow-md"
       )}
     >
       {isPaused && (
@@ -73,13 +70,13 @@ function InsightCard({ opportunity, showProject, formatRelativeDate, status }: I
       {/* Header */}
       <div className="flex items-start gap-3 mb-3">
         <div className={cn(
-          "flex-shrink-0 p-2 rounded-lg",
-          isPaused ? "bg-slate-700 text-slate-400" :
+          "flex-shrink-0 p-2 rounded-lg border",
+          isPaused ? "bg-slate-800 text-slate-400 border-slate-700" :
           isGap
-            ? "bg-red-100 text-red-600"
+            ? "bg-red-500/10 text-red-500 border-red-500/20"
             : isMedium
-            ? "bg-amber-100 text-amber-600"
-            : "bg-green-100 text-green-600"
+            ? "bg-amber-500/10 text-amber-500 border-amber-500/20"
+            : "bg-green-500/10 text-green-500 border-green-500/20"
         )}>
           {isGap ? (
             <AlertTriangle className="h-4 w-4" />
@@ -91,20 +88,11 @@ function InsightCard({ opportunity, showProject, formatRelativeDate, status }: I
           <div className="flex items-center gap-2 flex-wrap pr-16">
             <h4 className={cn(
               "text-sm font-semibold",
-              isPaused ? "text-slate-300" :
-              isGap ? "text-red-900" : isMedium ? "text-amber-900" : "text-green-900"
+              isPaused ? "text-slate-300" : "text-slate-50"
             )}>
               {opportunity.label}
             </h4>
-            <span className={cn(
-              "text-xs px-2 py-0.5 rounded-full font-medium",
-              isPaused ? "bg-slate-700 text-slate-400" :
-              isGap
-                ? "bg-red-100 text-red-400"
-                : isMedium
-                ? "bg-amber-100 text-amber-400"
-                : "bg-green-100 text-green-400"
-            )}>
+            <span className="bg-slate-900 text-slate-300 border border-slate-800 px-2 py-0.5 rounded-full text-[10px] font-medium tracking-wide uppercase">
               {opportunity.type}
               <span className="sr-only"> — severity: {opportunity.severity}</span>
             </span>
@@ -117,41 +105,24 @@ function InsightCard({ opportunity, showProject, formatRelativeDate, status }: I
 
       {/* Project Source */}
       {showProject && opportunity.projectTitle && (
-        <div className="flex items-center gap-1.5 text-xs text-indigo-600 mb-2">
+        <div className="flex items-center gap-1.5 text-xs text-slate-400 mb-2">
           <FileText className="h-3 w-3" />
           <span className="font-medium truncate">{opportunity.projectTitle}</span>
         </div>
       )}
 
       {/* Summary */}
-      <p className={cn(
-        "text-sm mb-3 leading-relaxed",
-        isPaused ? "text-slate-400" :
-        isGap ? "text-red-300" : isMedium ? "text-amber-300" : "text-green-300"
-      )}>
+      <p className="text-slate-300 text-sm mb-3 leading-relaxed">
         {opportunity.summary}
       </p>
 
       {/* Action */}
-      <div className={cn(
-        "flex items-start gap-2 p-2.5 rounded-lg",
-        isPaused ? "bg-slate-800" :
-        isGap
-          ? "bg-red-100/50"
-          : isMedium
-          ? "bg-amber-100/50"
-          : "bg-green-100/50"
-      )}>
+      <div className="mt-4 pt-3 border-t border-slate-800/60 flex items-center gap-2">
         <ArrowRight className={cn(
           "h-4 w-4 flex-shrink-0 mt-0.5",
-          isPaused ? "text-slate-500" :
-          isGap ? "text-red-600" : isMedium ? "text-amber-600" : "text-green-600"
+          isPaused ? "text-slate-600" : "text-slate-500"
         )} />
-        <p className={cn(
-          "text-xs font-medium",
-          isPaused ? "text-slate-400" :
-          isGap ? "text-red-400" : isMedium ? "text-amber-400" : "text-green-400"
-        )}>
+        <p className="text-xs font-medium text-slate-300 transition-colors group-hover:text-white">
           {opportunity.recommendedAction || 'Review AI suggestion'}
         </p>
       </div>

@@ -6,6 +6,7 @@ import type {
   AiUsageDetail
 } from '@/lib/narrative-coverage';
 import { getPrompt, prompts } from '@/lib/prompts/loader';
+import { getOpenAIApiKeyForUser } from '@/lib/openai/consent';
 import type { NarrativeCoverageVars } from '@/lib/prompts/types';
 import { trackOpenAIUsage } from '@/lib/billing/track-usage';
 
@@ -76,9 +77,9 @@ export async function analyzeNarrativeCoverage(
   transcriptionText: string,
   options: NarrativeCoverageAnalyzerOptions = {}
 ): Promise<NarrativeCoverageAnalysisResult> {
-  const apiKey = process.env.OPENAI_API_KEY;
+  const apiKey = await getOpenAIApiKeyForUser(options.userId);
   if (!apiKey) {
-    throw new Error('OPENAI_API_KEY not configured; unable to run narrative coverage analysis.');
+    throw new Error('OpenAI API key not configured; unable to run narrative coverage analysis.');
   }
 
   if (!transcriptionText || transcriptionText.trim().length === 0) {

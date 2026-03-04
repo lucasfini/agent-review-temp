@@ -955,6 +955,12 @@ export default function AnalyticsPage() {
   }, [analytics, selectedProjectIds]);
 
   const coverageGoals = analytics?.coverage?.goals || [];
+  const demoGoalsFallback = [
+    { topic_id: 'ai-healthcare', topic_label: 'AI in Healthcare', goal_type: 'include', target_mentions: 3, cadence_days: 30, status: 'active', created_at: new Date().toISOString(), updated_at: new Date().toISOString() },
+    { topic_id: 'leadership-mindset', topic_label: 'Leadership Mindset', goal_type: 'include', target_mentions: 2, cadence_days: 30, status: 'active', created_at: new Date().toISOString(), updated_at: new Date().toISOString() },
+    { topic_id: 'cta-newsletter', topic_label: 'Subscribe to Newsletter', goal_type: 'cta', target_mentions: 1, cadence_days: 30, status: 'active', created_at: new Date().toISOString(), updated_at: new Date().toISOString() },
+  ];
+  const effectiveGoals = isDemoMode && coverageGoals.length === 0 ? demoGoalsFallback : coverageGoals;
 
   const suggestedGoals = useMemo(() => {
     const suggestions: { label: string; type: string; target: number; cadence: number | null }[] = [];
@@ -1273,7 +1279,7 @@ export default function AnalyticsPage() {
             <p className="text-sm text-slate-400 mt-0.5">Insights and trends from your content</p>
           </div>
 
-          <div className="flex items-center gap-4">
+          <div className="flex items-center gap-4" data-tour="analytics-controls">
             <ProjectSwitcher
               projects={analytics.projectsSummary}
               selectedProjectId={projectIdFromUrl}
@@ -1321,16 +1327,18 @@ export default function AnalyticsPage() {
         {/* ================================================================== */}
         {/* ROW 2: Content Mix + Top Topics */}
         {/* ================================================================== */}
-        <ContentMixSection
-          contentBreakdown={analytics.contentBreakdown}
-          topTopics={allTopics.map(t => ({ label: t.label, mentions: t.mentions }))}
-        />
+        <div data-tour="analytics-content-mix">
+          <ContentMixSection
+            contentBreakdown={analytics.contentBreakdown}
+            topTopics={allTopics.map(t => ({ label: t.label, mentions: t.mentions }))}
+          />
+        </div>
 
         {/* ================================================================== */}
         {/* Unanalyzed Projects Banner */}
         {/* ================================================================== */}
         {!bannerDismissed && unanalyzedProjects.length > 0 && (
-          <div className="bg-blue-900/20 border border-blue-800/30 rounded-xl p-4 flex items-start gap-3" role="alert">
+          <div className="bg-blue-900/20 border border-blue-800/30 rounded-xl p-4 flex items-start gap-3" role="alert" data-tour="analytics-banner">
             <AlertCircle className="h-5 w-5 text-blue-600 flex-shrink-0 mt-0.5" />
             <div className="flex-1 min-w-0">
               <h4 className="text-sm font-semibold text-blue-200">
@@ -1435,15 +1443,15 @@ export default function AnalyticsPage() {
                 opportunities={displayedOpportunities}
                 projectIdFilter={projectIdFromUrl}
                 formatRelativeDate={formatRelativeDate}
-                goals={coverageGoals}
+                goals={effectiveGoals}
               />
             </div>
           )}
 
           {activeTab === 'goals' && (
-            <div id="tabpanel-goals" role="tabpanel" aria-labelledby="tab-goals" className="p-6">
+            <div id="tabpanel-goals" role="tabpanel" aria-labelledby="tab-goals" className="p-6" data-tour="analytics-goals-panel">
               <GoalsSection
-                goals={coverageGoals}
+                goals={effectiveGoals}
                 goalProgress={analytics.goalProgress}
                 onSaveGoal={saveGoal}
                 onToggleStatus={handleToggleGoalStatus}

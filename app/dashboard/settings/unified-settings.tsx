@@ -1,6 +1,7 @@
 "use client";
 
 import { useState, useEffect, useMemo } from 'react';
+import Link from 'next/link';
 import { useSearchParams } from 'next/navigation';
 import {
   User,
@@ -543,6 +544,30 @@ export default function UnifiedSettings({ userId, userEmail }: UnifiedSettingsPr
 
   return (
     <div className="max-w-5xl mx-auto">
+        {/* Tab navigation */}
+        <div className="flex gap-1 mb-8 border-b border-slate-800">
+          {[
+            { label: 'General', href: '/dashboard/settings?section=general', id: 'general', icon: <User className="h-4 w-4" /> },
+            { label: 'Billing', href: '/dashboard/settings?section=billing', id: 'billing', icon: <CreditCard className="h-4 w-4" /> },
+            { label: 'Usage', href: '/dashboard/settings?section=usage', id: 'usage', icon: <BarChart3 className="h-4 w-4" /> },
+          ].map((tab) => (
+            <Link
+              key={tab.id}
+              href={tab.href}
+              {...(tab.id === 'usage' ? { 'data-tour': 'usage-tab' } : {})}
+              className={cn(
+                'flex items-center gap-2 px-4 py-2.5 text-sm font-medium rounded-t-lg border-b-2 -mb-px transition-colors',
+                section === tab.id
+                  ? 'border-blue-500 text-blue-400 bg-blue-500/5'
+                  : 'border-transparent text-slate-400 hover:text-slate-200 hover:border-slate-600'
+              )}
+            >
+              {tab.icon}
+              {tab.label}
+            </Link>
+          ))}
+        </div>
+
         {/* ================================================================ */}
         {/* GENERAL */}
         {/* ================================================================ */}

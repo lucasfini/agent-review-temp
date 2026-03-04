@@ -1,5 +1,6 @@
 // AI-powered podcast summary generation using GPT-4o
 import OpenAI from 'openai';
+import { getOpenAIApiKeyForUser } from '@/lib/openai/consent';
 import type { NarrativeMetadata } from './pre-processor';
 import { trackOpenAIUsage } from '@/lib/billing/track-usage';
 
@@ -28,9 +29,9 @@ export async function generatePodcastSummary(
     apiKey?: string;
   } = {}
 ): Promise<PodcastSummary> {
-  const apiKey = options.apiKey || process.env.OPENAI_API_KEY;
+  const apiKey = options.apiKey ?? await getOpenAIApiKeyForUser(options.userId);
   if (!apiKey) {
-    throw new Error('OPENAI_API_KEY not configured');
+    throw new Error('OpenAI API key not configured');
   }
 
   const { maxWords = 1000, speakerContext, narrativeMetadata, userId, projectId } = options;

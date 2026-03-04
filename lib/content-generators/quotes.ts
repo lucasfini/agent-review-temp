@@ -1,5 +1,6 @@
 // AI-powered social media quote extraction using GPT-4o
 import OpenAI from 'openai';
+import { getOpenAIApiKeyForUser } from '@/lib/openai/consent';
 import { trackOpenAIUsage } from '@/lib/billing/track-usage';
 
 export interface SocialQuote {
@@ -34,9 +35,9 @@ export async function extractSocialQuotes(
     apiKey?: string;
   } = {}
 ): Promise<QuotesResult> {
-  const apiKey = options.apiKey || process.env.OPENAI_API_KEY;
+  const apiKey = options.apiKey ?? await getOpenAIApiKeyForUser(options.userId);
   if (!apiKey) {
-    throw new Error('OPENAI_API_KEY not configured');
+    throw new Error('OpenAI API key not configured');
   }
 
   const { maxQuotes = 8, speakerContext, userId, projectId } = options;

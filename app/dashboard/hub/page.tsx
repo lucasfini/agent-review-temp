@@ -645,19 +645,21 @@ export default function ProjectHubPage() {
                               <Sparkles className="h-4 w-4" />
                             </Link>
                           )}
-                          <button
-                            type="button"
-                            onClick={() => handleDelete(project.id)}
-                            disabled={deletingId === project.id}
-                            className="p-1.5 text-slate-500 hover:text-red-400 hover:bg-red-900/20 rounded transition-colors disabled:opacity-50"
-                            title="Delete"
-                          >
-                            {deletingId === project.id ? (
-                              <Loader2 className="h-4 w-4 animate-spin" />
-                            ) : (
-                              <Trash2 className="h-4 w-4" />
-                            )}
-                          </button>
+                          {!isDemoMode && (
+                            <button
+                              type="button"
+                              onClick={() => handleDelete(project.id)}
+                              disabled={deletingId === project.id}
+                              className="p-1.5 text-slate-500 hover:text-red-400 hover:bg-red-900/20 rounded transition-colors disabled:opacity-50"
+                              title="Delete"
+                            >
+                              {deletingId === project.id ? (
+                                <Loader2 className="h-4 w-4 animate-spin" />
+                              ) : (
+                                <Trash2 className="h-4 w-4" />
+                              )}
+                            </button>
+                          )}
                         </div>
                       </td>
                     </tr>

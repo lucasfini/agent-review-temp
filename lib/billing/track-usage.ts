@@ -406,6 +406,32 @@ export async function trackBatchUsage(params: {
 }
 
 // ============================================================================
+// Idempotency Helpers
+// ============================================================================
+
+/**
+ * Check if a reconcile task has already been completed for a project+feature.
+ * Looks for a usage_events record where metadata.reconcileTaskKey matches.
+ * Returns true if already billed/completed (skip billing on retry).
+ */
+export async function checkIdempotentUsage(
+  projectId: string,
+  featureName: string
+): Promise<boolean> {
+  const { supabaseAdmin } = await import('@/lib/supabase/server');
+  const taskKey = `${projectId}_${featureName}`;
+  const { data } = await (supabaseAdmin as any)
+    .from('usage_events')
+    .select('id')
+    .eq('project_id', projectId)
+    .eq('status', 'completed')
+    .eq('metadata->>reconcileTaskKey', taskKey)
+    .limit(1)
+    .maybeSingle();
+  return !!data;
+}
+
+// ============================================================================
 // Pre-flight Balance Checks
 // ============================================================================
 

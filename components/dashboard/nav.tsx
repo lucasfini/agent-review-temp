@@ -576,17 +576,83 @@ export default function DashboardNav({
   }, [user, session]);
 
   useEffect(() => {
+    if (!user) return;
+    let isActive = true;
+
     const fetchRecentProjects = async () => {
-      if (!user) return;
       const { data } = await supabase
         .from('projects')
         .select('id, title')
         .eq('user_id', user.id)
         .order('created_at', { ascending: false })
         .limit(8);
-      if (data) setRecentProjects(data as RecentProject[]);
+      if (isActive && data) setRecentProjects(data as RecentProject[]);
     };
+
     fetchRecentProjects();
+
+    const channel = supabase
+      .channel(`recent-projects-${user.id}`)
+      .on(
+        'postgres_changes',
+        {
+          event: 'INSERT',
+          schema: 'public',
+          table: 'projects',
+        },
+        (payload) => {
+          const created = payload.new as RecentProject & { user_id?: string } | undefined;
+          if (!created || created.user_id !== user.id) return;
+          setRecentProjects((prev) => {
+            const next = [ { id: created.id, title: created.title }, ...prev.filter(p => p.id !== created.id) ];
+            return next.slice(0, 8);
+          });
+        }
+      )
+      .on(
+        'postgres_changes',
+        {
+          event: 'UPDATE',
+          schema: 'public',
+          table: 'projects',
+        },
+        (payload) => {
+          const updated = payload.new as Partial<RecentProject> | undefined;
+          const updatedId = updated?.id;
+          const updatedTitle = updated?.title;
+          if (!updatedId) return;
+          setRecentProjects((prev) => {
+            const isInList = prev.some((project) => project.id === updatedId);
+            if (!isInList) return prev;
+            if (!updatedTitle) {
+              fetchRecentProjects();
+              return prev;
+            }
+            return prev.map((project) =>
+              project.id === updatedId ? { ...project, title: updatedTitle } : project
+            );
+          });
+        }
+      )
+      .on(
+        'postgres_changes',
+        {
+          event: 'DELETE',
+          schema: 'public',
+          table: 'projects',
+        },
+        (payload) => {
+          const deletedId = (payload.old as { id?: string } | undefined)?.id;
+          if (!deletedId) return;
+          setRecentProjects((prev) => prev.filter(p => p.id !== deletedId));
+        }
+      )
+      .subscribe();
+
+    return () => {
+      isActive = false;
+      supabase.removeChannel(channel);
+    };
   }, [user]);
 
   const handleSignOut = async () => {

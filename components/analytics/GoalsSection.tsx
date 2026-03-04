@@ -48,17 +48,17 @@ interface GoalsSectionProps {
 // GOAL TYPE STYLES
 // ============================================================================
 
-const GOAL_TYPE_STYLES: Record<string, { bg: string; text: string; border: string }> = {
-  include: { bg: 'bg-blue-900/20', text: 'text-blue-400', border: 'border-l-blue-500' },
-  cta: { bg: 'bg-emerald-900/20', text: 'text-emerald-400', border: 'border-l-emerald-500' },
-  avoid: { bg: 'bg-red-900/20', text: 'text-red-400', border: 'border-l-red-500' },
-  mention: { bg: 'bg-amber-900/20', text: 'text-amber-400', border: 'border-l-amber-500' }
+const GOAL_TYPE_STYLES: Record<string, { iconText: string; iconBg: string; progressColor: string }> = {
+  include: { iconText: 'text-blue-500', iconBg: 'bg-blue-500/10 border-blue-500/20', progressColor: 'bg-gradient-to-r from-blue-600 to-blue-400' },
+  cta: { iconText: 'text-emerald-500', iconBg: 'bg-emerald-500/10 border-emerald-500/20', progressColor: 'bg-gradient-to-r from-emerald-600 to-emerald-400' },
+  avoid: { iconText: 'text-red-500', iconBg: 'bg-red-500/10 border-red-500/20', progressColor: 'bg-gradient-to-r from-red-600 to-red-400' },
+  mention: { iconText: 'text-amber-500', iconBg: 'bg-amber-500/10 border-amber-500/20', progressColor: 'bg-gradient-to-r from-amber-600 to-amber-400' }
 }
 
 const STATUS_STYLES: Record<string, { bg: string; text: string; icon: typeof Check }> = {
-  active: { bg: 'bg-green-900/20', text: 'text-green-400', icon: Check },
-  paused: { bg: 'bg-yellow-900/20', text: 'text-yellow-400', icon: Pause },
-  archived: { bg: 'bg-slate-800', text: 'text-slate-400', icon: Archive }
+  active: { bg: 'bg-slate-900 border border-emerald-500/20', text: 'text-emerald-400', icon: Check },
+  paused: { bg: 'bg-slate-900 border border-amber-500/20', text: 'text-amber-400', icon: Pause },
+  archived: { bg: 'bg-slate-900 border border-slate-700', text: 'text-slate-400', icon: Archive }
 }
 
 // ============================================================================
@@ -85,13 +85,13 @@ function ProgressBar({
   return (
     <div className="flex items-center gap-3">
       <div className={cn(
-        "flex-1 rounded-full overflow-hidden bg-slate-800",
+        "flex-1 rounded-full overflow-hidden bg-slate-900 shadow-inner",
         size === 'sm' ? 'h-1.5' : 'h-2.5'
       )}>
         <div
           className={cn(
             "h-full rounded-full transition-all duration-500 ease-out",
-            percent >= 100 ? 'bg-green-500' : percent >= 75 ? 'bg-emerald-500' : color
+            percent >= 100 ? 'bg-gradient-to-r from-green-600 to-green-400' : percent >= 75 ? 'bg-gradient-to-r from-emerald-600 to-emerald-400' : color
           )}
           style={{ width: `${percent}%` }}
         />
@@ -130,26 +130,20 @@ function GoalCard({ goal, progress, onToggleStatus, onArchive }: GoalCardProps) 
   const targetMentions = progress?.targetMentions || goal.target_mentions || 1
 
   return (
-    <div className={cn(
-      "bg-slate-900 rounded-lg border border-slate-800 shadow-sm overflow-hidden",
-      "hover:shadow-md transition-shadow",
-      "border-l-4",
-      typeStyle.border
-    )}>
+    <div className="bg-slate-950 border border-slate-800/60 shadow-sm rounded-xl hover:border-slate-700 transition-colors overflow-hidden">
       <div className="p-4">
         {/* Header */}
         <div className="flex items-start justify-between mb-3">
           <div className="flex items-start gap-2 min-w-0">
-            <Target className={cn("h-4 w-4 mt-0.5 flex-shrink-0", typeStyle.text)} />
+            <div className={cn("flex-shrink-0 p-1.5 rounded-md border mt-0.5", typeStyle.iconBg)}>
+              <Target className={cn("h-4 w-4", typeStyle.iconText)} />
+            </div>
             <div className="min-w-0">
               <h4 className="text-sm font-medium text-slate-50 truncate">
                 {goal.topic_label}
               </h4>
               <div className="flex items-center gap-2 mt-1">
-                <span className={cn(
-                  "text-xs font-medium uppercase px-1.5 py-0.5 rounded",
-                  typeStyle.bg, typeStyle.text
-                )}>
+                <span className="text-[10px] font-medium tracking-wide uppercase border px-2 py-0.5 rounded-full bg-slate-900 text-slate-300 border-slate-800">
                   {goal.goal_type}
                 </span>
                 <span className="text-xs text-slate-400">
@@ -159,7 +153,7 @@ function GoalCard({ goal, progress, onToggleStatus, onArchive }: GoalCardProps) 
             </div>
           </div>
           <span className={cn(
-            "flex items-center gap-1 text-xs px-2 py-0.5 rounded-full",
+            "flex items-center gap-1 text-[10px] font-medium tracking-wide px-2 py-0.5 rounded-full",
             statusStyle.bg, statusStyle.text
           )}>
             <StatusIcon className="h-3 w-3" />
@@ -177,28 +171,28 @@ function GoalCard({ goal, progress, onToggleStatus, onArchive }: GoalCardProps) 
           </div>
           <ProgressBar
             value={progressPercent}
-            color={typeStyle.text.replace('text-', 'bg-').replace('-700', '-500')}
+            color={typeStyle.progressColor}
           />
         </div>
       </div>
 
       {/* Actions */}
       {goal.status !== 'archived' && (
-        <div className="px-4 py-2 bg-slate-800/50 border-t border-slate-800 flex items-center justify-end gap-2">
+        <div className="px-4 pb-4 border-t border-slate-800/60 pt-3 flex justify-end gap-3">
           <button
             type="button"
             onClick={onToggleStatus}
             aria-label={`${goal.status === 'active' ? 'Pause' : 'Activate'} goal: ${goal.topic_label}`}
-            className="text-xs font-medium text-slate-400 hover:text-slate-50"
+            className="text-xs font-medium text-slate-400 hover:text-slate-200 transition-colors"
           >
             {goal.status === 'active' ? 'Pause' : 'Activate'}
           </button>
-          <span className="text-slate-500" aria-hidden="true">|</span>
+          <span className="text-slate-600" aria-hidden="true">|</span>
           <button
             type="button"
             onClick={onArchive}
             aria-label={`Archive goal: ${goal.topic_label}`}
-            className="text-xs font-medium text-red-600 hover:text-red-300"
+            className="text-xs font-medium text-slate-400 hover:text-red-400 transition-colors"
           >
             Archive
           </button>
@@ -429,7 +423,7 @@ export function GoalsSection({
           <button
             type="button"
             onClick={() => setIsSheetOpen(true)}
-            className="inline-flex items-center gap-1 px-4 py-2 text-sm font-medium text-blue-600 bg-blue-900/20 rounded-lg hover:bg-blue-100"
+            className="inline-flex items-center gap-1 px-4 py-2 text-sm font-medium text-blue-400 bg-slate-900 border border-slate-800 rounded-lg hover:border-blue-500/50 hover:text-blue-300 transition-colors"
           >
             <Plus className="h-4 w-4" />
             Create your first goal

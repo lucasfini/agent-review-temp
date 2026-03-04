@@ -24,7 +24,7 @@ const STEPS = [
   {
     n: '02',
     title: 'AI Identifies & Refines',
-    description: 'Our AI automatically detects speakers, extracts their names and roles, and surfaces the key insights from the conversation.',
+    description: 'Our AI detects speakers, extracts names and roles, generates educational definitions for complex concepts, and analyzes narrative coverage — surfacing sentiment, missed CTAs, and topic gaps.',
     Icon: Sparkles,
     accent: 'bg-violet-500',
     ring: 'ring-violet-500/20',
@@ -58,8 +58,8 @@ const FEATURES = [
     border: 'hover:border-violet-200',
   },
   {
-    title: 'Deep Insight Extraction',
-    description: 'Automated entity tracking across people, products, and key concepts. Surface what matters from every recording.',
+    title: 'Educational Insight Extraction',
+    description: 'Auto-generate definitions, research links, and explanations for every complex concept, person, and product surfaced in your recordings.',
     Icon: Sparkles,
     iconColor: 'text-indigo-600',
     iconBg: 'bg-indigo-50',
@@ -72,6 +72,22 @@ const FEATURES = [
     iconColor: 'text-amber-600',
     iconBg: 'bg-amber-50',
     border: 'hover:border-amber-200',
+  },
+  {
+    title: 'Custom Prompt Templating',
+    description: 'Control the voice, format, and structure of every output. Save templates and reuse them across recordings for a consistent brand voice.',
+    Icon: FileText,
+    iconColor: 'text-teal-600',
+    iconBg: 'bg-teal-50',
+    border: 'hover:border-teal-200',
+  },
+  {
+    title: 'Narrative Coverage & Gaps',
+    description: 'Detect missing CTAs, analyze topic sentiment, and surface coverage gaps — so every recording reaches its full audience potential.',
+    Icon: Layers,
+    iconColor: 'text-rose-600',
+    iconBg: 'bg-rose-50',
+    border: 'hover:border-rose-200',
   },
 ];
 
@@ -96,20 +112,20 @@ const PAIN_POINTS = [
 
 // ─── Output showcase — matches lib/content-types.ts exactly ─────────────────
 const OUTPUTS = [
-  { badge: '𝕏',   badgeBg: 'bg-slate-900',                                   name: 'X Threads',           desc: 'Thread-format posts, 6–8 per thread',   tier: 'Basic',   count: '4 per recording' },
-  { badge: 'in',  badgeBg: 'bg-blue-700',                                     name: 'LinkedIn Posts',      desc: 'Professional posts with discussion prompts', tier: 'Basic', count: '3 per recording' },
-  { badge: '◉',   badgeBg: 'bg-gradient-to-br from-purple-500 to-pink-500',   name: 'Instagram Carousel',  desc: 'Multi-slide carousel with hashtags',     tier: 'Basic',   count: '1 per recording' },
-  { badge: 'B',   badgeBg: 'bg-emerald-600',                                  name: 'Blog Post',           desc: 'SEO-optimized article, 1,200–1,800 words', tier: 'Pro',  count: '1 per recording' },
-  { badge: 'NL',  badgeBg: 'bg-orange-500',                                   name: 'Email Newsletter',    desc: 'Newsletter with CTA, 800–1,200 words',  tier: 'Pro',     count: '1 per recording' },
-  { badge: '"',   badgeBg: 'bg-rose-500',                                     name: 'Quote Graphics',      desc: 'Speaker-attributed quotable excerpts',   tier: 'Pro',     count: '2 per recording' },
-  { badge: 'SN',  badgeBg: 'bg-violet-600',                                   name: 'Show Notes',          desc: 'Episode summary with timestamps & links', tier: 'Premium', count: '1 per recording' },
+  { badge: '𝕏', badgeBg: 'bg-slate-900', name: 'X Threads', desc: 'Thread-format posts, 6–8 per thread', tier: 'Basic', count: '4 per recording' },
+  { badge: 'in', badgeBg: 'bg-blue-700', name: 'LinkedIn Posts', desc: 'Professional posts with discussion prompts', tier: 'Basic', count: '3 per recording' },
+  { badge: '◉', badgeBg: 'bg-gradient-to-br from-purple-500 to-pink-500', name: 'Instagram Carousel', desc: 'Multi-slide carousel with hashtags', tier: 'Basic', count: '1 per recording' },
+  { badge: 'B', badgeBg: 'bg-emerald-600', name: 'Blog Post', desc: 'SEO-optimized article, 1,200–1,800 words', tier: 'Pro', count: '1 per recording' },
+  { badge: 'NL', badgeBg: 'bg-orange-500', name: 'Email Newsletter', desc: 'Newsletter with CTA, 800–1,200 words', tier: 'Pro', count: '1 per recording' },
+  { badge: '"', badgeBg: 'bg-rose-500', name: 'Quote Graphics', desc: 'Speaker-attributed quotable excerpts', tier: 'Pro', count: '2 per recording' },
+  { badge: 'SN', badgeBg: 'bg-violet-600', name: 'Show Notes', desc: 'Episode summary with timestamps & links', tier: 'Premium', count: '1 per recording' },
 ];
 
 // ─── Pricing — matches lib/tier-config.ts exactly ────────────────────────────
 const TIERS = [
   {
     name: 'Basic',
-    price: '$0.37',
+    price: '$0.39',
     unit: '/hr of audio',
     badge: null,
     description: 'Accurate transcription with speaker separation for every recording.',
@@ -126,7 +142,7 @@ const TIERS = [
   },
   {
     name: 'Pro',
-    price: '$0.44',
+    price: '$0.47',
     unit: '/hr of audio',
     badge: 'Most Popular',
     description: 'AI-powered name extraction and episode summaries for professional creators.',
@@ -144,7 +160,7 @@ const TIERS = [
   },
   {
     name: 'Premium',
-    price: '$0.52',
+    price: '$0.55',
     unit: '/hr of audio',
     badge: 'Best Value',
     description: 'Full AI suite — chapters, takeaways, role classification, and insights.',
@@ -165,10 +181,10 @@ const TIERS = [
 // ─── Navbar ───────────────────────────────────────────────────────────────────
 function Navbar({ open, setOpen }: { open: boolean; setOpen: (v: boolean) => void }) {
   const links = [
-    { label: 'Problems',     href: '#pain-points' },
+    { label: 'Problems', href: '#pain-points' },
     { label: 'How it Works', href: '#how-it-works' },
-    { label: 'Features',     href: '#features' },
-    { label: 'Pricing',      href: '#pricing' },
+    { label: 'Features', href: '#features' },
+    { label: 'Pricing', href: '#pricing' },
   ];
 
   return (
@@ -271,9 +287,9 @@ function AppMockup() {
 
             <div className="space-y-4">
               {[
-                { init: 'R', name: 'Ryan W.', role: 'Host',  color: 'bg-blue-500',   text: '"Welcome to Tech Forward. Today we explore how AI is reshaping content creation for creators everywhere…"' },
-                { init: 'S', name: 'Sarah C.',role: 'Guest', color: 'bg-violet-500', text: '"Thanks Ryan. The shift we\'re seeing is unprecedented — what used to take a full writing team now takes minutes…"' },
-                { init: 'R', name: 'Ryan W.', role: 'Host',  color: 'bg-blue-500',   text: '"So for our listeners, what\'s the single biggest change they should make today?"' },
+                { init: 'R', name: 'Ryan W.', role: 'Host', color: 'bg-blue-500', text: '"Welcome to Tech Forward. Today we explore how AI is reshaping content creation for creators everywhere…"' },
+                { init: 'S', name: 'Sarah C.', role: 'Guest', color: 'bg-violet-500', text: '"Thanks Ryan. The shift we\'re seeing is unprecedented — what used to take a full writing team now takes minutes…"' },
+                { init: 'R', name: 'Ryan W.', role: 'Host', color: 'bg-blue-500', text: '"So for our listeners, what\'s the single biggest change they should make today?"' },
               ].map(({ init, name, role, color, text }, i) => (
                 <div key={i} className="flex gap-3">
                   <div className={`flex-shrink-0 h-7 w-7 ${color} rounded-full flex items-center justify-center text-[11px] font-bold text-white mt-0.5`}>
@@ -305,8 +321,8 @@ function AppMockup() {
 
             <div className="space-y-3">
               {[
-                { badge: '𝕏',  bg: 'bg-slate-900', name: 'X Thread',      meta: '6 posts · 280 chars each', preview: '"AI is changing content creation forever. Here\'s what 10 years of podcasting taught me about staying relevant…"' },
-                { badge: 'in', bg: 'bg-blue-700',   name: 'LinkedIn Post', meta: '1,420 characters',          preview: '"Had an incredible conversation with Sarah Chen on Tech Forward. 3 insights that will change how you approach your content strategy…"' },
+                { badge: '𝕏', bg: 'bg-slate-900', name: 'X Thread', meta: '6 posts · 280 chars each', preview: '"AI is changing content creation forever. Here\'s what 10 years of podcasting taught me about staying relevant…"' },
+                { badge: 'in', bg: 'bg-blue-700', name: 'LinkedIn Post', meta: '1,420 characters', preview: '"Had an incredible conversation with Sarah Chen on Tech Forward. 3 insights that will change how you approach your content strategy…"' },
               ].map(({ badge, bg, name, meta, preview }) => (
                 <div key={name} className="bg-white/5 border border-white/10 rounded-xl p-4">
                   <div className="flex items-center justify-between mb-2">
@@ -331,6 +347,24 @@ function AppMockup() {
                 </div>
                 <span className="text-[11px] text-white/35">all 8 formats</span>
               </div>
+            </div>
+          </div>
+        </div>
+
+        {/* Bottom metrics bar — Insights · Narrative Coverage · Cost */}
+        <div className="border-t border-white/10 bg-slate-900/50 px-6 py-3">
+          <div className="flex flex-wrap items-center justify-between gap-x-6 gap-y-2">
+            <div className="flex items-center gap-1.5">
+              <Sparkles className="h-3 w-3 text-indigo-400 flex-shrink-0" />
+              <span className="text-[10px] text-white/45">5 concepts explained · 2 entities linked</span>
+            </div>
+            <div className="flex items-center gap-1.5">
+              <Layers className="h-3 w-3 text-rose-400 flex-shrink-0" />
+              <span className="text-[10px] text-white/45">Positive sentiment · 1 CTA detected · 0 topic gaps</span>
+            </div>
+            <div className="flex items-center gap-1.5">
+              <Clock className="h-3 w-3 text-emerald-400/70 flex-shrink-0" />
+              <span className="text-[10px] text-emerald-400/60">$0.55 used · manually triggered</span>
             </div>
           </div>
         </div>
@@ -361,12 +395,12 @@ function Hero() {
         </h1>
 
         <p className="text-base md:text-lg text-blue-200/70 max-w-2xl mx-auto mb-10 leading-relaxed motion-safe:animate-fade-up-400">
-          Transform your podcasts and interviews into LinkedIn posts, X threads, newsletters,
-          and show notes with AI speaker intelligence — plus summaries, chapters, key takeaways, and quotes.
+          Transform your podcasts and interviews into LinkedIn posts, X threads, newsletters, and show notes.
+          AI identifies every speaker, explains complex concepts, analyzes narrative gaps, and generates all 8 formats — automatically.
           No editing. No manual work.
         </p>
 
-        <div className="flex flex-col sm:flex-row items-center justify-center gap-4 mb-16 motion-safe:animate-fade-up-600">
+        <div className="flex flex-col sm:flex-row items-center justify-center gap-4 motion-safe:animate-fade-up-600">
           <Link href="/auth/signup" className="inline-flex items-center gap-2 bg-blue-600 hover:bg-blue-500 text-white font-semibold px-7 py-3.5 rounded-xl transition-colors shadow-lg shadow-blue-900/50">
             Start Repurposing Free
             <ArrowRight className="h-4 w-4" />
@@ -375,6 +409,9 @@ function Hero() {
             Try Demo →
           </Link>
         </div>
+        <p className="text-xs text-blue-300/45 mt-4 mb-12 motion-safe:animate-fade-up-600">
+          Pay only when you manually trigger processing.
+        </p>
 
         <div className="motion-safe:animate-fade-up-600 motion-safe:animate-float-slow">
           <AppMockup />
@@ -403,9 +440,8 @@ function PainPoints() {
           {PAIN_POINTS.map(({ title, problem, fix }, idx) => (
             <div
               key={title}
-              className={`rounded-2xl border border-gray-100 bg-gray-50 p-6 hover:shadow-lg hover:-translate-y-0.5 transition-all duration-200 motion-safe:animate-fade-up${
-                idx === 1 ? '-200' : idx === 2 ? '-400' : ''
-              }`}
+              className={`rounded-2xl border border-gray-100 bg-gray-50 p-6 hover:shadow-lg hover:-translate-y-0.5 transition-all duration-200 motion-safe:animate-fade-up${idx === 1 ? '-200' : idx === 2 ? '-400' : ''
+                }`}
             >
               <h3 className="text-lg font-bold text-gray-900 mb-2">{title}</h3>
               <p className="text-sm text-gray-600 leading-relaxed">{problem}</p>
@@ -441,9 +477,8 @@ function HowItWorks() {
           {STEPS.map(({ n, title, description, Icon, accent, ring }, idx) => (
             <div
               key={n}
-              className={`relative flex flex-col items-center text-center group motion-safe:animate-fade-up${
-                idx === 1 ? '-200' : idx === 2 ? '-400' : ''
-              }`}
+              className={`relative flex flex-col items-center text-center group motion-safe:animate-fade-up${idx === 1 ? '-200' : idx === 2 ? '-400' : ''
+                }`}
             >
               <div className={`relative z-10 h-16 w-16 ${accent} rounded-2xl flex items-center justify-center mb-6 shadow-lg ring-4 ${ring} transition-transform duration-300 group-hover:-translate-y-1`}>
                 <Icon className="h-7 w-7 text-white" />
@@ -474,13 +509,12 @@ function Features() {
           </p>
         </div>
 
-        <div className="grid sm:grid-cols-2 lg:grid-cols-4 gap-6">
+        <div className="grid sm:grid-cols-2 lg:grid-cols-3 gap-6">
           {FEATURES.map(({ title, description, Icon, iconColor, iconBg, border }, idx) => (
             <div
               key={title}
-              className={`rounded-2xl border border-gray-100 ${border} bg-white p-6 hover:shadow-lg hover:-translate-y-1 transition-all duration-300 cursor-default motion-safe:animate-fade-up${
-                idx === 1 ? '-200' : idx === 2 ? '-400' : idx === 3 ? '-600' : ''
-              }`}
+              className={`rounded-2xl border border-gray-100 ${border} bg-white p-6 hover:shadow-lg hover:-translate-y-1 transition-all duration-300 cursor-default motion-safe:animate-fade-up${idx % 3 === 1 ? '-200' : idx % 3 === 2 ? '-400' : ''
+                }`}
             >
               <div className={`inline-flex h-11 w-11 items-center justify-center rounded-xl ${iconBg} mb-4`}>
                 <Icon className={`h-5 w-5 ${iconColor}`} />
@@ -498,9 +532,9 @@ function Features() {
 // ─── Output Showcase ──────────────────────────────────────────────────────────
 function OutputShowcase() {
   const tierColor = (tier: string) =>
-    tier === 'Basic'   ? 'bg-gray-100 text-gray-600' :
-    tier === 'Pro'     ? 'bg-blue-50 text-blue-600 border border-blue-100' :
-                         'bg-violet-50 text-violet-600 border border-violet-100';
+    tier === 'Basic' ? 'bg-gray-100 text-gray-600' :
+      tier === 'Pro' ? 'bg-blue-50 text-blue-600 border border-blue-100' :
+        'bg-violet-50 text-violet-600 border border-violet-100';
 
   return (
     <section className="py-24 bg-gray-50">
@@ -517,9 +551,8 @@ function OutputShowcase() {
           {OUTPUTS.map(({ badge, badgeBg, name, desc, tier, count }, idx) => (
             <div
               key={name}
-              className={`bg-white rounded-2xl border border-gray-100 p-5 hover:shadow-md hover:-translate-y-0.5 transition-all duration-200 group hover:scale-[1.01] motion-safe:animate-fade-up${
-                idx % 4 === 1 ? '-200' : idx % 4 === 2 ? '-400' : idx % 4 === 3 ? '-600' : ''
-              }`}
+              className={`bg-white rounded-2xl border border-gray-100 p-5 hover:shadow-md hover:-translate-y-0.5 transition-all duration-200 group hover:scale-[1.01] motion-safe:animate-fade-up${idx % 4 === 1 ? '-200' : idx % 4 === 2 ? '-400' : idx % 4 === 3 ? '-600' : ''
+                }`}
             >
               <div className="flex items-start justify-between mb-4">
                 <div className={`w-10 h-10 ${badgeBg} rounded-xl flex items-center justify-center text-sm font-bold text-white flex-shrink-0`}>
@@ -565,13 +598,19 @@ function Pricing() {
           </p>
         </div>
 
+        <div className="max-w-5xl mx-auto mb-10 rounded-xl border border-blue-100 bg-blue-50 px-5 py-3.5 flex items-start gap-3">
+          <Clock className="h-4 w-4 text-blue-500 flex-shrink-0 mt-0.5" />
+          <p className="text-sm text-blue-700">
+            <span className="font-semibold">100% Manual Triggers</span> — You control what processes and when, so you never waste credits. A built-in cost dashboard shows your usage in real time.
+          </p>
+        </div>
+
         <div className="grid md:grid-cols-3 gap-8 max-w-5xl mx-auto">
           {TIERS.map(({ name, price, unit, badge, description, highlight, borderClass, ctaClass, features }, idx) => (
             <div
               key={name}
-              className={`relative rounded-2xl border-2 ${borderClass} p-8 flex flex-col ${highlight ? 'shadow-xl shadow-blue-100' : ''} motion-safe:animate-fade-up${
-                idx === 1 ? '-200' : idx === 2 ? '-400' : ''
-              }`}
+              className={`relative rounded-2xl border-2 ${borderClass} p-8 flex flex-col ${highlight ? 'shadow-xl shadow-blue-100' : ''} motion-safe:animate-fade-up${idx === 1 ? '-200' : idx === 2 ? '-400' : ''
+                }`}
             >
               {badge && (
                 <div className={`absolute -top-3.5 left-1/2 -translate-x-1/2 px-3 py-1 rounded-full text-xs font-bold motion-safe:animate-breathe ${highlight ? 'bg-blue-600 text-white' : 'bg-violet-600 text-white'}`}>

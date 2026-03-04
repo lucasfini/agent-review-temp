@@ -350,6 +350,28 @@ export async function POST(request: NextRequest) {
     const tier: TierLevel = performanceLevel || 'basic';
     const features = getTierFeatures(tier);
 
+    // Persist which content blocks are owed for this tier so the reconcile
+    // endpoint can detect gaps even if background processing is interrupted.
+    const selectedContentBlocks: string[] = [];
+    if (features.aiSummary) selectedContentBlocks.push('summary');
+    if (features.chapterDetection) selectedContentBlocks.push('chapters');
+    if (features.keyTakeaways) selectedContentBlocks.push('takeaways');
+    if (features.quotesExtraction) selectedContentBlocks.push('quotes');
+    if (selectedContentBlocks.length > 0) {
+      // Fire and forget — don't block transcription on this write
+      void (async () => {
+        try {
+          await (supabaseAdmin as any)
+            .from('projects')
+            .update({ metadata: { selected_content_blocks: selectedContentBlocks } })
+            .eq('id', projectId);
+          console.log(`[TRANSCRIBE] 📋 Persisted selected_content_blocks: [${selectedContentBlocks}]`);
+        } catch (err: any) {
+          console.warn('[TRANSCRIBE] ⚠️ Failed to persist selected_content_blocks:', err.message);
+        }
+      })();
+    }
+
     console.log(`\n========================================`);
     console.log(`[TRANSCRIPTION] 🚀 Starting ${tier.toUpperCase()} tier processing`);
     console.log(`[TRANSCRIPTION] Provider: ${diarizationProvider}`);

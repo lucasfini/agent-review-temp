@@ -1,5 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { Buffer } from 'buffer';
+import { PutObjectCommand } from '@aws-sdk/client-s3';
+import { r2Client, BUCKET_NAME } from '@/lib/r2';
 import { supabaseAdmin } from '@/lib/supabase/server';
 import { updateProcessingProgress } from '@/lib/progress-tracker';
 import { computeAudioFingerprint } from '@/lib/audio-fingerprint';
@@ -328,95 +330,32 @@ export async function POST(request: NextRequest) {
       // Upload file to Supabase Storage - sanitize filename
       const fileName = `${project.id}/${sanitizedBaseName}`;
 
-      console.log('Uploading file to storage...');
+      console.log('Uploading file to R2 storage...');
       console.log(`File size: ${(file.size / 1024 / 1024).toFixed(2)}MB`);
-      
-      // Test Supabase Storage connectivity first
-      try {
-        console.log('Testing Supabase Storage connectivity...');
-        const { data: buckets, error: bucketsError } = await supabaseAdmin.storage.listBuckets();
-        
-        if (bucketsError) {
-          console.error('Failed to list buckets:', bucketsError);
-          return NextResponse.json(
-            { error: 'Supabase Storage configuration error. Please check your setup.' },
-            { status: 500 }
-          );
-        }
-        
-        console.log('Available buckets:', buckets?.map(b => b.name));
-        
-        const audioBucket = buckets?.find(b => b.name === 'audio-files');
-        if (!audioBucket) {
-          console.error('audio-files bucket not found');
-          return NextResponse.json(
-            { error: 'Audio files bucket not found. Please create the "audio-files" bucket in Supabase Storage.' },
-            { status: 500 }
-          );
-        }
-        
-        console.log('Storage connectivity OK, bucket exists');
-        
-      } catch (storageError) {
-        console.error('Storage connectivity test failed:', storageError);
-        return NextResponse.json(
-          { error: 'Failed to connect to Supabase Storage. Please check your configuration.' },
-          { status: 500 }
-        );
-      }
-      
-      // Upload directly to Supabase Storage with retry logic
+
+      // Upload to R2 (large files use in-memory only for immediate transcription)
       let uploadError: unknown = null;
       let uploadData: { path: string } | null = null;
 
-      // For large files (>25MB), skip Supabase Storage and use in-memory only
-      // This avoids timeout issues with Supabase Storage
       const isLargeFile = file.size > LARGE_FILE_THRESHOLD_BYTES;
 
       if (isLargeFile) {
         console.log(`Large file detected (${(file.size / 1024 / 1024).toFixed(2)}MB) - using in-memory storage only`);
-        uploadData = { path: fileName }; // Simulate success
+        uploadData = { path: fileName };
       } else {
-        const maxRetries = 3;
-        let retryCount = 0;
-
-        while (retryCount <= maxRetries) {
-          try {
-            console.log(`Upload attempt ${retryCount + 1}/${maxRetries + 1}`);
-
-            const { data, error } = await supabaseAdmin.storage
-              .from('audio-files')
-              .upload(fileName, fileBuffer, {
-                contentType: file.type || 'application/octet-stream',
-                upsert: true,
-                // Add timeout configuration for better reliability
-                duplex: 'half'
-              });
-
-            uploadData = data;
-            uploadError = error;
-
-            if (error) {
-              throw error;
-            }
-
-            console.log('Supabase Storage upload successful');
-            break; // Success - exit retry loop
-
-          } catch (error) {
-            uploadError = error;
-            console.error(`Upload attempt ${retryCount + 1} failed:`, error);
-
-            if (retryCount < maxRetries) {
-              const delay = Math.pow(2, retryCount) * 1000; // Exponential backoff: 1s, 2s, 4s
-              console.log(`Retrying in ${delay}ms...`);
-              await new Promise(resolve => setTimeout(resolve, delay));
-              retryCount++;
-            } else {
-              console.error('All upload attempts failed');
-              break;
-            }
-          }
+        try {
+          console.log(`Uploading to R2: ${fileName}`);
+          await r2Client.send(new PutObjectCommand({
+            Bucket: BUCKET_NAME,
+            Key: fileName,
+            Body: fileBuffer,
+            ContentType: file.type || 'application/octet-stream',
+          }));
+          uploadData = { path: fileName };
+          console.log('R2 upload successful');
+        } catch (error) {
+          uploadError = error;
+          console.error('R2 upload failed:', error);
         }
       }
 
@@ -604,8 +543,7 @@ export async function POST(request: NextRequest) {
       */
 
       if (uploadError && !isLargeFile) {
-        // Only fail if it's NOT a large file using in-memory storage
-        console.error(`File upload failed:`, uploadError);
+        console.error(`R2 upload failed:`, uploadError);
 
         // Clean up project record
         await supabaseAdmin
@@ -613,49 +551,17 @@ export async function POST(request: NextRequest) {
           .delete()
           .eq('id', project.id);
 
-        // Provide specific error messages
         const errorMessage = (uploadError as any)?.message || 'Unknown storage error';
-        const errorCause = (uploadError as any)?.originalError?.cause?.code;
-
-        if (errorMessage.includes('bucket') || errorMessage.includes('not found')) {
-          return NextResponse.json(
-            { error: 'Storage bucket not found. Please check Supabase Storage configuration.' },
-            { status: 500 }
-          );
-        }
-
-        if (errorCause === 'EPIPE' || errorMessage.includes('EPIPE') || errorMessage.includes('fetch failed')) {
-          return NextResponse.json(
-            {
-              error: 'Upload connection interrupted. This can happen with large files. Please try again or use a smaller file.',
-              details: 'Network connection to storage was lost during upload'
-            },
-            { status: 500 }
-          );
-        }
-
-        if (errorMessage.includes('timeout')) {
-          return NextResponse.json(
-            { error: 'Upload timed out. The file may be too large. Please try with a smaller file.' },
-            { status: 500 }
-          );
-        }
-
         return NextResponse.json(
-          {
-            error: `Upload failed: ${errorMessage}`
-          },
+          { error: `Upload failed: ${errorMessage}` },
           { status: 500 }
         );
-      } else if (uploadError && isLargeFile) {
-        // Large file - Supabase Storage failed but we have in-memory copy, so continue
-        console.log('[UPLOAD] ℹ️ Supabase Storage skipped for large file - using in-memory storage only');
       }
 
       if (isLargeFile) {
-        console.log('[UPLOAD] ✅ Large file ready for processing (in-memory storage)');
+        console.log('[UPLOAD] ✅ Large file ready for processing (in-memory, no R2 upload)');
       } else {
-        console.log('[UPLOAD] ✅ File uploaded successfully to:', fileName);
+        console.log('[UPLOAD] ✅ File uploaded to R2:', fileName);
       }
 
       // Update progress: upload complete, starting transcription
@@ -678,8 +584,8 @@ export async function POST(request: NextRequest) {
         console.error('Project update error:', updateError);
       }
 
-      // Start transcription process (async) - only if OpenAI key is available
-      if (process.env.OPENAI_API_KEY) {
+      // Start transcription process (async) - only if any OpenAI key is available
+      if (process.env.OPENAI_API_KEY_NONOPTIN || process.env.OPENAI_API_KEY_OPTIN || process.env.OPENAI_API_KEY) {
         const diarizationProvider = (process.env.ASSEMBLYAI_API_KEY || process.env.ASSEMBLYAI_ACCESS_KEY) ? 'assemblyai' : 'deepgram';
         console.log(`[UPLOAD] Starting transcription with provider: ${diarizationProvider}`);
 
