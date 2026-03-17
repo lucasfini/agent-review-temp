@@ -1,5 +1,9 @@
 import type { NextConfig } from "next";
 
+const supabaseHostname = process.env.NEXT_PUBLIC_SUPABASE_URL
+  ? new URL(process.env.NEXT_PUBLIC_SUPABASE_URL).hostname
+  : null;
+
 const nextConfig: NextConfig = {
   // Temporarily disable the React Compiler in dev to reduce overhead
   // Re-enable once dev compiles reliably
@@ -15,23 +19,35 @@ const nextConfig: NextConfig = {
       bodySizeLimit: '500mb',
     },
   },
-  async headers() {
-    return [
+  images: {
+    remotePatterns: [
       {
-        source: '/(.*)',
-        headers: [
-          {
-            key: 'Cross-Origin-Opener-Policy',
-            value: 'same-origin',
-          },
-          {
-            key: 'Cross-Origin-Embedder-Policy',
-            value: 'require-corp',
-          },
-        ],
+        protocol: 'https',
+        hostname: 'lh3.googleusercontent.com',
       },
-    ];
+      {
+        protocol: 'https',
+        hostname: 'lh4.googleusercontent.com',
+      },
+      {
+        protocol: 'https',
+        hostname: 'lh5.googleusercontent.com',
+      },
+      {
+        protocol: 'https',
+        hostname: 'lh6.googleusercontent.com',
+      },
+      {
+        protocol: 'https',
+        hostname: 'googleusercontent.com',
+      },
+      ...(supabaseHostname ? [{
+        protocol: 'https' as const,
+        hostname: supabaseHostname,
+      }] : []),
+    ],
   },
+  devIndicators: false,
   // Help webpack-based dev ignore massive non-app folders if Turbopack is disabled
   webpack: (config, { dev }) => {
     if (dev) {

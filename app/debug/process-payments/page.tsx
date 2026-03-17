@@ -9,6 +9,7 @@ import { useState } from 'react';
 import { useAuth } from '@/lib/auth/context';
 import { CheckCircle, XCircle, Loader2 } from 'lucide-react';
 import { toast } from 'sonner';
+import { formatSiteCreditsFromUsd } from '@/lib/billing/display';
 
 export default function ProcessPaymentsPage() {
   const { session } = useAuth();
@@ -143,10 +144,10 @@ export default function ProcessPaymentsPage() {
                           ) : (
                             <>
                               <p className="text-green-700 font-medium">
-                                ✓ Added ${result.data.creditsAdded?.toFixed(2)} credits
+                                ✓ Added {formatSiteCreditsFromUsd(Number(result.data.creditsAdded || 0))}
                               </p>
                               <p className="text-gray-600">
-                                New balance: ${result.data.newBalance?.toFixed(2)}
+                                New balance: {formatSiteCreditsFromUsd(Number(result.data.newBalance || 0))}
                               </p>
                             </>
                           )}

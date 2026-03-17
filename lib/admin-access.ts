@@ -1,22 +1,28 @@
-const DEFAULT_ADMIN_EMAILS: string[] = [];
+const DEFAULT_ADMIN_EMAILS = [
+  'lucasfiniello@gmail.com',
+  'lucas@lucasfini.com',
+  'admin@audiorepurpose.com',
+];
 
-function parseEmails(raw: string | undefined): string[] {
-  if (!raw) return [];
-  return raw
+function parseAdminEmails(value?: string): string[] {
+  if (!value) return [];
+
+  return value
     .split(',')
     .map((email) => email.trim().toLowerCase())
     .filter(Boolean);
 }
 
 export function getAdminAllowedEmails(): string[] {
-  const serverList = parseEmails(process.env.ADMIN_ALLOWED_EMAILS);
-  const clientList = parseEmails(process.env.NEXT_PUBLIC_ADMIN_ALLOWED_EMAILS);
-  const combined = [...serverList, ...clientList];
-  return combined.length > 0 ? combined : DEFAULT_ADMIN_EMAILS;
+  const configuredEmails = [
+    ...parseAdminEmails(process.env.ADMIN_EMAILS),
+    ...parseAdminEmails(process.env.NEXT_PUBLIC_ADMIN_EMAILS),
+  ];
+
+  return Array.from(new Set([...DEFAULT_ADMIN_EMAILS, ...configuredEmails]));
 }
 
 export function isAdminEmail(email?: string | null): boolean {
   if (!email) return false;
-  const allowed = getAdminAllowedEmails();
-  return allowed.includes(email.toLowerCase());
+  return getAdminAllowedEmails().includes(email.trim().toLowerCase());
 }

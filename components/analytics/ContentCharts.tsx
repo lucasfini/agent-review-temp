@@ -55,9 +55,9 @@ export function DonutChart({ data, className, showLegend = true }: DonutChartPro
                 const item = payload[0].payload
                 const percentage = ((item.value / total) * 100).toFixed(1)
                 return (
-                  <div className="bg-slate-900 rounded-lg shadow-lg border border-slate-700 px-3 py-2">
-                    <p className="text-sm font-medium text-slate-200">{item.name}</p>
-                    <p className="text-sm text-slate-400">
+                  <div className="rounded-lg border border-slate-200 bg-white px-3 py-2 shadow-lg dark:border-slate-700 dark:bg-slate-900">
+                    <p className="text-sm font-medium text-slate-900 dark:text-slate-200">{item.name}</p>
+                    <p className="text-sm text-slate-500 dark:text-slate-400">
                       {item.value} ({percentage}%)
                     </p>
                   </div>
@@ -134,15 +134,15 @@ export function BarList({
                   {item.icon}
                 </span>
               )}
-              <span className="text-sm font-medium text-slate-50 truncate">
+              <span className="text-sm font-medium text-slate-900 dark:text-slate-50 truncate">
                 {item.name}
               </span>
             </div>
-            <span className="text-sm font-semibold text-slate-50 ml-2 tabular-nums">
+            <span className="ml-2 text-sm font-semibold tabular-nums text-slate-900 dark:text-slate-50">
               {valueFormatter(item.value)}
             </span>
           </div>
-          <div className="h-2 w-full bg-slate-800 rounded-full overflow-hidden">
+          <div className="h-2 w-full rounded-full overflow-hidden bg-slate-200 dark:bg-slate-800">
             <div
               className="h-full rounded-full transition-all duration-500 ease-out"
               style={{
@@ -232,21 +232,21 @@ export function ContentMixSection({ contentBreakdown, topTopics }: ContentMixDat
   return (
     <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
       {/* Donut Chart - Content Mix */}
-      <div className="bg-slate-900 rounded-xl border border-slate-800 p-5" role="region" aria-label="Content mix breakdown">
-        <h3 className="text-sm font-semibold text-slate-50 mb-4">Content Mix</h3>
+      <div className="rounded-xl border border-slate-200 bg-white p-5 dark:border-slate-800 dark:bg-slate-900" role="region" aria-label="Content mix breakdown">
+        <h3 className="mb-4 text-sm font-semibold text-slate-900 dark:text-slate-50">Content Mix</h3>
         <div role="img" aria-label={donutSummary}>
           <DonutChart data={donutData} />
         </div>
         {totalContent === 0 && (
-          <p className="text-sm text-slate-400 text-center py-4">
+          <p className="py-4 text-center text-sm text-slate-500 dark:text-slate-400">
             No content generated yet. Generate content from your transcribed projects to see a breakdown here.
           </p>
         )}
       </div>
 
       {/* Bar List - Top Topics */}
-      <div className="bg-slate-900 rounded-xl border border-slate-800 p-5" role="region" aria-label="Top performing topics">
-        <h3 className="text-sm font-semibold text-slate-50 mb-4">Top Performing Topics</h3>
+      <div className="rounded-xl border border-slate-200 bg-white p-5 dark:border-slate-800 dark:bg-slate-900" role="region" aria-label="Top performing topics">
+        <h3 className="mb-4 text-sm font-semibold text-slate-900 dark:text-slate-50">Top Performing Topics</h3>
         <div role="img" aria-label={topicSummary}>
           <BarList
             data={barListData}
@@ -254,7 +254,7 @@ export function ContentMixSection({ contentBreakdown, topTopics }: ContentMixDat
           />
         </div>
         {topTopics.length === 0 && (
-          <p className="text-sm text-slate-400 text-center py-8">
+          <p className="py-8 text-center text-sm text-slate-500 dark:text-slate-400">
             No topics detected yet. Run analytics on your transcribed projects to discover topic performance.
           </p>
         )}

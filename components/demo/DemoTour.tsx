@@ -40,7 +40,7 @@ function getHubSteps(onNavigateToProjects: () => void) {
       popover: {
         title: 'Your Projects',
         description:
-          'Each card is a processed podcast episode. Click any project to open it in the Content Library.',
+          'Each card is a processed podcast episode. Click any project to open it in the Studio.',
         side: 'top' as const,
         align: 'start' as const,
       },
@@ -58,7 +58,7 @@ function getHubSteps(onNavigateToProjects: () => void) {
     {
       element: 'body',
       popover: {
-        title: 'Next: Content Library',
+        title: 'Next: Studio',
         description:
           "Let's open a project and see everything AudioRepurpose generated from a single recording.",
         side: 'over' as const,
@@ -92,6 +92,7 @@ function getProjectsSteps(
     showQuotes: () => void;
     expandFirstOutput: () => void;
     collapseFirstOutput: () => void;
+    refresh: () => void;
     openGenerateModal: () => void;
     closeGenerateModal: () => void;
     openGenerateModalOnly: () => void;
@@ -161,7 +162,7 @@ function getProjectsSteps(
         side: 'left' as const,
         align: 'start' as const,
         onNextClick: handlers.showSpeakers,
-        onHighlightStarted: (element) => {
+        onHighlightStarted: (element: Element | null) => {
           handlers.selectReviewTab();
           element?.scrollIntoView({ behavior: 'smooth', block: 'nearest' });
           setTimeout(() => handlers.refresh(), 120);
@@ -178,7 +179,7 @@ function getProjectsSteps(
         align: 'start' as const,
         onNextClick: handlers.showContent,
         onPrevClick: handlers.selectReviewTab,
-        onHighlightStarted: (element) => {
+        onHighlightStarted: (element: Element | null) => {
           handlers.selectSpeakersTab();
           element?.scrollIntoView({ behavior: 'smooth', block: 'nearest' });
           setTimeout(() => handlers.refresh(), 120);
@@ -221,7 +222,7 @@ function getProjectsSteps(
         align: 'start' as const,
         onNextClick: handlers.showSummary,
         onPrevClick: handlers.selectContentTab,
-        onHighlightStarted: (element) => {
+        onHighlightStarted: (element: Element | null) => {
           handlers.selectInsightsTab();
           element?.scrollIntoView({ behavior: 'smooth', block: 'nearest' });
           setTimeout(() => handlers.refresh(), 120);
@@ -299,7 +300,7 @@ function getProjectsSteps(
         side: 'right' as const,
         align: 'center' as const,
         onPrevClick: handlers.closeGenerateModalOnly,
-        onHighlightStarted: (element) => {
+        onHighlightStarted: (element: Element | null) => {
           handlers.openGenerateModalOnly();
           element?.scrollIntoView({ behavior: 'smooth', block: 'nearest' });
           setTimeout(() => handlers.refresh(), 200);
@@ -392,7 +393,7 @@ function getUploadSteps(onNavigateToAnalytics: () => void, onNavigateToProjects:
           'Tune speaker detection and pre-define speakers before upload for better accuracy.',
         side: 'bottom' as const,
         align: 'start' as const,
-        onHighlightStarted: (element) => {
+        onHighlightStarted: (element: Element | null) => {
           const wrapper = document.querySelector('[data-tour="advanced-options"]') as HTMLElement | null;
           const expanded = wrapper?.getAttribute('data-expanded') === 'true';
           if (!expanded) {
@@ -411,7 +412,7 @@ function getUploadSteps(onNavigateToAnalytics: () => void, onNavigateToProjects:
           "Optionally list the speakers' names and roles before uploading. This gives the AI a head start and improves attribution accuracy.",
         side: 'top' as const,
         align: 'start' as const,
-        onHighlightStarted: (element) => {
+        onHighlightStarted: (element: Element | null) => {
           element?.scrollIntoView({ behavior: 'smooth', block: 'start' });
         },
       },
@@ -424,7 +425,7 @@ function getUploadSteps(onNavigateToAnalytics: () => void, onNavigateToProjects:
           'Track past uploads, statuses, and quickly jump back into any project.',
         side: 'top' as const,
         align: 'start' as const,
-        onHighlightStarted: (element) => {
+        onHighlightStarted: (element: Element | null) => {
           element?.scrollIntoView({ behavior: 'smooth', block: 'center' });
         },
       },
@@ -517,7 +518,7 @@ function getAnalyticsSteps(
           'Set topics you want to own — "AI in healthcare", "leadership mindset" — and see which episodes cover them and how deeply.',
         side: 'top' as const,
         align: 'start' as const,
-        onHighlightStarted: (element) => {
+        onHighlightStarted: (element: Element | null) => {
           handlers.showGoalsTab();
           element?.scrollIntoView({ behavior: 'smooth', block: 'nearest' });
           setTimeout(() => handlers.refresh(), 120);
@@ -707,7 +708,7 @@ export function DemoTour({ chapter, autoStart = true }: DemoTourProps) {
         break;
       case 'analytics':
         steps = getAnalyticsSteps(
-          () => navigateTo('/dashboard/settings?section=usage', 'settings'),
+          () => navigateTo('/dashboard/usage', 'settings'),
           () => navigateTo('/dashboard/upload', 'upload'),
           { showInsightsTab: handlers.showInsightsTab, showGoalsTab: handlers.showGoalsTab, advanceToGoalsPanel: handlers.advanceToGoalsPanel, refresh: handlers.refresh }
         );

@@ -313,6 +313,34 @@ export const STRICT_CONTENT_LIMITS: Record<string, ContentLimits> = {
     min: 10,
     unit: 'words',
     truncationStrategy: 'smart'
+  },
+  facebook_post: {
+    hardMax: 300,
+    softMax: 280,
+    min: 150,
+    unit: 'words',
+    truncationStrategy: 'smart'
+  },
+  youtube_description: {
+    hardMax: 300,
+    softMax: 280,
+    min: 150,
+    unit: 'words',
+    truncationStrategy: 'smart'
+  },
+  podcast_episode_description: {
+    hardMax: 200,
+    softMax: 180,
+    min: 100,
+    unit: 'words',
+    truncationStrategy: 'smart'
+  },
+  short_form_video_script: {
+    hardMax: 150,
+    softMax: 140,
+    min: 120,
+    unit: 'words',
+    truncationStrategy: 'smart'
   }
 };
 

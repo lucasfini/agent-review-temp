@@ -1,5 +1,6 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { supabaseAdmin } from '@/lib/supabase/server';
+import { RouteAccessError, requireProjectOwner } from '@/lib/api/route-auth';
 
 // Force dynamic to prevent caching
 export const dynamic = 'force-dynamic';
@@ -12,6 +13,7 @@ export async function PATCH(
   try {
     const { id: projectId } = await params;
     const { segmentIndices, newSpeakerId, confirmOnly } = await request.json();
+    const { user } = await requireProjectOwner(request, projectId, 'speaker_data, user_id');
 
     if (!projectId || !Array.isArray(segmentIndices)) {
       return NextResponse.json(
@@ -27,6 +29,10 @@ export async function PATCH(
       );
     }
 
+    if (user.email === process.env.DEMO_EMAIL) {
+      return NextResponse.json({ error: 'Demo account is read-only' }, { status: 403 });
+    }
+
     // Fetch current project data
     const { data: project, error: fetchError } = await supabaseAdmin
       .from('projects')
@@ -40,15 +46,6 @@ export async function PATCH(
         { error: 'Project not found' },
         { status: 404 }
       );
-    }
-
-    // Demo account guard
-    const projectUserId = (project as { speaker_data: any; user_id: string }).user_id;
-    if (projectUserId) {
-      const { data: { user: projectUser } } = await supabaseAdmin.auth.admin.getUserById(projectUserId);
-      if (projectUser?.email === process.env.DEMO_EMAIL) {
-        return NextResponse.json({ error: 'Demo account is read-only' }, { status: 403 });
-      }
     }
 
     const speakerData = (project as { speaker_data: any; user_id: string }).speaker_data;
@@ -87,7 +84,7 @@ export async function PATCH(
 
       const { data: savedConfirm, error: updateError } = await supabaseAdmin
         .from('projects')
-        // @ts-expect-error - Supabase types issue with update
+        // @ts-ignore - Supabase types issue with update
         .update({ speaker_data: updatedSpeakerData })
         .eq('id', projectId)
         .select('speaker_data')
@@ -171,7 +168,7 @@ export async function PATCH(
     // Save to database
     const { data: saved, error: updateError } = await supabaseAdmin
       .from('projects')
-      // @ts-expect-error - Supabase types issue with update
+      // @ts-ignore - Supabase types issue with update
       .update({ speaker_data: updatedSpeakerData })
       .eq('id', projectId)
       .select('speaker_data')
@@ -193,6 +190,9 @@ export async function PATCH(
     });
 
   } catch (error) {
+    if (error instanceof RouteAccessError) {
+      return NextResponse.json({ error: error.message }, { status: error.status });
+    }
     console.error('Segment reassignment error:', error);
     return NextResponse.json(
       { error: 'Internal server error' },

@@ -15,6 +15,12 @@ export interface PerplexitySource {
   type?: string; // 'wikipedia' | 'documentation' | 'article' | 'academic'
 }
 
+export interface PersonResearchProfile {
+  summary?: string;
+  current_work?: string;
+  notable_background?: string;
+}
+
 export interface PerplexityResponse {
   id: string;
   model: string;
@@ -42,6 +48,7 @@ export interface PerplexityResponse {
 
 export interface ResearchLinksResult {
   sources: PerplexitySource[];
+  personProfile?: PersonResearchProfile;
   raw_content?: string;
   cost_usd: number;
   tokens_used: {
@@ -125,7 +132,7 @@ export async function generateResearchLinks(
 
     // Extract sources from response
     const content = data.choices[0]?.message?.content || '';
-    const sources = parseSourcesFromResponse(content, data.citations);
+    const parsed = parseResearchFromResponse(content, data.citations, category);
 
     // Calculate cost
     // Sonar Pro pricing: $3.00 per 1M input tokens, $15.00 per 1M output tokens
@@ -134,7 +141,8 @@ export async function generateResearchLinks(
     const totalCost = inputCost + outputCost;
 
     return {
-      sources,
+      sources: parsed.sources,
+      personProfile: parsed.personProfile,
       raw_content: content,
       cost_usd: totalCost,
       tokens_used: {
@@ -156,27 +164,52 @@ export async function generateResearchLinks(
  * Parse sources from Perplexity's response content
  * Handles both structured JSON and citation-based responses
  */
-function parseSourcesFromResponse(
+function parseResearchFromResponse(
   content: string,
-  citations?: string[]
-): PerplexitySource[] {
+  citations: string[] | undefined,
+  category: 'person' | 'concept' | 'tool'
+): { sources: PerplexitySource[]; personProfile?: PersonResearchProfile } {
   const sources: PerplexitySource[] = [];
 
   // Try to parse as JSON first
   try {
-    const jsonMatch = content.match(/\[[\s\S]*\]/);
+    const jsonMatch = content.match(category === 'person' ? /\{[\s\S]*\}/ : /\[[\s\S]*\]/);
     if (jsonMatch) {
       const parsed = JSON.parse(jsonMatch[0]);
+      if (category === 'person' && parsed && !Array.isArray(parsed)) {
+        const parsedSources = Array.isArray(parsed.sources)
+          ? parsed.sources.map((item: any) => ({
+              title: item.title || '',
+              url: item.url || '',
+              description: item.description,
+              type: item.type
+            })).filter((item: PerplexitySource) => item.url)
+          : [];
+
+        return {
+          sources: parsedSources,
+          personProfile: parsed.profile && typeof parsed.profile === 'object'
+            ? {
+                summary: typeof parsed.profile.summary === 'string' ? parsed.profile.summary : undefined,
+                current_work: typeof parsed.profile.current_work === 'string' ? parsed.profile.current_work : undefined,
+                notable_background: typeof parsed.profile.notable_background === 'string' ? parsed.profile.notable_background : undefined,
+              }
+            : undefined,
+        };
+      }
+
       if (Array.isArray(parsed)) {
-        return parsed.map(item => ({
+        return {
+          sources: parsed.map(item => ({
           title: item.title || '',
           url: item.url || '',
           description: item.description,
           type: item.type
-        })).filter(item => item.url);
+        })).filter((item: PerplexitySource) => item.url)
+        };
       }
     }
-  } catch (e) {
+  } catch {
     // If JSON parsing fails, try to extract from citations
   }
 
@@ -193,7 +226,7 @@ function parseSourcesFromResponse(
     });
   }
 
-  return sources;
+  return { sources };
 }
 
 /**

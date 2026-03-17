@@ -6,6 +6,7 @@ import { TierLevel } from './tier-config';
 export type ProcessingStage =
   | 'pending'
   | 'uploading'
+  | 'cancelled'
   | 'transcribing'
   | 'diarization'
   | 'name_extraction'
@@ -27,8 +28,8 @@ export interface ProgressStageDefinition {
   progressEnd: number; // Overall progress % when stage completes
 }
 
-// Basic Tier: Core transcription and diarization only
-const BASIC_STAGES: ProgressStageDefinition[] = [
+// Standard Tier: Core transcription and diarization only
+const STANDARD_STAGES: ProgressStageDefinition[] = [
   {
     id: 'uploading',
     displayName: 'Uploading Audio',
@@ -41,7 +42,7 @@ const BASIC_STAGES: ProgressStageDefinition[] = [
     id: 'transcribing',
     displayName: 'Transcribing',
     icon: 'FileText',
-    description: 'Converting speech to text with AssemblyAI...',
+    description: 'Turning your audio into a transcript...',
     progressStart: 10,
     progressEnd: 60
   },
@@ -63,60 +64,8 @@ const BASIC_STAGES: ProgressStageDefinition[] = [
   }
 ];
 
-// Pro Tier: + Name Extraction + AI Summary
+// Pro Tier: + Name Extraction + AI Summary + Roles + Chapters + Takeaways + Quotes
 const PRO_STAGES: ProgressStageDefinition[] = [
-  {
-    id: 'uploading',
-    displayName: 'Uploading Audio',
-    icon: 'Upload',
-    description: 'Uploading your audio file to secure storage...',
-    progressStart: 0,
-    progressEnd: 8
-  },
-  {
-    id: 'transcribing',
-    displayName: 'Transcribing',
-    icon: 'FileText',
-    description: 'Converting speech to text with AssemblyAI...',
-    progressStart: 8,
-    progressEnd: 50
-  },
-  {
-    id: 'diarization',
-    displayName: 'Speaker Detection',
-    icon: 'Users',
-    description: 'Identifying different speakers in the conversation...',
-    progressStart: 50,
-    progressEnd: 70
-  },
-  {
-    id: 'name_extraction',
-    displayName: 'Name Extraction',
-    icon: 'UserCheck',
-    description: 'Extracting speaker names from the conversation...',
-    progressStart: 70,
-    progressEnd: 80
-  },
-  {
-    id: 'summary',
-    displayName: 'AI Summary',
-    icon: 'FileText',
-    description: 'Generating podcast summary with AI...',
-    progressStart: 80,
-    progressEnd: 90
-  },
-  {
-    id: 'finalizing',
-    displayName: 'Finalizing',
-    icon: 'CheckCircle',
-    description: 'Saving your enhanced transcription...',
-    progressStart: 90,
-    progressEnd: 100
-  }
-];
-
-// Premium Tier: + Roles + Chapters + Takeaways + Quotes
-const PREMIUM_STAGES: ProgressStageDefinition[] = [
   {
     id: 'uploading',
     displayName: 'Uploading Audio',
@@ -129,7 +78,7 @@ const PREMIUM_STAGES: ProgressStageDefinition[] = [
     id: 'transcribing',
     displayName: 'Transcribing',
     icon: 'FileText',
-    description: 'Converting speech to text with AssemblyAI...',
+    description: 'Turning your audio into a transcript...',
     progressStart: 5,
     progressEnd: 40
   },
@@ -143,49 +92,49 @@ const PREMIUM_STAGES: ProgressStageDefinition[] = [
   },
   {
     id: 'name_extraction',
-    displayName: 'Name Extraction',
+    displayName: 'Finding Speaker Names',
     icon: 'UserCheck',
-    description: 'Extracting speaker names from the conversation...',
+    description: 'Matching speakers to the names mentioned in the episode...',
     progressStart: 55,
     progressEnd: 62
   },
   {
     id: 'summary',
-    displayName: 'AI Summary',
+    displayName: 'Creating Summary',
     icon: 'FileText',
-    description: 'Generating podcast summary with AI...',
+    description: 'Writing a concise summary of the episode...',
     progressStart: 62,
     progressEnd: 70
   },
   {
     id: 'role_classification',
-    displayName: 'Role Classification',
+    displayName: 'Understanding Roles',
     icon: 'Award',
-    description: 'Classifying speaker roles (host, guest, etc.)...',
+    description: 'Working out who is hosting, co-hosting, or guesting...',
     progressStart: 70,
     progressEnd: 78
   },
   {
     id: 'chapters',
-    displayName: 'Chapter Detection',
+    displayName: 'Building Chapters',
     icon: 'BookOpen',
-    description: 'Detecting chapter markers and topics...',
+    description: 'Breaking the episode into clear chapter sections...',
     progressStart: 78,
     progressEnd: 85
   },
   {
     id: 'takeaways',
-    displayName: 'Key Takeaways',
+    displayName: 'Pulling Out Key Takeaways',
     icon: 'Lightbulb',
-    description: 'Extracting key insights and takeaways...',
+    description: 'Pulling out the main ideas worth remembering...',
     progressStart: 85,
     progressEnd: 92
   },
   {
     id: 'quotes',
-    displayName: 'Social Quotes',
+    displayName: 'Finding Shareable Quotes',
     icon: 'Quote',
-    description: 'Finding shareable quotes for social media...',
+    description: 'Pulling out strong quotes that are worth sharing...',
     progressStart: 92,
     progressEnd: 97
   },
@@ -204,14 +153,12 @@ const PREMIUM_STAGES: ProgressStageDefinition[] = [
  */
 export function getTierStages(tier: TierLevel): ProgressStageDefinition[] {
   switch (tier) {
-    case 'basic':
-      return BASIC_STAGES;
+    case 'standard':
+      return STANDARD_STAGES;
     case 'pro':
       return PRO_STAGES;
-    case 'premium':
-      return PREMIUM_STAGES;
     default:
-      return BASIC_STAGES;
+      return STANDARD_STAGES;
   }
 }
 
@@ -234,6 +181,10 @@ export function calculateOverallProgress(
   currentStage: ProcessingStage,
   stageProgress: number = 0
 ): number {
+  if (currentStage === 'cancelled') {
+    return 0;
+  }
+
   const stageDef = getStageDefinition(tier, currentStage);
 
   if (!stageDef) {
@@ -289,6 +240,9 @@ export function getStageDisplayName(
   tier: TierLevel,
   stageId: ProcessingStage
 ): string {
+  if (stageId === 'cancelled') {
+    return 'Cancelled';
+  }
   const stageDef = getStageDefinition(tier, stageId);
   return stageDef?.displayName || stageId.replace(/_/g, ' ');
 }
@@ -300,6 +254,48 @@ export function getStageDescription(
   tier: TierLevel,
   stageId: ProcessingStage
 ): string {
+  if (stageId === 'cancelled') {
+    return 'Upload cancelled.';
+  }
   const stageDef = getStageDefinition(tier, stageId);
   return stageDef?.description || 'Processing...';
+}
+
+const MODEL_NAME_PATTERNS = [
+  /\bassemblyai\b/gi,
+  /\bdeepgram\b/gi,
+  /\bgpt-?\s*5(?:-mini|-nano)?\b/gi,
+  /\bgpt-?\s*4o(?:-mini)?\b/gi,
+  /\bclaude(?:-[\w.]+)?\b/gi,
+];
+
+function stripModelNames(message: string): string {
+  let sanitized = message;
+
+  for (const pattern of MODEL_NAME_PATTERNS) {
+    sanitized = sanitized.replace(pattern, 'AI');
+  }
+
+  sanitized = sanitized
+    .replace(/\(\s*AI\s*\+\s*AI\s*\)/gi, '')
+    .replace(/\(\s*AI\s*\)/gi, '')
+    .replace(/\s{2,}/g, ' ')
+    .replace(/\s+([,.)!?])/g, '$1')
+    .trim();
+
+  return sanitized;
+}
+
+export function getUserFacingProcessingMessage(
+  tier: TierLevel,
+  stageId: ProcessingStage,
+  message?: string | null
+): string {
+  const fallback = getStageDescription(tier, stageId);
+  if (!message || !message.trim()) {
+    return fallback;
+  }
+
+  const sanitized = stripModelNames(message);
+  return sanitized || fallback;
 }

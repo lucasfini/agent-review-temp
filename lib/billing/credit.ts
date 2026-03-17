@@ -190,35 +190,45 @@ export async function debitCredit(
   newVersion: number;
   transactionId: string;
 }> {
+  let balance = 0;
+  let version = 0;
+  let result: any = null;
+  let lastVersionError: ConcurrentUpdateError | null = null;
 
-  // Get current balance and version
-  const { balance, version } = await getBalance(userId);
+  for (let attempt = 0; attempt < 3; attempt++) {
+    ({ balance, version } = await getBalance(userId));
 
-  // Use PostgreSQL function for atomic debit
-  const { data, error } = await supabase.rpc('debit_user_credits', {
-    p_user_id: userId,
-    p_amount: amount,
-    p_current_version: version,
-  } as any) as { data: any; error: any };
+    const { data, error } = await supabase.rpc('debit_user_credits', {
+      p_user_id: userId,
+      p_amount: amount,
+      p_current_version: version,
+    } as any) as { data: any; error: any };
 
-  if (error) {
-    throw new Error(`Failed to debit credits: ${error.message}`);
-  }
+    if (error) {
+      throw new Error(`Failed to debit credits: ${error.message}`);
+    }
 
-  const result = data[0];
+    result = data[0];
 
-  // Handle errors returned by function
-  if (!result.success) {
+    if (result.success) {
+      break;
+    }
+
     if (result.error_message?.includes('not found')) {
       throw new CreditAccountNotFoundError(userId);
-    }
-    if (result.error_message?.includes('Version mismatch')) {
-      throw new ConcurrentUpdateError(userId, version, result.new_version);
     }
     if (result.error_message?.includes('Insufficient credits')) {
       throw new InsufficientCreditError(userId, amount, result.new_balance);
     }
+    if (result.error_message?.includes('Version mismatch')) {
+      lastVersionError = new ConcurrentUpdateError(userId, version, result.new_version);
+      continue;
+    }
     throw new Error(result.error_message || 'Unknown debit error');
+  }
+
+  if (!result?.success) {
+    throw lastVersionError || new Error('Unknown debit error');
   }
 
   // Log transaction for audit trail
@@ -337,6 +347,7 @@ export async function addCredit(
 export async function logUsageEvent(params: {
   userId: string;
   projectId?: string;
+  projectTitle?: string;
   serviceKey: string;
   serviceName: string;
   provider: string;
@@ -349,11 +360,23 @@ export async function logUsageEvent(params: {
   status?: 'completed' | 'pending' | 'failed';
 }): Promise<UsageEvent> {
 
+  // Snapshot the project title so it survives project deletion (FK ON DELETE SET NULL)
+  let resolvedProjectTitle = params.projectTitle;
+  if (params.projectId && !resolvedProjectTitle) {
+    const { data: proj } = await supabase
+      .from('projects')
+      .select('title')
+      .eq('id', params.projectId)
+      .maybeSingle() as { data: any };
+    resolvedProjectTitle = proj?.title ?? undefined;
+  }
+
   const { data, error } = await supabase
     .from('usage_events')
     .insert({
       user_id: params.userId,
       project_id: params.projectId,
+      project_title: resolvedProjectTitle ?? null,
       service_key: params.serviceKey,
       service_name: params.serviceName,
       provider: params.provider,
@@ -460,7 +483,7 @@ export async function getUsageHistory(
     metadata: row.metadata,
     status: row.status,
     createdAt: row.created_at,
-    projectTitle: row.projects?.title || undefined,
+    projectTitle: row.projects?.title || row.project_title || undefined,
   }));
 
   return {

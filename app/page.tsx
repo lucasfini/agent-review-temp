@@ -1,130 +1,377 @@
 "use client";
 
-import { useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import Link from 'next/link';
+import { useTheme } from 'next-themes';
 import {
-  Mic, Sparkles, Zap, Users, MessageSquare, ListChecks,
-  Upload, ArrowRight, Check, Menu, X as CloseIcon,
-  FileText, Clock, Mail, Layers,
+  AnimatePresence,
+  MotionConfig,
+  animate,
+  motion,
+  useInView,
+  useReducedMotion,
+  useScroll,
+  useSpring,
+} from 'framer-motion';
+import {
+  Mic, Sparkles, Zap, Users, ArrowRight, Check, BarChart3, Target, Lightbulb,
+  Menu, X as CloseIcon, Clock, Play, Upload, Sun, Moon,
 } from 'lucide-react';
+import BrandLogo from '@/components/site/BrandLogo';
 
-// ─── Mini waveform for the transcript header ──────────────────────────────────
-const MINI_WAVE = [8, 13, 10, 18, 12, 16, 9, 15, 11, 17];
+// ─── Constants ────────────────────────────────────────────────────────────────
+const SOCIAL_TAGS = [
+  'Podcasts',
+  'Interviews',
+  'Webinars',
+  'Panels',
+  'Founder Updates',
+  'Customer Calls',
+  'Creator Episodes',
+  'Team Briefings',
+];
 
-// ─── How it Works ─────────────────────────────────────────────────────────────
+const SECTION_VIEWPORT = { once: true, amount: 0.2 };
+const sectionContainer = {
+  hidden: { opacity: 0, y: 20 },
+  show: {
+    opacity: 1,
+    y: 0,
+    transition: {
+      duration: 0.55,
+      ease: 'easeOut' as const,
+      staggerChildren: 0.12,
+    },
+  },
+};
+const sectionItem = {
+  hidden: { opacity: 0, y: 16 },
+  show: { opacity: 1, y: 0, transition: { duration: 0.45, ease: 'easeOut' as const } },
+};
+
+// ─── How It Works steps ───────────────────────────────────────────────────────
 const STEPS = [
   {
     n: '01',
     title: 'Upload Your Audio',
     description: 'Drag & drop your podcast, interview, or recording. MP3, WAV, M4A — all supported.',
-    Icon: Upload,
     accent: 'bg-blue-500',
     ring: 'ring-blue-500/20',
+    Icon: Upload,
   },
   {
     n: '02',
-    title: 'AI Identifies & Refines',
-    description: 'Our AI detects speakers, extracts names and roles, generates educational definitions for complex concepts, and analyzes narrative coverage — surfacing sentiment, missed CTAs, and topic gaps.',
-    Icon: Sparkles,
+    title: 'Choose Your Analysis Level',
+    description: 'Standard gives you a clean transcript with numbered speakers. Pro adds names, roles, summaries, chapters, takeaways, and quotes.',
     accent: 'bg-violet-500',
     ring: 'ring-violet-500/20',
+    Icon: Sparkles,
   },
   {
     n: '03',
-    title: 'Generate Your Content Suite',
-    description: 'Instantly generate 8 content formats — X threads, LinkedIn posts, newsletters, show notes, and more — each optimized for its platform.',
-    Icon: Zap,
+    title: 'Generate 11 Content Types',
+    description: 'Create X threads, LinkedIn posts, YouTube descriptions, TikTok scripts, show notes, newsletters, and more without plan-based locks.',
     accent: 'bg-indigo-500',
     ring: 'ring-indigo-500/20',
-  },
-];
-
-// ─── Features ─────────────────────────────────────────────────────────────────
-const FEATURES = [
-  {
-    title: 'Smart Speaker ID',
-    description: 'Automated name and role detection. Know exactly who said what — Host, Guest, or Expert — without manual tagging.',
-    Icon: Users,
-    iconColor: 'text-blue-600',
-    iconBg: 'bg-blue-50',
-    border: 'hover:border-blue-200',
-  },
-  {
-    title: 'Interactive Transcript',
-    description: 'Teams-style conversation view with speaker-attributed segments. Searchable, editable, and export-ready.',
-    Icon: MessageSquare,
-    iconColor: 'text-violet-600',
-    iconBg: 'bg-violet-50',
-    border: 'hover:border-violet-200',
-  },
-  {
-    title: 'Educational Insight Extraction',
-    description: 'Auto-generate definitions, research links, and explanations for every complex concept, person, and product surfaced in your recordings.',
-    Icon: Sparkles,
-    iconColor: 'text-indigo-600',
-    iconBg: 'bg-indigo-50',
-    border: 'hover:border-indigo-200',
-  },
-  {
-    title: 'Content Multiplexer',
-    description: 'Native generation for X, LinkedIn, Instagram, Blog, and Email. Every piece is formatted for its platform from the start.',
     Icon: Zap,
-    iconColor: 'text-amber-600',
-    iconBg: 'bg-amber-50',
-    border: 'hover:border-amber-200',
-  },
-  {
-    title: 'Custom Prompt Templating',
-    description: 'Control the voice, format, and structure of every output. Save templates and reuse them across recordings for a consistent brand voice.',
-    Icon: FileText,
-    iconColor: 'text-teal-600',
-    iconBg: 'bg-teal-50',
-    border: 'hover:border-teal-200',
-  },
-  {
-    title: 'Narrative Coverage & Gaps',
-    description: 'Detect missing CTAs, analyze topic sentiment, and surface coverage gaps — so every recording reaches its full audience potential.',
-    Icon: Layers,
-    iconColor: 'text-rose-600',
-    iconBg: 'bg-rose-50',
-    border: 'hover:border-rose-200',
   },
 ];
 
-// ─── Pain Points ─────────────────────────────────────────────────────────────
-const PAIN_POINTS = [
+// ─── Output formats ───────────────────────────────────────────────────────────
+const OUTPUT_GROUPS = [
   {
-    title: 'Speaker attribution breaks down',
-    problem: 'Speaker identification often fails unless everyone is enrolled, licensed, and within strict meeting limits.',
-    fix: 'AudioRepurpose auto-detects speakers, extracts names/roles, and gives you clean review tools.',
+    title: 'Social Distribution',
+    description: 'Posts built to grab attention quickly and drive replies, saves, and shares.',
+    accent: 'from-slate-900 via-slate-800 to-slate-900',
+    items: [
+      { badge: '𝕏', badgeBg: 'bg-slate-900', name: 'X Threads', desc: '6–8 posts per thread' },
+      { badge: 'in', badgeBg: 'bg-blue-700', name: 'LinkedIn Posts', desc: 'Professional posts with discussion prompts' },
+      { badge: 'f', badgeBg: 'bg-blue-600', name: 'Facebook Post', desc: 'Conversational post with question-led engagement' },
+      { badge: '◉', badgeBg: 'bg-gradient-to-br from-fuchsia-500 to-rose-500', name: 'Instagram Carousel', desc: 'Multi-slide carousel with hashtags' },
+    ],
   },
   {
-    title: 'Real-world audio confuses speaker ID',
-    problem: 'Overlapping speech and mic sharing commonly lead to misattribution and generic “Speaker 1” labels.',
-    fix: 'We surface speaker clusters and let you correct labels fast, then reuse them across outputs.',
+    title: 'Video + Episode Packaging',
+    description: 'Assets that help an episode travel across video feeds and listening platforms.',
+    accent: 'from-blue-950 via-indigo-950 to-slate-900',
+    items: [
+      { badge: 'YT', badgeBg: 'bg-red-600', name: 'YouTube Description', desc: 'SEO-friendly summary with timestamps and hashtags' },
+      { badge: 'TT', badgeBg: 'bg-cyan-600', name: 'TikTok / Reels Script', desc: '45–60 second short-form hook and CTA' },
+      { badge: 'PD', badgeBg: 'bg-amber-600', name: 'Podcast Episode Description', desc: 'Store-ready episode summary for podcast apps' },
+      { badge: 'SN', badgeBg: 'bg-violet-600', name: 'Show Notes', desc: 'Episode summary with timestamps' },
+    ],
   },
   {
-    title: 'Manual cleanup becomes the bottleneck',
-    problem: 'Reliable attribution often depends on manual tagging and corrections to train the system.',
-    fix: 'AudioRepurpose centralizes speaker rosters + AI correction so you don’t babysit transcripts.',
+    title: 'Long-Form + Pull Quotes',
+    description: 'Deeper assets for search, email, and republishing once an episode has landed.',
+    accent: 'from-emerald-950 via-slate-900 to-slate-900',
+    items: [
+      { badge: 'B', badgeBg: 'bg-emerald-600', name: 'Blog Post', desc: 'SEO-optimized, 1,200–1,800 words' },
+      { badge: 'NL', badgeBg: 'bg-orange-500', name: 'Email Newsletter', desc: '800–1,200 words with CTA' },
+      { badge: '"', badgeBg: 'bg-rose-500', name: 'Quote Graphics', desc: 'Speaker-attributed quotable excerpts' },
+    ],
   },
 ];
 
-// ─── Output showcase — matches lib/content-types.ts exactly ─────────────────
-const OUTPUTS = [
-  { badge: '𝕏', badgeBg: 'bg-slate-900', name: 'X Threads', desc: 'Thread-format posts, 6–8 per thread', tier: 'Basic', count: '4 per recording' },
-  { badge: 'in', badgeBg: 'bg-blue-700', name: 'LinkedIn Posts', desc: 'Professional posts with discussion prompts', tier: 'Basic', count: '3 per recording' },
-  { badge: '◉', badgeBg: 'bg-gradient-to-br from-purple-500 to-pink-500', name: 'Instagram Carousel', desc: 'Multi-slide carousel with hashtags', tier: 'Basic', count: '1 per recording' },
-  { badge: 'B', badgeBg: 'bg-emerald-600', name: 'Blog Post', desc: 'SEO-optimized article, 1,200–1,800 words', tier: 'Pro', count: '1 per recording' },
-  { badge: 'NL', badgeBg: 'bg-orange-500', name: 'Email Newsletter', desc: 'Newsletter with CTA, 800–1,200 words', tier: 'Pro', count: '1 per recording' },
-  { badge: '"', badgeBg: 'bg-rose-500', name: 'Quote Graphics', desc: 'Speaker-attributed quotable excerpts', tier: 'Pro', count: '2 per recording' },
-  { badge: 'SN', badgeBg: 'bg-violet-600', name: 'Show Notes', desc: 'Episode summary with timestamps & links', tier: 'Premium', count: '1 per recording' },
+const FEATURED_OUTPUT_STACK = [
+  {
+    eyebrow: 'Short-form video',
+    platform: 'TikTok / Reels Script',
+    accent: 'from-cyan-400 to-blue-500',
+    surface: 'bg-slate-950/80 border-cyan-500/25',
+    badge: 'TT', badgeBg: 'bg-cyan-600',
+    preview: [
+      { label: 'Hook', text: '"This moment from our podcast is about to reframe how you think about customer retention…"' },
+      { label: 'Build', text: 'Guest breaks down the exact framework their team used to cut churn by 40% in 6 months.' },
+      { label: 'CTA',  text: '"Drop a 🔥 if you want the full episode link."' },
+    ],
+  },
+  {
+    eyebrow: 'Episode packaging',
+    platform: 'YouTube Description',
+    accent: 'from-rose-400 to-red-500',
+    surface: 'bg-slate-950/80 border-rose-500/25',
+    badge: 'YT', badgeBg: 'bg-red-600',
+    preview: [
+      { label: 'Summary',  text: 'Sarah Chen explains what separates high-retention SaaS from the rest — and the metrics teams get wrong.' },
+      { label: 'Chapters', text: '00:00 Intro  ·  04:22 Retention paradox  ·  18:45 Framework  ·  32:10 Q&A' },
+      { label: 'Tags',     text: '#SaaS #CustomerRetention #ProductLed #StartupGrowth' },
+    ],
+  },
+  {
+    eyebrow: 'Long-form',
+    platform: 'Email Newsletter',
+    accent: 'from-amber-300 to-orange-500',
+    surface: 'bg-slate-950/80 border-amber-500/25',
+    badge: 'NL', badgeBg: 'bg-orange-500',
+    preview: [
+      { label: 'Opening', text: 'Most teams measure retention wrong. This week Sarah Chen joined us to explain why stickiness is a vanity metric.' },
+      { label: 'Insight', text: "The teams that win aren't reducing churn — they're engineering indispensability at 30, 60, and 90 days." },
+      { label: 'CTA',     text: 'Read the full breakdown → [Listen Now]' },
+    ],
+  },
 ];
 
-// ─── Pricing — matches lib/tier-config.ts exactly ────────────────────────────
+const SIGNAL_LEVELS = [
+  { base: 24, low: 10, high: 42 },
+  { base: 68, low: 28, high: 88 },
+  { base: 32, low: 14, high: 52 },
+  { base: 84, low: 42, high: 100 },
+  { base: 40, low: 18, high: 64 },
+  { base: 58, low: 22, high: 78 },
+  { base: 28, low: 12, high: 46 },
+  { base: 92, low: 48, high: 100 },
+  { base: 46, low: 20, high: 68 },
+  { base: 74, low: 34, high: 92 },
+  { base: 36, low: 16, high: 58 },
+];
+
+const ANALYSIS_METRICS = [
+  { label: 'Topic coverage', value: '84%', note: 'Share of voice mapped across recurring themes' },
+  { label: 'CTA cadence', value: '2 gaps', note: 'Missed asks detected before publishing' },
+  { label: 'Editorial debt', value: '3', note: 'Under-covered ideas surfaced for the next episode' },
+];
+
+const ANALYSIS_OPPORTUNITIES = [
+  {
+    title: 'AI safety is rising, but underrepresented',
+    type: 'Topic gap',
+    severity: 'High',
+    action: 'Add one dedicated segment in the next two episodes.',
+  },
+  {
+    title: 'Newsletter CTA dropped below target cadence',
+    type: 'CTA gap',
+    severity: 'Medium',
+    action: 'Reintroduce the ask in the opening and closing beats.',
+  },
+  {
+    title: 'Founder story moments outperform tactical sections',
+    type: 'Opportunity',
+    severity: 'Low',
+    action: 'Package more personal examples into clips and posts.',
+  },
+];
+
+const ANALYSIS_CONTENT_BREAKDOWN = [
+  { label: 'Short-form video', value: 28, color: '#38bdf8' },
+  { label: 'Social posts', value: 24, color: '#818cf8' },
+  { label: 'Long-form', value: 18, color: '#34d399' },
+  { label: 'Episode assets', value: 16, color: '#f59e0b' },
+  { label: 'Quote pulls', value: 14, color: '#f472b6' },
+];
+
+const CONSTELLATION_STARS = [
+  { x: '10%', y: '16%', size: 3, delay: 0.1, duration: 2.8 },
+  { x: '16%', y: '34%', size: 2, delay: 0.5, duration: 3.4 },
+  { x: '22%', y: '58%', size: 2, delay: 0.2, duration: 2.6 },
+  { x: '28%', y: '22%', size: 4, delay: 0.8, duration: 4.2 },
+  { x: '34%', y: '48%', size: 2, delay: 0.3, duration: 3.1 },
+  { x: '40%', y: '74%', size: 3, delay: 0.6, duration: 2.9 },
+  { x: '48%', y: '14%', size: 2, delay: 0.4, duration: 3.8 },
+  { x: '54%', y: '36%', size: 3, delay: 0.2, duration: 2.7 },
+  { x: '60%', y: '62%', size: 2, delay: 0.9, duration: 3.5 },
+  { x: '68%', y: '22%', size: 4, delay: 0.3, duration: 4.4 },
+  { x: '74%', y: '46%', size: 2, delay: 0.7, duration: 2.5 },
+  { x: '80%', y: '18%', size: 3, delay: 0.1, duration: 3.2 },
+  { x: '86%', y: '64%', size: 2, delay: 0.6, duration: 3.7 },
+  { x: '90%', y: '30%', size: 4, delay: 0.4, duration: 4.1 },
+  { x: '94%', y: '54%', size: 2, delay: 0.2, duration: 2.8 },
+];
+
+const CONSTELLATION_LINES = [
+  { left: '15%', top: '33%', width: '14%', rotate: '-20deg', delay: 0.2 },
+  { left: '28%', top: '21%', width: '20%', rotate: '-12deg', delay: 0.5 },
+  { left: '48%', top: '14%', width: '20%', rotate: '12deg', delay: 0.9 },
+  { left: '34%', top: '48%', width: '22%', rotate: '-16deg', delay: 0.4 },
+  { left: '54%', top: '35%', width: '21%', rotate: '12deg', delay: 0.7 },
+  { left: '40%', top: '73%', width: '21%', rotate: '-10deg', delay: 0.6 },
+  { left: '60%', top: '61%', width: '26%', rotate: '5deg', delay: 1.1 },
+];
+
+const SUBTLE_CONSTELLATION_GROUPS = [
+  {
+    id: 'cassiopeia',
+    stars: [
+      { x: '81%', y: '12%', size: 2.5 },
+      { x: '84.5%', y: '17%', size: 2 },
+      { x: '88%', y: '11.5%', size: 2.5 },
+      { x: '91.5%', y: '17.5%', size: 2 },
+      { x: '95%', y: '12.5%', size: 2.5 },
+    ],
+    lines: [
+      { left: '81%', top: '12%', width: '4.4%', rotate: '55deg' },
+      { left: '84.5%', top: '17%', width: '4.6%', rotate: '-54deg' },
+      { left: '88%', top: '11.5%', width: '4.4%', rotate: '56deg' },
+      { left: '91.5%', top: '17.5%', width: '4.3%', rotate: '-52deg' },
+    ],
+  },
+  {
+    id: 'delphinus',
+    stars: [
+      { x: '10%', y: '80%', size: 2 },
+      { x: '14%', y: '74%', size: 2.5 },
+      { x: '18%', y: '79%', size: 2 },
+      { x: '14%', y: '84%', size: 1.75 },
+      { x: '22%', y: '72%', size: 2.25 },
+    ],
+    lines: [
+      { left: '10%', top: '80%', width: '5.2%', rotate: '-50deg' },
+      { left: '14%', top: '74%', width: '5.1%', rotate: '50deg' },
+      { left: '14%', top: '84%', width: '5.1%', rotate: '-50deg' },
+      { left: '18%', top: '79%', width: '5.4%', rotate: '-34deg' },
+    ],
+  },
+];
+
+const AMBIENT_STARS = [
+  { x: '4%', y: '12%', size: 1, opacity: 0.48, duration: 5.4, delay: 0.1 },
+  { x: '7%', y: '44%', size: 1.5, opacity: 0.42, duration: 4.8, delay: 0.6 },
+  { x: '12%', y: '72%', size: 1, opacity: 0.38, duration: 6.1, delay: 0.9 },
+  { x: '18%', y: '9%', size: 1, opacity: 0.44, duration: 5.9, delay: 0.3 },
+  { x: '24%', y: '42%', size: 1.5, opacity: 0.35, duration: 5.3, delay: 1.1 },
+  { x: '31%', y: '9%', size: 1, opacity: 0.3, duration: 6.8, delay: 0.5 },
+  { x: '38%', y: '28%', size: 1, opacity: 0.4, duration: 5.7, delay: 0.2 },
+  { x: '43%', y: '86%', size: 1.5, opacity: 0.3, duration: 6.4, delay: 0.8 },
+  { x: '50%', y: '8%', size: 1, opacity: 0.42, duration: 5.6, delay: 0.1 },
+  { x: '58%', y: '28%', size: 1.5, opacity: 0.38, duration: 6.2, delay: 0.4 },
+  { x: '63%', y: '82%', size: 1, opacity: 0.36, duration: 5.1, delay: 1.2 },
+  { x: '71%', y: '8%', size: 1, opacity: 0.48, duration: 6.7, delay: 0.7 },
+  { x: '78%', y: '40%', size: 1.5, opacity: 0.34, duration: 5.4, delay: 0.5 },
+  { x: '83%', y: '78%', size: 1, opacity: 0.28, duration: 6.3, delay: 0.9 },
+  { x: '97%', y: '22%', size: 1, opacity: 0.44, duration: 5.8, delay: 0.2 },
+  { x: '95%', y: '70%', size: 1.5, opacity: 0.32, duration: 6.6, delay: 0.6 },
+];
+
+const SHOOTING_STARS = [
+  { left: '-12%', top: '12%', width: '10rem', rotate: '16deg', duration: 1.55, repeatDelay: 12.5, delay: 0.8, tone: 'via-white' },
+  { left: '58%', top: '6%', width: '8rem', rotate: '20deg', duration: 1.2, repeatDelay: 15.5, delay: 4.6, tone: 'via-sky-100' },
+  { left: '-10%', top: '78%', width: '7rem', rotate: '10deg', duration: 1.25, repeatDelay: 16.8, delay: 7.2, tone: 'via-cyan-100' },
+  { left: '82%', top: '70%', width: '7.5rem', rotate: '-18deg', duration: 1.35, repeatDelay: 18.2, delay: 10.5, tone: 'via-white' },
+];
+
+const PRICING_DARK_STARS = [
+  { x: '8%', y: '14%', size: 5, opacity: 0.48, duration: 7.2, delay: 0.2 },
+  { x: '16%', y: '28%', size: 4, opacity: 0.5, duration: 6.1, delay: 0.9 },
+  { x: '24%', y: '70%', size: 5, opacity: 0.44, duration: 7.8, delay: 0.5 },
+  { x: '32%', y: '21%', size: 4, opacity: 0.48, duration: 6.8, delay: 1.1 },
+  { x: '40%', y: '49%', size: 5, opacity: 0.42, duration: 7.5, delay: 0.7 },
+  { x: '48%', y: '35%', size: 4, opacity: 0.5, duration: 6.4, delay: 0.3 },
+  { x: '56%', y: '77%', size: 5, opacity: 0.48, duration: 7.1, delay: 1.2 },
+  { x: '64%', y: '14%', size: 4, opacity: 0.48, duration: 6.9, delay: 0.4 },
+  { x: '72%', y: '42%', size: 5, opacity: 0.44, duration: 7.3, delay: 0.8 },
+  { x: '80%', y: '28%', size: 4, opacity: 0.5, duration: 6.2, delay: 1.3 },
+  { x: '88%', y: '56%', size: 5, opacity: 0.48, duration: 7.7, delay: 0.6 },
+  { x: '96%', y: '35%', size: 4, opacity: 0.48, duration: 6.7, delay: 0.2 },
+  { x: '96%', y: '77%', size: 5, opacity: 0.44, duration: 7.4, delay: 1.0 },
+];
+
+const SYNC_SIGNAL_PATTERNS = [
+  {
+    name: 'bell-curve',
+    frames: [
+      [14, 20, 30, 48, 72, 90, 72, 48, 30, 20, 14],
+      [18, 30, 48, 72, 94, 100, 94, 72, 48, 30, 18],
+      [22, 38, 58, 82, 100, 100, 100, 82, 58, 38, 22],
+      [18, 30, 48, 72, 94, 100, 94, 72, 48, 30, 18],
+      [14, 20, 30, 48, 72, 90, 72, 48, 30, 20, 14],
+    ],
+  },
+  {
+    name: 'split-peak',
+    frames: [
+      [20, 34, 62, 96, 54, 18, 54, 96, 62, 34, 20],
+      [26, 48, 82, 100, 64, 22, 64, 100, 82, 48, 26],
+      [18, 32, 58, 86, 46, 14, 46, 86, 58, 32, 18],
+      [28, 50, 84, 100, 68, 24, 68, 100, 84, 50, 28],
+    ],
+  },
+  {
+    name: 'traveling-wave',
+    frames: [
+      [100, 86, 64, 38, 22, 14, 18, 28, 46, 70, 92],
+      [68, 92, 100, 84, 58, 30, 16, 18, 26, 42, 66],
+      [28, 48, 76, 100, 94, 68, 40, 20, 16, 24, 40],
+      [18, 24, 38, 62, 88, 100, 90, 64, 36, 18, 16],
+      [22, 18, 24, 42, 68, 92, 100, 86, 60, 34, 18],
+    ],
+  },
+  {
+    name: 'center-pulse',
+    frames: [
+      [12, 14, 18, 30, 58, 90, 58, 30, 18, 14, 12],
+      [16, 22, 34, 58, 88, 100, 88, 58, 34, 22, 16],
+      [20, 30, 48, 78, 100, 100, 100, 78, 48, 30, 20],
+      [16, 22, 34, 58, 88, 100, 88, 58, 34, 22, 16],
+      [12, 14, 18, 30, 58, 90, 58, 30, 18, 14, 12],
+    ],
+  },
+  {
+    name: 'stadium-rise',
+    frames: [
+      [14, 24, 36, 52, 68, 82, 68, 52, 36, 24, 14],
+      [24, 38, 54, 74, 90, 100, 90, 74, 54, 38, 24],
+      [34, 52, 72, 90, 100, 100, 100, 90, 72, 52, 34],
+      [20, 34, 48, 66, 82, 92, 82, 66, 48, 34, 20],
+      [14, 24, 36, 52, 68, 82, 68, 52, 36, 24, 14],
+    ],
+  },
+];
+
+function generateRandomSignal(prev: number[]): number[] {
+  return prev.map((value, index) => {
+    const drift = Math.round((Math.random() - 0.5) * 34);
+    const neighborBias = index > 0 && index < prev.length - 1
+      ? Math.round(((prev[index - 1] + prev[index + 1]) / 2 - value) * 0.18)
+      : 0;
+    return Math.max(12, Math.min(100, value + drift + neighborBias));
+  });
+}
+
+// ─── Pricing tiers — matches lib/tier-config.ts exactly ──────────────────────
 const TIERS = [
   {
-    name: 'Basic',
+    name: 'Standard',
     price: '$0.39',
     unit: '/hr of audio',
     badge: null,
@@ -137,99 +384,482 @@ const TIERS = [
       'Speaker diarization',
       'Word-level timestamps',
       'Generic speaker labels (Speaker 1, 2)',
-      'X Threads, LinkedIn & Instagram outputs',
+      'All 11 content types available',
     ],
   },
   {
     name: 'Pro',
-    price: '$0.47',
+    price: '$0.67',
     unit: '/hr of audio',
     badge: 'Most Popular',
-    description: 'AI-powered name extraction and episode summaries for professional creators.',
+    description: 'Full AI enrichment for teams that want cleaner transcripts and stronger downstream content.',
     highlight: true,
     borderClass: 'border-blue-500',
     ctaClass: 'bg-blue-600 hover:bg-blue-700 text-white shadow-md shadow-blue-200',
     features: [
-      'Everything in Basic',
+      'Everything in Standard',
       'AI speaker name extraction',
       'AI episode summary',
-      'Named speaker labels',
-      'Blog Post & Email Newsletter outputs',
-      'Quote Graphics',
-    ],
-  },
-  {
-    name: 'Premium',
-    price: '$0.55',
-    unit: '/hr of audio',
-    badge: 'Best Value',
-    description: 'Full AI suite — chapters, takeaways, role classification, and insights.',
-    highlight: false,
-    borderClass: 'border-violet-400',
-    ctaClass: 'bg-violet-600 hover:bg-violet-700 text-white',
-    features: [
-      'Everything in Pro',
-      'Speaker role classification (Host / Guest)',
+      'Named speaker labels with roles (Host / Guest)',
       'Chapter detection',
-      'Key takeaways extraction',
-      'Social quote extraction',
-      'Show Notes output',
+      'Key takeaways and social quote extraction',
+      'Better source data for every content type',
     ],
   },
 ];
 
-// ─── Navbar ───────────────────────────────────────────────────────────────────
-function Navbar({ open, setOpen }: { open: boolean; setOpen: (v: boolean) => void }) {
-  const links = [
-    { label: 'Problems', href: '#pain-points' },
-    { label: 'How it Works', href: '#how-it-works' },
-    { label: 'Features', href: '#features' },
-    { label: 'Pricing', href: '#pricing' },
-  ];
+// ─── Utilities ────────────────────────────────────────────────────────────────
+function ScrollProgressBar() {
+  const { scrollYProgress } = useScroll();
+  const scaleX = useSpring(scrollYProgress, { stiffness: 140, damping: 24, mass: 0.25 });
+  return (
+    <motion.div
+      className="fixed top-0 left-0 right-0 h-[3px] origin-left bg-gradient-to-r from-blue-500 via-indigo-500 to-violet-500 z-[60]"
+      style={{ scaleX }}
+    />
+  );
+}
+
+function CountUp({ to, suffix = '', duration = 1.1 }: { to: number; suffix?: string; duration?: number }) {
+  const ref = useRef<HTMLSpanElement | null>(null);
+  const isInView = useInView(ref, { once: true, amount: 0.85 });
+  const reduceMotion = useReducedMotion();
+  const [value, setValue] = useState(0);
+
+  useEffect(() => {
+    if (!isInView) return;
+    if (reduceMotion) { setValue(to); return; }
+    const controls = animate(0, to, {
+      duration,
+      ease: 'easeOut',
+      onUpdate: (latest) => setValue(Math.round(latest)),
+    });
+    return () => controls.stop();
+  }, [duration, isInView, reduceMotion, to]);
+
+  return <span ref={ref}>{value}{suffix}</span>;
+}
+
+function AnalysisConstellationBackground() {
+  const reduceMotion = useReducedMotion();
 
   return (
-    <header className="sticky top-0 z-50 bg-white/90 backdrop-blur-xl border-b border-gray-100">
+    <div className="absolute inset-0 overflow-hidden pointer-events-none">
+      <motion.div
+        className="absolute inset-0 bg-[radial-gradient(circle_at_16%_18%,rgba(148,163,184,0.16),transparent_24%),radial-gradient(circle_at_50%_0%,rgba(59,130,246,0.16),transparent_34%),radial-gradient(circle_at_88%_28%,rgba(125,211,252,0.12),transparent_24%),linear-gradient(180deg,#020617_0%,#040b18_42%,#020617_100%)]"
+      />
+      <div className="absolute inset-0 bg-[radial-gradient(circle_at_center,rgba(255,255,255,0.05),transparent_62%)]" />
+      <div className="absolute inset-0 bg-[linear-gradient(to_bottom,rgba(255,255,255,0.02),transparent_18%,transparent_82%,rgba(255,255,255,0.03))]" />
+
+      {AMBIENT_STARS.map((star, index) => (
+        <motion.div
+          key={`ambient-${star.x}-${star.y}`}
+          className="absolute rounded-full bg-white"
+          style={{
+            left: star.x,
+            top: star.y,
+            width: star.size,
+            height: star.size,
+          }}
+          animate={reduceMotion ? { opacity: star.opacity } : { opacity: [star.opacity * 0.55, star.opacity, star.opacity * 0.7] }}
+          transition={{ duration: star.duration + (index % 4) * 0.35, delay: star.delay, repeat: Infinity, ease: 'easeInOut' }}
+        />
+      ))}
+
+      {CONSTELLATION_LINES.map((line, index) => (
+        <motion.div
+          key={`line-${line.left}-${line.top}`}
+          className="absolute h-px origin-left bg-gradient-to-r from-transparent via-sky-100/85 to-transparent"
+          style={{ left: line.left, top: line.top, width: line.width, rotate: line.rotate }}
+          animate={reduceMotion ? { opacity: 0.24 } : { opacity: [0.1, 0.34, 0.16], scaleX: [0.98, 1.02, 1] }}
+          transition={{ duration: 6.8, delay: line.delay, repeat: Infinity, ease: 'easeInOut' }}
+        />
+      ))}
+
+      {SUBTLE_CONSTELLATION_GROUPS.map((group, groupIndex) => (
+        <div key={group.id}>
+          {group.lines.map((line, lineIndex) => (
+            <motion.div
+              key={`${group.id}-line-${lineIndex}`}
+              className="absolute h-px origin-left bg-gradient-to-r from-transparent via-white/45 to-transparent"
+              style={{ left: line.left, top: line.top, width: line.width, rotate: line.rotate }}
+              animate={reduceMotion ? { opacity: 0.14 } : { opacity: [0.04, 0.16, 0.08], scaleX: [0.98, 1.01, 1] }}
+              transition={{ duration: 7.4, delay: groupIndex * 0.9 + lineIndex * 0.22, repeat: Infinity, ease: 'easeInOut' }}
+            />
+          ))}
+          {group.stars.map((star, starIndex) => (
+            <motion.div
+              key={`${group.id}-star-${starIndex}`}
+              className="absolute rounded-full bg-white shadow-[0_0_12px_rgba(255,255,255,0.4)]"
+              style={{ left: star.x, top: star.y, width: star.size, height: star.size }}
+              animate={reduceMotion ? { opacity: 0.42, scale: 1 } : { opacity: [0.16, 0.5, 0.24], scale: [1, 1.35, 1] }}
+              transition={{ duration: 5.8 + starIndex * 0.35, delay: groupIndex * 0.8 + starIndex * 0.18, repeat: Infinity, ease: 'easeInOut' }}
+            />
+          ))}
+        </div>
+      ))}
+
+      {CONSTELLATION_STARS.map((star, index) => (
+        <motion.div
+          key={`${star.x}-${star.y}`}
+          className="absolute rounded-full bg-white shadow-[0_0_20px_rgba(255,255,255,0.95)]"
+          style={{ left: star.x, top: star.y, width: star.size, height: star.size }}
+          animate={reduceMotion
+            ? { opacity: 0.92, scale: 1 }
+            : { opacity: [0.45, 1, 0.58], scale: [1, 1.85, 1] }}
+          transition={{ duration: star.duration, delay: star.delay, repeat: Infinity, ease: 'easeInOut' }}
+        />
+      ))}
+
+      <motion.div
+        className="absolute left-[6%] top-[20%] h-16 w-16 rounded-full bg-[radial-gradient(circle_at_35%_35%,#f8fafc_0%,#cbd5e1_18%,#475569_54%,#0f172a_100%)] opacity-90 shadow-[0_0_42px_rgba(148,163,184,0.32)]"
+        animate={reduceMotion ? { y: 0 } : { y: [0, -10, 0], x: [0, 7, 0] }}
+        transition={{ duration: 14, repeat: Infinity, ease: 'easeInOut' }}
+      />
+
+      <motion.div
+        className="absolute right-[8%] bottom-[14%] h-24 w-24 rounded-full bg-[radial-gradient(circle_at_32%_28%,#fde68a_0%,#f59e0b_30%,#7c2d12_68%,#1f2937_100%)] opacity-95 shadow-[0_0_54px_rgba(245,158,11,0.24)]"
+        animate={reduceMotion ? { y: 0 } : { y: [0, 10, 0], x: [0, -8, 0] }}
+        transition={{ duration: 20, repeat: Infinity, ease: 'easeInOut' }}
+      >
+        <div className="absolute inset-[-9%] rounded-full border border-amber-200/20" />
+        <div className="absolute -left-6 top-6 h-[1px] w-10 rotate-[-24deg] bg-white/15" />
+      </motion.div>
+
+      <motion.div
+        className="absolute left-[70%] top-[18%] h-10 w-10"
+        animate={reduceMotion ? { x: 0, y: 0, rotate: 0 } : { x: [0, 24, 0], y: [0, -12, 0], rotate: [0, 7, 0] }}
+        transition={{ duration: 16, repeat: Infinity, ease: 'easeInOut' }}
+      >
+        <div className="absolute left-1/2 top-1/2 h-2 w-2 -translate-x-1/2 -translate-y-1/2 rounded-full bg-slate-200 shadow-[0_0_12px_rgba(255,255,255,0.5)]" />
+        <div className="absolute left-[10%] top-1/2 h-px w-[80%] -translate-y-1/2 bg-slate-300/80" />
+        <div className="absolute left-1/2 top-[10%] h-[80%] w-px -translate-x-1/2 bg-slate-300/80" />
+        <div className="absolute left-0 top-[24%] h-3 w-3 rounded-sm border border-slate-300/80 bg-slate-100/10" />
+        <div className="absolute right-0 top-[24%] h-3 w-3 rounded-sm border border-slate-300/80 bg-slate-100/10" />
+      </motion.div>
+
+      {!reduceMotion && (
+        <>
+          {SHOOTING_STARS.map((star) => (
+            <motion.div
+              key={`${star.left}-${star.top}-${star.rotate}`}
+              className={`absolute h-px bg-gradient-to-r from-transparent ${star.tone} to-transparent opacity-0`}
+              style={{ left: star.left, top: star.top, width: star.width, rotate: star.rotate }}
+              animate={{ x: ['0%', '145%'], opacity: [0, 0.95, 0] }}
+              transition={{ duration: star.duration, repeat: Infinity, repeatDelay: star.repeatDelay, ease: 'easeOut', delay: star.delay }}
+            />
+          ))}
+        </>
+      )}
+    </div>
+  );
+}
+
+function AnalysisContentPieChart() {
+  const gradientStops = ANALYSIS_CONTENT_BREAKDOWN.reduce(
+    (acc, slice, index) => {
+      const start = acc.offset;
+      const end = start + slice.value;
+      acc.stops.push(`${slice.color} ${start}% ${end}%`);
+      acc.offset = end;
+      return acc;
+    },
+    { offset: 0, stops: [] as string[] },
+  );
+
+  return (
+    <div className="grid gap-5 md:grid-cols-[0.9fr_1.1fr] md:items-center">
+      <div className="relative mx-auto h-48 w-48">
+        <div className="absolute inset-0 rounded-full border border-white/10 bg-[radial-gradient(circle_at_center,rgba(255,255,255,0.05),transparent_58%)]" />
+        <div
+          className="absolute inset-3 rounded-full border border-white/15 shadow-[0_0_40px_rgba(56,189,248,0.08)]"
+          style={{ background: `conic-gradient(${gradientStops.stops.join(', ')})` }}
+        />
+        <div className="absolute inset-[28%] rounded-full border border-white/12 bg-slate-950/35 backdrop-blur-[1px]" />
+        <div className="absolute inset-0 rounded-full border border-dashed border-white/8" />
+        <div className="absolute left-1/2 top-4 h-[calc(50%-1rem)] w-px -translate-x-1/2 bg-white/10" />
+        <div className="absolute left-4 top-1/2 h-px w-[calc(50%-1rem)] -translate-y-1/2 bg-white/10" />
+      </div>
+
+      <div className="space-y-3">
+        {ANALYSIS_CONTENT_BREAKDOWN.map((slice, index) => (
+          <motion.div
+            key={slice.label}
+            initial={{ opacity: 0, x: -8 }}
+            whileInView={{ opacity: 1, x: 0 }}
+            viewport={SECTION_VIEWPORT}
+            transition={{ duration: 0.35, delay: 0.06 * index, ease: 'easeOut' }}
+            className="flex items-center justify-between gap-4 border-b border-white/8 pb-2 last:border-b-0 last:pb-0"
+          >
+            <div className="flex items-center gap-3">
+              <span className="h-2.5 w-2.5 rounded-full shadow-[0_0_14px_rgba(255,255,255,0.18)]" style={{ backgroundColor: slice.color }} />
+              <span className="text-sm text-blue-50/78">{slice.label}</span>
+            </div>
+            <span className="text-[11px] font-semibold uppercase tracking-[0.14em] text-blue-100/50">{slice.value}%</span>
+          </motion.div>
+        ))}
+      </div>
+    </div>
+  );
+}
+
+function PricingSubtleStars() {
+  const reduceMotion = useReducedMotion();
+
+  return (
+    <div className="absolute inset-0 overflow-hidden pointer-events-none">
+      <div className="absolute inset-0 bg-[linear-gradient(to_right,rgba(15,23,42,0.05)_1px,transparent_1px),linear-gradient(to_bottom,rgba(15,23,42,0.05)_1px,transparent_1px)] bg-[size:28px_28px,28px_28px]" />
+      <div className="absolute inset-0 bg-[linear-gradient(to_right,rgba(15,23,42,0.08)_1px,transparent_1px),linear-gradient(to_bottom,rgba(15,23,42,0.08)_1px,transparent_1px)] bg-[size:140px_140px,140px_140px]" />
+      <div className="absolute inset-0 bg-[radial-gradient(circle_at_top,rgba(15,23,42,0.04),transparent_38%),radial-gradient(circle_at_bottom,rgba(15,23,42,0.03),transparent_32%)]" />
+
+      {PRICING_DARK_STARS.map((star) => (
+        <motion.div
+          key={`${star.x}-${star.y}`}
+          className="absolute rounded-full"
+          animate={reduceMotion ? { opacity: star.opacity } : { opacity: [star.opacity * 0.5, star.opacity, star.opacity * 0.82] }}
+          transition={{ duration: star.duration, delay: star.delay, repeat: Infinity, ease: 'easeInOut' }}
+          style={{
+            left: star.x,
+            top: star.y,
+            width: star.size,
+            height: star.size,
+            background: 'radial-gradient(circle at 32% 28%, rgba(71,85,105,0.72) 0%, rgba(30,41,59,0.92) 26%, rgba(15,23,42,0.98) 62%, rgba(2,6,23,1) 100%)',
+            boxShadow: '0 0 0 0.75px rgba(2,6,23,0.56), inset 0 0.5px 0 rgba(148,163,184,0.18)',
+          }}
+        />
+      ))}
+    </div>
+  );
+}
+
+function SocialProofStrip() {
+  const reduceMotion = useReducedMotion();
+  const [laneWidth, setLaneWidth] = useState(0);
+  const laneRef = useRef<HTMLDivElement | null>(null);
+
+  useEffect(() => {
+    if (!laneRef.current) return;
+    const laneEl = laneRef.current;
+    const syncWidth = () => setLaneWidth(laneEl.offsetWidth);
+    syncWidth();
+    const observer = new ResizeObserver(syncWidth);
+    observer.observe(laneEl);
+    return () => observer.disconnect();
+  }, []);
+
+  return (
+    <section className="relative overflow-hidden border-y border-white/10 bg-slate-950 py-5">
+      <div className="pointer-events-none absolute inset-0 bg-[radial-gradient(circle_at_16%_18%,rgba(148,163,184,0.14),transparent_24%),radial-gradient(circle_at_52%_0%,rgba(59,130,246,0.14),transparent_34%),radial-gradient(circle_at_86%_28%,rgba(125,211,252,0.1),transparent_24%),linear-gradient(180deg,#020617_0%,#040b18_42%,#020617_100%)]" />
+      <div className="pointer-events-none absolute inset-0 bg-[linear-gradient(to_right,rgba(255,255,255,0.04)_1px,transparent_1px),linear-gradient(to_bottom,rgba(255,255,255,0.04)_1px,transparent_1px)] bg-[size:28px_28px,28px_28px] opacity-40" />
+      <div className="pointer-events-none absolute inset-0 bg-[radial-gradient(circle_at_center,rgba(255,255,255,0.05),transparent_62%)]" />
+      <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 mb-3 relative z-10">
+        <p className="text-center text-[11px] font-semibold uppercase tracking-[0.18em] text-blue-100/70">
+          Built For Real-World Audio
+        </p>
+      </div>
+      <div className="pointer-events-none absolute inset-y-0 left-0 z-20 w-24 bg-gradient-to-r from-slate-950 to-transparent" />
+      <div className="pointer-events-none absolute inset-y-0 right-0 z-20 w-24 bg-gradient-to-l from-slate-950 to-transparent" />
+      {reduceMotion ? (
+        <div className="max-w-6xl mx-auto px-4 sm:px-6 lg:px-8 flex flex-wrap items-center justify-center gap-2 relative z-10">
+          {SOCIAL_TAGS.map((tag) => (
+            <span key={tag} className="rounded-full border border-white/10 bg-white/8 px-3.5 py-1.5 text-xs font-medium text-blue-50/90 shadow-[0_10px_30px_-18px_rgba(59,130,246,0.55)] backdrop-blur-sm">
+              {tag}
+            </span>
+          ))}
+        </div>
+      ) : (
+        <motion.div
+          className="relative z-10 flex w-max"
+          initial={{ x: 0 }}
+          animate={laneWidth > 0 ? { x: [0, -laneWidth] } : undefined}
+          transition={laneWidth > 0 ? { duration: Math.max(16, laneWidth / 42), ease: 'linear', repeat: Infinity, repeatType: 'loop' } : undefined}
+        >
+          <div ref={laneRef} className="flex items-center gap-3 pr-3">
+            {SOCIAL_TAGS.map((tag) => (
+              <span key={`a-${tag}`} className="whitespace-nowrap rounded-full border border-white/10 bg-white/8 px-3.5 py-1.5 text-xs font-medium text-blue-50/90 shadow-[0_10px_30px_-18px_rgba(59,130,246,0.55)] backdrop-blur-sm">
+                {tag}
+              </span>
+            ))}
+          </div>
+          {[...Array(8)].map((_, i) => (
+            <div key={`dup-${i}`} aria-hidden className="flex items-center gap-3 pr-3">
+              {SOCIAL_TAGS.map((tag) => (
+                <span key={`b-${i}-${tag}`} className="whitespace-nowrap rounded-full border border-white/10 bg-white/8 px-3.5 py-1.5 text-xs font-medium text-blue-50/90 shadow-[0_10px_30px_-18px_rgba(59,130,246,0.55)] backdrop-blur-sm">
+                  {tag}
+                </span>
+              ))}
+            </div>
+          ))}
+        </motion.div>
+      )}
+    </section>
+  );
+}
+
+// ─── Video frame wrapper ──────────────────────────────────────────────────────
+// Drop the video file into /public/videos/ and it activates automatically.
+function VideoFrame({
+  src,
+  poster,
+  urlLabel,
+  statusLabel,
+  className = '',
+}: {
+  src: string;
+  poster?: string;
+  urlLabel?: string;
+  statusLabel?: string;
+  className?: string;
+}) {
+  const videoRef = useRef<HTMLVideoElement>(null);
+
+  useEffect(() => {
+    if (videoRef.current) {
+      videoRef.current.playbackRate = 2.0;
+    }
+  }, [src]);
+
+  return (
+    <div className={`relative overflow-hidden rounded-2xl border border-slate-200 bg-white shadow-2xl dark:border-white/15 dark:bg-slate-900 ${className}`}>
+      {/* Window chrome */}
+      <div className="flex items-center gap-3 border-b border-slate-200 bg-slate-100 px-5 py-3 dark:border-white/10 dark:bg-slate-950">
+        <div className="flex gap-1.5 flex-shrink-0">
+          <div className="w-2.5 h-2.5 rounded-full bg-red-400/60" />
+          <div className="w-2.5 h-2.5 rounded-full bg-yellow-400/60" />
+          <div className="w-2.5 h-2.5 rounded-full bg-green-400/60" />
+        </div>
+        {urlLabel && (
+          <div className="flex-1 min-w-0 mx-4">
+            <div className="mx-auto max-w-xs truncate rounded-md bg-slate-200 px-3 py-1 text-center text-[11px] text-slate-500 dark:bg-white/5 dark:text-white/30">
+              {urlLabel}
+            </div>
+          </div>
+        )}
+        {statusLabel && (
+          <div className="hidden sm:flex items-center gap-1.5 flex-shrink-0 ml-auto">
+            <span className="relative flex h-2 w-2">
+              <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-green-400 opacity-60" />
+              <span className="relative inline-flex h-2 w-2 rounded-full bg-green-400" />
+            </span>
+            <span className="text-[11px] text-slate-500 dark:text-white/35">{statusLabel}</span>
+          </div>
+        )}
+      </div>
+
+      {/* Video — placeholder grid shows behind it until the file is present */}
+      <div className="relative bg-slate-100 dark:bg-slate-900" style={{ aspectRatio: '16/9' }}>
+        {/* Placeholder: visible only when no video file has loaded */}
+        <div className="absolute inset-0 flex flex-col items-center justify-center pointer-events-none select-none">
+          <div className="mb-3 flex h-14 w-14 items-center justify-center rounded-full border border-slate-300 bg-white dark:border-white/15 dark:bg-white/8">
+            <Play className="ml-0.5 h-5 w-5 text-slate-500 dark:text-white/30" />
+          </div>
+          <p className="text-xs tracking-wide text-slate-500 dark:text-white/20">Add {src.split('/').pop()} to /public/videos/</p>
+        </div>
+
+        {src.endsWith('.webp') ? (
+          <img src={src} className="absolute inset-0 w-full h-full object-cover block" alt={urlLabel || "Demo video"} />
+        ) : (
+          <video
+            ref={videoRef}
+            autoPlay
+            muted
+            loop
+            playsInline
+            poster={poster}
+            className="absolute inset-0 w-full h-full object-cover block relative z-10"
+          >
+            <source src={src} type="video/mp4" />
+          </video>
+        )}
+      </div>
+    </div>
+  );
+}
+
+function LaunchThemeToggle() {
+  const { resolvedTheme, setTheme } = useTheme();
+  const [mounted, setMounted] = useState(false);
+
+  useEffect(() => setMounted(true), []);
+
+  if (!mounted) {
+    return <div className="h-10 w-10 rounded-lg border border-slate-200 bg-white/70 dark:border-white/10 dark:bg-slate-900/50" />;
+  }
+
+  const isDark = resolvedTheme === 'dark';
+
+  return (
+    <button
+      type="button"
+      onClick={() => setTheme(isDark ? 'light' : 'dark')}
+      className="inline-flex h-10 w-10 items-center justify-center rounded-lg border border-slate-200 bg-white/80 text-slate-600 transition-colors hover:bg-slate-100 hover:text-slate-900 dark:border-white/10 dark:bg-slate-900/60 dark:text-slate-300 dark:hover:bg-slate-800 dark:hover:text-white"
+      title={isDark ? 'Switch to light mode' : 'Switch to dark mode'}
+      aria-label={isDark ? 'Switch to light mode' : 'Switch to dark mode'}
+    >
+      {isDark ? <Sun className="h-4 w-4" /> : <Moon className="h-4 w-4" />}
+    </button>
+  );
+}
+
+// ─── Navbar ───────────────────────────────────────────────────────────────────
+function Navbar({ open, setOpen }: { open: boolean; setOpen: (v: boolean) => void }) {
+  const { resolvedTheme } = useTheme();
+  const [mounted, setMounted] = useState(false);
+
+  useEffect(() => setMounted(true), []);
+  const links = [
+    { label: 'Speaker AI', href: '#speaker-intelligence' },
+    { label: 'How it Works', href: '#how-it-works' },
+    { label: 'Outputs', href: '#outputs' },
+    { label: 'Analysis', href: '#analysis' },
+    { label: 'Pricing', href: '#pricing' },
+  ];
+  const logoTheme = mounted && resolvedTheme === 'light' ? 'light' : 'dark';
+
+  return (
+    <header className="sticky top-0 z-50 border-b border-gray-100 bg-white/90 backdrop-blur-xl dark:border-white/10 dark:bg-slate-950/85">
       <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8">
         <div className="flex items-center justify-between h-16">
           <Link href="/" className="flex items-center gap-2.5">
-            <div className="h-8 w-8 bg-blue-600 rounded-lg flex items-center justify-center flex-shrink-0">
-              <Mic className="h-4 w-4 text-white" />
-            </div>
-            <span className="font-bold text-gray-900 text-[15px]">AudioRepurpose</span>
+            <BrandLogo theme={logoTheme} />
           </Link>
 
           <nav className="hidden md:flex items-center gap-8">
             {links.map(({ label, href }) => (
-              <a key={label} href={href} className="text-sm font-medium text-gray-600 hover:text-gray-900 transition-colors">
+              <a key={label} href={href} className="text-sm font-medium text-gray-600 transition-colors hover:text-gray-900 dark:text-slate-300 dark:hover:text-white">
                 {label}
               </a>
             ))}
           </nav>
 
           <div className="hidden md:flex items-center gap-3">
-            <Link href="/auth/login" className="text-sm font-medium text-gray-700 px-4 py-2 rounded-lg hover:bg-gray-100 transition-colors">
+            <LaunchThemeToggle />
+            <Link href="/auth/login" className="rounded-lg px-4 py-2 text-sm font-medium text-gray-700 transition-colors hover:bg-gray-100 dark:text-slate-200 dark:hover:bg-slate-800">
               Log In
             </Link>
-            <Link href="/auth/signup" className="text-sm font-semibold text-white bg-blue-600 hover:bg-blue-700 px-4 py-2 rounded-lg transition-colors shadow-sm">
-              Get Started
+            <Link href="/auth/signup" className="rounded-lg bg-blue-600 px-4 py-2 text-sm font-semibold text-white shadow-sm transition-colors hover:bg-blue-700">
+              Get Started Free
             </Link>
           </div>
 
-          <button onClick={() => setOpen(!open)} className="md:hidden p-2 rounded-lg text-gray-500 hover:bg-gray-100 transition-colors">
-            {open ? <CloseIcon className="h-5 w-5" /> : <Menu className="h-5 w-5" />}
-          </button>
+          <div className="flex items-center gap-2 md:hidden">
+            <LaunchThemeToggle />
+            <button onClick={() => setOpen(!open)} className="rounded-lg p-2 text-gray-500 transition-colors hover:bg-gray-100 dark:text-slate-300 dark:hover:bg-slate-800">
+              {open ? <CloseIcon className="h-5 w-5" /> : <Menu className="h-5 w-5" />}
+            </button>
+          </div>
         </div>
       </div>
 
       {open && (
-        <div className="md:hidden border-t border-gray-100 px-4 py-4 space-y-1 bg-white">
+        <div className="space-y-1 border-t border-gray-100 bg-white px-4 py-4 dark:border-white/10 dark:bg-slate-950 md:hidden">
           {links.map(({ label, href }) => (
-            <a key={label} href={href} onClick={() => setOpen(false)} className="block py-2.5 px-3 text-sm font-medium text-gray-700 rounded-lg hover:bg-gray-50">
+            <a key={label} href={href} onClick={() => setOpen(false)} className="block rounded-lg px-3 py-2.5 text-sm font-medium text-gray-700 hover:bg-gray-50 dark:text-slate-200 dark:hover:bg-slate-900">
               {label}
             </a>
           ))}
-          <div className="pt-3 border-t border-gray-100 space-y-2">
-            <Link href="/auth/login" onClick={() => setOpen(false)} className="block text-center py-2.5 text-sm font-medium text-gray-700 border border-gray-200 rounded-xl hover:bg-gray-50">
+          <div className="space-y-2 border-t border-gray-100 pt-3 dark:border-white/10">
+            <Link href="/auth/login" onClick={() => setOpen(false)} className="block rounded-xl border border-gray-200 py-2.5 text-center text-sm font-medium text-gray-700 hover:bg-gray-50 dark:border-slate-800 dark:text-slate-200 dark:hover:bg-slate-900">
               Log In
             </Link>
             <Link href="/auth/signup" onClick={() => setOpen(false)} className="block text-center py-2.5 text-sm font-semibold text-white bg-blue-600 rounded-xl hover:bg-blue-700">
@@ -242,243 +872,210 @@ function Navbar({ open, setOpen }: { open: boolean; setOpen: (v: boolean) => voi
   );
 }
 
-// ─── Hero Mockup ──────────────────────────────────────────────────────────────
-function AppMockup() {
-  return (
-    <div className="relative max-w-5xl mx-auto">
-      <div className="absolute -bottom-6 left-1/2 -translate-x-1/2 w-2/3 h-20 bg-blue-500/25 blur-2xl rounded-full pointer-events-none" />
-
-      <div className="relative rounded-t-2xl border border-white/15 bg-slate-800/70 backdrop-blur-xl overflow-hidden shadow-2xl">
-        {/* Window chrome */}
-        <div className="bg-slate-900/90 border-b border-white/10 px-5 py-3 flex items-center gap-3">
-          <div className="flex gap-1.5 flex-shrink-0">
-            <div className="w-2.5 h-2.5 rounded-full bg-red-400/60" />
-            <div className="w-2.5 h-2.5 rounded-full bg-yellow-400/60" />
-            <div className="w-2.5 h-2.5 rounded-full bg-green-400/60" />
-          </div>
-          <div className="flex-1 min-w-0 mx-4">
-            <div className="bg-white/5 rounded-md px-3 py-1 text-[11px] text-white/30 text-center max-w-xs mx-auto truncate">
-              app.audiorepurpose.com/project/tech-forward-ep-127
-            </div>
-          </div>
-          <div className="hidden sm:flex items-center gap-1.5 flex-shrink-0">
-            <span className="relative flex h-2 w-2">
-              <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-green-400 opacity-60" />
-              <span className="relative inline-flex h-2 w-2 rounded-full bg-green-400" />
-            </span>
-            <span className="text-[11px] text-white/30">Processing complete</span>
-          </div>
-        </div>
-
-        <div className="grid md:grid-cols-2">
-          {/* Transcript panel */}
-          <div className="p-6 md:border-r border-b md:border-b-0 border-white/10">
-            <div className="flex items-center justify-between mb-5">
-              <div className="flex items-center gap-2">
-                <div className="flex items-end gap-[2px] h-4">
-                  {MINI_WAVE.map((h, i) => (
-                    <div key={i} className="w-[2px] rounded-full bg-blue-400/60" style={{ height: `${h}px` }} />
-                  ))}
-                </div>
-                <span className="text-xs font-semibold text-white/80">Transcript</span>
-              </div>
-              <span className="text-[10px] bg-blue-500/20 text-blue-300 border border-blue-400/20 px-2 py-0.5 rounded-full">AI Enhanced</span>
-            </div>
-
-            <div className="space-y-4">
-              {[
-                { init: 'R', name: 'Ryan W.', role: 'Host', color: 'bg-blue-500', text: '"Welcome to Tech Forward. Today we explore how AI is reshaping content creation for creators everywhere…"' },
-                { init: 'S', name: 'Sarah C.', role: 'Guest', color: 'bg-violet-500', text: '"Thanks Ryan. The shift we\'re seeing is unprecedented — what used to take a full writing team now takes minutes…"' },
-                { init: 'R', name: 'Ryan W.', role: 'Host', color: 'bg-blue-500', text: '"So for our listeners, what\'s the single biggest change they should make today?"' },
-              ].map(({ init, name, role, color, text }, i) => (
-                <div key={i} className="flex gap-3">
-                  <div className={`flex-shrink-0 h-7 w-7 ${color} rounded-full flex items-center justify-center text-[11px] font-bold text-white mt-0.5`}>
-                    {init}
-                  </div>
-                  <div className="min-w-0">
-                    <div className="flex items-center gap-2 mb-0.5">
-                      <span className="text-xs font-semibold text-white/90">{name}</span>
-                      <span className="text-[9px] px-1.5 py-0.5 rounded-full bg-white/10 text-white/50">{role}</span>
-                    </div>
-                    <p className="text-[11px] text-white/45 leading-relaxed">{text}</p>
-                  </div>
-                </div>
-              ))}
-            </div>
-
-            <div className="mt-5 pt-4 border-t border-white/10 flex items-center gap-4 text-[10px] text-white/30">
-              <span>2 speakers detected</span>
-              <span>42 min · 98.3% accuracy</span>
-            </div>
-          </div>
-
-          {/* Outputs panel */}
-          <div className="p-6">
-            <div className="flex items-center justify-between mb-5">
-              <span className="text-xs font-semibold text-white/80">Generated Content</span>
-              <span className="text-[10px] bg-emerald-500/15 text-emerald-400 border border-emerald-400/20 px-2 py-0.5 rounded-full">8 formats ready</span>
-            </div>
-
-            <div className="space-y-3">
-              {[
-                { badge: '𝕏', bg: 'bg-slate-900', name: 'X Thread', meta: '6 posts · 280 chars each', preview: '"AI is changing content creation forever. Here\'s what 10 years of podcasting taught me about staying relevant…"' },
-                { badge: 'in', bg: 'bg-blue-700', name: 'LinkedIn Post', meta: '1,420 characters', preview: '"Had an incredible conversation with Sarah Chen on Tech Forward. 3 insights that will change how you approach your content strategy…"' },
-              ].map(({ badge, bg, name, meta, preview }) => (
-                <div key={name} className="bg-white/5 border border-white/10 rounded-xl p-4">
-                  <div className="flex items-center justify-between mb-2">
-                    <div className="flex items-center gap-2">
-                      <div className={`w-6 h-6 ${bg} rounded-lg flex items-center justify-center text-[10px] font-bold text-white flex-shrink-0`}>{badge}</div>
-                      <div>
-                        <span className="text-xs font-semibold text-white/85">{name}</span>
-                        <div className="text-[9px] text-white/35">{meta}</div>
-                      </div>
-                    </div>
-                    <span className="text-[9px] text-emerald-400 bg-emerald-400/10 px-1.5 py-0.5 rounded-full border border-emerald-400/20 flex-shrink-0">Ready</span>
-                  </div>
-                  <p className="text-[11px] text-white/45 leading-relaxed line-clamp-2">{preview}</p>
-                </div>
-              ))}
-
-              <div className="flex items-center gap-2.5 px-1 pt-1">
-                <div className="flex -space-x-1.5">
-                  {['bg-emerald-600', 'bg-orange-500', 'bg-violet-600', 'bg-rose-500'].map((c, i) => (
-                    <div key={i} className={`w-5 h-5 ${c} rounded-full border-2 border-slate-800`} />
-                  ))}
-                </div>
-                <span className="text-[11px] text-white/35">all 8 formats</span>
-              </div>
-            </div>
-          </div>
-        </div>
-
-        {/* Bottom metrics bar — Insights · Narrative Coverage · Cost */}
-        <div className="border-t border-white/10 bg-slate-900/50 px-6 py-3">
-          <div className="flex flex-wrap items-center justify-between gap-x-6 gap-y-2">
-            <div className="flex items-center gap-1.5">
-              <Sparkles className="h-3 w-3 text-indigo-400 flex-shrink-0" />
-              <span className="text-[10px] text-white/45">5 concepts explained · 2 entities linked</span>
-            </div>
-            <div className="flex items-center gap-1.5">
-              <Layers className="h-3 w-3 text-rose-400 flex-shrink-0" />
-              <span className="text-[10px] text-white/45">Positive sentiment · 1 CTA detected · 0 topic gaps</span>
-            </div>
-            <div className="flex items-center gap-1.5">
-              <Clock className="h-3 w-3 text-emerald-400/70 flex-shrink-0" />
-              <span className="text-[10px] text-emerald-400/60">$0.55 used · manually triggered</span>
-            </div>
-          </div>
-        </div>
-      </div>
-    </div>
-  );
-}
-
-// ─── Hero section ─────────────────────────────────────────────────────────────
+// ─── Hero ─────────────────────────────────────────────────────────────────────
 function Hero() {
   return (
-    <section className="relative overflow-hidden bg-gradient-to-br from-slate-900 via-blue-950 to-indigo-950 pt-20 pb-0">
+    <section className="relative overflow-hidden bg-gradient-to-br from-slate-100 via-blue-50 to-indigo-100 pt-20 pb-12 dark:from-slate-900 dark:via-blue-950 dark:to-indigo-950 md:pb-20">
       <div className="absolute top-0 left-1/4 w-96 h-96 bg-blue-600/15 rounded-full blur-3xl pointer-events-none" />
       <div className="absolute top-1/3 right-1/4 w-80 h-80 bg-violet-600/15 rounded-full blur-3xl pointer-events-none" />
 
       <div className="relative z-10 max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 text-center">
-        <div className="inline-flex items-center gap-2 bg-blue-500/15 border border-blue-400/25 text-blue-300 px-4 py-1.5 rounded-full text-sm font-medium mb-8 motion-safe:animate-fade-up">
+        <motion.div
+          className="mb-8 inline-flex items-center gap-2 rounded-full border border-blue-200 bg-blue-50 px-4 py-1.5 text-sm font-medium text-blue-700 dark:border-blue-400/25 dark:bg-blue-500/15 dark:text-blue-300"
+          initial={{ opacity: 0, y: 16 }}
+          animate={{ opacity: 1, y: 0 }}
+          transition={{ duration: 0.5, ease: 'easeOut' }}
+        >
           <Sparkles className="h-3.5 w-3.5 flex-shrink-0" />
           AI-Powered Speaker Intelligence
-        </div>
+        </motion.div>
 
-        <h1 className="text-4xl sm:text-5xl md:text-6xl font-bold text-white leading-tight mb-6 tracking-tight motion-safe:animate-fade-up-200">
+        <motion.h1
+          className="mb-6 text-4xl font-bold leading-tight tracking-tight text-slate-900 dark:text-white sm:text-5xl md:text-6xl"
+          initial={{ opacity: 0, y: 18 }}
+          animate={{ opacity: 1, y: 0 }}
+          transition={{ duration: 0.55, delay: 0.08, ease: 'easeOut' }}
+        >
           One Recording.{' '}
           <span className="bg-gradient-to-r from-blue-400 to-violet-400 bg-clip-text text-transparent">
-            A Month of Content.
+            Speaker Intelligence.
           </span>
           <br />Instantly.
-        </h1>
+        </motion.h1>
 
-        <p className="text-base md:text-lg text-blue-200/70 max-w-2xl mx-auto mb-10 leading-relaxed motion-safe:animate-fade-up-400">
-          Transform your podcasts and interviews into LinkedIn posts, X threads, newsletters, and show notes.
-          AI identifies every speaker, explains complex concepts, analyzes narrative gaps, and generates all 8 formats — automatically.
-          No editing. No manual work.
-        </p>
+        <motion.p
+          className="mx-auto mb-10 max-w-2xl text-base leading-relaxed text-slate-600 dark:text-blue-200/70 md:text-lg"
+          initial={{ opacity: 0, y: 16 }}
+          animate={{ opacity: 1, y: 0 }}
+          transition={{ duration: 0.55, delay: 0.16, ease: 'easeOut' }}
+        >
+          AudioRepurpose turns one recording into 11 platform-ready content types with speaker-aware transcripts, clean summaries, and no content gates between plans.
+        </motion.p>
 
-        <div className="flex flex-col sm:flex-row items-center justify-center gap-4 motion-safe:animate-fade-up-600">
+        <motion.div
+          className="flex flex-col sm:flex-row items-center justify-center gap-4 mb-16"
+          initial={{ opacity: 0, y: 14 }}
+          animate={{ opacity: 1, y: 0 }}
+          transition={{ duration: 0.5, delay: 0.24, ease: 'easeOut' }}
+        >
           <Link href="/auth/signup" className="inline-flex items-center gap-2 bg-blue-600 hover:bg-blue-500 text-white font-semibold px-7 py-3.5 rounded-xl transition-colors shadow-lg shadow-blue-900/50">
-            Start Repurposing Free
+            Start Free
             <ArrowRight className="h-4 w-4" />
           </Link>
-          <Link href="/auth/demo" className="inline-flex items-center gap-2 text-white/80 hover:text-white font-medium px-6 py-3.5 rounded-xl border border-white/25 hover:border-white/50 hover:bg-white/5 transition-colors">
+          <Link href="/auth/demo" className="inline-flex items-center gap-2 rounded-xl border border-slate-300 px-6 py-3.5 font-medium text-slate-700 transition-colors hover:border-slate-400 hover:bg-white/70 dark:border-white/25 dark:text-white/80 dark:hover:border-white/50 dark:hover:bg-white/5 dark:hover:text-white">
             Try Demo →
           </Link>
-        </div>
-        <p className="text-xs text-blue-300/45 mt-4 mb-12 motion-safe:animate-fade-up-600">
-          Pay only when you manually trigger processing.
-        </p>
+        </motion.div>
 
-        <div className="motion-safe:animate-fade-up-600 motion-safe:animate-float-slow">
-          <AppMockup />
-        </div>
+        {/* Hero video
+            ─────────────────────────────────────────────────────────────────
+            Record: open a real project → scroll transcript → AI Summary →
+            Key Takeaways → rename Speaker 2 → segments update → Generated
+            Content tab showing LinkedIn post + X thread. ~30 seconds total.
+            Drop the file at /public/videos/hero-demo.mp4 to activate.
+        */}
+        <motion.div
+          className="relative max-w-7xl mx-auto px-4 sm:px-0"
+          initial={{ opacity: 0, y: 20 }}
+          whileInView={{ opacity: 1, y: 0 }}
+          viewport={SECTION_VIEWPORT}
+          transition={{ duration: 0.7, ease: 'easeOut' }}
+        >
+          <div className="absolute -bottom-6 left-1/2 -translate-x-1/2 w-2/3 h-20 bg-blue-500/25 blur-2xl rounded-full pointer-events-none" />
+          <VideoFrame
+            src="/videos/hero-demo.webp"
+            poster="/videos/hero-demo-poster.jpg"
+            urlLabel="app.audiorepurpose.com/studio"
+            statusLabel="Speaker attribution confirmed, all 11 outputs unlocked"
+          />
+        </motion.div>
       </div>
     </section>
   );
 }
 
-// ─── Pain Points ─────────────────────────────────────────────────────────────
-function PainPoints() {
+// ─── Speaker Intelligence Section ────────────────────────────────────────────
+function SpeakerIntelligenceSection() {
+  const bullets = [
+    { Icon: Users, text: 'Auto-detects names and roles directly from audio context' },
+    { Icon: Sparkles, text: 'Surfaces uncertain segments for one-click review and correction' },
+    { Icon: Check, text: 'Every output inherits clean speaker attribution automatically' },
+  ];
+
   return (
-    <section id="pain-points" className="py-20 bg-white">
-      <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8">
-        <div className="text-center mb-14">
-          <span className="text-sm font-semibold text-blue-600 uppercase tracking-widest">Why creators choose us</span>
+    <section id="speaker-intelligence" className="py-24 bg-white overflow-hidden">
+      <div className="max-w-[90rem] mx-auto px-4 sm:px-6 lg:px-8">
+        <motion.div
+          className="text-center mb-16"
+          initial="hidden"
+          whileInView="show"
+          viewport={SECTION_VIEWPORT}
+          variants={sectionContainer}
+        >
+          <span className="text-sm font-semibold text-blue-600 uppercase tracking-widest">Speaker Intelligence</span>
           <h2 className="text-3xl md:text-4xl font-bold text-gray-900 mt-2">
-            The common transcript problems we fix
+            The feature no other tool ships
           </h2>
           <p className="text-gray-500 mt-4 max-w-2xl mx-auto text-base">
-            Most tools work in perfect conditions. Real meetings aren’t perfect. AudioRepurpose is built for the messy reality.
+            Most tools give you Speaker 1, Speaker 2, and a prayer. AudioRepurpose auto-detects names and roles from the audio itself — then gives you a clean review workflow to confirm or correct every segment.
           </p>
-        </div>
+        </motion.div>
 
-        <div className="grid lg:grid-cols-3 gap-6">
-          {PAIN_POINTS.map(({ title, problem, fix }, idx) => (
-            <div
-              key={title}
-              className={`rounded-2xl border border-gray-100 bg-gray-50 p-6 hover:shadow-lg hover:-translate-y-0.5 transition-all duration-200 motion-safe:animate-fade-up${idx === 1 ? '-200' : idx === 2 ? '-400' : ''
-                }`}
-            >
-              <h3 className="text-lg font-bold text-gray-900 mb-2">{title}</h3>
-              <p className="text-sm text-gray-600 leading-relaxed">{problem}</p>
-              <div className="mt-4 pt-4 border-t border-gray-200">
-                <p className="text-sm text-gray-900 font-medium">Fix:</p>
-                <p className="text-sm text-gray-600 mt-1">{fix}</p>
-              </div>
+        <div className="grid lg:grid-cols-12 gap-12 lg:gap-16 items-center">
+          {/* Video loop
+              ──────────────────────────────────────────────────────────────────
+              Record: a Speaker 2 → rename to "Sarah Chen (Guest)" → confirm →
+              watch transcript update in real time. Loop: ~10 seconds.
+              File: /public/videos/speaker-loop.mp4
+          */}
+          <motion.div
+            className="lg:col-span-7 xl:col-span-8"
+            initial={{ opacity: 0, x: -20 }}
+            whileInView={{ opacity: 1, x: 0 }}
+            viewport={SECTION_VIEWPORT}
+            transition={{ duration: 0.6, ease: 'easeOut' }}
+          >
+            <VideoFrame
+              src="/videos/speaker-loop.webp"
+              poster="/videos/speaker-loop-poster.jpg"
+              urlLabel="Studio · Speaker Review"
+              statusLabel="Rename confirmed"
+            />
+          </motion.div>
+
+          <motion.div
+            initial={{ opacity: 0, x: 20 }}
+            whileInView={{ opacity: 1, x: 0 }}
+            viewport={SECTION_VIEWPORT}
+            transition={{ duration: 0.6, ease: 'easeOut', delay: 0.1 }}
+            className="flex flex-col gap-8 lg:col-span-5 xl:col-span-4"
+          >
+            <ul className="space-y-6">
+              {bullets.map(({ Icon, text }, i) => (
+                <li key={i} className="flex items-start gap-4">
+                  <div className="flex-shrink-0 h-10 w-10 rounded-xl bg-blue-50 flex items-center justify-center">
+                    <Icon className="h-5 w-5 text-blue-600" />
+                  </div>
+                  <p className="text-gray-700 leading-relaxed pt-1.5">{text}</p>
+                </li>
+              ))}
+            </ul>
+
+            <div className="rounded-2xl border border-gray-100 bg-gray-50 p-5">
+              <p className="text-sm text-gray-500 leading-relaxed">
+                <span className="font-semibold text-gray-800">Merge duplicate speakers</span> — real-world audio often fragments one voice into multiple clusters. AudioRepurpose lets you merge them in one click and propagate the correction across the entire transcript.
+              </p>
             </div>
-          ))}
+
+            <Link
+              href="/auth/demo"
+              className="inline-flex items-center gap-2 text-blue-600 font-semibold hover:text-blue-700 transition-colors text-sm"
+            >
+              See it live in the demo <ArrowRight className="h-4 w-4" />
+            </Link>
+          </motion.div>
         </div>
       </div>
     </section>
   );
 }
 
-// ─── How it Works ─────────────────────────────────────────────────────────────
+// ─── How It Works ─────────────────────────────────────────────────────────────
 function HowItWorks() {
   return (
-    <section id="how-it-works" className="py-24 bg-gray-50">
-      <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8">
-        <div className="text-center mb-16">
+    <section id="how-it-works" className="relative overflow-hidden bg-gray-50 py-24">
+      <div className="pointer-events-none absolute inset-0 bg-[linear-gradient(to_right,rgba(15,23,42,0.05)_1px,transparent_1px),linear-gradient(to_bottom,rgba(15,23,42,0.05)_1px,transparent_1px)] bg-[size:28px_28px,28px_28px]" />
+      <div className="pointer-events-none absolute inset-0 bg-[linear-gradient(to_right,rgba(15,23,42,0.08)_1px,transparent_1px),linear-gradient(to_bottom,rgba(15,23,42,0.08)_1px,transparent_1px)] bg-[size:140px_140px,140px_140px]" />
+      <div className="pointer-events-none absolute inset-0 bg-[radial-gradient(circle_at_top,rgba(15,23,42,0.04),transparent_38%),radial-gradient(circle_at_bottom,rgba(15,23,42,0.03),transparent_32%)]" />
+      <div className="relative max-w-7xl mx-auto px-4 sm:px-6 lg:px-8">
+        <motion.div
+          className="text-center mb-16"
+          initial="hidden"
+          whileInView="show"
+          viewport={SECTION_VIEWPORT}
+          variants={sectionContainer}
+        >
           <span className="text-sm font-semibold text-blue-600 uppercase tracking-widest">How it Works</span>
           <h2 className="text-3xl md:text-4xl font-bold text-gray-900 mt-2">From recording to content in minutes</h2>
           <p className="text-gray-500 mt-4 max-w-xl mx-auto text-base">
-            Three steps. Zero manual work. A full month of content ready to publish.
+            Pick your processing level once, then generate whichever content types you need.
           </p>
-        </div>
+        </motion.div>
 
-        <div className="grid md:grid-cols-3 gap-8 relative">
-          {/* Connector line (desktop only) */}
+        <motion.div
+          className="grid md:grid-cols-3 gap-8 relative"
+          initial="hidden"
+          whileInView="show"
+          viewport={SECTION_VIEWPORT}
+          variants={sectionContainer}
+        >
           <div className="hidden md:block absolute top-12 left-1/3 right-1/3 h-px bg-gradient-to-r from-blue-200 via-violet-200 to-indigo-200" />
-
           {STEPS.map(({ n, title, description, Icon, accent, ring }, idx) => (
-            <div
+            <motion.div
               key={n}
-              className={`relative flex flex-col items-center text-center group motion-safe:animate-fade-up${idx === 1 ? '-200' : idx === 2 ? '-400' : ''
-                }`}
+              variants={sectionItem}
+              transition={{ delay: idx * 0.06 }}
+              className="relative flex flex-col items-center text-center group"
             >
               <div className={`relative z-10 h-16 w-16 ${accent} rounded-2xl flex items-center justify-center mb-6 shadow-lg ring-4 ${ring} transition-transform duration-300 group-hover:-translate-y-1`}>
                 <Icon className="h-7 w-7 text-white" />
@@ -488,98 +1085,487 @@ function HowItWorks() {
               </div>
               <h3 className="text-lg font-bold text-gray-900 mb-2">{title}</h3>
               <p className="text-gray-500 text-sm leading-relaxed max-w-xs">{description}</p>
-            </div>
+            </motion.div>
           ))}
-        </div>
+        </motion.div>
       </div>
     </section>
   );
 }
 
-// ─── Features ─────────────────────────────────────────────────────────────────
-function Features() {
+// ─── Content Outputs Section ──────────────────────────────────────────────────
+function ContentOutputsSection() {
+  const [activeCard, setActiveCard] = useState(0);
+  const [signalHeights, setSignalHeights] = useState<number[]>(SIGNAL_LEVELS.map((signal) => signal.base));
+  const [activeSignalPattern, setActiveSignalPattern] = useState<number | null>(null);
+  const [signalLeadIn, setSignalLeadIn] = useState(false);
+
+  useEffect(() => {
+    const timer = setInterval(() => {
+      setActiveCard((prev) => (prev + 1) % FEATURED_OUTPUT_STACK.length);
+    }, 3500);
+    return () => clearInterval(timer);
+  }, []);
+
+  useEffect(() => {
+    if (activeSignalPattern !== null || signalLeadIn) return;
+
+    const timer = setInterval(() => {
+      setSignalHeights((prev) => generateRandomSignal(prev));
+    }, 520);
+
+    return () => clearInterval(timer);
+  }, [activeSignalPattern, signalLeadIn]);
+
+  useEffect(() => {
+    let patternIndex = 0;
+    let leadTimeout: ReturnType<typeof setTimeout> | null = null;
+    let releaseTimeout: ReturnType<typeof setTimeout> | null = null;
+
+    const runPattern = () => {
+      const nextPattern = patternIndex % SYNC_SIGNAL_PATTERNS.length;
+      patternIndex += 1;
+      const gatherFrame = SYNC_SIGNAL_PATTERNS[nextPattern].frames[0];
+      const finalFrame = SYNC_SIGNAL_PATTERNS[nextPattern].frames.at(-1);
+      setSignalLeadIn(true);
+      setSignalHeights(gatherFrame);
+
+      leadTimeout = setTimeout(() => {
+        setActiveSignalPattern(nextPattern);
+        setSignalLeadIn(false);
+      }, 1000);
+
+      releaseTimeout = setTimeout(() => {
+        setSignalHeights(finalFrame || SIGNAL_LEVELS.map((signal) => signal.base));
+        setActiveSignalPattern(null);
+      }, 7000);
+    };
+
+    const interval = setInterval(() => {
+      runPattern();
+    }, 30000);
+
+    runPattern();
+
+    return () => {
+      clearInterval(interval);
+      if (leadTimeout) clearTimeout(leadTimeout);
+      if (releaseTimeout) clearTimeout(releaseTimeout);
+    };
+  }, []);
+
+  const card = FEATURED_OUTPUT_STACK[activeCard];
+  const activePattern = activeSignalPattern !== null ? SYNC_SIGNAL_PATTERNS[activeSignalPattern] : null;
+
   return (
-    <section id="features" className="py-24 bg-white">
-      <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8">
-        <div className="text-center mb-16">
-          <span className="text-sm font-semibold text-blue-600 uppercase tracking-widest">Core Features</span>
-          <h2 className="text-3xl md:text-4xl font-bold text-gray-900 mt-2">Everything you need to repurpose at scale</h2>
-          <p className="text-gray-500 mt-4 max-w-xl mx-auto text-base">
-            Built for serious creators who want maximum output from every recording.
-          </p>
-        </div>
+    <section id="outputs" className="py-24 bg-white overflow-hidden">
+      <div className="max-w-[90rem] mx-auto px-4 sm:px-6 lg:px-8">
+        <motion.div
+          className="text-center mb-16"
+          initial="hidden"
+          whileInView="show"
+          viewport={SECTION_VIEWPORT}
+          variants={sectionContainer}
+        >
+          <span className="text-sm font-semibold text-blue-600 uppercase tracking-widest">Content Generation</span>
+          <h2 className="text-3xl md:text-4xl font-bold text-gray-900 mt-2">
+            One recording, shaped for every channel.
+          </h2>
+        </motion.div>
 
-        <div className="grid sm:grid-cols-2 lg:grid-cols-3 gap-6">
-          {FEATURES.map(({ title, description, Icon, iconColor, iconBg, border }, idx) => (
-            <div
-              key={title}
-              className={`rounded-2xl border border-gray-100 ${border} bg-white p-6 hover:shadow-lg hover:-translate-y-1 transition-all duration-300 cursor-default motion-safe:animate-fade-up${idx % 3 === 1 ? '-200' : idx % 3 === 2 ? '-400' : ''
-                }`}
-            >
-              <div className={`inline-flex h-11 w-11 items-center justify-center rounded-xl ${iconBg} mb-4`}>
-                <Icon className={`h-5 w-5 ${iconColor}`} />
-              </div>
-              <h3 className="font-bold text-gray-900 mb-2">{title}</h3>
-              <p className="text-sm text-gray-500 leading-relaxed">{description}</p>
-            </div>
-          ))}
-        </div>
-      </div>
-    </section>
-  );
-}
-
-// ─── Output Showcase ──────────────────────────────────────────────────────────
-function OutputShowcase() {
-  const tierColor = (tier: string) =>
-    tier === 'Basic' ? 'bg-gray-100 text-gray-600' :
-      tier === 'Pro' ? 'bg-blue-50 text-blue-600 border border-blue-100' :
-        'bg-violet-50 text-violet-600 border border-violet-100';
-
-  return (
-    <section className="py-24 bg-gray-50">
-      <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8">
-        <div className="text-center mb-16">
-          <span className="text-sm font-semibold text-blue-600 uppercase tracking-widest">Output Showcase</span>
-          <h2 className="text-3xl md:text-4xl font-bold text-gray-900 mt-2">Every format your audience expects</h2>
-          <p className="text-gray-500 mt-4 max-w-xl mx-auto text-base">
-            From X threads to SEO blogs — every piece is natively formatted and ready to publish.
-          </p>
-        </div>
-
-        <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4">
-          {OUTPUTS.map(({ badge, badgeBg, name, desc, tier, count }, idx) => (
-            <div
-              key={name}
-              className={`bg-white rounded-2xl border border-gray-100 p-5 hover:shadow-md hover:-translate-y-0.5 transition-all duration-200 group hover:scale-[1.01] motion-safe:animate-fade-up${idx % 4 === 1 ? '-200' : idx % 4 === 2 ? '-400' : idx % 4 === 3 ? '-600' : ''
-                }`}
-            >
-              <div className="flex items-start justify-between mb-4">
-                <div className={`w-10 h-10 ${badgeBg} rounded-xl flex items-center justify-center text-sm font-bold text-white flex-shrink-0`}>
-                  {badge}
-                </div>
-                <span className={`text-[10px] font-semibold px-2 py-0.5 rounded-full ${tierColor(tier)}`}>
-                  {tier}
+        <div className="grid gap-8 xl:grid-cols-5 xl:items-start">
+          {/* Left column — Content Menu */}
+          <motion.div
+            initial={{ opacity: 0, y: 20 }}
+            whileInView={{ opacity: 1, y: 0 }}
+            viewport={SECTION_VIEWPORT}
+            transition={{ duration: 0.6, ease: 'easeOut' }}
+            className="xl:col-span-3"
+          >
+            {/* Stat chips */}
+            <div className="mb-8 flex items-center justify-center gap-2">
+              {[
+                ['11', 'content types'],
+                ['2', 'tiers'],
+              ].map(([value, label]) => (
+                <span key={label} className="inline-flex items-center gap-1.5 rounded-md border border-slate-200 bg-white px-3 py-1.5 text-[11px] font-semibold uppercase tracking-[0.14em] text-slate-500">
+                  <span className="font-bold text-slate-950">{value}</span>
+                  <span>{label}</span>
                 </span>
-              </div>
-              <h3 className="font-semibold text-gray-900 mb-1">{name}</h3>
-              <p className="text-sm text-gray-500 leading-relaxed mb-3">{desc}</p>
-              <div className="text-xs font-medium text-gray-400">{count}</div>
+              ))}
             </div>
-          ))}
 
-          {/* Total callout card */}
-          <div className="bg-gradient-to-br from-blue-600 to-violet-600 rounded-2xl p-5 flex flex-col justify-center motion-safe:animate-fade-up-400 hover:scale-[1.01] transition-transform">
-            <div className="text-4xl font-bold text-white mb-1">8</div>
-            <div className="text-blue-100 font-semibold text-sm mb-2">Content formats</div>
-            <div className="text-blue-200/70 text-xs leading-relaxed">
-              Generated from a single recording, formatted for every platform.
+            {/* Content groups — clean vertical sections */}
+            <div className="space-y-0">
+              {OUTPUT_GROUPS.map(({ title, description, items }, index) => (
+                <div key={title}>
+                  {index > 0 && <div className="border-t border-slate-200 my-7" />}
+                  <div className="flex items-baseline justify-between gap-4 mb-4">
+                    <div>
+                      <p className="text-[10px] font-semibold uppercase tracking-[0.18em] text-slate-500">Editorial Group</p>
+                      <h3 className="mt-1 text-lg font-semibold tracking-tight text-slate-950">{title}</h3>
+                    </div>
+                  </div>
+                  <div className="grid gap-2.5 sm:grid-cols-2">
+                    {items.map(({ badge, badgeBg, name, desc }) => (
+                      <div key={name} className="flex items-center gap-3 rounded-2xl border border-slate-200 bg-white px-4 py-3 transition-colors hover:border-slate-300 hover:shadow-sm">
+                        <div className={`h-9 w-9 ${badgeBg} rounded-xl flex items-center justify-center text-[10px] font-bold text-white flex-shrink-0`}>
+                          {badge}
+                        </div>
+                        <div className="min-w-0">
+                          <div className="text-sm font-semibold text-slate-950">{name}</div>
+                          <div className="mt-0.5 text-xs leading-4 text-slate-500">{desc}</div>
+                        </div>
+                      </div>
+                    ))}
+                  </div>
+                </div>
+              ))}
             </div>
-            <Link href="/auth/signup" className="mt-4 inline-flex items-center gap-1 text-xs font-semibold text-white hover:text-blue-100 transition-colors">
-              Get started <ArrowRight className="h-3.5 w-3.5" />
-            </Link>
-          </div>
+
+            {/* Footer */}
+            <div className="mt-8 flex flex-wrap items-center justify-between gap-3 border-t border-slate-200 pt-6">
+              <Link
+                href="/auth/signup"
+                className="inline-flex items-center gap-2 text-sm font-semibold text-blue-600 hover:text-blue-700 transition-colors"
+              >
+                Generate your first batch here <ArrowRight className="h-4 w-4" />
+              </Link>
+            </div>
+          </motion.div>
+
+          {/* Right column — Cycling Output Preview */}
+          <motion.div
+            initial={{ opacity: 0, y: 24 }}
+            whileInView={{ opacity: 1, y: 0 }}
+            viewport={SECTION_VIEWPORT}
+            transition={{ duration: 0.6, ease: 'easeOut', delay: 0.08 }}
+            className="xl:col-span-2 xl:sticky xl:top-24"
+          >
+            <div className="relative pt-4">
+              <div className="absolute left-0 right-0 top-0 h-px bg-gradient-to-r from-transparent via-slate-300 to-transparent" />
+              <div className="mb-6 flex items-start justify-between gap-4">
+                <div>
+                  <p className="text-[11px] font-semibold uppercase tracking-[0.2em] text-slate-500">Editorial Rotation</p>
+                  <h3 className="mt-2 text-2xl font-bold tracking-tight text-slate-950">
+                    Three live examples, all eleven outputs available.
+                  </h3>
+                </div>
+              </div>
+
+              <div className="relative min-h-[19rem] border-y border-slate-200 py-6">
+                <AnimatePresence mode="wait">
+                  <motion.div
+                    key={activeCard}
+                    initial={{ opacity: 0, y: 16 }}
+                    animate={{ opacity: 1, y: 0 }}
+                    exit={{ opacity: 0, y: -12 }}
+                    transition={{ duration: 0.4, ease: 'easeOut' }}
+                    className="grid gap-4"
+                  >
+                    <div className="flex items-start gap-4">
+                      <div className={`h-11 w-11 rounded-2xl ${card.badgeBg} flex items-center justify-center text-sm font-bold text-white flex-shrink-0 shadow-sm`}>
+                        {card.badge}
+                      </div>
+                      <div>
+                        <p className="text-[11px] font-semibold uppercase tracking-[0.18em] text-slate-500">{card.eyebrow}</p>
+                        <h4 className="mt-1 text-xl font-bold tracking-tight text-slate-950">{card.platform}</h4>
+                      </div>
+                      <div className={`ml-auto h-8 w-8 rounded-xl bg-gradient-to-br ${card.accent} shadow-md flex-shrink-0`} />
+                    </div>
+
+                    <div className="space-y-3">
+                      {card.preview.map(({ label, text }, index) => (
+                        <div key={label} className="grid grid-cols-[4.75rem_1fr] gap-3 border-b border-slate-200/80 pb-3 last:border-b-0 last:pb-0">
+                          <span className="pt-1 text-[10px] font-semibold uppercase tracking-[0.14em] text-slate-500">
+                            {String(index + 1).padStart(2, '0')} {label}
+                          </span>
+                          <span className="text-sm leading-7 text-slate-700">{text}</span>
+                        </div>
+                      ))}
+                    </div>
+                  </motion.div>
+                </AnimatePresence>
+              </div>
+
+              <div className="mt-5 flex items-center justify-center gap-2">
+                {FEATURED_OUTPUT_STACK.map((c, i) => (
+                  <button
+                    key={i}
+                    onClick={() => setActiveCard(i)}
+                    className={`rounded-full px-3 py-1 text-[11px] font-semibold uppercase tracking-[0.14em] transition-all
+                      ${i === activeCard
+                        ? 'bg-slate-900 text-white border border-slate-900'
+                        : 'text-slate-500 hover:text-slate-700'}`}
+                  >
+                    {c.eyebrow}
+                  </button>
+                ))}
+              </div>
+
+              <div className="mt-6">
+                <div className="mb-4 flex items-center justify-center gap-1.5 whitespace-nowrap">
+                  {['Available on Standard', 'Available on Pro', 'Generate on demand'].map((pill) => (
+                    <span key={pill} className="rounded-md border border-slate-200 bg-white px-2 py-1.5 text-[10px] font-semibold uppercase tracking-[0.12em] text-slate-500 shadow-sm">
+                      {pill}
+                    </span>
+                  ))}
+                </div>
+                <div className="flex items-center justify-between text-xs font-semibold uppercase tracking-[0.16em] text-slate-500">
+                  <span>Pipeline signal</span>
+                  <span>Source transcript</span>
+                </div>
+                <div className="mt-4 grid grid-cols-11 gap-2 items-end" style={{ height: 104 }}>
+                  {OUTPUT_GROUPS.flatMap((group) => group.items).map(({ badge, badgeBg, name }, index) => {
+                    const liveHeight = signalHeights[index];
+                    const iconTravel = Math.max(3, Math.round(liveHeight / 10));
+                    const patternFrames = activePattern?.frames.map((frame) => frame[index]);
+                    const patternTimes = patternFrames?.map((_, frameIndex, arr) => (
+                      arr.length === 1 ? 1 : frameIndex / (arr.length - 1)
+                    ));
+                    const iconFrames = activePattern
+                      ? [0, ...(patternFrames || []).map((height) => -Math.max(3, Math.round(height / 10))), 0]
+                      : signalLeadIn
+                        ? [-Math.max(3, Math.round(liveHeight / 10))]
+                      : [-iconTravel];
+                    const iconTimes = activePattern
+                      ? iconFrames.map((_, frameIndex, arr) => (
+                        arr.length === 1 ? 1 : frameIndex / (arr.length - 1)
+                      ))
+                      : undefined;
+                    return (
+                      <div key={name} className="flex h-full flex-col items-center justify-end">
+                        <motion.div
+                          className={`mb-1 flex h-8 w-8 items-center justify-center rounded-lg ${badgeBg} text-[10px] font-bold text-white shadow-sm`}
+                          animate={{ y: iconFrames }}
+                          style={{ willChange: 'transform' }}
+                          transition={activePattern
+                            ? { duration: 6, times: iconTimes, ease: 'easeInOut' }
+                            : signalLeadIn
+                              ? { duration: 1, ease: 'easeInOut' }
+                              : { duration: 0.42, ease: 'easeOut' }}
+                        >
+                          {badge}
+                        </motion.div>
+                        <motion.div
+                          className="w-full rounded-[5px] bg-gradient-to-t from-blue-500 via-sky-400 to-cyan-200"
+                          animate={activePattern
+                            ? { height: (patternFrames || [liveHeight]).map((height) => `${height}%`) }
+                            : { height: `${liveHeight}%` }}
+                          transition={activePattern
+                            ? { duration: 6, times: patternTimes, ease: 'easeInOut' }
+                            : signalLeadIn
+                              ? { duration: 1, ease: 'easeInOut' }
+                              : { duration: 0.42, ease: 'easeOut' }}
+                          style={{ height: `${liveHeight}%` }}
+                        />
+                      </div>
+                    );
+                  })}
+                </div>
+              </div>
+            </div>
+          </motion.div>
         </div>
+      </div>
+    </section>
+  );
+}
+
+function AnalysisSection() {
+  return (
+    <section id="analysis" className="relative overflow-hidden bg-slate-100 py-20 dark:bg-slate-950">
+      <AnalysisConstellationBackground />
+      <div className="relative max-w-[90rem] mx-auto px-4 sm:px-6 lg:px-8">
+        <motion.div
+          className="text-center mb-12"
+          initial="hidden"
+          whileInView="show"
+          viewport={SECTION_VIEWPORT}
+          variants={sectionContainer}
+        >
+          <span className="text-sm font-semibold uppercase tracking-widest text-blue-300">Analysis</span>
+          <h2 className="mt-2 text-3xl font-bold text-white md:text-4xl">
+            See the patterns behind the episode.
+          </h2>
+          <p className="mx-auto mt-4 max-w-2xl text-base text-blue-100/65">
+            Topic mix, CTA cadence, and editorial gaps become visible before you decide what to make next.
+          </p>
+        </motion.div>
+
+        <motion.div
+          className="grid gap-8 xl:grid-cols-5 xl:items-stretch"
+          initial="hidden"
+          whileInView="show"
+          viewport={SECTION_VIEWPORT}
+          variants={sectionContainer}
+        >
+          <motion.div
+            variants={sectionItem}
+            className="xl:col-span-2 h-full"
+          >
+            <div className="flex h-full flex-col">
+              <motion.div variants={sectionItem} className="flex items-center gap-2 text-[11px] font-semibold uppercase tracking-[0.18em] text-blue-200/55">
+                <BarChart3 className="h-4 w-4 text-blue-300" />
+                Editorial intelligence
+              </motion.div>
+              <motion.h3 variants={sectionItem} className="mt-4 text-4xl font-bold tracking-tight text-white">
+                Analytics that tell you what your content keeps saying, skipping, and overdoing.
+              </motion.h3>
+              <motion.p variants={sectionItem} className="mt-5 max-w-xl text-sm leading-7 text-blue-100/70">
+                Instead of just counting outputs, AudioRepurpose reads the conversation itself: what topics dominate, where CTAs fall off, and which editorial angles deserve another pass.
+              </motion.p>
+
+              <motion.div variants={sectionItem} className="mt-6 space-y-4">
+                {[
+                  { Icon: Target, text: 'Track CTA frequency and see when promotion cadence slips.' },
+                  { Icon: Lightbulb, text: 'Surface underrepresented topics before they turn into blind spots.' },
+                  { Icon: BarChart3, text: 'Turn transcripts into coverage snapshots you can act on.' },
+                ].map(({ Icon, text }) => (
+                  <motion.div key={text} variants={sectionItem} className="flex items-start gap-3 border-l border-slate-200 pl-4 dark:border-white/10">
+                    <div className="mt-0.5 flex h-9 w-9 items-center justify-center rounded-xl bg-white text-blue-600 shadow-sm dark:bg-white/8 dark:text-blue-200">
+                      <Icon className="h-4 w-4" />
+                    </div>
+                    <p className="text-sm leading-6 text-blue-100/72">{text}</p>
+                  </motion.div>
+                ))}
+              </motion.div>
+
+              <motion.div variants={sectionItem} className="mt-8 xl:mt-8">
+                <div className="relative overflow-hidden rounded-[1.5rem] border border-white/10 bg-transparent p-5">
+                  <div className="pointer-events-none absolute inset-0 bg-[linear-gradient(to_right,rgba(255,255,255,0.04)_1px,transparent_1px),linear-gradient(to_bottom,rgba(255,255,255,0.04)_1px,transparent_1px)] bg-[size:24px_24px,24px_24px] opacity-60" />
+                  <div className="relative">
+                    <p className="text-[11px] font-semibold uppercase tracking-[0.16em] text-blue-100/50">Content mix</p>
+                    <h4 className="mt-1 text-lg font-semibold tracking-tight text-white">What this upload produced across formats</h4>
+                    <div className="mt-6">
+                      <AnalysisContentPieChart />
+                    </div>
+                  </div>
+                </div>
+              </motion.div>
+            </div>
+          </motion.div>
+
+          <motion.div
+            variants={sectionItem}
+            className="xl:col-span-3 h-full"
+          >
+            <div className="relative h-full rounded-[2rem] border border-white/10 bg-white/9 px-5 py-6 shadow-[0_30px_90px_-55px_rgba(15,23,42,0.85)] backdrop-blur-md sm:px-7">
+              <div className="pointer-events-none absolute inset-0 rounded-[2rem] bg-[radial-gradient(circle_at_top_right,rgba(96,165,250,0.12),transparent_30%),linear-gradient(to_right,rgba(255,255,255,0.06)_1px,transparent_1px),linear-gradient(to_bottom,rgba(255,255,255,0.06)_1px,transparent_1px)] bg-[size:auto,28px_28px,28px_28px]" />
+              <div className="relative">
+                <div className="flex flex-col gap-4 border-b border-white/10 pb-5 sm:flex-row sm:items-end sm:justify-between">
+                  <div>
+                    <p className="text-[11px] font-semibold uppercase tracking-[0.18em] text-blue-100/50">Coverage snapshot</p>
+                    <h3 className="mt-2 text-2xl font-bold tracking-tight text-white">
+                      Narrative coverage at a glance
+                    </h3>
+                  </div>
+                  <div className="flex flex-wrap gap-2">
+                    {['Topics', 'CTAs', 'Opportunities'].map((pill) => (
+                      <span key={pill} className="rounded-md border border-white/10 bg-white/8 px-2.5 py-1.5 text-[11px] font-semibold uppercase tracking-[0.14em] text-blue-50/75">
+                        {pill}
+                      </span>
+                    ))}
+                  </div>
+                </div>
+
+                <div className="mt-6 grid gap-4 md:grid-cols-3">
+                  {ANALYSIS_METRICS.map((metric, index) => (
+                    <motion.div
+                      key={metric.label}
+                      initial={{ opacity: 0, y: 12 }}
+                      whileInView={{ opacity: 1, y: 0 }}
+                      viewport={SECTION_VIEWPORT}
+                      transition={{ duration: 0.45, delay: 0.06 * index, ease: 'easeOut' }}
+                      className="rounded-[1.5rem] border border-white/10 bg-white/8 p-4"
+                    >
+                      <div className="text-[11px] font-semibold uppercase tracking-[0.16em] text-blue-100/50">{metric.label}</div>
+                      <div className="mt-3 text-3xl font-bold tracking-tight text-white">{metric.value}</div>
+                      <p className="mt-2 text-sm leading-6 text-blue-100/65">{metric.note}</p>
+                    </motion.div>
+                  ))}
+                </div>
+
+                <div className="mt-5">
+                  <div className="rounded-[1.5rem] border border-white/10 bg-white/8 p-5">
+                    <div className="flex items-center justify-between">
+                      <div>
+                        <p className="text-[11px] font-semibold uppercase tracking-[0.16em] text-blue-100/50">Topic intensity</p>
+                        <h4 className="mt-1 text-lg font-semibold tracking-tight text-white">Where the conversation spends its energy</h4>
+                      </div>
+                    </div>
+                    <div className="mt-6 space-y-4">
+                      {[
+                        { name: 'AI safety', width: '84%', tone: 'from-blue-600 to-cyan-400' },
+                        { name: 'Future of work', width: '68%', tone: 'from-violet-600 to-indigo-400' },
+                        { name: 'Sponsor CTA', width: '38%', tone: 'from-amber-500 to-orange-400' },
+                        { name: 'Founder story', width: '56%', tone: 'from-emerald-500 to-lime-400' },
+                      ].map((item, index) => (
+                        <motion.div
+                          key={item.name}
+                          initial={{ opacity: 0, x: -10 }}
+                          whileInView={{ opacity: 1, x: 0 }}
+                          viewport={SECTION_VIEWPORT}
+                          transition={{ duration: 0.4, delay: 0.08 * index, ease: 'easeOut' }}
+                        >
+                          <div className="flex items-center justify-between text-sm text-blue-100/78">
+                            <span>{item.name}</span>
+                            <span className="text-xs font-semibold uppercase tracking-[0.14em] text-blue-100/45">{item.width}</span>
+                          </div>
+                          <div className="mt-2 h-2.5 overflow-hidden rounded-full bg-white/10">
+                            <motion.div
+                              className={`h-full rounded-full bg-gradient-to-r ${item.tone}`}
+                              initial={{ width: 0 }}
+                              whileInView={{ width: item.width }}
+                              viewport={SECTION_VIEWPORT}
+                              transition={{ duration: 0.8, delay: 0.12 + index * 0.08, ease: 'easeOut' }}
+                            />
+                          </div>
+                        </motion.div>
+                      ))}
+                    </div>
+                  </div>
+                </div>
+
+                <div className="mt-5 rounded-[1.5rem] border border-white/10 bg-white/8 p-5">
+                  <div className="flex items-center justify-between">
+                    <div>
+                      <p className="text-[11px] font-semibold uppercase tracking-[0.16em] text-blue-100/50">AI opportunities</p>
+                      <h4 className="mt-1 text-lg font-semibold tracking-tight text-white">What to fix or lean into next</h4>
+                    </div>
+                  </div>
+                  <div className="mt-5 grid gap-3 lg:grid-cols-3">
+                    {ANALYSIS_OPPORTUNITIES.map((item, index) => (
+                      <motion.div
+                        key={item.title}
+                        initial={{ opacity: 0, y: 10 }}
+                        whileInView={{ opacity: 1, y: 0 }}
+                        viewport={SECTION_VIEWPORT}
+                        transition={{ duration: 0.4, delay: 0.08 * index, ease: 'easeOut' }}
+                        className="rounded-2xl border border-white/10 bg-white/8 p-4"
+                      >
+                        <div className="flex items-center justify-between gap-3">
+                          <span className="text-[11px] font-semibold uppercase tracking-[0.14em] text-blue-100/48">{item.type}</span>
+                          <span className={`rounded-md px-2 py-1 text-[10px] font-semibold uppercase tracking-[0.14em] ${
+                            item.severity === 'High'
+                              ? 'bg-rose-500/10 text-rose-200'
+                              : item.severity === 'Medium'
+                                ? 'bg-amber-500/10 text-amber-200'
+                                : 'bg-emerald-500/10 text-emerald-200'
+                          }`}>
+                            {item.severity}
+                          </span>
+                        </div>
+                        <h5 className="mt-2 text-sm font-semibold leading-6 text-white">{item.title}</h5>
+                        <p className="mt-2 text-sm leading-6 text-blue-100/65">{item.action}</p>
+                      </motion.div>
+                    ))}
+                  </div>
+                </div>
+              </div>
+            </div>
+          </motion.div>
+        </motion.div>
       </div>
     </section>
   );
@@ -588,36 +1574,35 @@ function OutputShowcase() {
 // ─── Pricing ──────────────────────────────────────────────────────────────────
 function Pricing() {
   return (
-    <section id="pricing" className="py-24 bg-white">
-      <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8">
+    <section id="pricing" className="relative overflow-hidden py-24 bg-gray-50">
+      <PricingSubtleStars />
+      <div className="relative max-w-7xl mx-auto px-4 sm:px-6 lg:px-8">
         <div className="text-center mb-16">
           <span className="text-sm font-semibold text-blue-600 uppercase tracking-widest">Pricing</span>
-          <h2 className="text-3xl md:text-4xl font-bold text-gray-900 mt-2">Pay only for what you process</h2>
-          <p className="text-gray-500 mt-4 max-w-xl mx-auto text-base">
-            Credit-based pricing. Choose the processing level that fits your workflow — upgrade anytime.
+          <h2 className="text-3xl md:text-4xl font-bold text-slate-900 mt-2">Pay only for what you process</h2>
+          <p className="text-slate-600 mt-4 max-w-xl mx-auto text-base">
+            Credit-based pricing. Pick the transcript quality you want, then generate whichever content types you need.
           </p>
         </div>
 
-        <div className="max-w-5xl mx-auto mb-10 rounded-xl border border-blue-100 bg-blue-50 px-5 py-3.5 flex items-start gap-3">
-          <Clock className="h-4 w-4 text-blue-500 flex-shrink-0 mt-0.5" />
-          <p className="text-sm text-blue-700">
-            <span className="font-semibold">100% Manual Triggers</span> — You control what processes and when, so you never waste credits. A built-in cost dashboard shows your usage in real time.
+        <div className="max-w-5xl mx-auto mb-10 rounded-xl border border-slate-200 bg-transparent px-5 py-3.5 flex items-start gap-3">
+          <Clock className="h-4 w-4 text-slate-500 flex-shrink-0 mt-0.5" />
+          <p className="text-sm text-slate-700">
+            <span className="font-semibold">100% Manual Triggers</span> — You decide what runs and when, so you never waste credits. A built-in cost dashboard shows your usage in real time.
           </p>
         </div>
 
-        <div className="grid md:grid-cols-3 gap-8 max-w-5xl mx-auto">
+        <div className="grid md:grid-cols-2 gap-8 max-w-4xl mx-auto">
           {TIERS.map(({ name, price, unit, badge, description, highlight, borderClass, ctaClass, features }, idx) => (
             <div
               key={name}
-              className={`relative rounded-2xl border-2 ${borderClass} p-8 flex flex-col ${highlight ? 'shadow-xl shadow-blue-100' : ''} motion-safe:animate-fade-up${idx === 1 ? '-200' : idx === 2 ? '-400' : ''
-                }`}
+              className={`relative rounded-2xl border-2 ${borderClass} p-8 flex flex-col ${highlight ? 'shadow-xl shadow-blue-100' : ''} motion-safe:animate-fade-up${idx === 1 ? '-200' : idx === 2 ? '-400' : ''}`}
             >
               {badge && (
                 <div className={`absolute -top-3.5 left-1/2 -translate-x-1/2 px-3 py-1 rounded-full text-xs font-bold motion-safe:animate-breathe ${highlight ? 'bg-blue-600 text-white' : 'bg-violet-600 text-white'}`}>
                   {badge}
                 </div>
               )}
-
               <div className="mb-6">
                 <h3 className="text-lg font-bold text-gray-900 mb-1">{name}</h3>
                 <div className="flex items-baseline gap-1">
@@ -626,7 +1611,6 @@ function Pricing() {
                 </div>
                 <p className="text-sm text-gray-500 mt-3 leading-relaxed">{description}</p>
               </div>
-
               <ul className="space-y-3 flex-1 mb-8">
                 {features.map((f) => (
                   <li key={f} className="flex items-start gap-2.5">
@@ -635,19 +1619,15 @@ function Pricing() {
                   </li>
                 ))}
               </ul>
-
-              <Link
-                href="/auth/signup"
-                className={`block text-center py-3 rounded-xl text-sm font-semibold transition-colors ${ctaClass}`}
-              >
+              <Link href="/auth/signup" className={`block text-center py-3 rounded-xl text-sm font-semibold transition-colors ${ctaClass}`}>
                 Get started with {name}
               </Link>
             </div>
           ))}
         </div>
 
-        <p className="text-center text-sm text-gray-400 mt-8">
-          All prices include a 35% service markup. No subscriptions — buy credits and process on demand.
+        <p className="mt-8 text-center text-sm text-slate-500">
+          Prices reflect AI processing, transcription, speaker intelligence, and platform costs. No subscriptions — buy credits and process on demand.
         </p>
       </div>
     </section>
@@ -656,22 +1636,28 @@ function Pricing() {
 
 // ─── Final CTA ────────────────────────────────────────────────────────────────
 function FinalCTA() {
+  const stats = [
+    { value: 11, suffix: '', label: 'Content types' },
+    { value: 5, suffix: ' min', label: 'Per episode' },
+    { value: 2, suffix: '', label: 'Processing tiers' },
+  ] as const;
+
   return (
-    <section className="relative overflow-hidden bg-gradient-to-br from-slate-900 via-blue-950 to-indigo-950 py-24">
+    <section className="relative overflow-hidden bg-gradient-to-br from-slate-100 via-blue-50 to-indigo-100 py-24 dark:from-slate-900 dark:via-blue-950 dark:to-indigo-950">
       <div className="absolute inset-0 pointer-events-none">
         <div className="absolute top-0 left-1/3 w-72 h-72 bg-blue-600/15 rounded-full blur-3xl" />
         <div className="absolute bottom-0 right-1/3 w-72 h-72 bg-violet-600/15 rounded-full blur-3xl" />
       </div>
 
       <div className="relative z-10 max-w-3xl mx-auto px-4 sm:px-6 lg:px-8 text-center">
-        <div className="inline-flex h-14 w-14 items-center justify-center rounded-2xl bg-blue-500/20 border border-blue-400/30 mb-6 motion-safe:animate-fade-up">
-          <Mic className="h-6 w-6 text-blue-300" />
+        <div className="mb-6 inline-flex h-14 w-14 items-center justify-center rounded-2xl border border-blue-200 bg-blue-50 motion-safe:animate-fade-up dark:border-blue-400/30 dark:bg-blue-500/20">
+          <Mic className="h-6 w-6 text-blue-600 dark:text-blue-300" />
         </div>
-        <h2 className="text-3xl md:text-4xl font-bold text-white mb-4 leading-tight motion-safe:animate-fade-up-200">
+        <h2 className="mb-4 text-3xl font-bold leading-tight text-slate-900 motion-safe:animate-fade-up-200 dark:text-white md:text-4xl">
           Start Repurposing Today
         </h2>
-        <p className="text-blue-200/70 text-lg mb-10 leading-relaxed motion-safe:animate-fade-up-400">
-          "Transform one recording into a month of content. Instantly."
+        <p className="mb-10 text-lg leading-relaxed text-slate-600 motion-safe:animate-fade-up-400 dark:text-blue-200/70">
+          Turn one recording into transcripts, insights, and 11 publish-ready content types.
         </p>
 
         <div className="flex flex-col sm:flex-row items-center justify-center gap-4 motion-safe:animate-fade-up-600">
@@ -684,17 +1670,19 @@ function FinalCTA() {
           </Link>
           <Link
             href="/auth/login"
-            className="inline-flex items-center gap-2 text-white/70 hover:text-white font-medium px-6 py-4 rounded-xl border border-white/15 hover:border-white/30 transition-colors text-sm"
+            className="inline-flex items-center gap-2 rounded-xl border border-slate-300 px-6 py-4 text-sm font-medium text-slate-700 transition-colors hover:border-slate-400 hover:bg-white/70 dark:border-white/15 dark:text-white/70 dark:hover:border-white/30 dark:hover:text-white"
           >
             Already have an account? Log in
           </Link>
         </div>
 
-        <div className="mt-12 flex items-center justify-center gap-10 text-sm">
-          {[['8', 'Content formats'], ['5 min', 'Per episode'], ['No subscription', 'Pay as you go']].map(([stat, label], idx) => (
-            <div key={stat} className={`text-center motion-safe:animate-fade-in${idx === 1 ? '-200' : idx === 2 ? '-400' : ''}`}>
-              <div className="font-bold text-white text-base">{stat}</div>
-              <div className="text-blue-300/60 text-xs mt-0.5">{label}</div>
+        <div className="mt-12 flex items-center justify-center gap-6 sm:gap-10 text-sm">
+          {stats.map((stat, idx) => (
+            <div key={stat.label} className={`text-center motion-safe:animate-fade-in${idx === 1 ? '-200' : idx === 2 ? '-400' : ''}`}>
+              <div className="text-base font-bold text-slate-900 dark:text-white">
+                <CountUp to={stat.value} suffix={stat.suffix} />
+              </div>
+              <div className="mt-0.5 text-xs text-slate-500 dark:text-blue-300/60">{stat.label}</div>
             </div>
           ))}
         </div>
@@ -706,44 +1694,39 @@ function FinalCTA() {
 // ─── Footer ───────────────────────────────────────────────────────────────────
 function Footer() {
   return (
-    <footer className="bg-gray-950 text-gray-400 py-14 border-t border-gray-900 motion-safe:animate-fade-in">
+    <footer className="border-t border-slate-200 bg-slate-100 py-14 text-slate-500 motion-safe:animate-fade-in dark:border-gray-900 dark:bg-gray-950 dark:text-gray-400">
       <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8">
         <div className="grid gap-10 md:grid-cols-4">
           <div className="md:col-span-2">
-            <div className="flex items-center gap-2.5">
-              <div className="h-8 w-8 bg-blue-600 rounded-lg flex items-center justify-center flex-shrink-0">
-                <Mic className="h-4 w-4 text-white" />
-              </div>
-              <span className="text-base font-semibold text-gray-200">AudioRepurpose</span>
-            </div>
-            <p className="mt-4 text-sm text-gray-500 max-w-md">
-              Turn one recording into a full content suite with accurate speakers, clear summaries,
-              and platform-ready outputs.
+            <BrandLogo theme="dark" />
+            <p className="mt-4 max-w-md text-sm text-slate-500 dark:text-gray-500">
+              Turn one recording into a full content suite with accurate speakers, clean summaries, and platform-ready outputs.
             </p>
           </div>
           <div>
-            <p className="text-xs font-semibold uppercase tracking-widest text-gray-500">Product</p>
+            <p className="text-xs font-semibold uppercase tracking-widest text-slate-500 dark:text-gray-500">Product</p>
             <div className="mt-4 space-y-2 text-sm">
-              <a href="#pain-points" className="block hover:text-gray-200 transition-colors">Problems we fix</a>
-              <a href="#features" className="block hover:text-gray-200 transition-colors">Features</a>
-              <a href="#how-it-works" className="block hover:text-gray-200 transition-colors">How it works</a>
-              <a href="#pricing" className="block hover:text-gray-200 transition-colors">Pricing</a>
+              <a href="#speaker-intelligence" className="block transition-colors hover:text-slate-900 dark:hover:text-gray-200">Speaker Intelligence</a>
+              <a href="#how-it-works" className="block transition-colors hover:text-slate-900 dark:hover:text-gray-200">How it works</a>
+              <a href="#outputs" className="block transition-colors hover:text-slate-900 dark:hover:text-gray-200">Content outputs</a>
+              <a href="#pricing" className="block transition-colors hover:text-slate-900 dark:hover:text-gray-200">Pricing</a>
             </div>
           </div>
           <div>
-            <p className="text-xs font-semibold uppercase tracking-widest text-gray-500">Account</p>
+            <p className="text-xs font-semibold uppercase tracking-widest text-slate-500 dark:text-gray-500">Account</p>
             <div className="mt-4 space-y-2 text-sm">
-              <Link href="/auth/login" className="block hover:text-gray-200 transition-colors">Log In</Link>
-              <Link href="/auth/signup" className="block hover:text-gray-200 transition-colors">Get Started</Link>
-              <Link href="/auth/signup" className="block hover:text-gray-200 transition-colors">Start Free</Link>
+              <Link href="/auth/login" className="block transition-colors hover:text-slate-900 dark:hover:text-gray-200">Log In</Link>
+              <Link href="/auth/signup" className="block transition-colors hover:text-slate-900 dark:hover:text-gray-200">Get Started Free</Link>
+              <Link href="/auth/demo" className="block transition-colors hover:text-slate-900 dark:hover:text-gray-200">Try Demo</Link>
             </div>
           </div>
         </div>
-        <div className="mt-10 flex flex-col sm:flex-row items-center justify-between gap-4 text-xs text-gray-600">
+        <div className="mt-10 flex flex-col items-center justify-between gap-4 text-xs text-slate-500 dark:text-gray-600 sm:flex-row">
           <p>&copy; {new Date().getFullYear()} AudioRepurpose. All rights reserved.</p>
           <div className="flex items-center gap-4">
-            <a href="#pricing" className="hover:text-gray-300 transition-colors">Pricing</a>
-            <a href="#features" className="hover:text-gray-300 transition-colors">Features</a>
+            <a href="#pricing" className="transition-colors hover:text-slate-700 dark:hover:text-gray-300">Pricing</a>
+            <Link href="/privacy" className="transition-colors hover:text-slate-700 dark:hover:text-gray-300">Privacy</Link>
+            <Link href="/terms" className="transition-colors hover:text-slate-700 dark:hover:text-gray-300">Terms</Link>
           </div>
         </div>
       </div>
@@ -756,18 +1739,22 @@ export default function LandingPage() {
   const [mobileOpen, setMobileOpen] = useState(false);
 
   return (
-    <div className="min-h-screen bg-white">
-      <Navbar open={mobileOpen} setOpen={setMobileOpen} />
-      <main>
-        <Hero />
-        <PainPoints />
-        <HowItWorks />
-        <Features />
-        <OutputShowcase />
-        <Pricing />
-        <FinalCTA />
-      </main>
-      <Footer />
-    </div>
+    <MotionConfig reducedMotion="user">
+      <ScrollProgressBar />
+      <div className="min-h-screen bg-white">
+        <Navbar open={mobileOpen} setOpen={setMobileOpen} />
+        <main>
+          <Hero />
+          <SocialProofStrip />
+          <SpeakerIntelligenceSection />
+          <HowItWorks />
+          <ContentOutputsSection />
+          <AnalysisSection />
+          <Pricing />
+          <FinalCTA />
+        </main>
+        <Footer />
+      </div>
+    </MotionConfig>
   );
 }

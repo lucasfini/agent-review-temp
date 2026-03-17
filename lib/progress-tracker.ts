@@ -1,6 +1,6 @@
 // Progress tracking utility for transcription pipeline
 import { supabaseAdmin } from './supabase/server';
-import { getStageDescription, type ProcessingStage } from './tier-progress-config';
+import { type ProcessingStage } from './tier-progress-config';
 
 export { type ProcessingStage } from './tier-progress-config';
 
@@ -36,6 +36,8 @@ export async function updateProcessingProgress(
       updateData.status = 'completed';
     } else if (stage === 'failed') {
       updateData.status = 'failed';
+    } else if (stage === 'cancelled') {
+      updateData.status = 'cancelled';
     } else if (stage === 'uploading') {
       updateData.status = 'uploading';
     } else {

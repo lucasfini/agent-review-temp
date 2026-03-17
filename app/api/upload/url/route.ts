@@ -12,14 +12,13 @@ import {
 export const runtime = 'nodejs';
 export const dynamic = 'force-dynamic';
 
-type PerformanceLevel = 'basic' | 'pro' | 'premium';
+type PerformanceLevel = 'standard' | 'pro';
 
 const normalizePerformanceLevel = (value?: string | null): PerformanceLevel => {
-  if (value === 'basic' || value === 'pro' || value === 'premium') return value;
-  if (value === 'low') return 'basic';
-  if (value === 'medium') return 'pro';
-  if (value === 'high') return 'premium';
-  return 'premium';
+  if (value === 'standard' || value === 'pro') return value;
+  if (value === 'basic' || value === 'low') return 'standard';
+  if (value === 'premium' || value === 'high' || value === 'medium') return 'pro';
+  return 'pro';
 };
 
 const sanitizeTitle = (title: string) => {
@@ -138,6 +137,7 @@ export async function POST(request: NextRequest) {
       title: finalTitle
     });
   } catch (error) {
+    console.error('[URL IMPORT] Failed:', error);
     return NextResponse.json(
       { error: error instanceof Error ? error.message : 'URL import failed' },
       { status: 500 }

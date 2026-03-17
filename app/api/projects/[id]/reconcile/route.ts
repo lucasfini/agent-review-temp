@@ -5,8 +5,10 @@ import { generatePodcastSummary } from '@/lib/content-generators/summary';
 import { detectPodcastChapters } from '@/lib/content-generators/chapters';
 import { extractKeyTakeaways } from '@/lib/content-generators/takeaways';
 import { extractSocialQuotes } from '@/lib/content-generators/quotes';
+import { processInsightsForProject } from '@/lib/insight-extraction';
 import { checkIdempotentUsage } from '@/lib/billing/track-usage';
 import { getOpenAIApiKeyForUser } from '@/lib/openai/consent';
+import { aiRatelimit } from '@/lib/rate-limit';
 
 export const dynamic = 'force-dynamic';
 export const maxDuration = 300;
@@ -70,11 +72,26 @@ async function setFlag(
  * Returns: { reconciled: boolean, flagFixed: string[], generated: string[] }
  */
 export async function POST(
-  _request: NextRequest,
+  request: NextRequest,
   { params }: { params: Promise<{ id: string }> }
 ) {
   try {
     const { id: projectId } = await params;
+
+    const authHeader = request.headers.get('Authorization');
+    if (!authHeader) {
+      return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
+    }
+    const token = authHeader.replace('Bearer ', '');
+    const { data: { user }, error: authError } = await supabaseAdmin.auth.getUser(token);
+    if (authError || !user) {
+      return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
+    }
+
+    const { success } = await aiRatelimit.limit(user.id);
+    if (!success) {
+      return NextResponse.json({ error: 'Rate limit exceeded for AI operations. Please wait a moment.' }, { status: 429 });
+    }
 
     // Fetch project with all relevant content fields
     const { data: project, error } = await (supabaseAdmin as any)
@@ -89,7 +106,13 @@ export async function POST(
       return NextResponse.json({ error: 'Project not found' }, { status: 404 });
     }
 
-    const tier = (project.performance_level || 'basic') as TierLevel;
+    // Ownership check
+    if (project.user_id !== user.id) {
+      return NextResponse.json({ error: 'Forbidden' }, { status: 403 });
+    }
+
+    const rawLevel = project.performance_level || 'standard';
+    const tier = (rawLevel === 'basic' ? 'standard' : rawLevel === 'premium' ? 'pro' : rawLevel) as TierLevel;
     const features = getTierFeatures(tier);
     const aiProcessing: AIProcessingFlags =
       project.speaker_data?.detectionMetadata?.aiProcessing || {};
@@ -124,6 +147,7 @@ export async function POST(
     check('chapters', features.chapterDetection, project.chapters);
     check('takeaways', features.keyTakeaways, project.key_takeaways);
     check('quotes', features.quotesExtraction, project.social_quotes);
+    check('insights', features.insights, null);
 
     // ── Fix flag-only items (no LLM call) ───────────────────────────────────
     let currentSpeakerData = project.speaker_data;
@@ -229,6 +253,17 @@ export async function POST(
               social_quotes: result.quotes,
             });
             generated.push('quotes');
+            break;
+          }
+
+          case 'insights': {
+            const result = await processInsightsForProject(projectId, userId);
+            if (result.success) {
+              currentSpeakerData = await setFlag(projectId, currentSpeakerData, 'insights');
+              generated.push('insights');
+            } else {
+              throw new Error(result.error || 'Insight extraction failed');
+            }
             break;
           }
         }

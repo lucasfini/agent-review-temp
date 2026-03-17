@@ -2,7 +2,7 @@ import { Skeleton } from "@/components/ui/skeleton";
 
 export default function UploadLoading() {
   return (
-    <div className="p-6 max-w-6xl mx-auto animate-in fade-in duration-200">
+    <div className="p-3 sm:p-6 max-w-6xl mx-auto animate-in fade-in duration-200">
       {/* Header */}
       <div className="mb-8 space-y-2">
         <Skeleton className="h-7 w-40" />

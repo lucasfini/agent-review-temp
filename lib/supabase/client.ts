@@ -26,10 +26,13 @@ const createMockQueryBuilder = () => {
     'upsert',
     'delete',
     'eq',
+    'is',
     'neq',
+    'not',
     'in',
     'like',
     'ilike',
+    'lte',
     'order',
     'limit',
     'range',
@@ -60,7 +63,7 @@ const createMockStorageBucket = () => ({
   getPublicUrl: createMockFunction(() => ({ data: { publicUrl: '' }, error: null })),
 });
 
-export const createMockSupabaseClient = (): SupabaseClient<Database> => {
+export const createMockSupabaseClient = (): SupabaseClient<any> => {
   const authResponse = async () => ({ data: { user: null, session: null }, error: null });
   const sessionResponse = async () => ({ data: { session: null }, error: null });
 
@@ -91,16 +94,16 @@ export const createMockSupabaseClient = (): SupabaseClient<Database> => {
     })),
     removeChannel: createMockFunction(() => undefined),
     getChannels: createMockFunction(() => []),
-  } as unknown as SupabaseClient<Database>;
+  } as unknown as SupabaseClient<any>;
 };
 
 const supabaseUrl = process.env.NEXT_PUBLIC_SUPABASE_URL || ''
 const supabaseAnonKey = process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY || ''
 const isTestEnv = process.env.NODE_ENV === 'test'
 
-export const supabase: SupabaseClient<Database> = isTestEnv
+export const supabase: SupabaseClient<any> = isTestEnv
   ? createMockSupabaseClient()
-  : createBrowserClient<Database>(supabaseUrl, supabaseAnonKey, {
+  : createBrowserClient<any>(supabaseUrl, supabaseAnonKey, {
       auth: {
         flowType: 'pkce',
       },
@@ -134,6 +137,9 @@ export type Database = {
           id: string
           email: string
           full_name: string | null
+          username: string | null
+          first_name: string | null
+          last_name: string | null
           avatar_url: string | null
           subscription_plan: 'free' | 'creator' | 'professional' | 'agency'
           subscription_status: 'inactive' | 'active' | 'past_due' | 'canceled'
@@ -147,6 +153,9 @@ export type Database = {
           id: string
           email: string
           full_name?: string | null
+          username?: string | null
+          first_name?: string | null
+          last_name?: string | null
           avatar_url?: string | null
           subscription_plan?: 'free' | 'creator' | 'professional' | 'agency'
           subscription_status?: 'inactive' | 'active' | 'past_due' | 'canceled'
@@ -160,6 +169,9 @@ export type Database = {
           id?: string
           email?: string
           full_name?: string | null
+          username?: string | null
+          first_name?: string | null
+          last_name?: string | null
           avatar_url?: string | null
           subscription_plan?: 'free' | 'creator' | 'professional' | 'agency'
           subscription_status?: 'inactive' | 'active' | 'past_due' | 'canceled'
@@ -179,7 +191,9 @@ export type Database = {
           audio_file_name: string | null
           audio_file_size: number | null
           audio_duration: number | null
-          status: 'uploading' | 'processing' | 'completed' | 'failed'
+          audio_expires_at: string | null
+          audio_deleted_at: string | null
+          status: 'uploading' | 'processing' | 'completed' | 'failed' | 'cancelled'
           transcription_text: string | null
           preset_speakers: any[] | null
           speaker_keywords: any[] | null
@@ -197,7 +211,9 @@ export type Database = {
           audio_file_name?: string | null
           audio_file_size?: number | null
           audio_duration?: number | null
-          status?: 'uploading' | 'processing' | 'completed' | 'failed'
+          audio_expires_at?: string | null
+          audio_deleted_at?: string | null
+          status?: 'uploading' | 'processing' | 'completed' | 'failed' | 'cancelled'
           transcription_text?: string | null
           preset_speakers?: any[] | null
           speaker_keywords?: any[] | null
@@ -215,7 +231,9 @@ export type Database = {
           audio_file_name?: string | null
           audio_file_size?: number | null
           audio_duration?: number | null
-          status?: 'uploading' | 'processing' | 'completed' | 'failed'
+          audio_expires_at?: string | null
+          audio_deleted_at?: string | null
+          status?: 'uploading' | 'processing' | 'completed' | 'failed' | 'cancelled'
           transcription_text?: string | null
           preset_speakers?: any[] | null
           speaker_keywords?: any[] | null

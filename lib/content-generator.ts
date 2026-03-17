@@ -138,7 +138,11 @@ function buildPrompt(input: GenerationInput, count: number): string {
     'show_notes': 'showNotes',
     'quote_graphic': 'quoteGraphics',
     'social_post': 'twitterThreads', // default fallback
-    'audiogram_clip': 'quoteGraphics' // fallback
+    'audiogram_clip': 'quoteGraphics', // fallback
+    'youtube_description': 'youtubeDescription',
+    'podcast_episode_description': 'podcastEpisodeDescription',
+    'short_form_video_script': 'shortFormVideoScript',
+    'facebook_post': 'facebookPost'
   };
 
   const contentTypeKey = contentTypeKeyMap[outputType] || 'twitterThreads';

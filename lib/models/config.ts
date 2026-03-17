@@ -48,7 +48,7 @@ export const MODEL_PROVIDERS: Record<string, ModelProvider> = {
   openai: {
     id: 'openai',
     name: 'OpenAI',
-    apiKeyEnv: 'OPENAI_API_KEY',
+    apiKeyEnv: 'OPENAI_API_KEY_OPTIN',
     supportsStreaming: true,
     rateLimits: {
       requestsPerMinute: 10000,

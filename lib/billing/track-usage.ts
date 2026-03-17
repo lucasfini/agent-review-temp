@@ -76,12 +76,22 @@ export async function trackOpenAIUsage(params: {
   purpose?: string;
   metadata?: Record<string, unknown>;
   shouldDebit?: boolean;
+  strictBilling?: boolean;
 }): Promise<{
   usageEventId: string;
   billedCost: number;
   rawCost: number;
 }> {
-  const { userId, projectId, response, modelName = 'gpt-4o-mini', purpose, metadata, shouldDebit = true } = params;
+  const {
+    userId,
+    projectId,
+    response,
+    modelName = 'gpt-4o-mini',
+    purpose,
+    metadata,
+    shouldDebit = true,
+    strictBilling = false,
+  } = params;
 
   // Extract token usage (including cached tokens)
   const usage = extractOpenAIUsage(response);
@@ -102,45 +112,57 @@ export async function trackOpenAIUsage(params: {
   const totalBilledCost = Number((uncachedInputCost.billedCost + cachedInputCost.billedCost + outputCost.billedCost).toFixed(6));
 
   // Log combined usage event (single event per API call for cleaner history)
-  const usageEvent = await logUsageEvent({
-    userId,
-    projectId,
-    serviceKey: inputServiceKey,
-    serviceName: `OpenAI ${modelName}`,
-    provider: 'openai',
-    units: usage.promptTokens + usage.completionTokens,
-    unitType: 'tokens',
-    rawCost: totalRawCost,
-    marginPercent: 35,
-    billedCost: totalBilledCost,
-    metadata: {
-      model: modelName,
-      purpose,
-      inputTokens: usage.promptTokens,
-      cachedTokens: usage.cachedTokens,
-      uncachedTokens: usage.uncachedTokens,
-      outputTokens: usage.completionTokens,
-      totalTokens: usage.totalTokens,
-      ...metadata,
-    },
-  });
+  let usageEventId = '';
 
-  // Debit credits if requested
-  if (shouldDebit) {
-    await debitCredit(userId, totalBilledCost, usageEvent.id, {
-      reason: `OpenAI ${modelName} - ${purpose || 'API call'}`,
+  try {
+    const usageEvent = await logUsageEvent({
+      userId,
+      projectId,
+      serviceKey: inputServiceKey,
+      serviceName: `OpenAI ${modelName}`,
+      provider: 'openai',
+      units: usage.promptTokens + usage.completionTokens,
+      unitType: 'tokens',
+      rawCost: totalRawCost,
+      marginPercent: 35,
+      billedCost: totalBilledCost,
       metadata: {
-        projectId,
         model: modelName,
+        purpose,
         inputTokens: usage.promptTokens,
         cachedTokens: usage.cachedTokens,
+        uncachedTokens: usage.uncachedTokens,
         outputTokens: usage.completionTokens,
+        totalTokens: usage.totalTokens,
+        ...metadata,
       },
     });
+    usageEventId = usageEvent.id;
+  } catch (error) {
+    if (strictBilling) throw error;
+    console.error('[BILLING] Failed to log OpenAI usage event, continuing:', error);
+  }
+
+  if (shouldDebit) {
+    try {
+      await debitCredit(userId, totalBilledCost, usageEventId || undefined, {
+        reason: `OpenAI ${modelName} - ${purpose || 'API call'}`,
+        metadata: {
+          projectId,
+          model: modelName,
+          inputTokens: usage.promptTokens,
+          cachedTokens: usage.cachedTokens,
+          outputTokens: usage.completionTokens,
+        },
+      });
+    } catch (error) {
+      if (strictBilling) throw error;
+      console.error('[BILLING] Failed to debit OpenAI usage, continuing:', error);
+    }
   }
 
   return {
-    usageEventId: usageEvent.id,
+    usageEventId,
     billedCost: totalBilledCost,
     rawCost: totalRawCost,
   };
@@ -185,12 +207,13 @@ export async function trackAnthropicUsage(params: {
   purpose?: string;
   metadata?: Record<string, unknown>;
   shouldDebit?: boolean;
+  strictBilling?: boolean;
 }): Promise<{
   usageEventId: string;
   billedCost: number;
   rawCost: number;
 }> {
-  const { userId, projectId, response, modelName, purpose, metadata, shouldDebit = true } = params;
+  const { userId, projectId, response, modelName, purpose, metadata, shouldDebit = true, strictBilling = false } = params;
 
   // Extract token usage
   const usage = extractAnthropicUsage(response);
@@ -209,58 +232,69 @@ export async function trackAnthropicUsage(params: {
   );
 
   // Log usage event
-  const usageEvent = await logUsageEvent({
-    userId,
-    projectId,
-    serviceKey: inputServiceKey,
-    serviceName: `Claude ${modelName} Input`,
-    provider: 'anthropic',
-    units: usage.inputTokens,
-    unitType: 'input_tokens',
-    rawCost: costResult.breakdown.input.rawCost,
-    marginPercent: 35,
-    billedCost: costResult.breakdown.input.billedCost,
-    metadata: {
-      model: modelName,
-      purpose,
-      ...metadata,
-    },
-  });
+  let usageEventId = '';
 
-  // Log output tokens
-  await logUsageEvent({
-    userId,
-    projectId,
-    serviceKey: outputServiceKey,
-    serviceName: `Claude ${modelName} Output`,
-    provider: 'anthropic',
-    units: usage.outputTokens,
-    unitType: 'output_tokens',
-    rawCost: costResult.breakdown.output.rawCost,
-    marginPercent: 35,
-    billedCost: costResult.breakdown.output.billedCost,
-    metadata: {
-      model: modelName,
-      purpose,
-      ...metadata,
-    },
-  });
-
-  // Debit credits if requested
-  if (shouldDebit) {
-    await debitCredit(userId, costResult.billedCost, usageEvent.id, {
-      reason: `Claude ${modelName} - ${purpose || 'API call'}`,
+  try {
+    const usageEvent = await logUsageEvent({
+      userId,
+      projectId,
+      serviceKey: inputServiceKey,
+      serviceName: `Claude ${modelName} Input`,
+      provider: 'anthropic',
+      units: usage.inputTokens,
+      unitType: 'input_tokens',
+      rawCost: costResult.breakdown.input.rawCost,
+      marginPercent: 35,
+      billedCost: costResult.breakdown.input.billedCost,
       metadata: {
-        projectId,
         model: modelName,
-        inputTokens: usage.inputTokens,
-        outputTokens: usage.outputTokens,
+        purpose,
+        ...metadata,
       },
     });
+    usageEventId = usageEvent.id;
+
+    await logUsageEvent({
+      userId,
+      projectId,
+      serviceKey: outputServiceKey,
+      serviceName: `Claude ${modelName} Output`,
+      provider: 'anthropic',
+      units: usage.outputTokens,
+      unitType: 'output_tokens',
+      rawCost: costResult.breakdown.output.rawCost,
+      marginPercent: 35,
+      billedCost: costResult.breakdown.output.billedCost,
+      metadata: {
+        model: modelName,
+        purpose,
+        ...metadata,
+      },
+    });
+  } catch (error) {
+    if (strictBilling) throw error;
+    console.error('[BILLING] Failed to log Anthropic usage event, continuing:', error);
+  }
+
+  if (shouldDebit) {
+    try {
+      await debitCredit(userId, costResult.billedCost, usageEventId || undefined, {
+        reason: `Claude ${modelName} - ${purpose || 'API call'}`,
+        metadata: {
+          projectId,
+          model: modelName,
+          inputTokens: usage.inputTokens,
+          outputTokens: usage.outputTokens,
+        },
+      });
+    } catch (error) {
+      if (strictBilling) throw error;
+      console.error('[BILLING] Failed to debit Anthropic usage, continuing:', error);
+    }
   }
 
   return {
-    usageEventId: usageEvent.id,
+    usageEventId,
     billedCost: costResult.billedCost,
     rawCost: costResult.rawCost,
   };
@@ -285,47 +319,60 @@ export async function trackAssemblyAIUsage(params: {
   durationSeconds: number;
   metadata?: Record<string, unknown>;
   shouldDebit?: boolean;
+  strictBilling?: boolean;
 }): Promise<{
   usageEventId: string;
   billedCost: number;
   rawCost: number;
 }> {
-  const { userId, projectId, durationSeconds, metadata, shouldDebit = true } = params;
+  const { userId, projectId, durationSeconds, metadata, shouldDebit = true, strictBilling = false } = params;
 
   // Calculate costs
   const costResult = calculateServiceCost('assemblyai_transcription', durationSeconds);
 
   // Log usage event
-  const usageEvent = await logUsageEvent({
-    userId,
-    projectId,
-    serviceKey: 'assemblyai_transcription',
-    serviceName: 'AssemblyAI Transcription',
-    provider: 'assemblyai',
-    units: durationSeconds,
-    unitType: 'seconds',
-    rawCost: costResult.rawCost,
-    marginPercent: costResult.marginPercent,
-    billedCost: costResult.billedCost,
-    metadata: {
-      durationMinutes: durationSeconds / 60,
-      ...metadata,
-    },
-  });
+  let usageEventId = '';
 
-  // Debit credits if requested
-  if (shouldDebit) {
-    await debitCredit(userId, costResult.billedCost, usageEvent.id, {
-      reason: `AssemblyAI Transcription - ${(durationSeconds / 60).toFixed(1)} minutes`,
+  try {
+    const usageEvent = await logUsageEvent({
+      userId,
+      projectId,
+      serviceKey: 'assemblyai_transcription',
+      serviceName: 'AssemblyAI Transcription',
+      provider: 'assemblyai',
+      units: durationSeconds,
+      unitType: 'seconds',
+      rawCost: costResult.rawCost,
+      marginPercent: costResult.marginPercent,
+      billedCost: costResult.billedCost,
       metadata: {
-        projectId,
-        durationSeconds,
+        durationMinutes: durationSeconds / 60,
+        ...metadata,
       },
     });
+    usageEventId = usageEvent.id;
+  } catch (error) {
+    if (strictBilling) throw error;
+    console.error('[BILLING] Failed to log AssemblyAI usage event, continuing:', error);
+  }
+
+  if (shouldDebit) {
+    try {
+      await debitCredit(userId, costResult.billedCost, usageEventId || undefined, {
+        reason: `AssemblyAI Transcription - ${(durationSeconds / 60).toFixed(1)} minutes`,
+        metadata: {
+          projectId,
+          durationSeconds,
+        },
+      });
+    } catch (error) {
+      if (strictBilling) throw error;
+      console.error('[BILLING] Failed to debit AssemblyAI usage, continuing:', error);
+    }
   }
 
   return {
-    usageEventId: usageEvent.id,
+    usageEventId,
     billedCost: costResult.billedCost,
     rawCost: costResult.rawCost,
   };
@@ -354,12 +401,13 @@ export async function trackBatchUsage(params: {
     metadata?: Record<string, unknown>;
   }>;
   shouldDebit?: boolean;
+  strictBilling?: boolean;
 }): Promise<{
   totalBilledCost: number;
   totalRawCost: number;
   usageEventIds: string[];
 }> {
-  const { userId, projectId, usageEvents, shouldDebit = true } = params;
+  const { userId, projectId, usageEvents, shouldDebit = true, strictBilling = false } = params;
 
   const usageEventIds: string[] = [];
   let totalBilledCost = 0;
@@ -367,35 +415,44 @@ export async function trackBatchUsage(params: {
 
   // Log all usage events
   for (const event of usageEvents) {
-    const usageEvent = await logUsageEvent({
-      userId,
-      projectId,
-      serviceKey: event.serviceKey,
-      serviceName: event.serviceName,
-      provider: event.provider,
-      units: event.units,
-      unitType: event.unitType,
-      rawCost: event.rawCost,
-      marginPercent: 35,
-      billedCost: event.billedCost,
-      metadata: event.metadata,
-    });
+    try {
+      const usageEvent = await logUsageEvent({
+        userId,
+        projectId,
+        serviceKey: event.serviceKey,
+        serviceName: event.serviceName,
+        provider: event.provider,
+        units: event.units,
+        unitType: event.unitType,
+        rawCost: event.rawCost,
+        marginPercent: 35,
+        billedCost: event.billedCost,
+        metadata: event.metadata,
+      });
 
-    usageEventIds.push(usageEvent.id);
+      usageEventIds.push(usageEvent.id);
+    } catch (error) {
+      if (strictBilling) throw error;
+      console.error('[BILLING] Failed to log batch usage event, continuing:', error);
+    }
     totalBilledCost += event.billedCost;
     totalRawCost += event.rawCost;
   }
 
-  // Debit total cost once
   if (shouldDebit && totalBilledCost > 0) {
-    await debitCredit(userId, totalBilledCost, usageEventIds[0], {
-      reason: `Batch usage - ${usageEvents.length} services`,
-      metadata: {
-        projectId,
-        eventCount: usageEvents.length,
-        usageEventIds,
-      },
-    });
+    try {
+      await debitCredit(userId, totalBilledCost, usageEventIds[0], {
+        reason: `Batch usage - ${usageEvents.length} services`,
+        metadata: {
+          projectId,
+          eventCount: usageEvents.length,
+          usageEventIds,
+        },
+      });
+    } catch (error) {
+      if (strictBilling) throw error;
+      console.error('[BILLING] Failed to debit batch usage, continuing:', error);
+    }
   }
 
   return {

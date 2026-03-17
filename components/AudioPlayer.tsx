@@ -169,7 +169,7 @@ export function AudioPlayer({ src, audioElementRef }: AudioPlayerProps) {
   const VolumeIcon = isMuted || volume === 0 ? VolumeX : volume < 0.5 ? Volume1 : Volume2;
 
   return (
-    <div className="flex-shrink-0 flex flex-col gap-1.5 px-4 pt-2.5 pb-2 bg-slate-950 border-b border-slate-800 select-none">
+    <div className="flex-shrink-0 flex flex-col gap-1.5 border-b border-slate-200 bg-white px-4 pt-2.5 pb-2 select-none dark:border-slate-800 dark:bg-slate-950">
       {/* Hidden audio element — ref forwarded from parent */}
       <audio ref={audioElementRef} src={src} preload="metadata" className="hidden" crossOrigin="anonymous" />
 
@@ -196,7 +196,7 @@ export function AudioPlayer({ src, audioElementRef }: AudioPlayerProps) {
           >
             <span
               ref={tooltipTextRef}
-              className="backdrop-blur-md rounded-full bg-slate-900/90 border border-slate-700/80 text-[11px] font-medium text-slate-200 px-2 py-1 shadow-md shadow-black/40 whitespace-nowrap block"
+              className="block whitespace-nowrap rounded-full border border-slate-200 bg-white/95 px-2 py-1 text-[11px] font-medium text-slate-700 shadow-md shadow-slate-300/60 backdrop-blur-md dark:border-slate-700/80 dark:bg-slate-900/90 dark:text-slate-200 dark:shadow-black/40"
             >
               0:00
             </span>
@@ -209,14 +209,14 @@ export function AudioPlayer({ src, audioElementRef }: AudioPlayerProps) {
             onClick={handleWaveformClick}
             onMouseMove={handleWaveformMouseMove}
             onMouseLeave={handleWaveformMouseLeave}
-            role="slider"
+            role="button"
             aria-label="Seek audio"
           >
             {/* Unplayed bars (grey) */}
             {bars.map((h, i) => (
               <div
                 key={i}
-                className="flex-1 rounded-sm bg-slate-700/50 pointer-events-none"
+                className="pointer-events-none flex-1 rounded-sm bg-slate-300/70 dark:bg-slate-700/50"
                 style={{ height: `${h * 100}%` }}
               />
             ))}
@@ -241,20 +241,20 @@ export function AudioPlayer({ src, audioElementRef }: AudioPlayerProps) {
         {/* Speed + time chip */}
         <button
           onClick={cycleSpeed}
-          className="flex-shrink-0 flex items-center gap-1 px-2.5 py-1 rounded-full bg-slate-800 hover:bg-slate-700 transition-colors border border-slate-700/80"
+          className="flex-shrink-0 flex items-center gap-1 rounded-full border border-slate-300 bg-slate-100 px-2.5 py-1 transition-colors hover:bg-slate-200 dark:border-slate-700/80 dark:bg-slate-800 dark:hover:bg-slate-700"
           title="Toggle playback speed"
         >
-          <span className="text-[10px] font-semibold text-blue-400">{speed === 1 ? '1×' : `${speed}×`}</span>
-          <span className="text-slate-600 text-[10px] mx-0.5">•</span>
-          <span ref={chipTimeRef} className="text-[10px] font-mono text-slate-400 tabular-nums">0:00</span>
-          <span className="text-slate-600 text-[10px] mx-0.5">/</span>
-          <span ref={chipDurRef} className="text-[10px] font-mono text-slate-600 tabular-nums">--:--</span>
+          <span className="text-[10px] font-semibold text-blue-600 dark:text-blue-400">{speed === 1 ? '1×' : `${speed}×`}</span>
+          <span className="mx-0.5 text-[10px] text-slate-400 dark:text-slate-600">•</span>
+          <span ref={chipTimeRef} className="text-[10px] font-mono tabular-nums text-slate-700 dark:text-slate-400">0:00</span>
+          <span className="mx-0.5 text-[10px] text-slate-400 dark:text-slate-600">/</span>
+          <span ref={chipDurRef} className="text-[10px] font-mono tabular-nums text-slate-500 dark:text-slate-600">--:--</span>
         </button>
 
         {/* Mute toggle */}
         <button
           onClick={toggleMute}
-          className="flex-shrink-0 text-slate-500 hover:text-slate-300 transition-colors"
+          className="flex-shrink-0 text-slate-500 transition-colors hover:text-slate-700 dark:hover:text-slate-300"
           aria-label={isMuted ? 'Unmute' : 'Mute'}
         >
           <VolumeIcon className="w-3.5 h-3.5" />
@@ -275,7 +275,7 @@ export function AudioPlayer({ src, audioElementRef }: AudioPlayerProps) {
 
       {/* Error message */}
       {playError && (
-        <p className="text-[11px] text-amber-400 text-center pb-0.5">{playError}</p>
+        <p className="pb-0.5 text-center text-[11px] text-amber-600 dark:text-amber-400">{playError}</p>
       )}
     </div>
   );

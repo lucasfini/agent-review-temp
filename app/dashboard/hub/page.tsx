@@ -36,8 +36,10 @@ import { KPICard, CollapsibleStatsRow } from '@/components/ui/kpi-card';
 import { Badge } from '@/components/ui/badge';
 import { cn } from '@/lib/utils';
 import { DemoTour } from '@/components/demo/DemoTour';
+import { emitProjectMutation } from '@/lib/project-events';
 import { toast } from 'sonner';
 import ConfirmModal from '@/components/ui/confirm-modal';
+import { useUserPrefs } from '@/lib/hooks/useUserPrefs';
 
 // ============================================================================
 // TYPES
@@ -49,14 +51,16 @@ const HUB_PAGE_SIZE = 10;
 interface Project {
   id: string;
   title: string;
-  status: 'uploading' | 'processing' | 'completed' | 'failed';
+  status: 'uploading' | 'processing' | 'completed' | 'failed' | 'cancelled';
   created_at: string;
   audio_duration?: number;
   audio_file_size?: number;
   audio_file_name?: string;
+  audio_expires_at?: string | null;
+  audio_deleted_at?: string | null;
   processing_time_seconds?: number;
   transcription_text?: string;
-  performance_level?: 'basic' | 'pro' | 'premium';
+  performance_level?: string;
   project_type?: ProjectType;
   actual_processing_cost?: number;
 }
@@ -98,17 +102,11 @@ function formatBytes(bytes: number): string {
   return `${parseFloat((bytes / Math.pow(k, i)).toFixed(1))} ${sizes[i]}`;
 }
 
-function formatRelativeDate(date: string): string {
-  const now = new Date();
-  const then = new Date(date);
-  const diffMs = now.getTime() - then.getTime();
-  const diffDays = Math.floor(diffMs / (1000 * 60 * 60 * 24));
 
-  if (diffDays === 0) return 'Today';
-  if (diffDays === 1) return 'Yesterday';
-  if (diffDays < 7) return `${diffDays}d ago`;
-  if (diffDays < 30) return `${Math.floor(diffDays / 7)}w ago`;
-  return then.toLocaleDateString('en-US', { month: 'short', day: 'numeric' });
+function isAudioExpired(project: Project): boolean {
+  if (project.audio_deleted_at) return true;
+  if (!project.audio_expires_at) return false;
+  return new Date(project.audio_expires_at).getTime() <= Date.now();
 }
 
 // ============================================================================
@@ -116,14 +114,15 @@ function formatRelativeDate(date: string): string {
 // ============================================================================
 
 function StatusBadge({ status }: { status: Project['status'] }) {
-  const config = {
+  const config: Record<Project['status'], { variant: 'success' | 'info' | 'warning' | 'destructive' | 'secondary'; icon: any; label: string }> = {
     completed: { variant: 'success' as const, icon: CheckCircle, label: 'Completed' },
     processing: { variant: 'info' as const, icon: Loader2, label: 'Processing' },
     uploading: { variant: 'warning' as const, icon: Loader2, label: 'Uploading' },
-    failed: { variant: 'destructive' as const, icon: AlertCircle, label: 'Failed' }
+    failed: { variant: 'destructive' as const, icon: AlertCircle, label: 'Failed' },
+    cancelled: { variant: 'secondary' as const, icon: AlertCircle, label: 'Cancelled' }
   };
 
-  const { variant, icon: Icon, label } = config[status] || config.failed;
+  const { variant, icon: Icon, label } = config[status];
 
   return (
     <Badge variant={variant} className="gap-1">
@@ -133,16 +132,18 @@ function StatusBadge({ status }: { status: Project['status'] }) {
   );
 }
 
-function TierBadge({ tier }: { tier?: Project['performance_level'] }) {
+function TierBadge({ tier }: { tier?: string }) {
   if (!tier) return null;
 
-  const config = {
-    basic: { variant: 'secondary' as const, icon: null, label: 'Basic' },
-    pro: { variant: 'pro' as const, icon: Star, label: 'Pro' },
-    premium: { variant: 'premium' as const, icon: Crown, label: 'Premium' }
+  // Normalize legacy values
+  const normalized = tier === 'basic' ? 'standard' : tier === 'premium' ? 'pro' : tier;
+
+  const config: Record<string, { variant: 'secondary' | 'pro'; icon: any; label: string }> = {
+    standard: { variant: 'secondary', icon: null, label: 'Standard' },
+    pro: { variant: 'pro', icon: Crown, label: 'Pro' }
   };
 
-  const { variant, icon: Icon, label } = config[tier] || config.basic;
+  const { variant, icon: Icon, label } = config[normalized] || config.standard;
 
   return (
     <Badge variant={variant} className="gap-1">
@@ -159,31 +160,31 @@ function ProjectTypeBadge({ type }: { type?: ProjectType }) {
     DEBATE: {
       icon: Users,
       label: 'Debate',
-      className: 'bg-amber-900/20 text-amber-400 border-amber-800/30',
+      className: 'bg-amber-100 dark:bg-amber-900/20 text-amber-700 dark:text-amber-400 border-amber-300 dark:border-amber-800/30',
       description: 'Panel discussion with moderator',
     },
     INTERVIEW: {
       icon: Mic,
       label: 'Interview',
-      className: 'bg-green-900/20 text-green-400 border-green-800/30',
+      className: 'bg-green-100 dark:bg-green-900/20 text-green-700 dark:text-green-400 border-green-300 dark:border-green-800/30',
       description: '1-on-1 Q&A format',
     },
     PODCAST: {
       icon: Radio,
       label: 'Podcast',
-      className: 'bg-indigo-900/20 text-indigo-400 border-indigo-800/30',
+      className: 'bg-indigo-100 dark:bg-indigo-900/20 text-indigo-700 dark:text-indigo-400 border-indigo-300 dark:border-indigo-800/30',
       description: 'Conversational show',
     },
     MONOLOGUE: {
       icon: User,
       label: 'Solo',
-      className: 'bg-slate-800 text-slate-300 border-slate-700',
+      className: 'bg-slate-100 dark:bg-slate-800 text-slate-600 dark:text-slate-300 border-slate-300 dark:border-slate-700',
       description: 'Single speaker',
     },
     OTHER: {
       icon: HelpCircle,
       label: 'Other',
-      className: 'bg-slate-800 text-slate-400 border-slate-700',
+      className: 'bg-slate-100 dark:bg-slate-800 text-slate-500 dark:text-slate-400 border-slate-300 dark:border-slate-700',
       description: 'Unclassified format',
     },
   };
@@ -207,11 +208,11 @@ function ProjectTypeBadge({ type }: { type?: ProjectType }) {
 function EmptyState() {
   return (
     <div className="flex flex-col items-center justify-center py-16 px-4 text-center">
-      <div className="rounded-full bg-slate-800 p-4 mb-4">
+      <div className="rounded-full bg-slate-100 dark:bg-slate-800 p-4 mb-4">
         <FolderOpen className="h-8 w-8 text-slate-500" />
       </div>
-      <h3 className="text-lg font-semibold text-slate-100 mb-1">No projects yet</h3>
-      <p className="text-sm text-slate-400 mb-6 max-w-sm">
+      <h3 className="text-lg font-semibold text-slate-800 dark:text-slate-100 mb-1">No projects yet</h3>
+      <p className="text-sm text-slate-500 dark:text-slate-400 mb-6 max-w-sm">
         Upload your first audio file to start generating content automatically.
       </p>
       <Link
@@ -231,12 +232,13 @@ function EmptyState() {
 
 export default function ProjectHubPage() {
   const { user, isDemoMode } = useAuth();
+  const prefs = useUserPrefs();
   const [projects, setProjects] = useState<Project[]>([]);
   const [outputs, setOutputs] = useState<Output[]>([]);
   const [loading, setLoading] = useState(true);
   const [searchTerm, setSearchTerm] = useState('');
   const [statusFilter, setStatusFilter] = useState<'all' | Project['status']>('all');
-  const [tierFilter, setTierFilter] = useState<'all' | 'basic' | 'pro' | 'premium'>('all');
+  const [tierFilter, setTierFilter] = useState<'all' | 'standard' | 'pro'>('all');
   const [sortBy, setSortBy] = useState<'recent' | 'oldest' | 'name'>('recent');
   const [showFilters, setShowFilters] = useState(false);
   const [deletingId, setDeletingId] = useState<string | null>(null);
@@ -260,6 +262,7 @@ export default function ProjectHubPage() {
         .from('projects')
         .select('*')
         .eq('user_id', user.id)
+        .neq('status', 'cancelled')
         .order('created_at', { ascending: false }) as { data: Project[] | null; error: any };
 
       if (projectsError) throw projectsError;
@@ -327,9 +330,13 @@ export default function ProjectHubPage() {
       result = result.filter(p => p.status === statusFilter);
     }
 
-    // Tier filter
+    // Tier filter (normalize legacy values for comparison)
     if (tierFilter !== 'all') {
-      result = result.filter(p => p.performance_level === tierFilter);
+      result = result.filter(p => {
+        const level = p.performance_level;
+        const norm = level === 'basic' ? 'standard' : level === 'premium' ? 'pro' : level;
+        return norm === tierFilter;
+      });
     }
 
     // Sort
@@ -388,13 +395,18 @@ export default function ProjectHubPage() {
     if (!pendingDeleteId || !user?.id) return;
     setDeletingId(pendingDeleteId);
     try {
-      const { error } = await supabase
-        .from('projects')
-        .delete()
-        .eq('id', pendingDeleteId)
-        .eq('user_id', user.id);
+      const { data: { session } } = await supabase.auth.getSession();
+      const response = await fetch(`/api/projects/${pendingDeleteId}`, {
+        method: 'DELETE',
+        headers: session?.access_token ? { Authorization: `Bearer ${session.access_token}` } : {},
+      });
 
-      if (error) throw error;
+      if (!response.ok) {
+        const data = await response.json().catch(() => ({ error: 'Failed to delete project' }));
+        throw new Error(data.error || 'Failed to delete project');
+      }
+
+      emitProjectMutation({ projectId: pendingDeleteId, action: 'deleted' });
       setProjects(prev => prev.filter(p => p.id !== pendingDeleteId));
       toast.success('Project deleted');
     } catch (error) {
@@ -412,13 +424,13 @@ export default function ProjectHubPage() {
       <div className="p-6">
         <div className="max-w-7xl mx-auto">
           <div className="animate-pulse space-y-6">
-            <div className="h-8 bg-slate-800 rounded w-48" />
-            <div className="grid grid-cols-4 gap-4">
+            <div className="h-8 bg-slate-200 dark:bg-slate-800 rounded w-48" />
+            <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
               {[1, 2, 3, 4].map(i => (
-                <div key={i} className="h-24 bg-slate-800 rounded-lg" />
+                <div key={i} className="h-24 bg-slate-200 dark:bg-slate-800 rounded-lg" />
               ))}
             </div>
-            <div className="h-96 bg-slate-800 rounded-lg" />
+            <div className="h-96 bg-slate-200 dark:bg-slate-800 rounded-lg" />
           </div>
         </div>
       </div>
@@ -426,7 +438,7 @@ export default function ProjectHubPage() {
   }
 
   return (
-    <div className="p-6">
+    <div className="p-3 sm:p-6">
       <ConfirmModal
         isOpen={!!pendingDeleteId}
         onClose={() => setPendingDeleteId(null)}
@@ -438,16 +450,16 @@ export default function ProjectHubPage() {
       />
       <div className="max-w-7xl mx-auto space-y-6">
         {/* Header */}
-        <div className="flex items-center justify-between">
+        <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-3">
           <div>
-            <h1 className="text-2xl font-bold text-slate-50">Project Hub</h1>
-            <p className="text-sm text-slate-400 mt-1">
-              Manage your audio projects and generated content
+            <h1 className="text-2xl font-bold text-slate-900 dark:text-slate-50">All Projects</h1>
+            <p className="text-sm text-slate-500 dark:text-slate-400 mt-1">
+              Your full project history and usage overview
             </p>
           </div>
           <Link
             href="/dashboard/upload"
-            className="inline-flex items-center gap-2 px-4 py-2 bg-blue-600 text-white text-sm font-medium rounded-lg hover:bg-blue-700 transition-colors"
+            className="inline-flex items-center gap-2 px-4 py-2 bg-blue-600 text-white text-sm font-medium rounded-lg hover:bg-blue-700 transition-colors self-start sm:self-auto"
           >
             <Upload className="h-4 w-4" />
             New Project
@@ -467,20 +479,16 @@ export default function ProjectHubPage() {
               title="Content Created"
               value={stats.totalContent}
               icon={<FileText className="h-5 w-5" />}
-              trend={stats.totalContent > 0 ? {
-                value: 12,
-                direction: 'up',
-                label: 'vs last week'
-              } : undefined}
+              subtitle={stats.totalContent > 0 ? `across ${stats.completedProjects} project${stats.completedProjects !== 1 ? 's' : ''}` : 'Generate your first piece'}
             />
             <KPICard
               title="Time Saved"
               value={`${stats.timeSavedHours}h`}
               icon={<Clock className="h-5 w-5" />}
-              subtitle="Estimated manual work"
+              subtitle="Estimated vs. doing it manually"
             />
             <KPICard
-              title="Processing Time"
+              title="Audio Processed"
               value={formatDuration(stats.totalProcessingTime)}
               icon={<Zap className="h-5 w-5" />}
               subtitle="Total compute time"
@@ -489,8 +497,8 @@ export default function ProjectHubPage() {
         </CollapsibleStatsRow>
 
         {/* Filters & Search Bar */}
-        <div data-tour="hub-filters" className="bg-slate-900 rounded-lg border border-slate-800 shadow-sm">
-          <div className="p-4 border-b border-slate-800">
+        <div data-tour="hub-filters" className="bg-white dark:bg-slate-900 rounded-lg border border-slate-200 dark:border-slate-800 shadow-sm">
+          <div className="p-4 border-b border-slate-200 dark:border-slate-800">
             <div className="flex flex-col sm:flex-row gap-3">
               {/* Search */}
               <div className="relative flex-1">
@@ -500,7 +508,7 @@ export default function ProjectHubPage() {
                   placeholder="Search projects..."
                   value={searchTerm}
                   onChange={(e) => setSearchTerm(e.target.value)}
-                  className="w-full pl-10 pr-4 py-2 text-sm border border-slate-700 bg-slate-800 text-slate-200 placeholder:text-slate-500 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-transparent"
+                  className="w-full pl-10 pr-4 py-2 text-sm border border-slate-300 dark:border-slate-700 bg-white dark:bg-slate-800 text-slate-900 dark:text-slate-200 placeholder:text-slate-500 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-transparent"
                 />
               </div>
 
@@ -511,8 +519,8 @@ export default function ProjectHubPage() {
                 className={cn(
                   "inline-flex items-center gap-2 px-3 py-2 text-sm font-medium rounded-lg border transition-colors",
                   showFilters
-                    ? "bg-blue-900/20 border-blue-700 text-blue-400"
-                    : "bg-slate-800 border-slate-700 text-slate-300 hover:bg-slate-700"
+                    ? "bg-blue-50 dark:bg-blue-900/20 border-blue-700 text-blue-600 dark:text-blue-400"
+                    : "bg-slate-100 dark:bg-slate-800 border-slate-300 dark:border-slate-700 text-slate-600 dark:text-slate-300 hover:bg-slate-200 dark:hover:bg-slate-700"
                 )}
               >
                 <Filter className="h-4 w-4" />
@@ -524,7 +532,7 @@ export default function ProjectHubPage() {
               <select
                 value={sortBy}
                 onChange={(e) => setSortBy(e.target.value as any)}
-                className="px-3 py-2 text-sm border border-slate-700 rounded-lg bg-slate-800 text-slate-200 focus:outline-none focus:ring-2 focus:ring-blue-500"
+                className="px-3 py-2 text-sm border border-slate-300 dark:border-slate-700 rounded-lg bg-white dark:bg-slate-800 text-slate-900 dark:text-slate-200 focus:outline-none focus:ring-2 focus:ring-blue-500"
               >
                 <option value="recent">Newest first</option>
                 <option value="oldest">Oldest first</option>
@@ -534,13 +542,13 @@ export default function ProjectHubPage() {
 
             {/* Expanded Filters */}
             {showFilters && (
-              <div className="mt-3 pt-3 border-t border-slate-800 flex flex-wrap gap-3">
+              <div className="mt-3 pt-3 border-t border-slate-200 dark:border-slate-800 flex flex-wrap gap-3">
                 <div className="flex items-center gap-2">
-                  <span className="text-xs font-medium text-slate-400">Status:</span>
+                  <span className="text-xs font-medium text-slate-500 dark:text-slate-400">Status:</span>
                   <select
                     value={statusFilter}
                     onChange={(e) => setStatusFilter(e.target.value as any)}
-                    className="px-2 py-1 text-sm border border-slate-700 rounded bg-slate-800 text-slate-200"
+                    className="px-2 py-1 text-sm border border-slate-300 dark:border-slate-700 rounded bg-white dark:bg-slate-800 text-slate-900 dark:text-slate-200"
                   >
                     <option value="all">All</option>
                     <option value="completed">Completed</option>
@@ -549,16 +557,15 @@ export default function ProjectHubPage() {
                   </select>
                 </div>
                 <div className="flex items-center gap-2">
-                  <span className="text-xs font-medium text-slate-400">Tier:</span>
+                  <span className="text-xs font-medium text-slate-500 dark:text-slate-400">Tier:</span>
                   <select
                     value={tierFilter}
                     onChange={(e) => setTierFilter(e.target.value as any)}
-                    className="px-2 py-1 text-sm border border-slate-700 rounded bg-slate-800 text-slate-200"
+                    className="px-2 py-1 text-sm border border-slate-300 dark:border-slate-700 rounded bg-white dark:bg-slate-800 text-slate-900 dark:text-slate-200"
                   >
                     <option value="all">All</option>
-                    <option value="basic">Basic</option>
+                    <option value="standard">Standard</option>
                     <option value="pro">Pro</option>
-                    <option value="premium">Premium</option>
                   </select>
                 </div>
                 {(statusFilter !== 'all' || tierFilter !== 'all') && (
@@ -568,7 +575,7 @@ export default function ProjectHubPage() {
                       setStatusFilter('all');
                       setTierFilter('all');
                     }}
-                    className="text-xs text-blue-600 hover:text-blue-300"
+                    className="text-xs text-blue-600 hover:text-blue-500 dark:hover:text-blue-300"
                   >
                     Clear filters
                   </button>
@@ -582,147 +589,243 @@ export default function ProjectHubPage() {
             projects.length === 0 ? (
               <EmptyState />
             ) : (
-              <div className="py-12 text-center text-slate-400">
-                No projects match your filters
+              <div className="py-12 text-center text-slate-500 dark:text-slate-400 space-y-3">
+                <p>No projects match your filters.</p>
+                <button
+                  type="button"
+                  onClick={() => {
+                    setSearchTerm('');
+                    setStatusFilter('all');
+                    setTierFilter('all');
+                  }}
+                  className="text-sm text-blue-600 dark:text-blue-400 hover:text-blue-500 dark:hover:text-blue-300 transition-colors"
+                >
+                  Clear all filters
+                </button>
               </div>
             )
           ) : (
-            <div data-tour="hub-grid" className="overflow-x-auto">
-              <table className="w-full text-sm">
-                <thead>
-                  <tr className="border-b border-slate-800 bg-slate-800/40">
-                    <th className="text-left font-medium text-slate-400 px-4 py-3">Project</th>
-                    <th className="text-left font-medium text-slate-400 px-4 py-3">Status</th>
-                    <th className="text-left font-medium text-slate-400 px-4 py-3">Tier</th>
-                    <th className="text-left font-medium text-slate-400 px-4 py-3">Duration</th>
-                    <th className="text-left font-medium text-slate-400 px-4 py-3">Content</th>
-                    <th className="text-left font-medium text-slate-400 px-4 py-3">Created</th>
-                    <th className="text-right font-medium text-slate-400 px-4 py-3">Actions</th>
-                  </tr>
-                </thead>
-                <tbody className="divide-y divide-slate-800">
-                  {pagedProjects.map((project) => (
-                    <tr
-                      key={project.id}
-                      className="hover:bg-slate-800/50 transition-colors group"
-                    >
-                      <td className="px-4 py-3">
-                        <Link
-                          href={`/dashboard/projects?id=${project.id}`}
-                          className="block"
-                        >
-                          <div className="font-medium text-slate-200 group-hover:text-blue-400 transition-colors">
-                            {project.title || 'Untitled'}
-                          </div>
-                          {project.audio_file_name && (
-                            <div className="text-xs text-slate-500 truncate max-w-[200px]">
-                              {project.audio_file_name}
-                            </div>
-                          )}
-                        </Link>
-                      </td>
-                      <td className="px-4 py-3">
-                        <StatusBadge status={project.status} />
-                      </td>
-                      <td className="px-4 py-3">
-                        <div className="flex items-center gap-1.5">
-                          <TierBadge tier={project.performance_level} />
-                          <ProjectTypeBadge type={project.project_type} />
-                        </div>
-                      </td>
-                      <td className="px-4 py-3 text-slate-400">
-                        {project.audio_duration
-                          ? formatDuration(project.audio_duration)
-                          : '—'}
-                      </td>
-                      <td className="px-4 py-3">
-                        <span className="inline-flex items-center gap-1 text-slate-400">
-                          <FileText className="h-3.5 w-3.5" />
-                          {outputCountByProject[project.id] || 0}
+            <div data-tour="hub-grid">
+              {/* ── Mobile card list (< sm) ── */}
+              <div className="sm:hidden divide-y divide-slate-200 dark:divide-slate-800">
+                {pagedProjects.map((project) => (
+                  <div key={project.id} className="p-4 space-y-3">
+                    {/* Title + status */}
+                    <div className="flex items-start justify-between gap-3">
+                      <Link
+                        href={`/dashboard/projects?id=${project.id}`}
+                        className="flex-1 min-w-0"
+                      >
+                        <p className="font-medium text-slate-700 dark:text-slate-200 truncate">
+                          {project.title || 'Untitled'}
+                        </p>
+                        {project.audio_file_name && (
+                          <p className="text-xs text-slate-500 truncate mt-0.5">
+                            {project.audio_file_name}
+                          </p>
+                        )}
+                        {project.status === 'completed' && isAudioExpired(project) && (
+                          <p className="text-xs text-rose-500 dark:text-rose-300 mt-0.5">Source audio expired</p>
+                        )}
+                      </Link>
+                      <StatusBadge status={project.status} />
+                    </div>
+                    {/* Metadata row */}
+                    <div className="flex items-center gap-2 flex-wrap text-xs text-slate-500 dark:text-slate-500">
+                      <TierBadge tier={project.performance_level} />
+                      <ProjectTypeBadge type={project.project_type} />
+                      <span>{prefs.formatRelativeDate(project.created_at)}</span>
+                      {project.audio_duration && (
+                        <span>{formatDuration(project.audio_duration)}</span>
+                      )}
+                      {outputCountByProject[project.id] > 0 && (
+                        <span className="inline-flex items-center gap-1">
+                          <FileText className="h-3 w-3" />
+                          {outputCountByProject[project.id]} pieces
                         </span>
-                      </td>
-                      <td className="px-4 py-3 text-slate-400">
-                        {formatRelativeDate(project.created_at)}
-                      </td>
-                      <td className="px-4 py-3">
-                        <div className="flex items-center justify-end gap-1">
+                      )}
+                    </div>
+                    {/* Actions */}
+                    <div className="flex items-center gap-2">
+                      <Link
+                        href={`/dashboard/projects?id=${project.id}`}
+                        className="flex-1 py-2 text-xs font-medium text-center bg-slate-100 dark:bg-slate-800 hover:bg-slate-200 dark:hover:bg-slate-700 text-slate-600 dark:text-slate-300 rounded-lg transition-colors"
+                      >
+                        View
+                      </Link>
+                      {project.status === 'completed' && (
+                        <Link
+                          href={`/dashboard/projects?id=${project.id}&generate=true`}
+                          className="flex-1 py-2 text-xs font-medium text-center bg-slate-100 dark:bg-slate-800 hover:bg-slate-200 dark:hover:bg-slate-700 text-slate-600 dark:text-slate-300 rounded-lg transition-colors"
+                        >
+                          Generate
+                        </Link>
+                      )}
+                      {!isDemoMode && (
+                        <button
+                          type="button"
+                          onClick={() => handleDelete(project.id)}
+                          disabled={deletingId === project.id}
+                          className="p-2 text-slate-500 hover:text-red-500 dark:hover:text-red-400 hover:bg-red-50 dark:hover:bg-red-900/20 rounded-lg transition-colors disabled:opacity-50"
+                          title="Delete"
+                        >
+                          {deletingId === project.id ? (
+                            <Loader2 className="h-4 w-4 animate-spin" />
+                          ) : (
+                            <Trash2 className="h-4 w-4" />
+                          )}
+                        </button>
+                      )}
+                    </div>
+                  </div>
+                ))}
+              </div>
+
+              {/* ── Desktop table (≥ sm) ── */}
+              <div className="hidden sm:block overflow-x-auto">
+                <table className="w-full text-sm">
+                  <thead>
+                    <tr className="border-b border-slate-200 dark:border-slate-800 bg-slate-50 dark:bg-slate-800/40">
+                      <th className="text-left font-medium text-slate-500 dark:text-slate-400 px-4 py-3">Project</th>
+                      <th className="text-left font-medium text-slate-500 dark:text-slate-400 px-4 py-3">Status</th>
+                      <th className="hidden sm:table-cell text-left font-medium text-slate-500 dark:text-slate-400 px-4 py-3">Tier</th>
+                      <th className="hidden md:table-cell text-left font-medium text-slate-500 dark:text-slate-400 px-4 py-3">Duration</th>
+                      <th className="hidden md:table-cell text-left font-medium text-slate-500 dark:text-slate-400 px-4 py-3">Content</th>
+                      <th className="hidden sm:table-cell text-left font-medium text-slate-500 dark:text-slate-400 px-4 py-3">Created</th>
+                      <th className="text-right font-medium text-slate-500 dark:text-slate-400 px-4 py-3">Actions</th>
+                    </tr>
+                  </thead>
+                  <tbody className="divide-y divide-slate-200 dark:divide-slate-800">
+                    {pagedProjects.map((project) => (
+                      <tr
+                        key={project.id}
+                        className="hover:bg-slate-50 dark:hover:bg-slate-800/50 transition-colors group"
+                      >
+                        <td className="px-4 py-3">
                           <Link
                             href={`/dashboard/projects?id=${project.id}`}
-                            className="p-1.5 text-slate-500 hover:text-blue-400 hover:bg-blue-900/20 rounded transition-colors"
-                            title="View"
+                            className="block"
                           >
-                            <Eye className="h-4 w-4" />
+                            <div className="font-medium text-slate-700 dark:text-slate-200 group-hover:text-blue-600 dark:group-hover:text-blue-400 transition-colors">
+                              {project.title || 'Untitled'}
+                            </div>
+                            {project.audio_file_name && (
+                              <div className="text-xs text-slate-500 truncate max-w-[200px]">
+                                {project.audio_file_name}
+                              </div>
+                            )}
+                            {project.status === 'completed' && isAudioExpired(project) && (
+                              <div className="text-xs text-rose-500 dark:text-rose-300 truncate max-w-[200px]">
+                                Source audio expired
+                              </div>
+                            )}
                           </Link>
-                          {project.status === 'completed' && (
+                        </td>
+                        <td className="px-4 py-3">
+                          <StatusBadge status={project.status} />
+                        </td>
+                        <td className="hidden sm:table-cell px-4 py-3">
+                          <div className="flex items-center gap-1.5">
+                            <TierBadge tier={project.performance_level} />
+                            <ProjectTypeBadge type={project.project_type} />
+                          </div>
+                        </td>
+                        <td className="hidden md:table-cell px-4 py-3 text-slate-500 dark:text-slate-400">
+                          {project.audio_duration
+                            ? formatDuration(project.audio_duration)
+                            : '—'}
+                        </td>
+                        <td className="hidden md:table-cell px-4 py-3">
+                          <span className="inline-flex items-center gap-1 text-slate-500 dark:text-slate-400">
+                            <FileText className="h-3.5 w-3.5" />
+                            {outputCountByProject[project.id] || 0}
+                          </span>
+                        </td>
+                        <td className="hidden sm:table-cell px-4 py-3 text-slate-500 dark:text-slate-400">
+                          {prefs.formatRelativeDate(project.created_at)}
+                        </td>
+                        <td className="px-4 py-3">
+                          <div className="flex items-center justify-end gap-1">
                             <Link
-                              href={`/dashboard/projects?id=${project.id}&generate=true`}
-                              className="p-1.5 text-slate-500 hover:text-green-400 hover:bg-green-900/20 rounded transition-colors"
-                              title="Generate Content"
+                              href={`/dashboard/projects?id=${project.id}`}
+                              className="p-1.5 text-slate-500 hover:text-blue-600 dark:hover:text-blue-400 hover:bg-blue-50 dark:hover:bg-blue-900/20 rounded transition-colors"
+                              title="View"
                             >
-                              <Sparkles className="h-4 w-4" />
+                              <Eye className="h-4 w-4" />
                             </Link>
-                          )}
-                          {!isDemoMode && (
-                            <button
-                              type="button"
-                              onClick={() => handleDelete(project.id)}
-                              disabled={deletingId === project.id}
-                              className="p-1.5 text-slate-500 hover:text-red-400 hover:bg-red-900/20 rounded transition-colors disabled:opacity-50"
-                              title="Delete"
-                            >
-                              {deletingId === project.id ? (
-                                <Loader2 className="h-4 w-4 animate-spin" />
-                              ) : (
-                                <Trash2 className="h-4 w-4" />
-                              )}
-                            </button>
-                          )}
-                        </div>
-                      </td>
-                    </tr>
-                  ))}
-                </tbody>
-              </table>
+                            {project.status === 'completed' && (
+                              <Link
+                                href={`/dashboard/projects?id=${project.id}&generate=true`}
+                                className="p-1.5 text-slate-500 hover:text-green-600 dark:hover:text-green-400 hover:bg-green-50 dark:hover:bg-green-900/20 rounded transition-colors"
+                                title="Generate Content"
+                              >
+                                <Sparkles className="h-4 w-4" />
+                              </Link>
+                            )}
+                            {!isDemoMode && (
+                              <button
+                                type="button"
+                                onClick={() => handleDelete(project.id)}
+                                disabled={deletingId === project.id}
+                                className="p-1.5 text-slate-500 hover:text-red-500 dark:hover:text-red-400 hover:bg-red-50 dark:hover:bg-red-900/20 rounded transition-colors disabled:opacity-50"
+                                title="Delete"
+                              >
+                                {deletingId === project.id ? (
+                                  <Loader2 className="h-4 w-4 animate-spin" />
+                                ) : (
+                                  <Trash2 className="h-4 w-4" />
+                                )}
+                              </button>
+                            )}
+                          </div>
+                        </td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
             </div>
           )}
 
-          {/* Footer with count */}
+          {/* Footer with count + pagination */}
           {filteredProjects.length > 0 && (
-            <div className="px-4 py-3 border-t border-slate-800 bg-slate-800/30 text-xs text-slate-500 flex items-center justify-between">
-              <div>
-                Showing {pagedProjects.length} of {filteredProjects.length} projects
-              </div>
-              {totalPages > 1 && (
-                <div className="flex items-center gap-2">
-                  <span className="text-xs text-slate-500">
-                    Page {hubPage} of {totalPages}
-                  </span>
-                  <button
-                    type="button"
-                    onClick={() => setHubPage(hubPage - 1)}
-                    disabled={hubPage <= 1}
-                    className={`px-2.5 py-1.5 text-xs font-medium rounded border transition-colors ${
-                      hubPage <= 1
-                        ? 'border-slate-800 text-slate-600 cursor-not-allowed'
-                        : 'border-slate-700 text-slate-300 hover:bg-slate-800'
-                    }`}
-                  >
-                    Previous
-                  </button>
-                  <button
-                    type="button"
-                    onClick={() => setHubPage(hubPage + 1)}
-                    disabled={hubPage >= totalPages}
-                    className={`px-2.5 py-1.5 text-xs font-medium rounded border transition-colors ${
-                      hubPage >= totalPages
-                        ? 'border-slate-800 text-slate-600 cursor-not-allowed'
-                        : 'border-slate-700 text-slate-300 hover:bg-slate-800'
-                    }`}
-                  >
-                    Next
-                  </button>
+            <div className="px-4 py-3 border-t border-slate-200 dark:border-slate-800 bg-slate-100/60 dark:bg-slate-800/30 text-xs text-slate-500">
+              <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-2">
+                <div>
+                  Showing {pagedProjects.length} of {filteredProjects.length} projects
                 </div>
-              )}
+                {totalPages > 1 && (
+                  <div className="flex items-center gap-2">
+                    <span className="text-xs text-slate-500">
+                      Page {hubPage} of {totalPages}
+                    </span>
+                    <button
+                      type="button"
+                      onClick={() => setHubPage(hubPage - 1)}
+                      disabled={hubPage <= 1}
+                      className={`px-2.5 py-1.5 text-xs font-medium rounded border transition-colors ${
+                        hubPage <= 1
+                          ? 'border-slate-200 dark:border-slate-800 text-slate-400 dark:text-slate-600 cursor-not-allowed'
+                          : 'border-slate-300 dark:border-slate-700 text-slate-600 dark:text-slate-300 hover:bg-slate-100 dark:hover:bg-slate-800'
+                      }`}
+                    >
+                      Previous
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => setHubPage(hubPage + 1)}
+                      disabled={hubPage >= totalPages}
+                      className={`px-2.5 py-1.5 text-xs font-medium rounded border transition-colors ${
+                        hubPage >= totalPages
+                          ? 'border-slate-200 dark:border-slate-800 text-slate-400 dark:text-slate-600 cursor-not-allowed'
+                          : 'border-slate-300 dark:border-slate-700 text-slate-600 dark:text-slate-300 hover:bg-slate-100 dark:hover:bg-slate-800'
+                      }`}
+                    >
+                      Next
+                    </button>
+                  </div>
+                )}
+              </div>
             </div>
           )}
         </div>

@@ -62,12 +62,47 @@ const DEFAULT_ANALYTICS = {
   avgSentiment: 0,
   dominantTopic: null as null | { id: string; label: string; shareOfVoice: number },
   topicEvenness: 0,
-  uniqueCtas: 0
+  uniqueCtas: 0,
+  coverageScore: 0
 };
 
 const COVERAGE_COST_KEY = 'coverageAnalysis';
 
-function deriveAnalytics(topics: TopicSignal[], ctas: CtaSignal[]) {
+function deriveCoverageScore(topics: TopicSignal[], ctas: CtaSignal[], activeGoals: any[] = []) {
+  const trackableGoals = activeGoals.filter(
+    (goal) => goal && goal.status !== 'archived' && goal.goal_type !== 'avoid'
+  );
+
+  if (trackableGoals.length > 0) {
+    const topicIds = new Set(topics.map((topic) => topic.id.toLowerCase()));
+    const topicLabels = new Set(topics.map((topic) => topic.label.toLowerCase()));
+    const ctaIds = new Set(ctas.map((cta) => cta.id.toLowerCase()));
+    const ctaLabels = new Set(ctas.map((cta) => cta.label.toLowerCase()));
+
+    const covered = trackableGoals.filter((goal) => {
+      const id = String(goal.topic_id || '').toLowerCase();
+      const label = String(goal.topic_label || '').toLowerCase();
+      return topicIds.has(id) || topicLabels.has(label) || ctaIds.has(id) || ctaLabels.has(label);
+    }).length;
+
+    return Math.round((covered / trackableGoals.length) * 100);
+  }
+
+  if (!topics.length) return 0;
+
+  const totalMentions = topics.reduce((sum, topic) => sum + topic.mentionCount, 0) || 1;
+  const evennessBase =
+    -topics.reduce((acc, topic) => {
+      const share = topic.shareOfVoice ?? topic.mentionCount / totalMentions;
+      return acc + (share > 0 ? share * Math.log(share) : 0);
+    }, 0) / Math.log(topics.length || 1);
+
+  const evenness = Number.isFinite(evennessBase) ? evennessBase : 0;
+  const topicDepth = Math.min(topics.length / 6, 1);
+  return Math.round(((evenness * 0.65) + (topicDepth * 0.35)) * 100);
+}
+
+function deriveAnalytics(topics: TopicSignal[], ctas: CtaSignal[], activeGoals: any[] = []) {
   if (!topics.length) {
     return {
       ...DEFAULT_ANALYTICS,
@@ -110,7 +145,8 @@ function deriveAnalytics(topics: TopicSignal[], ctas: CtaSignal[]) {
         }
       : null,
     topicEvenness: Number.isFinite(evenness) ? Number(evenness.toFixed(3)) : 0,
-    uniqueCtas: ctas.length
+    uniqueCtas: ctas.length,
+    coverageScore: deriveCoverageScore(topics, ctas, activeGoals)
   };
 }
 
@@ -119,7 +155,7 @@ export async function saveNarrativeCoverageSnapshot(input: NarrativeCoverageSnap
     throw new Error('projectId and userId are required to save a narrative coverage snapshot');
   }
 
-  const analytics = input.analyticsOverride || deriveAnalytics(input.topics, input.ctas);
+  const analytics = input.analyticsOverride || deriveAnalytics(input.topics, input.ctas, input.activeGoals || []);
 
   const payload = {
     project_id: input.projectId,

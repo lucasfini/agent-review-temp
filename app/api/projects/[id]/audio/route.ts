@@ -26,10 +26,30 @@ export async function DELETE(
       return NextResponse.json({ error: 'fileName is required' }, { status: 400 });
     }
 
+    const { data: project, error: projectError } = await supabaseAdmin
+      .from('projects')
+      .select('id, user_id')
+      .eq('id', projectId)
+      .single() as { data: { id: string; user_id: string } | null; error: any };
+
+    if (projectError || !project) {
+      return NextResponse.json({ error: 'Project not found' }, { status: 404 });
+    }
+
+    if (project.user_id !== user.id) {
+      return NextResponse.json({ error: 'Forbidden' }, { status: 403 });
+    }
+
     await r2Client.send(new DeleteObjectCommand({
       Bucket: BUCKET_NAME,
       Key: fileName,
     }));
+
+    await supabaseAdmin
+      .from('projects')
+      .update({ audio_deleted_at: new Date().toISOString() } as any)
+      .eq('id', projectId)
+      .is('audio_deleted_at', null);
 
     console.log(`[audio-delete] Deleted R2 file: ${fileName} (project ${projectId})`);
     return NextResponse.json({ success: true });

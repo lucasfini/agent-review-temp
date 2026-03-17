@@ -3,7 +3,8 @@
 import { useEffect, useRef } from 'react';
 import Link from 'next/link';
 import { usePathname, useRouter } from 'next/navigation';
-import { Mic, X, MapPin, Compass } from 'lucide-react';
+import BrandLogo from '@/components/site/BrandLogo';
+import { X, MapPin, Compass } from 'lucide-react';
 
 interface WelcomeModalProps {
   isOpen: boolean;
@@ -63,9 +64,7 @@ export function WelcomeModal({ isOpen, onClose, onStartTour }: WelcomeModalProps
 
         {/* Header */}
         <div className="flex items-center gap-3 mb-6">
-          <div className="h-11 w-11 bg-blue-600 rounded-xl flex items-center justify-center flex-shrink-0">
-            <Mic className="h-6 w-6 text-white" />
-          </div>
+          <BrandLogo showText={false} size="lg" theme="dark" />
           <div>
             <h2 className="text-lg font-bold text-white">Welcome to the Demo</h2>
             <p className="text-xs text-slate-400">AudioRepurpose</p>

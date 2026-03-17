@@ -4,6 +4,7 @@ import { useState, useMemo, useEffect, useCallback, useRef, type ReactNode, type
 import { getSpeakerColor, getSpeakerDisplayName } from '@/lib/name-extraction';
 import { SpeakerSegment } from '@/lib/types';
 import { formatTime } from '@/lib/time-utils';
+import { useUserPrefs } from '@/lib/hooks/useUserPrefs';
 import {
   User,
   MessageCircle,
@@ -20,6 +21,7 @@ import {
   type Category
 } from '@/components/insights';
 import type { AudioPlayerRef } from '@/lib/hooks/useSpeakerSample';
+import { toast } from 'sonner';
 
 interface ConversationViewProps {
   speakerData: {
@@ -36,7 +38,7 @@ interface ConversationViewProps {
   className?: string;
   projectId?: string;
   onSpeakerUpdate?: (updatedSpeakerData: any) => void;
-  userTier?: 'basic' | 'pro' | 'premium'; // User's subscription tier
+  userTier?: string; // User's subscription tier
   filteredSpeakers?: Array<{
     speakerId: string;
     filterReason?: 'ad_read' | 'intro' | 'outro' | 'promo' | 'venue_announcement';
@@ -57,7 +59,27 @@ interface ConversationViewProps {
     category: 'concept' | 'person' | 'tool';
     definition: string;
     significance: string;
-    sources: Array<{ title: string; url: string }>;
+    sources: Array<{ title: string; url: string; description?: string; type?: string }>;
+    personProfile?: {
+      whoTheyAre?: string;
+      currentWork?: string;
+      notableBackground?: string;
+      whyRelevant?: string;
+    };
+    conceptProfile?: {
+      plainEnglish?: string;
+      coreMechanism?: string;
+      inThisEpisode?: string;
+      whyRelevant?: string;
+      relatedIdeas?: string[];
+    };
+    toolProfile?: {
+      whatItIs?: string;
+      primaryUseCase?: string;
+      whoUsesIt?: string;
+      whyRelevant?: string;
+      alternatives?: string[];
+    };
     matchText?: string;
     matchVariants?: string[];
   }>) => void;
@@ -98,6 +120,26 @@ interface InsightCard {
   relatedConcepts?: string[];
   whyItMatters?: string;
   relationships?: Array<{ type: string; entityId: string; description: string }>;
+  personProfile?: {
+    whoTheyAre?: string;
+    currentWork?: string;
+    notableBackground?: string;
+    whyRelevant?: string;
+  };
+  conceptProfile?: {
+    plainEnglish?: string;
+    coreMechanism?: string;
+    inThisEpisode?: string;
+    whyRelevant?: string;
+    relatedIdeas?: string[];
+  };
+  toolProfile?: {
+    whatItIs?: string;
+    primaryUseCase?: string;
+    whoUsesIt?: string;
+    whyRelevant?: string;
+    alternatives?: string[];
+  };
 }
 
 const resolveSpeakerId = (segment: SpeakerSegment) => segment.finalSpeakerId || segment.speakerId;
@@ -108,7 +150,7 @@ export default function ConversationView({
   className = "",
   projectId,
   onSpeakerUpdate,
-  userTier = 'basic',
+  userTier = 'standard',
   filteredSpeakers = [],
   insightsSidebarOpen,
   onInsightsSidebarChange,
@@ -128,6 +170,7 @@ export default function ConversationView({
 }: ConversationViewProps) {
   const showTimestamps = controlledShowTimestamps ?? true;
   const selectedSpeaker = controlledSelectedSpeaker ?? null;
+  const { formatDate: formatUserDate } = useUserPrefs();
   const [editingSpeaker, setEditingSpeaker] = useState<string | null>(null);
   const [editingName, setEditingName] = useState<string>('');
   const [savingSpeaker, setSavingSpeaker] = useState<string | null>(null);
@@ -150,6 +193,26 @@ export default function ConversationView({
   const [insightsError, setInsightsError] = useState<string | null>(null);
   const [refreshingInsights, setRefreshingInsights] = useState(false);
   const [generatingInsights, setGeneratingInsights] = useState(false);
+  const [insightsRetryTick, setInsightsRetryTick] = useState(0);
+  const insightsRetryAttemptRef = useRef(0);
+  const insightsRetryTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+
+  useEffect(() => {
+    insightsRetryAttemptRef.current = 0;
+    setInsightsRetryTick(0);
+    if (insightsRetryTimeoutRef.current) {
+      clearTimeout(insightsRetryTimeoutRef.current);
+      insightsRetryTimeoutRef.current = null;
+    }
+  }, [projectId]);
+
+  useEffect(() => {
+    return () => {
+      if (insightsRetryTimeoutRef.current) {
+        clearTimeout(insightsRetryTimeoutRef.current);
+      }
+    };
+  }, []);
 
   // Helper to check if a speaker is filtered
   const getFilterInfo = (speakerId: string) => {
@@ -215,7 +278,7 @@ export default function ConversationView({
       setEditingName('');
     } catch (error) {
       console.error('Error updating speaker name:', error);
-      alert('Failed to update speaker name. Please try again.');
+      toast.error('Failed to update the speaker name. Please try again.');
     } finally {
       setSavingSpeaker(null);
     }
@@ -262,7 +325,7 @@ export default function ConversationView({
       }
     } catch (error) {
       console.error('Error deleting speaker:', error);
-      alert('Failed to delete speaker. Please try again.');
+      toast.error('Failed to update the speaker roster. Please try again.');
     } finally {
       setDeletingSpeaker(null);
     }
@@ -293,7 +356,7 @@ export default function ConversationView({
       setSegmentReassigning(null);
     } catch (error) {
       console.error('Error reassigning segment:', error);
-      alert('Failed to reassign segment. Please try again.');
+      toast.error('Failed to reassign the segment. Please try again.');
     } finally {
       setSegmentReassigning(null);
     }
@@ -315,6 +378,7 @@ export default function ConversationView({
       onConfirmSegment?.(segmentIndex);
     } catch (error) {
       console.error('Error confirming segment:', error);
+      toast.error('Failed to confirm the segment. Please try again.');
     }
   };
 
@@ -322,12 +386,12 @@ export default function ConversationView({
 
   if (!speakerData || !speakerData.segments || speakerData.segments.length === 0) {
     return (
-      <div className={`p-6 bg-yellow-900/20 border border-yellow-800/30 rounded-lg ${className}`}>
-        <div className="flex items-center space-x-3 text-yellow-300">
+      <div className={`p-6 bg-yellow-50 dark:bg-yellow-900/20 border border-yellow-200 dark:border-yellow-800/30 rounded-lg ${className}`}>
+        <div className="flex items-center space-x-3 text-yellow-700 dark:text-yellow-300">
           <MessageCircle className="h-5 w-5" />
           <span className="text-sm font-medium">Conversation Format Processing</span>
         </div>
-        <p className="text-sm text-yellow-400 mt-3 leading-relaxed">
+        <p className="text-sm text-yellow-600 dark:text-yellow-400 mt-3 leading-relaxed">
           Speaker detection is being processed in the background. 
           Please refresh the page in a few moments to see the conversation format.
         </p>
@@ -338,12 +402,12 @@ export default function ConversationView({
   // Check if speaker analysis had errors
   if (speakerData.detectionMetadata?.error) {
     return (
-      <div className={`p-6 bg-orange-900/20 border border-orange-800/30 rounded-lg ${className}`}>
-        <div className="flex items-center space-x-3 text-orange-800">
+      <div className={`p-6 bg-orange-50 dark:bg-orange-900/20 border border-orange-200 dark:border-orange-800/30 rounded-lg ${className}`}>
+        <div className="flex items-center space-x-3 text-orange-700 dark:text-orange-800">
           <MessageCircle className="h-5 w-5" />
           <span className="text-sm font-medium">Conversation Format Partially Available</span>
         </div>
-        <p className="text-sm text-orange-400 mt-3 leading-relaxed">
+        <p className="text-sm text-orange-600 dark:text-orange-400 mt-3 leading-relaxed">
           Speaker segments are available but name detection failed. 
           Speakers will be shown as "Speaker 1", "Speaker 2", etc.
         </p>
@@ -453,7 +517,7 @@ export default function ConversationView({
         setInsightsLoading(true);
         setInsightsError(null);
 
-        const response = await fetch(`/api/insights/${projectId}?tier=${userTier}`);
+        const response = await fetch(`/api/insights/${projectId}`);
         const data = await response.json();
 
         if (!response.ok) {
@@ -464,11 +528,11 @@ export default function ConversationView({
         const transformedInsights: InsightCard[] = (data.insights || []).map((insight: any) => ({
           entityId: insight.entity_id,
           label: insight.label,
-          category: insight.category as 'person' | 'concept',
+          category: insight.category as 'person' | 'concept' | 'tool',
           matchText: insight.match_text,
           matchVariants: insight.match_variants || [],
           transcriptExcerpt: insight.transcript_excerpts?.[0]?.text || '',
-          summary: userTier === 'premium'
+          summary: userTier === 'pro' || userTier === 'premium'
             ? insight.full_explanation
             : userTier === 'pro'
             ? insight.simple_definition
@@ -479,12 +543,50 @@ export default function ConversationView({
           status: insight.status || 'auto_detected',
           origin: 'entity' as const,
           // Premium-only fields
-          relatedConcepts: userTier === 'premium' ? insight.related_concepts : undefined,
-          whyItMatters: userTier === 'premium' ? insight.why_it_matters : undefined,
-          relationships: userTier === 'premium' ? insight.relationships : undefined
+          relatedConcepts: userTier === 'pro' || userTier === 'premium' ? insight.related_concepts : undefined,
+          whyItMatters: userTier === 'pro' || userTier === 'premium' ? insight.why_it_matters : undefined,
+          relationships: userTier === 'pro' || userTier === 'premium' ? insight.relationships : undefined,
+          personProfile: insight.person_profile ? {
+            whoTheyAre: insight.person_profile.who_they_are,
+            currentWork: insight.person_profile.current_work,
+            notableBackground: insight.person_profile.notable_background,
+            whyRelevant: insight.person_profile.why_relevant,
+          } : undefined,
+          conceptProfile: insight.concept_profile ? {
+            plainEnglish: insight.concept_profile.plain_english,
+            coreMechanism: insight.concept_profile.core_mechanism,
+            inThisEpisode: insight.concept_profile.in_this_episode,
+            whyRelevant: insight.concept_profile.why_relevant,
+            relatedIdeas: insight.concept_profile.related_ideas || [],
+          } : undefined,
+          toolProfile: insight.tool_profile ? {
+            whatItIs: insight.tool_profile.what_it_is,
+            primaryUseCase: insight.tool_profile.primary_use_case,
+            whoUsesIt: insight.tool_profile.who_uses_it,
+            whyRelevant: insight.tool_profile.why_relevant,
+            alternatives: insight.tool_profile.alternatives || [],
+          } : undefined,
         }));
 
         setInlineInsightPresets(transformedInsights);
+
+        if (insightsRetryTimeoutRef.current) {
+          clearTimeout(insightsRetryTimeoutRef.current);
+          insightsRetryTimeoutRef.current = null;
+        }
+
+        if (
+          transformedInsights.length === 0 &&
+          userTier === 'pro' || userTier === 'premium' &&
+          insightsRetryAttemptRef.current < 20
+        ) {
+          insightsRetryAttemptRef.current += 1;
+          insightsRetryTimeoutRef.current = setTimeout(() => {
+            setInsightsRetryTick((prev) => prev + 1);
+          }, 5000);
+        } else {
+          insightsRetryAttemptRef.current = 0;
+        }
       } catch (error) {
         console.error('[Insights] Failed to fetch:', error);
         setInsightsError(error instanceof Error ? error.message : 'Unknown error');
@@ -496,7 +598,7 @@ export default function ConversationView({
     }
 
     fetchInsights();
-  }, [projectId, userTier, insightsRefreshToken]);
+  }, [projectId, userTier, insightsRefreshToken, insightsRetryTick]);
 
   const [activeInsightIds, setActiveInsightIds] = useState<Set<string>>(() => new Set());
 
@@ -552,7 +654,12 @@ export default function ConversationView({
         sources: (card.sources || []).map(s => ({
           title: s.title,
           url: s.url || '#',
+          description: s.description,
+          type: s.type,
         })),
+        personProfile: card.personProfile,
+        conceptProfile: card.conceptProfile,
+        toolProfile: card.toolProfile,
         matchText: card.matchText,
         matchVariants: card.matchVariants,
       };
@@ -607,7 +714,7 @@ export default function ConversationView({
 
 
   const handleRefreshInsights = async () => {
-    if (!projectId || userTier !== 'premium' || refreshingInsights) {
+    if (!projectId || (userTier !== 'pro' && userTier !== 'premium') || refreshingInsights) {
       return;
     }
 
@@ -625,18 +732,18 @@ export default function ConversationView({
       }
 
       // Refetch insights after successful refresh
-      const fetchResponse = await fetch(`/api/insights/${projectId}?tier=${userTier}`);
+      const fetchResponse = await fetch(`/api/insights/${projectId}`);
       const fetchData = await fetchResponse.json();
 
       if (fetchResponse.ok) {
         const transformedInsights: InsightCard[] = (fetchData.insights || []).map((insight: any) => ({
           entityId: insight.entity_id,
           label: insight.label,
-          category: insight.category as 'person' | 'concept',
+          category: insight.category as 'person' | 'concept' | 'tool',
           matchText: insight.match_text,
           matchVariants: insight.match_variants || [],
           transcriptExcerpt: insight.transcript_excerpts?.[0]?.text || '',
-          summary: userTier === 'premium'
+          summary: userTier === 'pro' || userTier === 'premium'
             ? insight.full_explanation
             : userTier === 'pro'
             ? insight.simple_definition
@@ -647,9 +754,29 @@ export default function ConversationView({
           status: insight.status || 'auto_detected',
           origin: 'entity' as const,
           // Premium-only fields
-          relatedConcepts: userTier === 'premium' ? insight.related_concepts : undefined,
-          whyItMatters: userTier === 'premium' ? insight.why_it_matters : undefined,
-          relationships: userTier === 'premium' ? insight.relationships : undefined
+          relatedConcepts: userTier === 'pro' || userTier === 'premium' ? insight.related_concepts : undefined,
+          whyItMatters: userTier === 'pro' || userTier === 'premium' ? insight.why_it_matters : undefined,
+          relationships: userTier === 'pro' || userTier === 'premium' ? insight.relationships : undefined,
+          personProfile: insight.person_profile ? {
+            whoTheyAre: insight.person_profile.who_they_are,
+            currentWork: insight.person_profile.current_work,
+            notableBackground: insight.person_profile.notable_background,
+            whyRelevant: insight.person_profile.why_relevant,
+          } : undefined,
+          conceptProfile: insight.concept_profile ? {
+            plainEnglish: insight.concept_profile.plain_english,
+            coreMechanism: insight.concept_profile.core_mechanism,
+            inThisEpisode: insight.concept_profile.in_this_episode,
+            whyRelevant: insight.concept_profile.why_relevant,
+            relatedIdeas: insight.concept_profile.related_ideas || [],
+          } : undefined,
+          toolProfile: insight.tool_profile ? {
+            whatItIs: insight.tool_profile.what_it_is,
+            primaryUseCase: insight.tool_profile.primary_use_case,
+            whoUsesIt: insight.tool_profile.who_uses_it,
+            whyRelevant: insight.tool_profile.why_relevant,
+            alternatives: insight.tool_profile.alternatives || [],
+          } : undefined,
         }));
 
         setInlineInsightPresets(transformedInsights);
@@ -658,7 +785,7 @@ export default function ConversationView({
       console.log(`[Insights] Refreshed: ${data.insight_count} insights`);
     } catch (error) {
       console.error('[Insights] Refresh failed:', error);
-      alert('Failed to refresh insights. Please try again.');
+      toast.error('Failed to refresh insights. Please try again.');
     } finally {
       setRefreshingInsights(false);
     }
@@ -704,7 +831,7 @@ export default function ConversationView({
         // Map category to allowed types
         let category: 'concept' | 'person' | 'tool' = 'concept';
         if (card.category === 'person') category = 'person';
-        else if (card.category === 'tool') category = 'tool';
+        else if (card.category === 'tool' || card.category === 'org' || card.category === 'product') category = 'tool';
 
         return {
           id: card.entityId,
@@ -715,7 +842,12 @@ export default function ConversationView({
           sources: (card.sources || []).map(s => ({
             title: s.title,
             url: s.url || '',
+            description: s.description,
+            type: s.type,
           })),
+          personProfile: card.personProfile,
+          conceptProfile: card.conceptProfile,
+          toolProfile: card.toolProfile,
           matchText: card.matchText,
           matchVariants: card.matchVariants,
         };
@@ -745,7 +877,7 @@ export default function ConversationView({
       }
 
       // Fetch the newly generated insights
-      const fetchResponse = await fetch(`/api/insights/${projectId}?tier=${userTier}`);
+      const fetchResponse = await fetch(`/api/insights/${projectId}`);
       const fetchData = await fetchResponse.json();
 
       if (fetchResponse.ok) {
@@ -756,7 +888,7 @@ export default function ConversationView({
           matchText: insight.match_text,
           matchVariants: insight.match_variants || [],
           transcriptExcerpt: insight.transcript_excerpts?.[0]?.text || '',
-          summary: userTier === 'premium'
+          summary: userTier === 'pro' || userTier === 'premium'
             ? insight.full_explanation
             : userTier === 'pro'
             ? insight.simple_definition
@@ -766,9 +898,29 @@ export default function ConversationView({
           updatedAt: insight.updated_at || new Date().toISOString(),
           status: insight.status || 'auto_detected',
           origin: 'entity' as const,
-          relatedConcepts: userTier === 'premium' ? insight.related_concepts : undefined,
-          whyItMatters: userTier === 'premium' ? insight.why_it_matters : undefined,
-          relationships: userTier === 'premium' ? insight.relationships : undefined
+          relatedConcepts: userTier === 'pro' || userTier === 'premium' ? insight.related_concepts : undefined,
+          whyItMatters: userTier === 'pro' || userTier === 'premium' ? insight.why_it_matters : undefined,
+          relationships: userTier === 'pro' || userTier === 'premium' ? insight.relationships : undefined,
+          personProfile: insight.person_profile ? {
+            whoTheyAre: insight.person_profile.who_they_are,
+            currentWork: insight.person_profile.current_work,
+            notableBackground: insight.person_profile.notable_background,
+            whyRelevant: insight.person_profile.why_relevant,
+          } : undefined,
+          conceptProfile: insight.concept_profile ? {
+            plainEnglish: insight.concept_profile.plain_english,
+            coreMechanism: insight.concept_profile.core_mechanism,
+            inThisEpisode: insight.concept_profile.in_this_episode,
+            whyRelevant: insight.concept_profile.why_relevant,
+            relatedIdeas: insight.concept_profile.related_ideas || [],
+          } : undefined,
+          toolProfile: insight.tool_profile ? {
+            whatItIs: insight.tool_profile.what_it_is,
+            primaryUseCase: insight.tool_profile.primary_use_case,
+            whoUsesIt: insight.tool_profile.who_uses_it,
+            whyRelevant: insight.tool_profile.why_relevant,
+            alternatives: insight.tool_profile.alternatives || [],
+          } : undefined,
         }));
 
         setInlineInsightPresets(transformedInsights);
@@ -777,7 +929,7 @@ export default function ConversationView({
       console.log(`[Insights] Generated: ${data.insight_count} insights`);
     } catch (error) {
       console.error('[Insights] Generation failed:', error);
-      alert('Failed to generate insights. Please try again.');
+      toast.error('Failed to generate insights. Please try again.');
     } finally {
       setGeneratingInsights(false);
     }
@@ -881,12 +1033,12 @@ export default function ConversationView({
         <div className="flex items-center gap-4">
           {/* Conversation Info */}
           <div className="flex items-center gap-3">
-            <div className="flex items-center justify-center h-9 w-9 rounded-full bg-blue-900/20 text-blue-600">
+            <div className="flex items-center justify-center h-9 w-9 rounded-full bg-blue-50 dark:bg-blue-900/20 text-blue-600">
               <MessageCircle className="h-4 w-4" />
             </div>
             <div>
-              <h4 className="text-sm font-semibold text-slate-50">Conversation</h4>
-              <p className="text-xs text-slate-400">
+              <h4 className="text-sm font-semibold text-slate-900 dark:text-slate-50">Conversation</h4>
+              <p className="text-xs text-slate-500 dark:text-slate-400">
                 {detectionMetadata.totalSpeakers} speaker{detectionMetadata.totalSpeakers !== 1 ? 's' : ''} • {detectionMetadata.totalSegments} segments
               </p>
             </div>
@@ -903,7 +1055,7 @@ export default function ConversationView({
           <div className="sticky top-2 z-10 flex justify-center mb-2 pointer-events-none">
             <button
               onClick={resumeAutoScroll}
-              className="pointer-events-auto flex items-center gap-1.5 px-3 py-1.5 text-[11px] font-medium text-slate-200 bg-slate-800/95 backdrop-blur-sm border border-slate-700 rounded-full shadow-lg hover:bg-slate-700 transition-colors"
+              className="pointer-events-auto flex items-center gap-1.5 px-3 py-1.5 text-[11px] font-medium text-slate-700 dark:text-slate-200 bg-white/95 dark:bg-slate-800/95 backdrop-blur-sm border border-slate-200 dark:border-slate-700 rounded-full shadow-lg hover:bg-slate-100 dark:hover:bg-slate-700 transition-colors"
             >
               ↓ Resume follow-along
             </button>
@@ -943,10 +1095,10 @@ export default function ConversationView({
               {...(loopIdx === 0 ? { 'data-tour': 'speaker-bubble' } : {})}
               className={`flex space-x-3 p-4 rounded-xl transition-all duration-300 border group cursor-pointer ${
                 isSelected
-                  ? 'bg-blue-900/20 border-blue-800/30'
+                  ? 'bg-blue-50 dark:bg-blue-900/20 border-blue-200 dark:border-blue-800/30'
                   : isActive
-                  ? 'bg-blue-900/10 border-l-2 border-blue-500 shadow-[inset_0_1px_0_0_rgba(255,255,255,0.05)]'
-                  : 'bg-slate-900/80 border-slate-800 hover:border-slate-700'
+                  ? 'bg-blue-50/50 dark:bg-blue-900/10 border-l-2 border-blue-500 shadow-[inset_0_1px_0_0_rgba(255,255,255,0.05)]'
+                  : 'bg-white/80 dark:bg-slate-900/80 border-slate-200 dark:border-slate-800 hover:border-slate-300 dark:hover:border-slate-700'
               }`}
               onClick={(e) => {
                 const target = e.target as HTMLElement;
@@ -966,7 +1118,7 @@ export default function ConversationView({
               )}
 
               {/* Speaker Avatar */}
-              <div className={`flex-shrink-0 w-10 h-10 rounded-full flex items-center justify-center ${colorClass.replace('bg-blue-50', 'bg-blue-600').replace('bg-green-50', 'bg-green-600').replace('bg-purple-50', 'bg-purple-600').replace('bg-orange-50', 'bg-orange-600').replace('bg-pink-50', 'bg-pink-600').replace('bg-indigo-50', 'bg-indigo-600').replace(/text-\w+-600/, 'text-white')} border-2 border-slate-900`}>
+              <div className={`flex-shrink-0 w-10 h-10 rounded-full flex items-center justify-center ${colorClass.replace('bg-blue-50', 'bg-blue-600').replace('bg-green-50', 'bg-green-600').replace('bg-purple-50', 'bg-purple-600').replace('bg-orange-50', 'bg-orange-600').replace('bg-pink-50', 'bg-pink-600').replace('bg-indigo-50', 'bg-indigo-600').replace(/text-\w+-600/, 'text-white')} border-2 border-white dark:border-slate-900`}>
                 <span className="text-sm font-bold">
                   {speakerName.charAt(0).toUpperCase()}
                 </span>
@@ -990,7 +1142,7 @@ export default function ConversationView({
                     )}
                     {!isFiltered && speakerRoleLabel && (
                       <span
-                        className="inline-flex items-center text-[11px] uppercase tracking-wide px-2 py-0.5 rounded-full bg-slate-800 text-slate-400 border border-slate-700"
+                        className="inline-flex items-center text-[11px] uppercase tracking-wide px-2 py-0.5 rounded-full bg-slate-100 dark:bg-slate-800 text-slate-500 dark:text-slate-400 border border-slate-200 dark:border-slate-700"
                         title={roleTooltip}
                       >
                         {speakerRoleLabel}
@@ -1003,7 +1155,7 @@ export default function ConversationView({
                     )}
                   </div>
                   {showTimestamps && (
-                    <div className="flex items-center space-x-2 text-xs text-slate-400">
+                    <div className="flex items-center space-x-2 text-xs text-slate-500 dark:text-slate-400">
                       <span className="font-mono">{formatTime(segment.startTime)}</span>
                       <span className="text-slate-500">•</span>
                       <span>{duration.toFixed(1)}s</span>
@@ -1028,14 +1180,14 @@ export default function ConversationView({
                   )}
                 </div>
                 {/* Message Text */}
-                <div className="text-sm text-slate-200 leading-relaxed break-words">
+                <div className="text-sm text-slate-700 dark:text-slate-200 leading-relaxed break-words">
                   {highlightSegmentText(segment.text)}
                 </div>
 
                 {projectId && (
                   <div className="mt-2 flex items-center justify-end">
                     <div className="flex items-center gap-2 opacity-30 transition-opacity group-hover:opacity-100">
-                      <label className="text-[11px] uppercase tracking-wide text-slate-400">
+                      <label className="text-[11px] uppercase tracking-wide text-slate-500 dark:text-slate-400">
                         Reassign
                       </label>
                       <select
@@ -1045,7 +1197,7 @@ export default function ConversationView({
                           handleSegmentReassign(segmentIndex, e.target.value);
                         }}
                         disabled={segmentReassigning === segmentIndex}
-                        className="text-xs bg-slate-800 border border-slate-700 rounded px-1.5 py-0.5 text-slate-200 focus:outline-none focus:ring-0 disabled:text-slate-500"
+                        className="text-xs bg-slate-50 dark:bg-slate-800 border border-slate-200 dark:border-slate-700 rounded px-1.5 py-0.5 text-slate-700 dark:text-slate-200 focus:outline-none focus:ring-0 disabled:text-slate-400 dark:disabled:text-slate-500"
                       >
                         {speakerList.map((speakerId) => (
                           <option key={speakerId} value={speakerId}>
@@ -1056,7 +1208,7 @@ export default function ConversationView({
                       <button
                         onClick={() => handleConfirmSegment(segmentIndex)}
                         title="Mark as confirmed"
-                        className="p-1 text-green-600 hover:text-green-300 hover:bg-green-900/20 rounded transition-colors"
+                        className="p-1 text-green-600 hover:text-green-700 dark:hover:text-green-300 hover:bg-green-50 dark:hover:bg-green-900/20 rounded transition-colors"
                       >
                         <Check className="h-3.5 w-3.5" />
                       </button>
@@ -1071,7 +1223,7 @@ export default function ConversationView({
       </div>
 
       {/* Footer Stats */}
-      <div className="flex-shrink-0 px-4 pb-4 text-xs text-slate-400 pt-4 border-t border-slate-700">
+      <div className="flex-shrink-0 px-4 pb-4 text-xs text-slate-500 dark:text-slate-400 pt-4 border-t border-slate-200 dark:border-slate-700">
         {selectedSpeaker ? (
           <span>
             Showing {filteredSegments.length} segments from {getSpeakerDisplayName(speakers[selectedSpeaker])}
@@ -1079,7 +1231,7 @@ export default function ConversationView({
         ) : (
           <span>
             Total conversation: {segments.length} segments • 
-            Processed on {new Date(detectionMetadata.processedAt).toLocaleDateString()}
+            Processed on {formatUserDate(detectionMetadata.processedAt)}
           </span>
         )}
       </div>

@@ -142,7 +142,7 @@ ${transcriptionText.slice(0, 100000)}`;
     }
 
     if (metadata.ad_segments_found.length > 0) {
-      console.log(`[PRE-PROCESSOR] 🛑 Filtering out ads: ${metadata.ad_segments_found.join(', ')}`);
+      console.log(`[PRE-PROCESSOR] 🛑 Excluding ad segments from narrative summaries only: ${metadata.ad_segments_found.join(', ')}`);
     }
 
     return {

@@ -184,14 +184,16 @@ npm run lint
 
 ## Deployment
 
-Deploy to Vercel with one click:
+DigitalOcean launch guide:
+- [docs/guides/DIGITALOCEAN_HOSTING_GUIDE.md](docs/guides/DIGITALOCEAN_HOSTING_GUIDE.md)
 
-[![Deploy with Vercel](https://vercel.com/button)](https://vercel.com/new/clone?repository-url=https://github.com/lucasfini/audiorepurpose)
+Production deployment assets:
+- [docker-compose.prod.yml](docker-compose.prod.yml)
+- [deploy/Caddyfile](deploy/Caddyfile)
+- [.env.production.example](.env.production.example)
+- [deploy/cron/audiorepurpose.cron.example](deploy/cron/audiorepurpose.cron.example)
 
-Or manually:
-```bash
-vercel --prod
-```
+This repo previously assumed Vercel in places, but the intended production direction is now DigitalOcean-hosted app infrastructure with external services kept where appropriate, such as Supabase and Cloudflare R2.
 
 ## Cost Optimization
 

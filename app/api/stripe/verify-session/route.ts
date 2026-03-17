@@ -8,6 +8,7 @@ import { NextRequest, NextResponse } from 'next/server';
 import Stripe from 'stripe';
 import { supabaseAdmin } from '@/lib/supabase/server';
 import { addCredit } from '@/lib/billing/credit';
+import { getTotalCredits, resolveCreditPackage } from '@/lib/billing/credit-packages';
 
 const stripe = new Stripe(process.env.STRIPE_SECRET_KEY!, {
   apiVersion: '2025-10-29.clover',
@@ -26,6 +27,10 @@ export async function POST(request: NextRequest) {
 
     if (authError || !user) {
       return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
+    }
+
+    if (user.email === process.env.DEMO_EMAIL) {
+      return NextResponse.json({ error: 'Demo account is read-only' }, { status: 403 });
     }
 
     // Parse request body
@@ -80,17 +85,28 @@ export async function POST(request: NextRequest) {
     }
 
     // Add credits
-    const creditsAmount = parseFloat(session.metadata?.creditsAmount || '0');
-    const baseAmount = parseFloat(session.metadata?.baseAmount || '0');
-    const bonusAmount = parseFloat(session.metadata?.bonusAmount || '0');
     const packageId = session.metadata?.packageId;
+    const pkg = resolveCreditPackage(
+      packageId || '',
+      session.metadata?.customAmount ? Number(session.metadata.customAmount) : undefined
+    );
 
-    if (!creditsAmount) {
+    if (!pkg) {
       return NextResponse.json(
-        { error: 'Invalid credits amount' },
+        { error: 'Invalid credit package' },
         { status: 400 }
       );
     }
+
+    const expectedAmountCents = Math.round(pkg.price * 100);
+    if ((session.amount_total || 0) !== expectedAmountCents) {
+      return NextResponse.json(
+        { error: 'Checkout amount mismatch' },
+        { status: 400 }
+      );
+    }
+
+    const creditsAmount = getTotalCredits(pkg);
 
     console.log(`Processing payment verification for user ${user.id}: $${creditsAmount} credits`);
 
@@ -112,8 +128,8 @@ export async function POST(request: NextRequest) {
       metadata: {
         sessionId: session.id,
         packageId,
-        baseAmount,
-        bonusAmount,
+        baseAmount: pkg.amount,
+        bonusAmount: pkg.bonus,
         amountPaid: (session.amount_total || 0) / 100,
         customerEmail: session.customer_email,
         verifiedViaSuccessPage: true,

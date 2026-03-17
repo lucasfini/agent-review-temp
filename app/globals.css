@@ -45,6 +45,9 @@
 
 :root {
   --radius: 0.625rem;
+  --dashboard-scrollbar-track: #e2e8f0;
+  --dashboard-scrollbar-thumb: #94a3b8;
+  --dashboard-scrollbar-thumb-hover: #64748b;
   --background: oklch(1 0 0);
   --foreground: oklch(0.129 0.042 264.695);
   --card: oklch(1 0 0);
@@ -79,6 +82,9 @@
 }
 
 .dark {
+  --dashboard-scrollbar-track: #0f172a;
+  --dashboard-scrollbar-thumb: #334155;
+  --dashboard-scrollbar-thumb-hover: #475569;
   --background: oklch(0.129 0.042 264.695);
   --foreground: oklch(0.984 0.003 247.858);
   --card: oklch(0.208 0.042 265.755);
@@ -237,16 +243,16 @@
 }
 .dark-scroll::-webkit-scrollbar-track,
 .dark-scroll *::-webkit-scrollbar-track {
-  background: #0f172a; /* slate-950 */
+  background: var(--dashboard-scrollbar-track);
 }
 .dark-scroll::-webkit-scrollbar-thumb,
 .dark-scroll *::-webkit-scrollbar-thumb {
-  background: #334155; /* slate-700 */
+  background: var(--dashboard-scrollbar-thumb);
   border-radius: 3px;
 }
 .dark-scroll::-webkit-scrollbar-thumb:hover,
 .dark-scroll *::-webkit-scrollbar-thumb:hover {
-  background: #475569; /* slate-600 */
+  background: var(--dashboard-scrollbar-thumb-hover);
 }
 
 /* Apply globally to the whole dashboard page */
@@ -255,14 +261,18 @@
   height: 6px;
 }
 .dashboard-page ::-webkit-scrollbar-track {
-  background: #0f172a;
+  background: var(--dashboard-scrollbar-track);
 }
 .dashboard-page ::-webkit-scrollbar-thumb {
-  background: #334155;
+  background: var(--dashboard-scrollbar-thumb);
   border-radius: 3px;
 }
 .dashboard-page ::-webkit-scrollbar-thumb:hover {
-  background: #475569;
+  background: var(--dashboard-scrollbar-thumb-hover);
+}
+.dark-scroll,
+.dashboard-page {
+  scrollbar-color: var(--dashboard-scrollbar-thumb) var(--dashboard-scrollbar-track);
 }
 
 /* ── Driver.js dark theme overrides ────────────────────────────────────── */

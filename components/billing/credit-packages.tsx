@@ -7,7 +7,9 @@
 
 import { useState } from 'react';
 import { Check, Zap } from 'lucide-react';
+import { toast } from 'sonner';
 import { useAuth } from '@/lib/auth/context';
+import { formatSiteCreditsFromUsd } from '@/lib/billing/display';
 
 interface Package {
   id: string;
@@ -80,7 +82,7 @@ export default function CreditPackages({ onSuccess }: CreditPackagesProps) {
     setIsProcessing(true);
     try {
       if (!session?.access_token) {
-        alert('Please log in to purchase credits');
+        toast.error('Please log in to purchase credits.');
         setIsProcessing(false);
         return;
       }
@@ -111,7 +113,7 @@ export default function CreditPackages({ onSuccess }: CreditPackagesProps) {
       }
     } catch (error) {
       console.error('Error creating checkout session:', error);
-      alert('Failed to initiate checkout. Please try again.');
+      toast.error(error instanceof Error ? error.message : 'Failed to initiate checkout. Please try again.');
       setIsProcessing(false);
     }
   };
@@ -134,8 +136,8 @@ export default function CreditPackages({ onSuccess }: CreditPackagesProps) {
             onClick={() => setSelectedPackage(pkg.id)}
             className={`relative p-4 rounded-xl border-2 transition-all text-left ${
               selectedPackage === pkg.id
-                ? 'border-blue-500 bg-blue-900/20/50 shadow-sm'
-                : 'border-slate-700 hover:border-slate-600 hover:shadow-sm'
+                ? 'border-blue-500 bg-blue-50 dark:bg-blue-900/20 shadow-sm'
+                : 'border-slate-300 dark:border-slate-700 hover:border-slate-400 dark:hover:border-slate-600 hover:shadow-sm'
             } ${pkg.popular ? 'ring-2 ring-blue-500 ring-offset-1' : ''}`}
           >
             {pkg.popular && (
@@ -145,13 +147,13 @@ export default function CreditPackages({ onSuccess }: CreditPackagesProps) {
               </div>
             )}
 
-            <div className="text-2xl font-bold text-slate-50 mb-1">
+            <div className="text-2xl font-bold text-slate-900 dark:text-slate-50 mb-1">
               {pkg.custom ? 'Custom' : `$${pkg.price}`}
             </div>
 
             {pkg.custom ? (
               <div className="mt-2">
-                <label className="block text-[11px] text-slate-400 mb-1">Amount (min $5)</label>
+                <label className="block text-[11px] text-slate-500 dark:text-slate-400 mb-1">Amount (min $5)</label>
                 <input
                   type="number"
                   min={5}
@@ -159,33 +161,33 @@ export default function CreditPackages({ onSuccess }: CreditPackagesProps) {
                   value={customAmount}
                   onChange={(e) => setCustomAmount(e.target.value)}
                   onFocus={() => setSelectedPackage('custom')}
-                  className={`w-full px-2.5 py-1.5 text-sm border rounded-lg bg-slate-900 text-slate-200 focus:outline-none focus:ring-2 focus:ring-blue-500 ${
+                  className={`w-full px-2.5 py-1.5 text-sm border rounded-lg bg-white dark:bg-slate-900 text-slate-700 dark:text-slate-200 focus:outline-none focus:ring-2 focus:ring-blue-500 ${
                     isCustomSelected && !isCustomValid && customAmount !== ''
                       ? 'border-red-500'
-                      : 'border-slate-700'
+                      : 'border-slate-300 dark:border-slate-700'
                   }`}
                   placeholder="Enter amount"
                 />
-                <div className="mt-2 text-[11px] text-slate-500">
-                  Credits match your dollar amount.
+                <div className="mt-2 text-[11px] text-slate-500 dark:text-slate-500">
+                  {isCustomValid ? `${formatSiteCreditsFromUsd(customValue)} will be added.` : 'Credits are converted from your dollar amount.'}
                 </div>
               </div>
             ) : (
-              <div className="text-[13px] text-slate-50 font-medium mb-1">
-                ${pkg.amount} credits
+              <div className="text-[13px] text-slate-800 dark:text-slate-50 font-medium mb-1">
+                {formatSiteCreditsFromUsd(pkg.amount)}
                 {pkg.bonus ? (
-                  <span className="ml-1 inline-flex items-center rounded-full bg-emerald-900/40 text-emerald-300 px-1.5 py-0.5 text-[10px] font-semibold">
-                    +${pkg.bonus}
+                  <span className="ml-1 inline-flex items-center rounded-full bg-emerald-100 dark:bg-emerald-900/40 text-emerald-600 dark:text-emerald-300 px-1.5 py-0.5 text-[10px] font-semibold">
+                    +{formatSiteCreditsFromUsd(pkg.bonus)}
                   </span>
                 ) : null}
               </div>
             )}
 
-            <div className="text-[11px] text-slate-400 mb-3">
+            <div className="text-[11px] text-slate-500 dark:text-slate-400 mb-3">
               {pkg.episodes}
             </div>
 
-            <div className="flex items-center gap-1 text-[11px] text-slate-500">
+            <div className="flex items-center gap-1 text-[11px] text-slate-500 dark:text-slate-500">
               <Check className="h-3 w-3" />
               No expiration
             </div>
@@ -202,10 +204,10 @@ export default function CreditPackages({ onSuccess }: CreditPackagesProps) {
       </div>
 
       <div className="flex items-center justify-between mb-4">
-        <p className="text-xs text-slate-400">
+        <p className="text-xs text-slate-500 dark:text-slate-400">
           Pay as you go — no subscriptions, credits never expire
         </p>
-        <p className="text-xs text-slate-500">
+        <p className="text-xs text-slate-500 dark:text-slate-500">
           Secure payment via Stripe
         </p>
       </div>
@@ -219,9 +221,9 @@ export default function CreditPackages({ onSuccess }: CreditPackagesProps) {
           ? 'Processing...'
           : isCustomSelected
             ? isCustomValid
-              ? `Purchase $${customValue.toFixed(2)} — Get $${customValue.toFixed(2)} in Credits`
+              ? `Purchase $${customValue.toFixed(2)} — Get ${formatSiteCreditsFromUsd(customValue)}`
               : 'Enter a custom amount (min $5)'
-            : `Purchase $${selected?.price ?? 0} — Get $${(selected?.amount ?? 0) + (selected?.bonus ?? 0)} in Credits`}
+            : `Purchase $${selected?.price ?? 0} — Get ${formatSiteCreditsFromUsd((selected?.amount ?? 0) + (selected?.bonus ?? 0))}`}
       </button>
     </div>
   );

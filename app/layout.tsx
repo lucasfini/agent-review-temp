@@ -2,7 +2,8 @@ import type { Metadata } from "next";
 import { Geist, Geist_Mono } from "next/font/google";
 import { AuthProvider } from "@/lib/auth/context";
 import CompactFooter from "@/components/site/CompactFooter";
-import { Toaster } from "sonner";
+import { ThemeProvider } from "@/components/theme-provider";
+import { ThemeAwareToaster } from "@/components/theme-aware-toaster";
 import "./globals.css";
 
 const geistSans = Geist({
@@ -20,21 +21,30 @@ export const metadata: Metadata = {
   description: "Turn your podcast into 15+ social posts automatically with AI-powered content repurposing.",
 };
 
+export const viewport = {
+  width: "device-width",
+  initialScale: 1,
+  maximumScale: 1,
+};
+
 export default function RootLayout({
   children,
 }: Readonly<{
   children: React.ReactNode;
 }>) {
   return (
-    <html lang="en" className="dark">
+    <html lang="en" suppressHydrationWarning>
       <body
-        className={`${geistSans.variable} ${geistMono.variable} antialiased bg-slate-950 text-slate-50`}
+        className={`${geistSans.variable} ${geistMono.variable} antialiased`}
+        suppressHydrationWarning
       >
-        <AuthProvider>
-          {children}
-          <CompactFooter />
-          <Toaster theme="dark" position="top-right" richColors />
-        </AuthProvider>
+        <ThemeProvider attribute="class" defaultTheme="dark" enableSystem={false} disableTransitionOnChange>
+          <AuthProvider>
+            {children}
+            <CompactFooter />
+            <ThemeAwareToaster />
+          </AuthProvider>
+        </ThemeProvider>
       </body>
     </html>
   );

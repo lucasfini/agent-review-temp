@@ -94,7 +94,6 @@ async function updateProjectWithSpeakerData(
 ) {
   return supabaseAdmin
     .from('projects')
-    // @ts-expect-error - Supabase types issue
     .update({
       speaker_data: speakerData,
       ...extraFields
@@ -119,8 +118,9 @@ async function runBackgroundContentTasks(params: {
   transcriptionSegments: any[];
   features: ReturnType<typeof getTierFeatures>;
   userId?: string;
+  openaiApiKey?: string;
 }) {
-  const { projectId, speakerData, finalTranscription, transcriptionSegments, features, userId } = params;
+  const { projectId, speakerData, finalTranscription, transcriptionSegments, features, userId, openaiApiKey } = params;
   let workingSpeakerData = speakerData;
 
   const aiProcessing: AIProcessingFlags = {
@@ -331,7 +331,7 @@ export async function POST(request: NextRequest) {
       );
     }
 
-    const {projectId, fileName, performanceLevel, diarizationProvider = 'assemblyai', speakerCount} = payload as {
+    const { projectId, fileName, performanceLevel, diarizationProvider = 'assemblyai', speakerCount } = payload as {
       projectId?: string;
       fileName?: string;
       performanceLevel?: TierLevel;
@@ -347,7 +347,7 @@ export async function POST(request: NextRequest) {
     }
 
     parsedProjectId = projectId;
-    const tier: TierLevel = performanceLevel || 'basic';
+    const tier: TierLevel = performanceLevel || 'standard';
     const features = getTierFeatures(tier);
 
     // Persist which content blocks are owed for this tier so the reconcile
@@ -627,7 +627,7 @@ export async function POST(request: NextRequest) {
           },
           duration: totalDuration
         });
-        
+
         const { incrementReferenceCount } = await import('@/lib/transcription-cache');
         await incrementReferenceCount(fingerprint);
       }
@@ -693,7 +693,7 @@ export async function POST(request: NextRequest) {
         finalTranscription,
         speakerSegments, // Use RAW segments, not LLM-processed ones
         {
-          openaiApiKey,
+          openaiApiKey: openaiApiKey ?? undefined,
           userId: existingProject?.user_id,
           projectId,
         }
@@ -726,8 +726,8 @@ export async function POST(request: NextRequest) {
 
     // Check if we have a preset roster (user-provided speakers)
     const hasRoster = existingProject?.preset_speakers &&
-                      Array.isArray(existingProject.preset_speakers) &&
-                      existingProject.preset_speakers.length > 0;
+      Array.isArray(existingProject.preset_speakers) &&
+      existingProject.preset_speakers.length > 0;
 
     // Do not infer speakerCount from preset roster size.
     // A partial roster (e.g. 2 names for a 5-speaker file) should not constrain GPT extraction.
@@ -759,7 +759,7 @@ export async function POST(request: NextRequest) {
           const { runRefactoredSpeakerPipeline } = await import('@/lib/refactored-speaker-pipeline');
 
           const pipelineResult = await runRefactoredSpeakerPipeline(speakerSegments, {
-            openaiApiKey,
+            openaiApiKey: openaiApiKey ?? undefined,
             userId: existingProject?.user_id,
             projectId,
             filename: fileName, // Pass filename for priming
@@ -767,12 +767,12 @@ export async function POST(request: NextRequest) {
             speakerCount: effectiveSpeakerCount, // Pass expected speaker count (explicit or inferred)
             projectType,
             mappingMode: 'csp',
-            hasPresetRoster: hasRoster,
+            hasPresetRoster: hasRoster ?? undefined,
             presetRoster: hasRoster
               ? existingProject!.preset_speakers!.map((s: any) => ({
-                  name: s.name,
-                  role: s.role ?? null,
-                }))
+                name: s.name,
+                role: s.role ?? null,
+              }))
               : undefined,
           });
 
@@ -850,61 +850,61 @@ export async function POST(request: NextRequest) {
         // Continue without pre-processing if it fails
       }
 
-    // ============================================================
-    // STEP 4: DEBATE POST-PROCESSING (Cleanup Layer)
-    // If DEBATE detected, use the LLM-extracted roster to fix drift
-    // ============================================================
-    if (projectType === 'DEBATE') {
-      console.log(`\n========================================`);
-      console.log(`[DEBATE] 🔒 STEP 2: DEBATE Post-Processing Cleanup`);
-      console.log(`[DEBATE] LLM ran first → Now applying Moderator Flow correction`);
-      console.log(`[DEBATE] Purpose: Fix any "drift" in LLM assignments`);
-      console.log(`========================================\n`);
+      // ============================================================
+      // STEP 4: DEBATE POST-PROCESSING (Cleanup Layer)
+      // If DEBATE detected, use the LLM-extracted roster to fix drift
+      // ============================================================
+      if (projectType === 'DEBATE') {
+        console.log(`\n========================================`);
+        console.log(`[DEBATE] 🔒 STEP 2: DEBATE Post-Processing Cleanup`);
+        console.log(`[DEBATE] LLM ran first → Now applying Moderator Flow correction`);
+        console.log(`[DEBATE] Purpose: Fix any "drift" in LLM assignments`);
+        console.log(`========================================\n`);
 
-      // Determine which roster to use: preset_speakers (if provided) or LLM-extracted
-      const hasPresetRoster = existingProject?.preset_speakers &&
-                              Array.isArray(existingProject.preset_speakers) &&
-                              existingProject.preset_speakers.length > 0;
+        // Determine which roster to use: preset_speakers (if provided) or LLM-extracted
+        const hasPresetRoster = existingProject?.preset_speakers &&
+          Array.isArray(existingProject.preset_speakers) &&
+          existingProject.preset_speakers.length > 0;
 
-      let roster: Array<{ id?: string; name: string; role?: string; aliases: string[] }>;
+        let roster: Array<{ id?: string; name: string; role?: string; aliases: string[] }>;
 
-      if (hasPresetRoster) {
-        roster = buildDebateRosterEntriesFromPreset(existingProject!.preset_speakers!, speakersWithNames);
-        console.log(`[DEBATE] Using PRESET roster: ${roster.map(r => r.name).join(', ')}`);
-      } else if (llmExtractedRoster.length > 0) {
-        roster = buildDebateRosterEntriesFromSpeakerMap(speakersWithNames);
-        console.log(`[DEBATE] Using LLM-EXTRACTED roster: ${roster.map(r => r.name).join(', ')}`);
-      } else {
-        // No roster available - skip debate correction
-        console.log(`[DEBATE] ⚠️ No roster available (preset or LLM-extracted)`);
-        console.log(`[DEBATE] Skipping debate correction - keeping LLM assignments`);
-        roster = [];
-      }
+        if (hasPresetRoster) {
+          roster = buildDebateRosterEntriesFromPreset(existingProject!.preset_speakers!, speakersWithNames);
+          console.log(`[DEBATE] Using PRESET roster: ${roster.map(r => r.name).join(', ')}`);
+        } else if (llmExtractedRoster.length > 0) {
+          roster = buildDebateRosterEntriesFromSpeakerMap(speakersWithNames);
+          console.log(`[DEBATE] Using LLM-EXTRACTED roster: ${roster.map(r => r.name).join(', ')}`);
+        } else {
+          // No roster available - skip debate correction
+          console.log(`[DEBATE] ⚠️ No roster available (preset or LLM-extracted)`);
+          console.log(`[DEBATE] Skipping debate correction - keeping LLM assignments`);
+          roster = [];
+        }
 
-      // DISABLED: correctDebateSpeakers was creating phantom speakers (e.g. "in")
-      // by overwriting correct assignments with broken lookahead logic.
-      // Keeping the pipeline at: GPT → Orphan Recovery → Conflict Detection → CSP → Reconciliation
-      const ENABLE_DEBATE_CORRECTION = false;
+        // DISABLED: correctDebateSpeakers was creating phantom speakers (e.g. "in")
+        // by overwriting correct assignments with broken lookahead logic.
+        // Keeping the pipeline at: GPT → Orphan Recovery → Conflict Detection → CSP → Reconciliation
+        const ENABLE_DEBATE_CORRECTION = false;
 
-      if (roster.length > 0 && ENABLE_DEBATE_CORRECTION) {
-        await updateProcessingProgress(projectId, {
-          stage: 'name_extraction' as ProcessingStage,
-          progress: 50,
-          message: 'Applying debate-specific speaker correction...'
-        });
+        if (roster.length > 0 && ENABLE_DEBATE_CORRECTION) {
+          await updateProcessingProgress(projectId, {
+            stage: 'name_extraction' as ProcessingStage,
+            progress: 50,
+            message: 'Applying debate-specific speaker correction...'
+          });
 
-        // Run debate correction on the LLM-reassigned segments
-        const debateResult = correctDebateSpeakers(reassignedSegments, roster);
+          // Run debate correction on the LLM-reassigned segments
+          const debateResult = correctDebateSpeakers(reassignedSegments, roster);
 
-        // Log the full summary
-        console.log(`\n${summarizeDebateCorrections(debateResult)}\n`);
+          // Log the full summary
+          console.log(`\n${summarizeDebateCorrections(debateResult)}\n`);
 
-        // Count segments that were actually modified
-        const modifiedSegmentCount = debateResult.segments.filter(
-          (s: any) => s._debateCorrected
-        ).length;
+          // Count segments that were actually modified
+          const modifiedSegmentCount = debateResult.segments.filter(
+            (s: any) => s._debateCorrected
+          ).length;
 
-        console.log(`[DEBATE] Fixed ${modifiedSegmentCount} speaker labels across ${debateResult.segments.length} total segments`);
+          console.log(`[DEBATE] Fixed ${modifiedSegmentCount} speaker labels across ${debateResult.segments.length} total segments`);
 
           if (debateResult.corrections.length > 0) {
             // Apply corrections to speaker data
@@ -937,65 +937,65 @@ export async function POST(request: NextRequest) {
             );
             logSpeakerAssignmentCounts(reassignedSegments, '[DEBATE] post-correction');
 
-          // Store correction metadata
-          debateCorrectionResult = {
-            hostId: debateResult.hostId,
-            hostConfidence: debateResult.hostConfidence,
-            hostDetectionMethod: debateResult.algorithmMetadata.hostDetectionMethod,
-            rosterSource: hasPresetRoster ? 'preset_speakers' : 'llm_extracted',
-            corrections: debateResult.corrections.map(c => ({
-              speakerId: c.speakerId,
-              assignedName: c.assignedName,
-              reason: c.assignmentReason,
-              confidence: c.confidence,
-              introducedAtSegment: c.introducedAtSegment,
-              introducedByPhrase: c.introducedByPhrase,
-            })),
-            metadata: {
-              ...debateResult.algorithmMetadata,
-              modifiedSegmentCount,
-            },
-            debugLog: debateResult.debugLog,
-          };
+            // Store correction metadata
+            debateCorrectionResult = {
+              hostId: debateResult.hostId,
+              hostConfidence: debateResult.hostConfidence,
+              hostDetectionMethod: debateResult.algorithmMetadata.hostDetectionMethod,
+              rosterSource: hasPresetRoster ? 'preset_speakers' : 'llm_extracted',
+              corrections: debateResult.corrections.map(c => ({
+                speakerId: c.speakerId,
+                assignedName: c.assignedName,
+                reason: c.assignmentReason,
+                confidence: c.confidence,
+                introducedAtSegment: c.introducedAtSegment,
+                introducedByPhrase: c.introducedByPhrase,
+              })),
+              metadata: {
+                ...debateResult.algorithmMetadata,
+                modifiedSegmentCount,
+              },
+              debugLog: debateResult.debugLog,
+            };
 
-          console.log(`[DEBATE] ✅ Applied ${debateResult.corrections.length} debate corrections:`);
-          console.log(`[DEBATE]   Host: ${debateResult.hostId || 'Not detected'} (method: ${debateResult.algorithmMetadata.hostDetectionMethod})`);
-          console.log(`[DEBATE]   Lookahead assignments: ${debateResult.algorithmMetadata.lookaheadAssignments}`);
-          console.log(`[DEBATE]   Name introductions found: ${debateResult.algorithmMetadata.nameIntroductionsFound}`);
+            console.log(`[DEBATE] ✅ Applied ${debateResult.corrections.length} debate corrections:`);
+            console.log(`[DEBATE]   Host: ${debateResult.hostId || 'Not detected'} (method: ${debateResult.algorithmMetadata.hostDetectionMethod})`);
+            console.log(`[DEBATE]   Lookahead assignments: ${debateResult.algorithmMetadata.lookaheadAssignments}`);
+            console.log(`[DEBATE]   Name introductions found: ${debateResult.algorithmMetadata.nameIntroductionsFound}`);
 
-          debateResult.corrections.forEach(c => {
-            const phraseInfo = c.introducedByPhrase ? ` via "${c.introducedByPhrase}"` : '';
-            console.log(`[DEBATE]   ${c.speakerId} → "${c.assignedName}" (${c.assignmentReason}, ${(c.confidence * 100).toFixed(0)}%${phraseInfo})`);
+            debateResult.corrections.forEach(c => {
+              const phraseInfo = c.introducedByPhrase ? ` via "${c.introducedByPhrase}"` : '';
+              console.log(`[DEBATE]   ${c.speakerId} → "${c.assignedName}" (${c.assignmentReason}, ${(c.confidence * 100).toFixed(0)}%${phraseInfo})`);
+            });
+
+            if (debateResult.unassignedSpeakers.length > 0) {
+              console.log(`[DEBATE]   ⚠️ Unassigned speakers: ${debateResult.unassignedSpeakers.join(', ')}`);
+            }
+          } else {
+            console.log(`[DEBATE] ℹ️ No corrections needed - LLM assignments appear correct`);
+            console.log(`[DEBATE] Debug: Host detection method: ${debateResult.algorithmMetadata.hostDetectionMethod}`);
+            console.log(`[DEBATE] Debug: Host ID: ${debateResult.hostId || 'NOT FOUND'}`);
+
+            // Log last debug entries for troubleshooting
+            if (debateResult.debugLog.length > 0) {
+              console.log(`[DEBATE] Last debug entries:`);
+              debateResult.debugLog.slice(-10).forEach((log: string) => console.log(`[DEBATE]   ${log}`));
+            }
+          }
+
+          await updateProcessingProgress(projectId, {
+            stage: 'name_extraction' as ProcessingStage,
+            progress: 100,
+            message: `Debate correction complete: ${debateResult.corrections.length} fixes applied`
           });
-
-          if (debateResult.unassignedSpeakers.length > 0) {
-            console.log(`[DEBATE]   ⚠️ Unassigned speakers: ${debateResult.unassignedSpeakers.join(', ')}`);
-          }
-        } else {
-          console.log(`[DEBATE] ℹ️ No corrections needed - LLM assignments appear correct`);
-          console.log(`[DEBATE] Debug: Host detection method: ${debateResult.algorithmMetadata.hostDetectionMethod}`);
-          console.log(`[DEBATE] Debug: Host ID: ${debateResult.hostId || 'NOT FOUND'}`);
-
-          // Log last debug entries for troubleshooting
-          if (debateResult.debugLog.length > 0) {
-            console.log(`[DEBATE] Last debug entries:`);
-            debateResult.debugLog.slice(-10).forEach((log: string) => console.log(`[DEBATE]   ${log}`));
-          }
+        } else if (roster.length > 0 && !ENABLE_DEBATE_CORRECTION) {
+          console.log(`[DEBATE] ⚠️ Debate correction DISABLED (roster has ${roster.length} speakers)`);
+          console.log(`[DEBATE] Using speaker assignments from: GPT → Orphan Recovery → Conflict Detection → CSP → Reconciliation`);
+          console.log(`[DEBATE] Speaker names from earlier passes will be preserved (no lookahead overwrites)`);
         }
-
-        await updateProcessingProgress(projectId, {
-          stage: 'name_extraction' as ProcessingStage,
-          progress: 100,
-          message: `Debate correction complete: ${debateResult.corrections.length} fixes applied`
-        });
-      } else if (roster.length > 0 && !ENABLE_DEBATE_CORRECTION) {
-        console.log(`[DEBATE] ⚠️ Debate correction DISABLED (roster has ${roster.length} speakers)`);
-        console.log(`[DEBATE] Using speaker assignments from: GPT → Orphan Recovery → Conflict Detection → CSP → Reconciliation`);
-        console.log(`[DEBATE] Speaker names from earlier passes will be preserved (no lookahead overwrites)`);
+      } else {
+        console.log(`[CLASSIFY] ℹ️ ${projectType} detected - no debate post-processing needed`);
       }
-    } else {
-      console.log(`[CLASSIFY] ℹ️ ${projectType} detected - no debate post-processing needed`);
-    }
 
     } // End of: if (features.nameExtraction || features.aiSummary)
     // NOTE: Summary, roles, chapters, takeaways, quotes now run in background
@@ -1003,7 +1003,7 @@ export async function POST(request: NextRequest) {
     // Cost calculation
     // Note: AI processing costs are now billed directly by the generator functions
     // via trackOpenAIUsage using the centralized COST_MAP.
-    
+
     // We only track the base transcription cost here as that's handled by this route
     let totalCost = baseCost;
     const tierPricing = calculateTierCost(tier, totalDuration, false);
@@ -1174,7 +1174,6 @@ export async function POST(request: NextRequest) {
     console.log(`\n[DATABASE] 💾 Saving results to project ${projectId}...`);
     const { error: updateError } = await supabaseAdmin
       .from('projects')
-      // @ts-expect-error - Supabase types issue
       .update(updateData)
       .eq('id', projectId);
 
@@ -1197,7 +1196,8 @@ export async function POST(request: NextRequest) {
         finalTranscription,
         transcriptionSegments,
         features,
-        userId: existingProject?.user_id
+        userId: existingProject?.user_id,
+        openaiApiKey: openaiApiKey ?? undefined
       }).catch((error) => {
         console.error('[BACKGROUND] ❌ Failed to run background tasks:', error);
       });
@@ -1207,7 +1207,7 @@ export async function POST(request: NextRequest) {
     try {
       if (tempAudioFilePath) await fs.unlink(tempAudioFilePath);
       purgeInMemoryAudio(fileName);
-    } catch (e) {}
+    } catch (e) { }
 
     const totalTime = (Date.now() - startTime) / 1000;
     console.log(`\n========================================`);
@@ -1245,7 +1245,7 @@ export async function POST(request: NextRequest) {
     }
 
     if (tempAudioFilePath) {
-      try { await fs.unlink(tempAudioFilePath); } catch {}
+      try { await fs.unlink(tempAudioFilePath); } catch { }
     }
     return NextResponse.json(
       { error: error.message || 'Transcription failed' },

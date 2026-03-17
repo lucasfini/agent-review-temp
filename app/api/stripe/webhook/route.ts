@@ -7,6 +7,7 @@ import { NextRequest, NextResponse } from 'next/server';
 import Stripe from 'stripe';
 import { addCredit, debitCredit } from '@/lib/billing/credit';
 import { supabaseAdmin } from '@/lib/supabase/server';
+import { getTotalCredits, resolveCreditPackage } from '@/lib/billing/credit-packages';
 
 const stripe = new Stripe(process.env.STRIPE_SECRET_KEY!, {
   apiVersion: '2025-10-29.clover',
@@ -73,15 +74,24 @@ export async function POST(request: NextRequest) {
 async function handleCheckoutComplete(session: Stripe.Checkout.Session) {
   try {
     const userId = session.metadata?.userId;
-    const creditsAmount = parseFloat(session.metadata?.creditsAmount || '0');
-    const baseAmount = parseFloat(session.metadata?.baseAmount || '0');
-    const bonusAmount = parseFloat(session.metadata?.bonusAmount || '0');
     const packageId = session.metadata?.packageId;
+    const pkg = resolveCreditPackage(
+      packageId || '',
+      session.metadata?.customAmount ? Number(session.metadata.customAmount) : undefined
+    );
 
-    if (!userId || !creditsAmount) {
+    if (!userId || !pkg) {
       console.error('Missing metadata in checkout session:', session.id);
       return;
     }
+
+    const expectedAmountCents = Math.round(pkg.price * 100);
+    if ((session.amount_total || 0) !== expectedAmountCents) {
+      console.error(`[STRIPE] Checkout amount mismatch for session ${session.id}: expected ${expectedAmountCents}, got ${session.amount_total}`);
+      return;
+    }
+
+    const creditsAmount = getTotalCredits(pkg);
 
     // Dedup: check if this payment_intent was already processed
     const paymentIntentId = session.payment_intent as string;
@@ -122,8 +132,8 @@ async function handleCheckoutComplete(session: Stripe.Checkout.Session) {
       metadata: {
         sessionId: session.id,
         packageId,
-        baseAmount,
-        bonusAmount,
+        baseAmount: pkg.amount,
+        bonusAmount: pkg.bonus,
         amountPaid: (session.amount_total || 0) / 100, // Convert cents to dollars
         customerEmail: session.customer_email,
       },

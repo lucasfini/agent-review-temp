@@ -156,7 +156,7 @@ CREATE POLICY "Users can view own transactions" ON credit_transactions
 -- ============================================================================
 
 -- Function to safely debit credits with optimistic locking
-CREATE OR REPLACE FUNCTION debit_user_credits(
+CREATE OR REPLACE FUNCTION public.debit_user_credits(
   p_user_id UUID,
   p_amount DECIMAL(10,4),
   p_current_version INTEGER
@@ -175,7 +175,7 @@ DECLARE
 BEGIN
   -- Lock the row for update
   SELECT balance, version INTO v_current_balance, v_current_version
-  FROM account_credits
+  FROM public.account_credits
   WHERE user_id = p_user_id
   FOR UPDATE;
 
@@ -203,7 +203,7 @@ BEGIN
   v_new_version := v_current_version + 1;
 
   -- Update the balance
-  UPDATE account_credits
+  UPDATE public.account_credits
   SET
     balance = v_new_balance,
     version = v_new_version,
@@ -214,10 +214,11 @@ BEGIN
   -- Return success
   RETURN QUERY SELECT true, v_new_balance, v_new_version, NULL::TEXT;
 END;
-$$ LANGUAGE plpgsql;
+$$ LANGUAGE plpgsql
+SET search_path = '';
 
 -- Function to add credits
-CREATE OR REPLACE FUNCTION add_user_credits(
+CREATE OR REPLACE FUNCTION public.add_user_credits(
   p_user_id UUID,
   p_amount DECIMAL(10,4),
   p_transaction_type TEXT DEFAULT 'purchase'
@@ -232,18 +233,19 @@ DECLARE
   v_new_version INTEGER;
 BEGIN
   -- Insert or update credits
-  INSERT INTO account_credits (user_id, balance, lifetime_credits_added, version)
+  INSERT INTO public.account_credits (user_id, balance, lifetime_credits_added, version)
   VALUES (p_user_id, p_amount, p_amount, 1)
   ON CONFLICT (user_id) DO UPDATE SET
-    balance = account_credits.balance + p_amount,
-    lifetime_credits_added = account_credits.lifetime_credits_added + p_amount,
-    version = account_credits.version + 1,
+    balance = public.account_credits.balance + p_amount,
+    lifetime_credits_added = public.account_credits.lifetime_credits_added + p_amount,
+    version = public.account_credits.version + 1,
     updated_at = NOW()
   RETURNING balance, version INTO v_new_balance, v_new_version;
 
   RETURN QUERY SELECT true, v_new_balance, v_new_version;
 END;
-$$ LANGUAGE plpgsql;
+$$ LANGUAGE plpgsql
+SET search_path = '';
 
 -- ============================================================================
 -- Initial Setup

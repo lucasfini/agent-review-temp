@@ -62,8 +62,9 @@ export async function transcribeWithDeepgram(
   console.log(`[DEEPGRAM] 🚀 Starting transcription for: ${audioFilePath}`);
 
   try {
-    const fileBuffer = await fs.readFile(audioFilePath);
-    
+    const isUrl = audioFilePath.startsWith('http://') || audioFilePath.startsWith('https://');
+    let response;
+
     // Deepgram API URL
     const url = new URL('https://api.deepgram.com/v1/listen');
     url.searchParams.append('model', config.model || 'nova-2');
@@ -73,16 +74,28 @@ export async function transcribeWithDeepgram(
     url.searchParams.append('punctuate', 'true');
     url.searchParams.append('utterances', 'true');
 
-    console.log('[DEEPGRAM] ⬆️ Uploading audio file...');
-    
-    const response = await fetch(url.toString(), {
-      method: 'POST',
-      headers: {
-        'Authorization': `Token ${apiKey}`,
-        'Content-Type': 'application/octet-stream', // Raw audio
-      },
-      body: fileBuffer,
-    });
+    if (isUrl) {
+      console.log('[DEEPGRAM] 🔗 Submitting remote URL...');
+      response = await fetch(url.toString(), {
+        method: 'POST',
+        headers: {
+          'Authorization': `Token ${apiKey}`,
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify({ url: audioFilePath }),
+      });
+    } else {
+      const fileBuffer = await fs.readFile(audioFilePath);
+      console.log('[DEEPGRAM] ⬆️ Uploading local audio file...');
+      response = await fetch(url.toString(), {
+        method: 'POST',
+        headers: {
+          'Authorization': `Token ${apiKey}`,
+          'Content-Type': 'application/octet-stream', // Raw audio
+        },
+        body: fileBuffer,
+      });
+    }
 
     if (!response.ok) {
       const errorText = await response.text();
@@ -91,7 +104,7 @@ export async function transcribeWithDeepgram(
 
     const data = await response.json();
     const processingTime = (Date.now() - startTime) / 1000;
-    
+
     console.log(`[DEEPGRAM] ✅ Transcription completed in ${processingTime.toFixed(1)}s`);
 
     return convertDeepgramResponse(data, processingTime);
@@ -122,7 +135,7 @@ function convertDeepgramResponse(
   const alternatives = channel.alternatives[0];
   const words = alternatives.words || [];
   const fullText = alternatives.transcript;
-  
+
   // Calculate duration from the last word end time or metadata
   const audioDuration = data.metadata?.duration || words[words.length - 1]?.end || 0;
 
@@ -130,7 +143,7 @@ function convertDeepgramResponse(
   // Deepgram provides word-level data. We can group them into sentences or use "utterances" if enabled.
   // Using 'utterances' feature from Deepgram which provides segmented speech.
   const utterances = data.results.utterances || [];
-  
+
   const transcriptionSegments: TranscriptionSegment[] = utterances.map((u: any, index: number) => ({
     id: index,
     start: u.start,

@@ -1,7 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server';
-import { DeleteObjectCommand } from '@aws-sdk/client-s3';
 import { supabaseAdmin } from '@/lib/supabase/server';
-import { r2Client, BUCKET_NAME } from '@/lib/r2';
+import { deleteProjectAudioObject, expireProjectAudio, isAudioExpired } from '@/lib/audio-retention';
+import { RouteAccessError, requireProjectOwner } from '@/lib/api/route-auth';
 
 // ============================================================
 // FORCE DYNAMIC: Disable all caching for this route
@@ -41,22 +41,57 @@ export async function GET(
 
     console.log(`[API] GET /api/projects/${projectId} - Fetching fresh data (no cache)`);
 
-    // Fetch complete project data
-    const { data: project, error } = await supabaseAdmin
-      .from('projects')
-      .select(`
-        *,
-        transcription_segments,
-        speaker_data,
-        performance_level,
-        project_type,
-        ai_summary,
-        chapters,
-        key_takeaways,
-        social_quotes
-      `)
-      .eq('id', projectId)
-      .single();
+    let project: any;
+    let error: any = null;
+    try {
+      ({ project } = await requireProjectOwner<any>(
+        request,
+        projectId,
+        `
+          *,
+          transcription_segments,
+          speaker_data,
+          performance_level,
+          project_type,
+          ai_summary,
+          chapters,
+          key_takeaways,
+          social_quotes
+        `
+      ));
+    } catch (authError) {
+      if (authError instanceof RouteAccessError) {
+        return NextResponse.json({ error: authError.message }, { status: authError.status });
+      }
+      throw authError;
+    }
+
+    if ((project as any)?.audio_expires_at === undefined) {
+      const retry = await supabaseAdmin
+        .from('projects')
+        .select(`
+          *,
+          transcription_segments,
+          speaker_data,
+          performance_level,
+          project_type,
+          ai_summary,
+          chapters,
+          key_takeaways,
+          social_quotes
+        `)
+        .eq('id', projectId)
+        .single();
+
+      project = retry.data
+        ? {
+            ...retry.data,
+            audio_expires_at: null,
+            audio_deleted_at: null,
+          }
+        : retry.data;
+      error = retry.error;
+    }
 
     if (error) {
       console.error('[API] Database error:', error);
@@ -75,6 +110,15 @@ export async function GET(
 
     // Log speaker data state for debugging
     const projectAny = project as any;
+    if (projectAny.audio_file_name && isAudioExpired(projectAny) && !projectAny.audio_deleted_at) {
+      try {
+        await expireProjectAudio(projectAny);
+        projectAny.audio_deleted_at = new Date().toISOString();
+      } catch (cleanupError) {
+        console.error(`[API] Failed to expire audio for project ${projectId}:`, cleanupError);
+      }
+    }
+
     if (projectAny.speaker_data?.speakers) {
       const speakerNames = Object.values(projectAny.speaker_data.speakers)
         .map((s: any) => s.finalName || s.fallbackName || 'unnamed')
@@ -122,13 +166,31 @@ export async function PATCH(
       );
     }
 
-    console.log(`[API] PATCH /api/projects/${projectId}`, Object.keys(body));
+    const { user } = await requireProjectOwner(request, projectId);
+
+    if (user.email === process.env.DEMO_EMAIL) {
+      return NextResponse.json({ error: 'Demo account is read-only' }, { status: 403 });
+    }
+
+    const allowedUpdates: Record<string, unknown> = {};
+    if (typeof body.title === 'string' && body.title.trim()) {
+      allowedUpdates.title = body.title.trim();
+    }
+
+    if (Object.keys(allowedUpdates).length === 0) {
+      return NextResponse.json(
+        { error: 'No valid fields to update' },
+        { status: 400 }
+      );
+    }
+
+    console.log(`[API] PATCH /api/projects/${projectId}`, Object.keys(allowedUpdates));
 
     // Update project
     const { data: project, error } = await supabaseAdmin
       .from('projects')
-      // @ts-expect-error - Supabase type inference issue with dynamic body
-      .update(body)
+      // @ts-ignore - Supabase type inference issue with dynamic body
+      .update(allowedUpdates)
       .eq('id', projectId)
       .select()
       .single();
@@ -147,6 +209,9 @@ export async function PATCH(
       },
     });
   } catch (error) {
+    if (error instanceof RouteAccessError) {
+      return NextResponse.json({ error: error.message }, { status: error.status });
+    }
     console.error('[API] Exception updating project:', error);
     return NextResponse.json(
       { error: 'Internal server error' },
@@ -177,12 +242,11 @@ export async function DELETE(
 
     console.log(`[API] DELETE /api/projects/${projectId}`);
 
-    // Demo account guard
-    const { data: projectForDelete } = await supabaseAdmin
-      .from('projects')
-      .select('user_id, audio_file_name')
-      .eq('id', projectId)
-      .single() as { data: { user_id: string; audio_file_name: string | null } | null };
+    const { project: projectForDelete } = await requireProjectOwner<{
+      audio_file_name: string | null;
+      audio_deleted_at: string | null;
+    }>(request, projectId, 'audio_file_name, audio_deleted_at');
+
     if (projectForDelete?.user_id) {
       const { data: { user: projectUser } } = await supabaseAdmin.auth.admin.getUserById(projectForDelete.user_id);
       if (projectUser?.email === process.env.DEMO_EMAIL) {
@@ -205,12 +269,13 @@ export async function DELETE(
     }
 
     // Clean up R2 file (non-fatal)
-    if (projectForDelete?.audio_file_name) {
+    if (projectForDelete?.audio_file_name && !projectForDelete.audio_deleted_at) {
       try {
-        await r2Client.send(new DeleteObjectCommand({
-          Bucket: BUCKET_NAME,
-          Key: `${projectId}/${projectForDelete.audio_file_name}`,
-        }));
+        await deleteProjectAudioObject({
+          id: projectId,
+          audio_file_name: projectForDelete.audio_file_name,
+          audio_deleted_at: projectForDelete.audio_deleted_at,
+        });
         console.log(`[API] Deleted R2 file for project ${projectId}`);
       } catch (r2Error) {
         console.error(`[API] R2 cleanup failed for project ${projectId}:`, r2Error);
@@ -219,6 +284,9 @@ export async function DELETE(
 
     return NextResponse.json({ success: true });
   } catch (error) {
+    if (error instanceof RouteAccessError) {
+      return NextResponse.json({ error: error.message }, { status: error.status });
+    }
     console.error('[API] Exception deleting project:', error);
     return NextResponse.json(
       { error: 'Internal server error' },

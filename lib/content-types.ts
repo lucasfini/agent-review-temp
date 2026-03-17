@@ -10,7 +10,11 @@ export type OutputType =
   | 'show_notes'
   | 'twitter_thread'
   | 'linkedin_post'
-  | 'instagram_caption';
+  | 'instagram_caption'
+  | 'youtube_description'
+  | 'podcast_episode_description'
+  | 'short_form_video_script'
+  | 'facebook_post';
 
 export type PlatformType =
   | 'twitter'
@@ -44,7 +48,6 @@ export interface ContentType {
   // New fields for outputs integration
   outputType?: OutputType;
   platformType?: PlatformType;
-  tier?: 'basic' | 'pro' | 'premium';
   estimatedCostUSD?: number;
   // Strict content limits
   limits?: ContentLimits;
@@ -53,6 +56,7 @@ export interface ContentType {
 }
 
 export const CONTENT_TYPES: ContentType[] = [
+  // ── SOCIAL ────────────────────────────────────────────────────────────────
   {
     id: 'twitter_threads',
     name: 'X Threads',
@@ -65,7 +69,6 @@ export const CONTENT_TYPES: ContentType[] = [
     badge: '𝕏',
     outputType: 'twitter_thread',
     platformType: 'twitter',
-    tier: 'basic',
     estimatedCostUSD: 0.02,
     limits: {
       min: 100,
@@ -88,7 +91,6 @@ export const CONTENT_TYPES: ContentType[] = [
     badge: 'LinkedIn',
     outputType: 'linkedin_post',
     platformType: 'linkedin',
-    tier: 'basic',
     estimatedCostUSD: 0.02,
     limits: {
       min: 1200,
@@ -111,7 +113,6 @@ export const CONTENT_TYPES: ContentType[] = [
     badge: 'Instagram',
     outputType: 'instagram_caption',
     platformType: 'instagram',
-    tier: 'basic',
     estimatedCostUSD: 0.015,
     limits: {
       min: 300,
@@ -122,6 +123,29 @@ export const CONTENT_TYPES: ContentType[] = [
     attentionSpan: '10 seconds per slide',
     maxCount: 3
   },
+  {
+    id: 'facebook_post',
+    name: 'Facebook Post',
+    description: 'Conversational post with engagement question and hashtags',
+    count: 1,
+    estimatedTokens: 600,
+    platform: 'facebook',
+    enabled: true,
+    category: 'social',
+    badge: 'Facebook',
+    outputType: 'facebook_post',
+    platformType: 'facebook',
+    estimatedCostUSD: 0.015,
+    limits: {
+      min: 150,
+      max: 300,
+      unit: 'words',
+      hardLimit: true
+    },
+    attentionSpan: '2 minutes (casual feed browsing)',
+    maxCount: 4
+  },
+  // ── LONG-FORM ─────────────────────────────────────────────────────────────
   {
     id: 'blog_post',
     name: 'Blog Post',
@@ -134,7 +158,6 @@ export const CONTENT_TYPES: ContentType[] = [
     badge: 'Blog',
     outputType: 'blog_post',
     platformType: 'blog',
-    tier: 'pro',
     estimatedCostUSD: 0.08,
     limits: {
       min: 1200,
@@ -157,7 +180,6 @@ export const CONTENT_TYPES: ContentType[] = [
     badge: 'Email',
     outputType: 'email_newsletter',
     platformType: 'email',
-    tier: 'pro',
     estimatedCostUSD: 0.03,
     limits: {
       min: 800,
@@ -168,6 +190,7 @@ export const CONTENT_TYPES: ContentType[] = [
     attentionSpan: '3-5 minutes (inbox environment)',
     maxCount: 2
   },
+  // ── SUPPORT ───────────────────────────────────────────────────────────────
   {
     id: 'show_notes',
     name: 'Show Notes',
@@ -177,10 +200,9 @@ export const CONTENT_TYPES: ContentType[] = [
     platform: 'general',
     enabled: true,
     category: 'support',
-    badge: 'Show Notes',  // Specific badge, not generic "Documentation"
+    badge: 'Show Notes',
     outputType: 'show_notes',
     platformType: 'general',
-    tier: 'premium',
     estimatedCostUSD: 0.04,
     limits: {
       min: 500,
@@ -192,6 +214,72 @@ export const CONTENT_TYPES: ContentType[] = [
     maxCount: 1
   },
   {
+    id: 'youtube_description',
+    name: 'YouTube Description',
+    description: '150-300 word description with timestamps and hashtags',
+    count: 1,
+    estimatedTokens: 900,
+    platform: 'youtube',
+    enabled: true,
+    category: 'support',
+    badge: 'YouTube',
+    outputType: 'youtube_description',
+    platformType: 'youtube',
+    estimatedCostUSD: 0.03,
+    limits: {
+      min: 150,
+      max: 300,
+      unit: 'words',
+      hardLimit: true
+    },
+    attentionSpan: '30 seconds (video discovery)',
+    maxCount: 2
+  },
+  {
+    id: 'podcast_episode_description',
+    name: 'Podcast Description',
+    description: '100-200 word episode description with guest names and CTA',
+    count: 1,
+    estimatedTokens: 600,
+    platform: 'general',
+    enabled: true,
+    category: 'support',
+    badge: 'Podcast',
+    outputType: 'podcast_episode_description',
+    platformType: 'general',
+    estimatedCostUSD: 0.02,
+    limits: {
+      min: 100,
+      max: 200,
+      unit: 'words',
+      hardLimit: true
+    },
+    attentionSpan: '1 minute (podcast app browsing)',
+    maxCount: 2
+  },
+  {
+    id: 'short_form_video_script',
+    name: 'Short-Form Video Script',
+    description: '45-60 second script with hook, pattern interrupt, and CTA',
+    count: 1,
+    estimatedTokens: 700,
+    platform: 'general',
+    enabled: true,
+    category: 'support',
+    badge: 'Video Script',
+    outputType: 'short_form_video_script',
+    platformType: 'general',
+    estimatedCostUSD: 0.04,
+    limits: {
+      min: 120,
+      max: 150,
+      unit: 'words',
+      hardLimit: true
+    },
+    attentionSpan: '45-60 seconds',
+    maxCount: 4
+  },
+  {
     id: 'quote_graphics',
     name: 'Quote Graphics',
     description: 'Quotable excerpts with speaker attribution',
@@ -200,10 +288,9 @@ export const CONTENT_TYPES: ContentType[] = [
     platform: 'instagram',
     enabled: true,
     category: 'support',
-    badge: 'Quote Graphic',  // Specific badge, not generic "Graphics"
+    badge: 'Quote Graphic',
     outputType: 'quote_graphic',
     platformType: 'general',
-    tier: 'pro',
     estimatedCostUSD: 0.015,
     limits: {
       min: 10,
@@ -229,16 +316,6 @@ export interface ContentBlock {
 // Helper functions
 export function getContentTypeById(id: string): ContentType | undefined {
   return CONTENT_TYPES.find(ct => ct.id === id);
-}
-
-export function getContentTypesByTier(tier: 'basic' | 'pro' | 'premium'): ContentType[] {
-  const tierOrder = { basic: 1, pro: 2, premium: 3 };
-  const userTierLevel = tierOrder[tier];
-
-  return CONTENT_TYPES.filter(ct => {
-    const ctTier = ct.tier || 'basic';
-    return tierOrder[ctTier] <= userTierLevel;
-  });
 }
 
 export function estimateTotalCost(contentTypeIds: string[]): number {

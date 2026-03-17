@@ -6,6 +6,7 @@
 
 import { NextRequest, NextResponse } from 'next/server';
 import { processInsightsForProject } from '@/lib/insight-extraction';
+import { RouteAccessError, requireProjectOwner } from '@/lib/api/route-auth';
 
 interface RouteContext {
   params: Promise<{
@@ -21,13 +22,20 @@ export async function POST(request: NextRequest, context: RouteContext) {
       return NextResponse.json({ error: 'Project ID required' }, { status: 400 });
     }
 
-    // TODO: Add authentication check here
-    // Verify user has Premium tier access
-    // Example:
-    // const session = await getServerSession();
-    // if (!session || session.user.tier !== 'premium') {
-    //   return NextResponse.json({ error: 'Premium tier required' }, { status: 403 });
-    // }
+    const { user, project } = await requireProjectOwner<{ performance_level: string | null }>(
+      request,
+      projectId,
+      'performance_level'
+    );
+
+    if (user.email === process.env.DEMO_EMAIL) {
+      return NextResponse.json({ error: 'Demo account is read-only' }, { status: 403 });
+    }
+
+    const projectLevel = project.performance_level || 'standard';
+    if (projectLevel !== 'pro' && projectLevel !== 'premium') {
+      return NextResponse.json({ error: 'Pro tier required' }, { status: 403 });
+    }
 
     console.log(`[Insights Refresh] Starting for project ${projectId}`);
 
@@ -51,6 +59,9 @@ export async function POST(request: NextRequest, context: RouteContext) {
       message: `Successfully generated ${result.insightCount} insights`,
     });
   } catch (error) {
+    if (error instanceof RouteAccessError) {
+      return NextResponse.json({ error: error.message }, { status: error.status });
+    }
     console.error('[Insights Refresh] Unexpected error:', error);
     return NextResponse.json(
       {

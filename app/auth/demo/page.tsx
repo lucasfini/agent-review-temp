@@ -4,7 +4,7 @@ import { useEffect, useState } from 'react';
 import { useRouter } from 'next/navigation';
 import { supabase } from '@/lib/supabase/client';
 import { DEMO_EMAIL } from '@/lib/demo-mode';
-import { Mic } from 'lucide-react';
+import BrandLogo from '@/components/site/BrandLogo';
 
 export default function DemoLoginPage() {
   const router = useRouter();
@@ -39,11 +39,8 @@ export default function DemoLoginPage() {
   return (
     <div className="min-h-screen bg-slate-950 flex items-center justify-center">
       <div className="text-center">
-        <div className="flex items-center justify-center gap-2 mb-6">
-          <div className="h-10 w-10 bg-blue-600 rounded-xl flex items-center justify-center">
-            <Mic className="h-5 w-5 text-white" />
-          </div>
-          <span className="text-xl font-bold text-white">AudioRepurpose</span>
+        <div className="flex items-center justify-center mb-6">
+          <BrandLogo size="lg" theme="dark" />
         </div>
 
         {error ? (

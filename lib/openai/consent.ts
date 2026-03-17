@@ -1,26 +1,41 @@
 import OpenAI from 'openai';
 import { supabaseAdmin } from '@/lib/supabase/server';
+import { decryptToken } from '@/lib/integrations/crypto';
 
-const DEFAULT_NONOPTIN_KEY = process.env.OPENAI_API_KEY_NONOPTIN || process.env.OPENAI_API_KEY || null;
-const OPTIN_KEY = process.env.OPENAI_API_KEY_OPTIN || null;
+const SHARED_OPENAI_KEY = process.env.OPENAI_API_KEY_OPTIN || null;
 
 export async function getOpenAIApiKeyForUser(userId?: string): Promise<string | null> {
-  if (!userId) return DEFAULT_NONOPTIN_KEY;
+  if (userId) {
+    const { data, error } = await supabaseAdmin
+      .from('user_openai_settings')
+      .select('api_key_enc, use_personal_key, openai_enabled')
+      .eq('user_id', userId)
+      .maybeSingle();
 
-  try {
-    const { data: { user } } = await supabaseAdmin.auth.admin.getUserById(userId);
-    const optedIn = Boolean(user?.user_metadata?.openai_data_sharing_opt_in);
-
-    if (optedIn && OPTIN_KEY) return OPTIN_KEY;
-    return DEFAULT_NONOPTIN_KEY;
-  } catch (error) {
-    console.warn('[OPENAI] Failed to resolve user opt-in; defaulting to non-opt-in key.', error);
-    return DEFAULT_NONOPTIN_KEY;
+    if (!error && data) {
+      if (data.openai_enabled === false) {
+        return null;
+      }
+      if (data.use_personal_key && data.api_key_enc) {
+        try {
+          return decryptToken(data.api_key_enc);
+        } catch (decryptError) {
+          console.error('[OPENAI] Failed to decrypt stored user token:', decryptError);
+        }
+      }
+    }
   }
+
+  if (!SHARED_OPENAI_KEY) {
+    console.error('[OPENAI] OPENAI_API_KEY_OPTIN is not configured.');
+    return null;
+  }
+  return SHARED_OPENAI_KEY;
 }
 
 export async function getOpenAIClientForUser(userId?: string): Promise<OpenAI | null> {
-  const apiKey = await getOpenAIApiKeyForUser(userId);
+  void userId;
+  const apiKey = await getOpenAIApiKeyForUser();
   if (!apiKey) return null;
   return new OpenAI({ apiKey });
 }

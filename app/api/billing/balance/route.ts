@@ -6,6 +6,7 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { supabaseAdmin } from '@/lib/supabase/server';
 import { getBalance } from '@/lib/billing/credit';
+import { formatSiteCreditsFromUsd } from '@/lib/billing/display';
 
 export async function GET(request: NextRequest) {
   try {
@@ -31,7 +32,7 @@ export async function GET(request: NextRequest) {
     return NextResponse.json({
       success: true,
       balance: balance.balance,
-      formatted: `$${balance.balance.toFixed(2)}`,
+      formatted: formatSiteCreditsFromUsd(balance.balance),
       lifetimeCreditsAdded: balance.lifetimeCreditsAdded,
       lifetimeCreditsSpent: balance.lifetimeCreditsSpent,
       lastUpdated: balance.updatedAt,

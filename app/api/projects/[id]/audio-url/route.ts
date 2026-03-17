@@ -3,6 +3,7 @@ import { GetObjectCommand } from '@aws-sdk/client-s3';
 import { getSignedUrl } from '@aws-sdk/s3-request-presigner';
 import { supabaseAdmin } from '@/lib/supabase/server';
 import { r2Client, BUCKET_NAME } from '@/lib/r2';
+import { expireProjectAudio, isAudioExpired } from '@/lib/audio-retention';
 
 export const dynamic = 'force-dynamic';
 
@@ -22,11 +23,44 @@ export async function GET(
       return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
     }
 
-    const { data: project, error: projectError } = await supabaseAdmin
+    let { data: project, error: projectError } = await supabaseAdmin
       .from('projects')
-      .select('id, audio_file_name, user_id')
+      .select('id, audio_file_name, audio_expires_at, audio_deleted_at, user_id')
       .eq('id', projectId)
-      .single() as { data: { id: string; audio_file_name: string; user_id: string } | null; error: any };
+      .single() as {
+        data: {
+          id: string;
+          audio_file_name: string | null;
+          audio_expires_at: string | null;
+          audio_deleted_at: string | null;
+          user_id: string;
+        } | null;
+        error: any;
+      };
+
+    if (projectError?.message?.includes(`'audio_expires_at'`)) {
+      const retry = await supabaseAdmin
+        .from('projects')
+        .select('id, audio_file_name, user_id')
+        .eq('id', projectId)
+        .single() as {
+          data: {
+            id: string;
+            audio_file_name: string | null;
+            user_id: string;
+          } | null;
+          error: any;
+        };
+
+      project = retry.data
+        ? {
+            ...retry.data,
+            audio_expires_at: null,
+            audio_deleted_at: null,
+          }
+        : null;
+      projectError = retry.error;
+    }
 
     if (projectError || !project) {
       return NextResponse.json({ error: 'Project not found' }, { status: 404 });
@@ -38,6 +72,22 @@ export async function GET(
 
     if (!project.audio_file_name) {
       return NextResponse.json({ error: 'No audio file associated with this project' }, { status: 404 });
+    }
+
+    if (isAudioExpired(project)) {
+      if (!project.audio_deleted_at) {
+        try {
+          await expireProjectAudio(project);
+        } catch (error) {
+          console.error(`[audio-url] Failed cleanup for expired project ${projectId}:`, error);
+        }
+      }
+
+      return NextResponse.json({
+        error: 'Source audio has expired',
+        code: 'AUDIO_EXPIRED',
+        audioExpiresAt: project.audio_expires_at,
+      }, { status: 410 });
     }
 
     const key = `${projectId}/${project.audio_file_name}`;

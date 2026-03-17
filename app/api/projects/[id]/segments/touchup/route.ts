@@ -3,6 +3,7 @@ import { supabaseAdmin } from '@/lib/supabase/server';
 import OpenAI from 'openai';
 import { trackOpenAIUsage } from '@/lib/billing/track-usage';
 import { getOpenAIApiKeyForUser } from '@/lib/openai/consent';
+import { RouteAccessError, requireProjectOwner } from '@/lib/api/route-auth';
 
 // Force dynamic to prevent caching
 export const dynamic = 'force-dynamic';
@@ -10,6 +11,7 @@ export const revalidate = 0;
 
 const CONTEXT_WINDOW = 8; // segments before/after each selected segment
 const TOUCHUP_MODEL = 'gpt-4o';
+const MAX_TOUCHUP_PROMPT_CHARS = 220000;
 
 function recomputeSpeakerCounts(
   speakers: Record<string, any>,
@@ -46,6 +48,105 @@ function getTypicalBehavior(role: string | undefined, avgDuration: number): stri
   return 'participates in conversation';
 }
 
+function chunkArray<T>(items: T[], chunkSize: number): T[][]
+{
+  if (chunkSize <= 0) return [items];
+
+  const chunks: T[][] = [];
+  for (let i = 0; i < items.length; i += chunkSize) {
+    chunks.push(items.slice(i, i + chunkSize));
+  }
+  return chunks;
+}
+
+function buildSegmentBlocks(
+  selectedIndices: number[],
+  segments: any[],
+  speakers: Record<string, any>,
+  selectedSet: Set<number>
+): string {
+  return selectedIndices.map(idx => {
+    if (idx < 0 || idx >= segments.length) return null;
+
+    const segment = segments[idx];
+    const currentSpeakerId = segment.finalSpeakerId || segment.speakerId;
+    const currentSpeaker = speakers[currentSpeakerId];
+    const currentSpeakerName = currentSpeaker?.finalName || currentSpeaker?.name || currentSpeakerId;
+
+    const beforeStart = Math.max(0, idx - CONTEXT_WINDOW);
+    const afterEnd = Math.min(segments.length - 1, idx + CONTEXT_WINDOW);
+    const lines: string[] = [];
+
+    for (let i = beforeStart; i < idx; i++) {
+      const s = segments[i];
+      const sid = s.finalSpeakerId || s.speakerId;
+      const spk = speakers[sid];
+      const name = spk?.finalName || spk?.name || sid;
+      const label = selectedSet.has(i) ? '[WRONG]  ' : '[CORRECT]';
+      lines.push(`  ${label} [${i}] ${name}: "${s.text}"`);
+    }
+
+    lines.push(`  [WRONG]   [${idx}] Currently: ${currentSpeakerName} → INCORRECT`);
+    lines.push(`            "${segment.text}"`);
+
+    for (let i = idx + 1; i <= afterEnd; i++) {
+      const s = segments[i];
+      const sid = s.finalSpeakerId || s.speakerId;
+      const spk = speakers[sid];
+      const name = spk?.finalName || spk?.name || sid;
+      const label = selectedSet.has(i) ? '[WRONG]  ' : '[CORRECT]';
+      lines.push(`  ${label} [${i}] ${name}: "${s.text}"`);
+    }
+
+    return `--- Segment ${idx} ---\n${lines.join('\n')}`;
+  }).filter(Boolean).join('\n\n');
+}
+
+function buildTouchupPrompt(
+  speakerProfileLines: string,
+  segmentBlocks: string
+): string {
+  return `You are a speaker attribution expert correcting misattributed segments in a podcast transcript.
+
+The segments marked [WRONG] have been flagged as DEFINITIVELY misattributed by the user.
+Your task: identify the ACTUAL speaker for each [WRONG] segment by aligning it with the established patterns of [CORRECT] speakers.
+
+SPEAKERS IN THIS CONVERSATION:
+${speakerProfileLines}
+
+CONTEXT LEGEND:
+  [CORRECT] = user-confirmed ground truth — these assignments are ABSOLUTE and MUST NOT be changed
+  [WRONG]   = confirmed incorrect assignment — determine the real speaker using [CORRECT] context
+
+SEGMENTS:
+${segmentBlocks}
+
+DIRECT ADDRESS RULE (critical):
+When a segment addresses someone by name or title, the SPEAKER is the one doing the addressing — NOT the person being named.
+Examples:
+  ✓ "Yeah, Prime Minister — where does this find you?" → speaker is the HOST (addressing the PM)
+  ✓ "Professor, what's your take on this?" → speaker is whoever asks, NOT the Professor
+  ✓ "I'm in Montreal right now, Professor." → speaker is the GUEST (responding while addressing Professor)
+  ✓ "Yeah, [Name]." / "[Name], yeah." → speaker is the one ACKNOWLEDGING, not the named person
+  ✓ "Thank you, [Name]." → speaker is the one giving thanks, not the named person
+
+ALIGNMENT INSTRUCTIONS:
+1. Your PRIMARY goal is to make [WRONG] segments consistent with the conversational flow of [CORRECT] segments
+2. [CORRECT] segments are user-verified ground truth — use them as anchor points to infer speaker identity
+3. Match vocabulary, topic ownership, sentence structure, and speaking style to each speaker's "Sample statements"
+4. Consider conversational turn-taking: after a [CORRECT] segment ends a thought, who would logically speak next?
+5. Consider: who asks questions vs. who answers? who narrates vs. who responds?
+6. For every [WRONG] segment you MUST return a definitive speakerId — never leave uncertain
+7. Only use speakerIds from the SPEAKERS list above
+8. Every [WRONG] segment index must appear in your response exactly once
+
+Respond with ONLY valid JSON:
+{"reassignments": [
+  {"index": <number>, "speakerId": "<correct_speaker_id>", "reason": "<concise reasoning>", "confidence": <0.0–1.0>},
+  ...
+]}`;
+}
+
 export async function POST(
   request: NextRequest,
   { params }: { params: Promise<{ id: string }> }
@@ -53,9 +154,14 @@ export async function POST(
   try {
     const { id: projectId } = await params;
     const { segmentIndices, dryRun = false, approvedReassignments } = await request.json();
+    const { user } = await requireProjectOwner(request, projectId, 'speaker_data, user_id');
 
     if (!projectId) {
       return NextResponse.json({ error: 'Missing projectId' }, { status: 400 });
+    }
+
+    if (user.email === process.env.DEMO_EMAIL) {
+      return NextResponse.json({ error: 'Demo account is read-only' }, { status: 403 });
     }
 
     // Fetch current project data
@@ -72,13 +178,6 @@ export async function POST(
     const rawSpeakerData = (project as { speaker_data: any; user_id: string }).speaker_data;
     const userId = (project as { speaker_data: any; user_id: string }).user_id;
 
-    // Demo account guard
-    if (userId) {
-      const { data: { user: projectUser } } = await supabaseAdmin.auth.admin.getUserById(userId);
-      if (projectUser?.email === process.env.DEMO_EMAIL) {
-        return NextResponse.json({ error: 'Demo account is read-only' }, { status: 403 });
-      }
-    }
     const speakerData = typeof rawSpeakerData === 'string'
       ? JSON.parse(rawSpeakerData)
       : rawSpeakerData;
@@ -130,7 +229,7 @@ export async function POST(
 
       const { data: savedApproved, error: updateError } = await supabaseAdmin
         .from('projects')
-        // @ts-expect-error - Supabase types issue with update
+        // @ts-ignore - Supabase types issue with update
         .update({ speaker_data: updatedSpeakerData })
         .eq('id', projectId)
         .select('speaker_data')
@@ -206,7 +305,7 @@ export async function POST(
       };
       const { data: savedSwap, error: updateError } = await supabaseAdmin
         .from('projects')
-        // @ts-expect-error - Supabase types issue
+        // @ts-ignore - Supabase types issue
         .update({ speaker_data: updatedSpeakerData })
         .eq('id', projectId)
         .select('speaker_data')
@@ -269,116 +368,62 @@ export async function POST(
       })
       .join('\n');
 
-    // Build per-segment context blocks with [CORRECT]/[WRONG] labeling
-    const segmentBlocks = (segmentIndices as number[]).map(idx => {
-      if (idx < 0 || idx >= totalSegments) return null;
-
-      const segment = segments[idx];
-      const currentSpeakerId = segment.finalSpeakerId || segment.speakerId;
-      const currentSpeaker = speakers[currentSpeakerId];
-      const currentSpeakerName = currentSpeaker?.finalName || currentSpeaker?.name || currentSpeakerId;
-
-      const beforeStart = Math.max(0, idx - CONTEXT_WINDOW);
-      const afterEnd = Math.min(totalSegments - 1, idx + CONTEXT_WINDOW);
-      const lines: string[] = [];
-
-      for (let i = beforeStart; i < idx; i++) {
-        const s = segments[i];
-        const sid = s.finalSpeakerId || s.speakerId;
-        const spk = speakers[sid];
-        const name = spk?.finalName || spk?.name || sid;
-        const label = selectedSet.has(i) ? '[WRONG]  ' : '[CORRECT]';
-        lines.push(`  ${label} [${i}] ${name}: "${s.text}"`);
-      }
-
-      lines.push(`  [WRONG]   [${idx}] Currently: ${currentSpeakerName} → INCORRECT`);
-      lines.push(`            "${segment.text}"`);
-
-      for (let i = idx + 1; i <= afterEnd; i++) {
-        const s = segments[i];
-        const sid = s.finalSpeakerId || s.speakerId;
-        const spk = speakers[sid];
-        const name = spk?.finalName || spk?.name || sid;
-        const label = selectedSet.has(i) ? '[WRONG]  ' : '[CORRECT]';
-        lines.push(`  ${label} [${i}] ${name}: "${s.text}"`);
-      }
-
-      return `--- Segment ${idx} ---\n${lines.join('\n')}`;
-    }).filter(Boolean).join('\n\n');
-
-    const prompt = `You are a speaker attribution expert correcting misattributed segments in a podcast transcript.
-
-The segments marked [WRONG] have been flagged as DEFINITIVELY misattributed by the user.
-Your task: identify the ACTUAL speaker for each [WRONG] segment by aligning it with the established patterns of [CORRECT] speakers.
-
-SPEAKERS IN THIS CONVERSATION:
-${speakerProfileLines}
-
-CONTEXT LEGEND:
-  [CORRECT] = user-confirmed ground truth — these assignments are ABSOLUTE and MUST NOT be changed
-  [WRONG]   = confirmed incorrect assignment — determine the real speaker using [CORRECT] context
-
-SEGMENTS:
-${segmentBlocks}
-
-DIRECT ADDRESS RULE (critical):
-When a segment addresses someone by name or title, the SPEAKER is the one doing the addressing — NOT the person being named.
-Examples:
-  ✓ "Yeah, Prime Minister — where does this find you?" → speaker is the HOST (addressing the PM)
-  ✓ "Professor, what's your take on this?" → speaker is whoever asks, NOT the Professor
-  ✓ "I'm in Montreal right now, Professor." → speaker is the GUEST (responding while addressing Professor)
-  ✓ "Yeah, [Name]." / "[Name], yeah." → speaker is the one ACKNOWLEDGING, not the named person
-  ✓ "Thank you, [Name]." → speaker is the one giving thanks, not the named person
-
-ALIGNMENT INSTRUCTIONS:
-1. Your PRIMARY goal is to make [WRONG] segments consistent with the conversational flow of [CORRECT] segments
-2. [CORRECT] segments are user-verified ground truth — use them as anchor points to infer speaker identity
-3. Match vocabulary, topic ownership, sentence structure, and speaking style to each speaker's "Sample statements"
-4. Consider conversational turn-taking: after a [CORRECT] segment ends a thought, who would logically speak next?
-5. Consider: who asks questions vs. who answers? who narrates vs. who responds?
-6. For every [WRONG] segment you MUST return a definitive speakerId — never leave uncertain
-7. Only use speakerIds from the SPEAKERS list above
-8. Every [WRONG] segment index must appear in your response exactly once
-
-Respond with ONLY valid JSON:
-{"reassignments": [
-  {"index": <number>, "speakerId": "<correct_speaker_id>", "reason": "<concise reasoning>", "confidence": <0.0–1.0>},
-  ...
-]}`;
-
-    // Call GPT-4o with JSON mode for reliable structured output
     const apiKey = await getOpenAIApiKeyForUser(userId);
     if (!apiKey) {
-      throw new Error('OPENAI_API_KEY not configured');
+      throw new Error('OPENAI_API_KEY_OPTIN not configured');
     }
     const openai = new OpenAI({ apiKey });
-    const completion = await openai.chat.completions.create({
-      model: TOUCHUP_MODEL,
-      response_format: { type: 'json_object' },
-      max_completion_tokens: 2048,
-      messages: [{ role: 'user', content: prompt }]
-    });
+    const allSelectedIndices = (segmentIndices as number[]).filter(idx => idx >= 0 && idx < totalSegments);
+    let chunkSize = Math.min(12, Math.max(1, allSelectedIndices.length));
+    let batches = chunkArray(allSelectedIndices, chunkSize);
+    let batchedSuggestions: Array<{ index: number; speakerId: string; reason: string; confidence?: number }> = [];
 
-    const rawText = completion.choices[0]?.message?.content ?? '';
+    while (batches.length > 0) {
+      const largestBatch = batches[0];
+      const prompt = buildTouchupPrompt(
+        speakerProfileLines,
+        buildSegmentBlocks(largestBatch, segments, speakers, selectedSet)
+      );
 
-    // Track usage (fire-and-forget)
-    if (userId) {
-      trackOpenAIUsage({
-        userId,
-        projectId,
-        response: completion,
-        modelName: TOUCHUP_MODEL,
-        purpose: 'segment touchup',
-      }).catch(err => console.error('[touchup] Failed to track usage:', err));
-    }
+      if (prompt.length <= MAX_TOUCHUP_PROMPT_CHARS || chunkSize === 1) {
+        for (const batch of batches) {
+          const batchPrompt = buildTouchupPrompt(
+            speakerProfileLines,
+            buildSegmentBlocks(batch, segments, speakers, selectedSet)
+          );
 
-    // Parse GPT-4o's JSON response
-    let claudeSuggestions: Array<{ index: number; speakerId: string; reason: string; confidence?: number }> = [];
-    try {
-      const parsed = JSON.parse(rawText);
-      claudeSuggestions = parsed.reassignments ?? [];
-    } catch (parseErr) {
-      console.warn('[touchup] Failed to parse GPT-4o response:', rawText, parseErr);
+          const completion = await openai.chat.completions.create({
+            model: TOUCHUP_MODEL,
+            response_format: { type: 'json_object' },
+            max_completion_tokens: 2048,
+            messages: [{ role: 'user', content: batchPrompt }]
+          });
+
+          const rawText = completion.choices[0]?.message?.content ?? '';
+
+          if (userId) {
+            trackOpenAIUsage({
+              userId,
+              projectId,
+              response: completion,
+              modelName: TOUCHUP_MODEL,
+              purpose: 'segment touchup',
+            }).catch(err => console.error('[touchup] Failed to track usage:', err));
+          }
+
+          try {
+            const parsed = JSON.parse(rawText);
+            const suggestions = Array.isArray(parsed.reassignments) ? parsed.reassignments : [];
+            batchedSuggestions.push(...suggestions);
+          } catch (parseErr) {
+            console.warn('[touchup] Failed to parse GPT-4o response:', rawText, parseErr);
+          }
+        }
+        break;
+      }
+
+      chunkSize = Math.max(1, Math.floor(chunkSize / 2));
+      batches = chunkArray(allSelectedIndices, chunkSize);
     }
 
     // Build validated reassignment list (includes all Claude suggestions, changed or not)
@@ -391,7 +436,13 @@ Respond with ONLY valid JSON:
       segmentText: string;
     }> = [];
 
-    for (const suggestion of claudeSuggestions) {
+    const dedupedSuggestions = new Map<number, { index: number; speakerId: string; reason: string; confidence?: number }>();
+    for (const suggestion of batchedSuggestions) {
+      if (typeof suggestion?.index !== 'number') continue;
+      dedupedSuggestions.set(suggestion.index, suggestion);
+    }
+
+    for (const suggestion of dedupedSuggestions.values()) {
       const { index, speakerId: newSpeakerId, reason, confidence } = suggestion;
 
       if (typeof index !== 'number' || index < 0 || index >= totalSegments) {
@@ -446,7 +497,7 @@ Respond with ONLY valid JSON:
     // Save to database
     const { data: savedAI, error: updateError } = await supabaseAdmin
       .from('projects')
-      // @ts-expect-error - Supabase types issue with update
+      // @ts-ignore - Supabase types issue with update
       .update({ speaker_data: updatedSpeakerData })
       .eq('id', projectId)
       .select('speaker_data')
@@ -464,6 +515,9 @@ Respond with ONLY valid JSON:
     });
 
   } catch (error) {
+    if (error instanceof RouteAccessError) {
+      return NextResponse.json({ error: error.message }, { status: error.status });
+    }
     console.error('[touchup] Unexpected error:', error);
     return NextResponse.json({ error: 'Internal server error' }, { status: 500 });
   }

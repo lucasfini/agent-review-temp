@@ -6,18 +6,12 @@
 import { NextRequest, NextResponse } from 'next/server';
 import Stripe from 'stripe';
 import { supabaseAdmin } from '@/lib/supabase/server';
+import { getAppBaseUrl } from '@/lib/app-url';
+import { resolveCreditPackage } from '@/lib/billing/credit-packages';
 
 const stripe = new Stripe(process.env.STRIPE_SECRET_KEY!, {
   apiVersion: '2025-10-29.clover',
 });
-
-// Credit packages matching the UI
-const PACKAGES = {
-  starter: { amount: 10, price: 10, bonus: 0 },
-  basic: { amount: 25, price: 25, bonus: 2 },
-  pro: { amount: 50, price: 50, bonus: 5 },
-  enterprise: { amount: 100, price: 100, bonus: 15 },
-} as const;
 
 export async function POST(request: NextRequest) {
   try {
@@ -44,27 +38,23 @@ export async function POST(request: NextRequest) {
     const { packageId, customAmount } = body;
 
     // Validate package
-    if (!packageId || (!(packageId in PACKAGES) && packageId !== 'custom')) {
+    if (!packageId) {
       return NextResponse.json(
         { error: 'Invalid package selected' },
         { status: 400 }
       );
     }
 
-    let pkg = PACKAGES[packageId as keyof typeof PACKAGES];
-    if (packageId === 'custom') {
-      const amount = Number(customAmount);
-      if (!Number.isFinite(amount) || amount < 5) {
-        return NextResponse.json(
-          { error: 'Custom amount must be at least $5' },
-          { status: 400 }
-        );
-      }
-      pkg = { amount, price: amount, bonus: 0 };
+    const pkg = resolveCreditPackage(packageId, customAmount);
+    if (!pkg) {
+      return NextResponse.json(
+        { error: 'Invalid package selected' },
+        { status: 400 }
+      );
     }
 
-    const totalCredits = pkg.amount + pkg.bonus;
     const unitAmountCents = Math.round(pkg.price * 100);
+    const appBaseUrl = getAppBaseUrl();
 
     // Create Stripe checkout session
     const session = await stripe.checkout.sessions.create({
@@ -89,14 +79,12 @@ export async function POST(request: NextRequest) {
         },
       ],
       mode: 'payment',
-      success_url: `${process.env.NEXT_PUBLIC_APP_URL || 'http://localhost:3000'}/billing/success?session_id={CHECKOUT_SESSION_ID}`,
-      cancel_url: `${process.env.NEXT_PUBLIC_APP_URL || 'http://localhost:3000'}/billing/cancel`,
+      success_url: `${appBaseUrl}/billing/success?session_id={CHECKOUT_SESSION_ID}`,
+      cancel_url: `${appBaseUrl}/billing/cancel`,
       metadata: {
         userId: user.id,
         packageId,
-        creditsAmount: totalCredits.toFixed(2),
-        baseAmount: pkg.amount.toFixed(2),
-        bonusAmount: pkg.bonus.toFixed(2),
+        customAmount: packageId === 'custom' ? pkg.amount.toFixed(2) : '',
       },
       customer_email: user.email,
     });

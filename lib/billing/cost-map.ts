@@ -428,7 +428,7 @@ export function formatCost(cost: number): string {
  */
 export function estimateTranscriptionCost(params: {
   durationSeconds: number;
-  tier: 'basic' | 'pro' | 'premium';
+  tier: string;
   estimatedTranscriptLength?: number; // characters
 }): {
   transcription: number;
@@ -455,6 +455,7 @@ export function estimateTranscriptionCost(params: {
     ? Math.ceil(estimatedTranscriptLength / 4)
     : Math.ceil(durationSeconds * 3); // Fallback: ~3 tokens per second of audio
 
+  // Pro tier includes all enrichment (legacy 'premium' also maps to pro)
   if (tier === 'pro' || tier === 'premium') {
     // Speaker Intelligence (gpt-5): full transcript input, ~500 output
     const speakerIntel = calculateTokenCost(
@@ -477,7 +478,7 @@ export function estimateTranscriptionCost(params: {
     breakdown.push({ service: 'AI Summary', cost: summary.billedCost });
   }
 
-  if (tier === 'premium') {
+  if (tier === 'pro' || tier === 'premium') {
     // Role classification (gpt-5-nano): ~500 input, ~50 output
     const roleClassification = calculateTokenCost(
       'openai_gpt5_nano_input',

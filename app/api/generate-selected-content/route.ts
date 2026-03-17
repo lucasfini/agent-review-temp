@@ -2,6 +2,13 @@ import { NextRequest, NextResponse } from 'next/server';
 import { supabaseAdmin } from '@/lib/supabase/server';
 import type { ContentBlock } from '@/lib/content-types';
 import { initializeGenerationProgress } from '@/lib/generation-progress';
+import { aiRatelimit } from '@/lib/rate-limit';
+import { getInternalJobToken } from '@/lib/internal-job-auth';
+import { getAppBaseUrl } from '@/lib/app-url';
+import { scheduleBackgroundTask } from '@/lib/background-task';
+import { calculateBlocksCost, getContentTypeById } from '@/lib/content-types';
+import { requireSufficientCredit } from '@/lib/billing/track-usage';
+import { InsufficientCreditError } from '@/lib/billing/credit';
 
 export async function POST(request: NextRequest) {
   try {
@@ -16,12 +23,22 @@ export async function POST(request: NextRequest) {
 
     console.log(`[GENERATE-SELECTED] Starting for project ${projectId} with ${blocks.length} blocks`);
 
+    const authHeader = request.headers.get('Authorization');
+    if (!authHeader) {
+      return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
+    }
+    const token = authHeader.replace('Bearer ', '');
+    const { data: { user }, error: authError } = await supabaseAdmin.auth.getUser(token);
+    if (authError || !user) {
+      return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
+    }
+
     // Get the project with transcription
     const { data: project, error: projectError } = await supabaseAdmin
       .from('projects')
-      .select('transcription_text, status')
+      .select('transcription_text, status, user_id, performance_level')
       .eq('id', projectId)
-      .single() as { data: { transcription_text: string; status: string } | null; error: any };
+      .single() as { data: { transcription_text: string; status: string; user_id: string; performance_level: string | null } | null; error: any };
 
     if (projectError || !project) {
       return NextResponse.json(
@@ -37,17 +54,45 @@ export async function POST(request: NextRequest) {
       );
     }
 
+    // Ownership check
+    if (project.user_id !== user.id) {
+      return NextResponse.json({ error: 'Forbidden' }, { status: 403 });
+    }
+
     // Demo account guard
-    const { data: projectWithUser } = await supabaseAdmin
-      .from('projects')
-      .select('user_id')
-      .eq('id', projectId)
-      .single() as { data: { user_id: string } | null };
-    if (projectWithUser?.user_id) {
-      const { data: { user: projectUser } } = await supabaseAdmin.auth.admin.getUserById(projectWithUser.user_id);
-      if (projectUser?.email === process.env.DEMO_EMAIL) {
-        return NextResponse.json({ error: 'Demo account is read-only' }, { status: 403 });
+    if (user.email === process.env.DEMO_EMAIL) {
+      return NextResponse.json({ error: 'Demo account is read-only' }, { status: 403 });
+    }
+
+    // Validate all blocks reference known content types
+    for (const block of blocks as ContentBlock[]) {
+      const contentType = getContentTypeById(block.contentTypeId);
+      if (!contentType) {
+        return NextResponse.json({ error: `Unknown content type: ${block.contentTypeId}` }, { status: 400 });
       }
+    }
+
+    try {
+      await requireSufficientCredit(user.id, calculateBlocksCost(blocks));
+    } catch (error) {
+      if (error instanceof InsufficientCreditError) {
+        return NextResponse.json(
+          {
+            error: 'Insufficient credits',
+            code: 'INSUFFICIENT_CREDITS',
+            required: error.required,
+            available: error.available,
+            shortfall: error.required - error.available,
+          },
+          { status: 402 }
+        );
+      }
+      throw error;
+    }
+
+    const { success } = await aiRatelimit.limit(user.id);
+    if (!success) {
+      return NextResponse.json({ error: 'Rate limit exceeded for AI operations. Please wait a moment.' }, { status: 429 });
     }
 
     // Extract unique content type IDs for database tracking
@@ -58,7 +103,7 @@ export async function POST(request: NextRequest) {
     // Update project with selected content types
     const { error: updateError } = await supabaseAdmin
       .from('projects')
-      // @ts-expect-error - Supabase types issue with update
+      // @ts-ignore - Supabase types issue with update
       .update({
         selected_content_types: selectedContentTypes
       })
@@ -73,25 +118,38 @@ export async function POST(request: NextRequest) {
     await initializeGenerationProgress(projectId, blocks.length);
 
     // Start content generation process (async)
-    const baseUrl = process.env.VERCEL_URL
-      ? `https://${process.env.VERCEL_URL}`
-      : 'http://localhost:3000';
+    const baseUrl = getAppBaseUrl();
 
-    fetch(`${baseUrl}/api/generate-content`, {
-      method: 'POST',
-      headers: {
-        'Content-Type': 'application/json',
-      },
-      body: JSON.stringify({
-        projectId,
-        transcription: project.transcription_text,
-        blocks, // Send blocks instead of selectedContentTypes
-        segments: [],
-        modelId: selectedModelId
+    const internalJobToken = getInternalJobToken();
+    const generationHeaders: Record<string, string> = {
+      'Content-Type': 'application/json',
+      Authorization: `Bearer ${token}`,
+    };
+    if (internalJobToken) {
+      generationHeaders['x-internal-job-token'] = internalJobToken;
+    }
+
+    scheduleBackgroundTask(
+      fetch(`${baseUrl}/api/generate-content`, {
+        method: 'POST',
+        headers: generationHeaders,
+        signal: AbortSignal.timeout(15 * 60 * 1000),
+        body: JSON.stringify({
+          projectId,
+          transcription: project.transcription_text,
+          blocks, // Send blocks instead of selectedContentTypes
+          segments: [],
+          modelId: selectedModelId
+        })
+      }).catch(error => {
+        const timeoutCode = (error as any)?.cause?.code;
+        if (timeoutCode === 'UND_ERR_HEADERS_TIMEOUT') {
+          console.warn('[GENERATE-SELECTED] Background generation request exceeded header wait timeout, but generation may still be running server-side.');
+          return;
+        }
+        console.error('[GENERATE-SELECTED] Failed to start content generation:', error);
       })
-    }).catch(error => {
-      console.error('[GENERATE-SELECTED] Failed to start content generation:', error);
-    });
+    );
 
     return NextResponse.json({
       success: true,

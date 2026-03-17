@@ -661,6 +661,8 @@ export async function runRefactoredSpeakerPipeline(
         console.log(`\n[HEURISTIC] 🧠 Naming host "${hostToName.id}" as "${filenameHost}" via known-show lookup`);
         hostToName.name = filenameHost;
         hostToName.confidence = Math.max(hostToName.confidence, 0.75);
+      } else if (recoverMissingKnownHostFromInvalidCluster(gptResult.speakers, mappingResult.segments, filenameHost)) {
+        console.log(`[HEURISTIC] 🧠 Recovered missing host "${filenameHost}" from large invalidly named cluster`);
       }
     }
 
@@ -693,8 +695,21 @@ export async function runRefactoredSpeakerPipeline(
         const guestSpeaker = gptResult.speakers.find(s => s.id === guestCandidateId);
 
         if (guestSpeaker) {
-          // Skip only if this speaker already has the correct name
-          const alreadyCorrect = guestSpeaker.name === filenameGuest || isPresetRosterSpeaker(guestSpeaker);
+          // Count named non-advertiser speakers GPT already found
+          const namedNonAdCount = gptResult.speakers.filter(
+            s => s.name && isValidFinalHumanSpeakerName(s.name) && s.role !== 'advertiser' && s.role !== 'narrator'
+          ).length;
+
+          // Skip only if this speaker already has the correct name, or if GPT has
+          // already identified ≥3 named speakers (host + co-host + guest): in that
+          // case trusting GPT's assignment is safer than blindly overriding a named
+          // co-host with the filename guest based on avg-segment-duration alone.
+          const alreadyCorrect =
+            guestSpeaker.name === filenameGuest ||
+            isPresetRosterSpeaker(guestSpeaker) ||
+            (namedNonAdCount >= 3 &&
+              !!guestSpeaker.name &&
+              isValidFinalHumanSpeakerName(guestSpeaker.name));
 
           if (!alreadyCorrect) {
             // Clear this name from any other speaker first.
@@ -712,6 +727,9 @@ export async function runRefactoredSpeakerPipeline(
             guestSpeaker.name = filenameGuest;
             guestSpeaker.role = 'guest';
             guestSpeaker.confidence = 0.7;
+          } else if (namedNonAdCount >= 3 && guestSpeaker.name !== filenameGuest) {
+            console.log(`[HEURISTIC] Skipping avg-duration guest override for ${guestCandidateId} ` +
+              `("${guestSpeaker.name}") — ${namedNonAdCount} named speakers already found; trusting GPT roster`);
           } else {
             console.log(`[HEURISTIC] Speaker (${guestCandidateId}) already correctly named "${guestSpeaker.name}" - no override needed`);
           }
@@ -1029,6 +1047,63 @@ export async function runRefactoredSpeakerPipeline(
   }
 
   // ============================================
+  // POST-PROCESS: ORPHANED CLUSTER HOST MERGE
+  // ============================================
+  // Detects large unnamed clusters that are actually a split of the named host's
+  // voice (AssemblyAI diarization sometimes splits a single speaker across two
+  // clusters). Evidence: the orphaned cluster's segments repeatedly address other
+  // known speakers by name — a behaviour unique to the host/moderator role.
+  console.log('\n--- POST-PROCESS: ORPHANED CLUSTER HOST MERGE ---\n');
+  try {
+    const orphanMergeResult = mergeOrphanedClustersIntoNamedHost(
+      gptResult.speakers,
+      mappingResult.segments
+    );
+    for (const line of orphanMergeResult.info) {
+      console.log(line);
+    }
+    if (orphanMergeResult.mergedCount > 0) {
+      gptResult.speakers = orphanMergeResult.speakers;
+      mappingResult.segments = orphanMergeResult.segments;
+      console.log(`[ORPHAN MERGE] Merged ${orphanMergeResult.mergedCount} orphaned cluster(s) into named host`);
+    } else {
+      console.log('[ORPHAN MERGE] No orphaned clusters merged');
+    }
+  } catch (err: any) {
+    console.error('[ORPHAN MERGE] failed (non-fatal), skipping:', err.message);
+  }
+
+  // ============================================
+  // POST-PROCESS: HOSTING SEGMENT RECLAIM FROM GUEST CLUSTER
+  // ============================================
+  // When AssemblyAI merges a co-host's voice with the guest's into a single
+  // cluster, all segments land on the guest. This step uses two conservative
+  // signals to reclaim host/co-host segments from the guest's attribution:
+  //   1. Guest-name-specific formalities (intro, "Thank you, [guest]") → interview recipient
+  //   2. Generic hosting markers ("We'll be right back", outros, CTAs), gated on signal 1
+  //      having fired first — routes to primary host (not co_host by default)
+  // The pre-intro temporal window is intentionally omitted: guests legitimately speak
+  // before their formal bio introduction in many podcast formats.
+  console.log('\n--- POST-PROCESS: HOSTING SEGMENT RECLAIM ---\n');
+  try {
+    const reclaimResult = reclaimHostingSegmentsFromGuestCluster(
+      gptResult.speakers,
+      mappingResult.segments
+    );
+    for (const line of reclaimResult.info) {
+      console.log(line);
+    }
+    if (reclaimResult.reclaimed > 0) {
+      mappingResult.segments = reclaimResult.segments;
+      console.log(`[HOST RECLAIM] Reclaimed ${reclaimResult.reclaimed} segment(s) from guest cluster(s) → co-host`);
+    } else {
+      console.log('[HOST RECLAIM] No hosting segments found to reclaim');
+    }
+  } catch (err: any) {
+    console.error('[HOST RECLAIM] failed (non-fatal), skipping:', err.message);
+  }
+
+  // ============================================
   // POST-PROCESS: DEAD SPEAKER CULL
   // ============================================
   console.log('\n--- POST-PROCESS: DEAD SPEAKER CULL ---\n');
@@ -1195,6 +1270,22 @@ export async function runRefactoredSpeakerPipeline(
     console.log(`[INTRO-HANDOFF CONF] Elevated ${introHandoffConfResult.corrected} uncertain segment(s) → tentative (handoff_consensus)`);
   } else {
     console.log('[INTRO-HANDOFF CONF] No uncertain intro-handoff segments to correct');
+  }
+
+  // ============================================
+  // POST-PROCESS: FINAL KNOWN-HOST RECOVERY
+  // ============================================
+  if (!options.hasPresetRoster && (options.title || options.filename)) {
+    try {
+      const { host: titleHost } = extractNamesFromFilename(options.title || options.filename || '');
+      if (titleHost && recoverMissingKnownHostFromInvalidCluster(gptResult.speakers, mappingResult.segments, titleHost)) {
+        console.log(`[HEURISTIC] 🧠 Final known-host recovery applied: "${titleHost}"`);
+      } else if (titleHost) {
+        console.log('[HEURISTIC] Final known-host recovery: no missing host detected');
+      }
+    } catch (err: any) {
+      console.error('[HEURISTIC] final known-host recovery failed (non-fatal):', err.message);
+    }
   }
 
   // ============================================
@@ -1780,7 +1871,10 @@ function recoverHandoffNames(
   // Fill ALL null-named non-host slots (cluster-floor entries AND any GPT-returned nulls),
   // so that e.g. a null-named guest from GPT also gets a name if the transcript has one.
   const unnamedSlots = roster.filter(
-    s => !s.name && s.role !== 'host' && s.role !== 'co_host'
+    s => !s.name &&
+      s.role !== 'host' &&
+      s.role !== 'co_host' &&
+      !isAdvertiserLikeSpeaker(s)
   );
   console.log(`[HANDOFF NAMES] Available unnamed slots: ${unnamedSlots.length}`);
 
@@ -1906,6 +2000,11 @@ function enforceRosterConstraints(
       cleaned.length > 0 // keep at least one even if it's generic
     ) {
       // Don't remove — just null-out the name so the entry survives but isn't treated as a real name
+      speaker.name = null;
+    }
+
+    if (speaker.name && !isValidFinalHumanSpeakerName(speaker.name)) {
+      console.log(`[ENFORCE] Nulling invalid human speaker name: "${speaker.name}" (${speaker.id})`);
       speaker.name = null;
     }
 
@@ -2179,7 +2278,7 @@ const SELF_ID_PATTERNS = STRONG_SELF_ID_PATTERNS;
 const SELF_ID_STOPWORDS = new Set([
   'here', 'back', 'going', 'just', 'not', 'so', 'very', 'really',
   'happy', 'glad', 'excited', 'thrilled', 'honored', 'delighted',
-  'sure', 'fine', 'good', 'great', 'well', 'okay',
+  'sure', 'fine', 'good', 'great', 'well', 'okay', 'right', 'yeah',
   'the', 'your', 'his', 'her', 'their',
   // Reflexive / descriptor false positives
   'myself', 'yourself', 'himself', 'herself', 'themselves',
@@ -2205,7 +2304,7 @@ const NAME_POISON_WORDS = new Set([
   'and', 'but', 'or', 'not', 'that', 'this',
   // adjectives / adverbs that title-case captures
   'so', 'very', 'really', 'just', 'also', 'still', 'even',
-  'happy', 'glad', 'excited', 'full', 'support', 'share',
+  'happy', 'glad', 'excited', 'full', 'support', 'share', 'right', 'okay', 'yeah', 'well',
   'pressuring', 'stage', 'here', 'there', 'now', 'then',
   // reflexive pronouns / descriptors that leak through self-ID regex
   'myself', 'yourself', 'himself', 'herself', 'themselves', 'ourselves',
@@ -2261,6 +2360,76 @@ function isPlausibleHumanName(name: string): boolean {
   // Reject if the whole extracted string is a single stopword
   if (SELF_ID_STOPWORDS.has(name.toLowerCase())) return false;
 
+  return true;
+}
+
+function isValidFinalHumanSpeakerName(name: string | null | undefined): boolean {
+  if (!name) return false;
+  return isValidProperName(name) && isPlausibleHumanName(name);
+}
+
+function isAdvertiserLikeSpeaker(speaker: Pick<GPTSpeaker, 'role' | 'source' | 'name'>): boolean {
+  return speaker.role === 'advertiser' ||
+    speaker.source === 'sponsor_detection' ||
+    (!!speaker.name && /^(advertiser|sponsor)$/i.test(speaker.name));
+}
+
+function recoverMissingKnownHostFromInvalidCluster(
+  roster: GPTSpeaker[],
+  segments: SpeakerSegment[],
+  hostName: string
+): boolean {
+  const normalizedHost = normalizeSpeakerName(hostName);
+  const hostAlreadyPresent = roster.some((speaker) =>
+    speaker.name && (
+      normalizeSpeakerName(speaker.name) === normalizedHost ||
+      fuzzyNameMatch(hostName, speaker.name)
+    )
+  );
+  if (hostAlreadyPresent) {
+    return false;
+  }
+
+  const segmentStats = new Map<string, { count: number; duration: number }>();
+  for (const segment of segments) {
+    const id = segment.finalSpeakerId || segment.speakerId;
+    const existing = segmentStats.get(id) || { count: 0, duration: 0 };
+    existing.count += 1;
+    existing.duration += Math.max(0, (segment.endTime || 0) - (segment.startTime || 0));
+    segmentStats.set(id, existing);
+  }
+
+  const candidate = roster
+    .filter((speaker) =>
+      !isPresetRosterSpeaker(speaker) &&
+      speaker.role !== 'advertiser' &&
+      speaker.role !== 'narrator' &&
+      speaker.role !== 'quoted_audio' &&
+      (!speaker.name || !isValidFinalHumanSpeakerName(speaker.name))
+    )
+    .map((speaker) => ({
+      speaker,
+      stats: segmentStats.get(speaker.id) || { count: 0, duration: 0 }
+    }))
+    .filter(({ stats }) => stats.count >= 5 || stats.duration >= 60)
+    .sort((a, b) =>
+      b.stats.count - a.stats.count ||
+      b.stats.duration - a.stats.duration ||
+      b.speaker.confidence - a.speaker.confidence
+    )[0];
+
+  if (!candidate) {
+    return false;
+  }
+
+  const previousName = candidate.speaker.name;
+  candidate.speaker.name = hostName;
+  candidate.speaker.role = 'host';
+  candidate.speaker.confidence = Math.max(candidate.speaker.confidence, 0.78);
+  console.log(
+    `[HEURISTIC] 🛟 Recovered missing known host "${hostName}" from invalid cluster ${candidate.speaker.id} ` +
+    `(was "${previousName}")`
+  );
   return true;
 }
 
@@ -2535,7 +2704,7 @@ function verifySpeakerIntegrity(
  * ad blocks by text patterns, extracts the sponsor name, creates a roster entry with
  * role 'advertiser', and remaps the segments.
  */
-function detectSponsorSegments(
+export function detectSponsorSegments(
   segments: SpeakerSegment[],
   roster: GPTSpeaker[]
 ): {
@@ -2644,12 +2813,19 @@ function detectSponsorSegments(
       }
     }
 
-    // Minimum size check: 3+ segments OR 50+ words — prevents false positives
+    // Minimum size check: strong sponsor-openers can be single long segments.
+    // Keep a floor to avoid false positives, but don't require a multi-segment ad block.
     const totalWords = adIndices.reduce((sum, idx) => {
       return sum + updatedSegments[idx].text.split(/\s+/).filter(Boolean).length;
     }, 0);
+    const hasStrongSponsorLead = AD_START_PATTERNS.some(pattern => pattern.test(text));
 
-    if (adIndices.length < 3 && totalWords < 50) {
+    if (!hasStrongSponsorLead && adIndices.length < 3 && totalWords < 50) {
+      console.log(`[SPONSOR] Skipping short ad mention: "${sponsorName}" (${adIndices.length} seg, ${totalWords} words)`);
+      continue;
+    }
+
+    if (hasStrongSponsorLead && totalWords < 20) {
       console.log(`[SPONSOR] Skipping short ad mention: "${sponsorName}" (${adIndices.length} seg, ${totalWords} words)`);
       continue;
     }
@@ -3745,6 +3921,7 @@ function mergeDuplicateUnknownSpeakers(
       const b = activeAfterFirstPass[j];
       if (!b.name || remap.has(b.id)) continue;
       if (decideDuplicateName(a.name, b.name).kind !== 'hard') continue;
+      if (isAdvertiserLikeSpeaker(a) || isAdvertiserLikeSpeaker(b)) continue;
 
       // Keep the one with the longer name (more informative) or higher confidence
       const keepA = a.name.length >= b.name.length
@@ -3784,6 +3961,324 @@ function mergeDuplicateUnknownSpeakers(
     speakers: updatedSpeakers,
     segments: updatedSegments,
     mergedCount,
+  };
+}
+
+/**
+ * POST-PROCESS: ORPHANED CLUSTER → NAMED HOST MERGE
+ *
+ * After garbage enforcement and segment mapping a large diarization cluster can
+ * survive with no valid name because its GPT-assigned name was a filler word or
+ * common interjection (e.g. "Right", "Sure", "Well"). If a named host already
+ * exists in the roster this step detects whether the orphaned cluster is a split
+ * of that host's voice by scanning its segments for direct-address evidence —
+ * the host addressing other known speakers by name.
+ *
+ * Evidence used:
+ *  - Segments in the orphaned cluster whose text uses a known roster member's
+ *    first name in vocative (direct-address) position:
+ *      "Ed, true story…"  /  "How are you, Ed?"  /  "Welcome, Katie."
+ *  - Plausible size match: orphaned cluster is no more than 3× the host's
+ *    existing segment count (prevents merging a large guest into the host).
+ *
+ * Conservative: requires ≥ 2 direct-address hits before merging.
+ */
+function mergeOrphanedClustersIntoNamedHost(
+  speakers: GPTSpeaker[],
+  segments: SpeakerSegment[]
+): { speakers: GPTSpeaker[]; segments: SpeakerSegment[]; mergedCount: number; info: string[] } {
+  const info: string[] = [];
+
+  // Find the named host (prefer role=host, fall back to co_host)
+  const namedHost =
+    speakers.find(s => s.name && isValidFinalHumanSpeakerName(s.name) && s.role === 'host') ||
+    speakers.find(s => s.name && isValidFinalHumanSpeakerName(s.name) && s.role === 'co_host');
+
+  if (!namedHost) {
+    info.push('[ORPHAN MERGE] No named host found — skipping');
+    return { speakers, segments, mergedCount: 0, info };
+  }
+
+  // Collect first names of other named non-advertiser speakers for address detection
+  const otherFirstNames = speakers
+    .filter(
+      s =>
+        s.name &&
+        isValidFinalHumanSpeakerName(s.name) &&
+        s.id !== namedHost.id &&
+        s.role !== 'advertiser'
+    )
+    .map(s => s.name!.split(/\s+/)[0])
+    .filter(fn => fn.length >= 2);
+
+  if (otherFirstNames.length === 0) {
+    info.push('[ORPHAN MERGE] No other named speakers to check against — skipping');
+    return { speakers, segments, mergedCount: 0, info };
+  }
+
+  // Tally segment counts per speaker from current assignments
+  const segCounts = new Map<string, number>();
+  for (const seg of segments) {
+    const id = seg.finalSpeakerId || seg.speakerId;
+    segCounts.set(id, (segCounts.get(id) || 0) + 1);
+  }
+
+  const hostSegCount = segCounts.get(namedHost.id) || 0;
+
+  // Orphaned candidates: no valid name, not an advertiser/narrator, ≥5 segments
+  const orphanedCandidates = speakers.filter(
+    s =>
+      !isPresetRosterSpeaker(s) &&
+      s.role !== 'advertiser' &&
+      s.role !== 'narrator' &&
+      s.role !== 'quoted_audio' &&
+      (!s.name || !isValidFinalHumanSpeakerName(s.name)) &&
+      (segCounts.get(s.id) || 0) >= 5
+  );
+
+  if (orphanedCandidates.length === 0) {
+    info.push('[ORPHAN MERGE] No large orphaned clusters found — skipping');
+    return { speakers, segments, mergedCount: 0, info };
+  }
+
+  const remap = new Map<string, string>(); // orphan.id → namedHost.id
+
+  for (const candidate of orphanedCandidates) {
+    const candidateSegCount = segCounts.get(candidate.id) || 0;
+
+    // Size guard: don't merge a cluster that is >3× the host's size.
+    // A cluster that large is more likely a distinct speaker than a voice split.
+    if (hostSegCount > 0 && candidateSegCount > hostSegCount * 3) {
+      info.push(
+        `[ORPHAN MERGE] Skipping ${candidate.id} (${candidateSegCount} segs) — ` +
+          `too large vs named host ${namedHost.id} (${hostSegCount} segs)`
+      );
+      continue;
+    }
+
+    // Count direct-address hits: scan the orphaned cluster's own segments for
+    // patterns where another known speaker's first name appears in vocative position.
+    const candidateSegs = segments.filter(
+      s => (s.finalSpeakerId || s.speakerId) === candidate.id
+    );
+
+    let directAddressHits = 0;
+    for (const seg of candidateSegs) {
+      for (const fn of otherFirstNames) {
+        const esc = fn.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+        const matched =
+          // "Name, ..." — vocative at sentence start or after sentence-ending punctuation
+          new RegExp(`(^|[.!?]\\s+)${esc},\\s`, 'i').test(seg.text) ||
+          // ", Name?" / ", Name." — trailing apostrophe
+          new RegExp(`,\\s*${esc}[.?!]`, 'i').test(seg.text) ||
+          // "you, Name" — e.g. "How are you, Ed?"
+          new RegExp(`\\byou,?\\s+${esc}\\b`, 'i').test(seg.text);
+        if (matched) {
+          directAddressHits++;
+          break; // count each segment at most once
+        }
+      }
+    }
+
+    info.push(
+      `[ORPHAN MERGE] Candidate ${candidate.id} (was "${candidate.name}", ` +
+        `${candidateSegCount} segs): directAddressHits=${directAddressHits}`
+    );
+
+    // Require ≥ 2 hits to avoid speculative merges
+    if (directAddressHits >= 2) {
+      remap.set(candidate.id, namedHost.id);
+      info.push(
+        `[ORPHAN MERGE] ✅ Merging ${candidate.id} → host "${namedHost.name}" ` +
+          `(${namedHost.id}): ${directAddressHits} direct-address hit(s)`
+      );
+    }
+  }
+
+  if (remap.size === 0) {
+    return { speakers, segments, mergedCount: 0, info };
+  }
+
+  // Remap all segments from the merged orphaned clusters to the named host
+  const updatedSegments = segments.map(seg => {
+    const id = seg.finalSpeakerId || seg.speakerId;
+    const target = remap.get(id);
+    if (!target) return seg;
+    return { ...seg, speakerId: target, finalSpeakerId: target };
+  });
+
+  // Remove the now-empty orphaned speakers from the roster.
+  // The dead-speaker cull will also catch them, but removing here is cleaner.
+  const updatedSpeakers = speakers.filter(s => !remap.has(s.id));
+
+  return {
+    speakers: updatedSpeakers,
+    segments: updatedSegments,
+    mergedCount: remap.size,
+    info,
+  };
+}
+
+/**
+ * POST-PROCESS: HOSTING SEGMENT RECLAIM FROM GUEST CLUSTER
+ *
+ * AssemblyAI sometimes merges a co-host's voice with the guest's into a single
+ * diarization cluster. After the CSP maps that cluster to the guest identity the
+ * co-host ends up with almost no segments. This step reclaims co-host segments
+ * from guest-attributed clusters using two conservative evidence classes:
+ *
+ * 1. Strong generic hosting markers — phrases that ONLY a host/co-host would say:
+ *      "We'll be right back", "We're back", "Thank you for listening", sign-up CTAs.
+ *
+ * 2. Guest-name-specific formalities — phrases that identify the *other* speaker:
+ *      "conversation with [guestName]", "[GuestName] is a [title]…", "Thank you, [guestName]".
+ *
+ * 3. Pre-formal-intro temporal window — if the guest has a formal intro segment
+ *    ("our conversation with [guestName]" or "[GuestName] is a [title]…") and the
+ *    intro occurs after a reasonable warm-up period, any guest-attributed segment
+ *    BEFORE the earliest intro timestamp is almost certainly the co-host.
+ *
+ * Only named co-hosts (role='co_host') receive the reclaimed segments. Falls back
+ * to the named host if no co_host exists. Never touches advertiser segments.
+ */
+function reclaimHostingSegmentsFromGuestCluster(
+  speakers: GPTSpeaker[],
+  segments: SpeakerSegment[]
+): { speakers: GPTSpeaker[]; segments: SpeakerSegment[]; reclaimed: number; info: string[] } {
+  const info: string[] = [];
+
+  // Two distinct recipients, because the two signal types have different ownership semantics:
+  //
+  //   interviewRecipient — whoever is interviewing this guest (prefer co_host, fall back to host).
+  //     Guest-name-specific markers ("Thank you, Katie.", "conversation with Katie Martin")
+  //     belong to the person conducting the interview.
+  //
+  //   genericRecipient — the primary show host (prefer host, fall back to co_host).
+  //     Generic outro/CTA markers ("We'll be right back", "Thank you for listening")
+  //     are show-level, and in shows that have both a host and a co_host, they
+  //     belong to the primary host — not automatically to the co_host.
+  //
+  // When only one host-role exists, both resolve to the same person.
+  const interviewRecipient =
+    speakers.find(s => s.name && isValidFinalHumanSpeakerName(s.name) && s.role === 'co_host') ||
+    speakers.find(s => s.name && isValidFinalHumanSpeakerName(s.name) && s.role === 'host');
+
+  const genericRecipient =
+    speakers.find(s => s.name && isValidFinalHumanSpeakerName(s.name) && s.role === 'host') ||
+    speakers.find(s => s.name && isValidFinalHumanSpeakerName(s.name) && s.role === 'co_host');
+
+  if (!interviewRecipient) {
+    info.push('[HOST RECLAIM] No named host/co-host to receive segments — skipping');
+    return { speakers, segments, reclaimed: 0, info };
+  }
+
+  const guests = speakers.filter(
+    s =>
+      s.name &&
+      isValidFinalHumanSpeakerName(s.name) &&
+      s.role === 'guest' &&
+      s.id !== interviewRecipient.id
+  );
+
+  if (guests.length === 0) {
+    info.push('[HOST RECLAIM] No named guest speakers found — skipping');
+    return { speakers, segments, reclaimed: 0, info };
+  }
+
+  // Generic hosting markers (show-level — not inherently co-host-specific).
+  // IMPORTANT: these are only reclaimed when guest-specific markers have already fired
+  // for the same guest, proving the cluster is genuinely mixed. Without that gate,
+  // a single generic phrase in a guest's cluster would be stolen without evidence.
+  const GENERIC_HOST_MARKERS: RegExp[] = [
+    /\bwe'?ll be right back\b/i,
+    /\bwe'?re back\b/i,
+    /\bthank you for (listening|watching|tuning in)\b/i,
+    /\b(send|share) it to a friend\b/i,
+    /\bsign up for our newsletter\b/i,
+    /\bif you (liked|enjoyed|loved) what you heard\b/i,
+    /\bleave (us )?(a|your) review\b/i,
+    /\bsubscribe.*\bpodcast\b/i,
+  ];
+
+  // Per-signal routing sets: guest-specific → interviewRecipient, generic → genericRecipient
+  const remapToInterview = new Set<number>();
+  const remapToGeneric = new Set<number>();
+
+  for (const guest of guests) {
+    const guestFirst = guest.name!.split(/\s+/)[0];
+    const guestFull = guest.name!;
+    const escapedFirst = guestFirst.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+    const escapedFull = guestFull.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+
+    // Guest-name-specific markers: segments that explicitly name this guest.
+    // These are strong evidence of a host/co-host speaking, not the guest.
+    const guestMarkers: RegExp[] = [
+      // "Thank you, Katie." / "Thanks, Katie." / "Thank you, Katie."
+      new RegExp(`\\bthank(?:s|\\s+you)?,?\\s+${escapedFirst}[.,!]?\\s*$`, 'i'),
+      // "Katie Martin is a markets columnist…" — formal bio intro
+      new RegExp(`\\b${escapedFull}\\s+is (a|an)\\b`, 'i'),
+      // "our conversation with Katie Martin" / "let's get into our conversation with Katie"
+      new RegExp(`\\bconversation with\\s+(${escapedFirst}|${escapedFull})\\b`, 'i'),
+    ];
+
+    // Signal 1: guest-specific markers → always reclaim to interviewRecipient
+    let guestSpecificFired = false;
+    for (let i = 0; i < segments.length; i++) {
+      const seg = segments[i];
+      if ((seg.finalSpeakerId || seg.speakerId) !== guest.id) continue;
+      if (guestMarkers.some(re => re.test(seg.text))) {
+        remapToInterview.add(i);
+        guestSpecificFired = true;
+        info.push(
+          `[HOST RECLAIM] Guest-specific marker → ${interviewRecipient.id} ("${interviewRecipient.name}"): ` +
+            `"${seg.text.substring(0, 80)}"`
+        );
+      }
+    }
+
+    // Signal 2: generic markers — gated on guest-specific evidence.
+    // Only reclaim if at least one guest-specific marker already fired for this guest,
+    // confirming the cluster is mixed (not just a coincidental generic phrase).
+    // Route to genericRecipient (primary host) since these markers are not co-host-specific.
+    if (guestSpecificFired && genericRecipient) {
+      for (let i = 0; i < segments.length; i++) {
+        const seg = segments[i];
+        if ((seg.finalSpeakerId || seg.speakerId) !== guest.id) continue;
+        if (remapToInterview.has(i)) continue; // already claimed
+        if (GENERIC_HOST_MARKERS.some(re => re.test(seg.text))) {
+          remapToGeneric.add(i);
+          info.push(
+            `[HOST RECLAIM] Generic marker (gated) → ${genericRecipient.id} ("${genericRecipient.name}"): ` +
+              `"${seg.text.substring(0, 80)}"`
+          );
+        }
+      }
+    }
+
+    // Signal 3 (pre-intro temporal window) — REMOVED.
+    // Guests legitimately speak before their formal bio introduction in many formats
+    // (round-tables, casual shows, shows where guests join early). The temporal window
+    // was too broad and caused false reclaims whenever any intro phrase happened to
+    // appear in a mixed cluster.
+  }
+
+  const totalRemap = remapToInterview.size + remapToGeneric.size;
+  if (totalRemap === 0) {
+    info.push('[HOST RECLAIM] No hosting segments found to reclaim');
+    return { speakers, segments, reclaimed: 0, info };
+  }
+
+  const updatedSegments = segments.map((seg, i) => {
+    if (remapToInterview.has(i)) return { ...seg, speakerId: interviewRecipient.id, finalSpeakerId: interviewRecipient.id };
+    if (remapToGeneric.has(i) && genericRecipient) return { ...seg, speakerId: genericRecipient.id, finalSpeakerId: genericRecipient.id };
+    return seg;
+  });
+
+  return {
+    speakers, // roster unchanged — only segment assignments change
+    segments: updatedSegments,
+    reclaimed: totalRemap,
+    info,
   };
 }
 

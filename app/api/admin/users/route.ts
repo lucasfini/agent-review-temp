@@ -49,6 +49,7 @@ export async function GET(request: NextRequest) {
       email: u.email,
       createdAt: u.created_at,
       lastSignInAt: u.last_sign_in_at,
+      bannedUntil: (u as any).banned_until || null,
       credits: creditsByUser[u.id] || null,
     }));
 

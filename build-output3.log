@@ -1,0 +1,73 @@
+app/api/transcribe/route.ts(4,31): error TS2307: Cannot find module '@/lib/supabase/server' or its corresponding type declarations.
+app/api/transcribe/route.ts(5,71): error TS2307: Cannot find module '@/lib/assemblyai-integration' or its corresponding type declarations.
+app/api/transcribe/route.ts(6,67): error TS2307: Cannot find module '@/lib/deepgram-integration' or its corresponding type declarations.
+app/api/transcribe/route.ts(7,40): error TS2307: Cannot find module '@/lib/speaker-utils' or its corresponding type declarations.
+app/api/transcribe/route.ts(8,37): error TS2307: Cannot find module '@/lib/name-extraction' or its corresponding type declarations.
+app/api/transcribe/route.ts(9,38): error TS2307: Cannot find module '@/lib/speaker-role-classifier' or its corresponding type declarations.
+app/api/transcribe/route.ts(10,40): error TS2307: Cannot find module '@/lib/content-generators/summary' or its corresponding type declarations.
+app/api/transcribe/route.ts(11,39): error TS2307: Cannot find module '@/lib/content-generators/chapters' or its corresponding type declarations.
+app/api/transcribe/route.ts(12,55): error TS2307: Cannot find module '@/lib/content-generators/takeaways' or its corresponding type declarations.
+app/api/transcribe/route.ts(13,37): error TS2307: Cannot find module '@/lib/content-generators/quotes' or its corresponding type declarations.
+app/api/transcribe/route.ts(14,38): error TS2307: Cannot find module '@/lib/content-generators/pre-processor' or its corresponding type declarations.
+app/api/transcribe/route.ts(15,68): error TS2307: Cannot find module '@/lib/tier-config' or its corresponding type declarations.
+app/api/transcribe/route.ts(16,64): error TS2307: Cannot find module '@/lib/progress-tracker' or its corresponding type declarations.
+app/api/transcribe/route.ts(17,33): error TS2307: Cannot find module '@/lib/tier-progress-config' or its corresponding type declarations.
+app/api/transcribe/route.ts(21,59): error TS2307: Cannot find module '@/lib/types' or its corresponding type declarations.
+app/api/transcribe/route.ts(22,43): error TS2307: Cannot find module '@/lib/billing/cost-map' or its corresponding type declarations.
+app/api/transcribe/route.ts(23,63): error TS2307: Cannot find module '@/lib/billing/track-usage' or its corresponding type declarations.
+app/api/transcribe/route.ts(24,41): error TS2307: Cannot find module '@/lib/billing/credit' or its corresponding type declarations.
+app/api/transcribe/route.ts(25,62): error TS2307: Cannot find module '@/lib/utils/autoCorrectSpeakers' or its corresponding type declarations.
+app/api/transcribe/route.ts(26,61): error TS2307: Cannot find module '@/lib/utils/classifyProjectType' or its corresponding type declarations.
+app/api/transcribe/route.ts(27,103): error TS2307: Cannot find module '@/lib/utils/correctDebateSpeakers' or its corresponding type declarations.
+app/api/transcribe/route.ts(28,40): error TS2307: Cannot find module '@/lib/openai/consent' or its corresponding type declarations.
+app/api/transcribe/route.ts(29,39): error TS2307: Cannot find module '@/lib/r2' or its corresponding type declarations.
+app/api/transcribe/route.ts(30,40): error TS2307: Cannot find module '@/lib/background-task' or its corresponding type declarations.
+app/api/transcribe/route.ts(254,19): error TS2304: Cannot find name 'openaiApiKey'.
+app/api/transcribe/route.ts(271,21): error TS2304: Cannot find name 'tokenUsage'.
+app/api/transcribe/route.ts(272,15): error TS2304: Cannot find name 'trackOpenAIUsage'.
+app/api/transcribe/route.ts(276,24): error TS2304: Cannot find name 'tokenUsage'.
+app/api/transcribe/route.ts(277,25): error TS2304: Cannot find name 'tokenUsage'.
+app/api/transcribe/route.ts(295,17): error TS2304: Cannot find name 'openaiApiKey'.
+app/api/transcribe/route.ts(298,15): error TS2304: Cannot find name 'trackOpenAIUsage'.
+app/api/transcribe/route.ts(321,17): error TS2304: Cannot find name 'openaiApiKey'.
+app/api/transcribe/route.ts(324,15): error TS2304: Cannot find name 'trackOpenAIUsage'.
+app/api/transcribe/route.ts(347,17): error TS2304: Cannot find name 'openaiApiKey'.
+app/api/transcribe/route.ts(350,15): error TS2304: Cannot find name 'trackOpenAIUsage'.
+app/api/transcribe/route.ts(373,17): error TS2304: Cannot find name 'openaiApiKey'.
+app/api/transcribe/route.ts(376,15): error TS2304: Cannot find name 'trackOpenAIUsage'.
+app/api/transcribe/route.ts(395,58): error TS2307: Cannot find module '@/lib/insight-extraction' or its corresponding type declarations.
+app/api/transcribe/route.ts(582,56): error TS2307: Cannot find module '@/lib/transcription-cache' or its corresponding type declarations.
+app/api/transcribe/route.ts(737,57): error TS2307: Cannot find module '@/lib/transcription-cache' or its corresponding type declarations.
+app/api/transcribe/route.ts(757,58): error TS2307: Cannot find module '@/lib/transcription-cache' or its corresponding type declarations.
+app/api/transcribe/route.ts(771,57): error TS2307: Cannot find module '@/lib/speaker-segment-filter' or its corresponding type declarations.
+app/api/transcribe/route.ts(776,43): error TS2802: Type 'Map<any, any>' can only be iterated through when using the '--downlevelIteration' flag or with a '--target' of 'es2015' or higher.
+app/api/transcribe/route.ts(885,65): error TS2307: Cannot find module '@/lib/refactored-speaker-pipeline' or its corresponding type declarations.
+app/api/transcribe/route.ts(1305,7): error TS2578: Unused '@ts-expect-error' directive.
+app/api/transcribe/route.ts(1431,29): error TS2802: Type 'MapIterator<[string, string[]]>' can only be iterated through when using the '--downlevelIteration' flag or with a '--target' of 'es2015' or higher.
+app/api/transcribe/route.ts(1474,21): error TS2802: Type 'MapIterator<string>' can only be iterated through when using the '--downlevelIteration' flag or with a '--target' of 'es2015' or higher.
+app/api/transcribe/route.ts(1714,14): error TS2802: Type 'Set<string>' can only be iterated through when using the '--downlevelIteration' flag or with a '--target' of 'es2015' or higher.
+app/api/transcribe/route.ts(1756,28): error TS2802: Type 'MapIterator<[string, SpeakerSegment[]]>' can only be iterated through when using the '--downlevelIteration' flag or with a '--target' of 'es2015' or higher.
+node_modules/next/dist/build/templates/app-page.d.ts(3,25): error TS2307: Cannot find module 'VAR_MODULE_GLOBAL_ERROR' or its corresponding type declarations.
+node_modules/next/dist/build/webpack-config.d.ts(10,104): error TS2694: Namespace '"/Users/lucas/Desktop/audiorepurpose/node_modules/next/dist/compiled/webpack/webpack".webpack' has no exported member 'RuleSetUseItem'.
+node_modules/next/dist/build/webpack/loaders/next-app-loader/index.d.ts(1,13): error TS2613: Module '"/Users/lucas/Desktop/audiorepurpose/node_modules/next/dist/compiled/webpack/webpack"' has no default export. Did you mean to use 'import { webpack } from "/Users/lucas/Desktop/audiorepurpose/node_modules/next/dist/compiled/webpack/webpack"' instead?
+node_modules/next/dist/client/components/error-boundary.d.ts(1,8): error TS1259: Module '"/Users/lucas/Desktop/audiorepurpose/node_modules/@types/react/index"' can only be default-imported using the 'esModuleInterop' flag
+node_modules/next/dist/client/components/http-access-fallback/error-boundary.d.ts(11,8): error TS1259: Module '"/Users/lucas/Desktop/audiorepurpose/node_modules/@types/react/index"' can only be default-imported using the 'esModuleInterop' flag
+node_modules/next/dist/client/components/layout-router.d.ts(2,8): error TS1259: Module '"/Users/lucas/Desktop/audiorepurpose/node_modules/@types/react/index"' can only be default-imported using the 'esModuleInterop' flag
+node_modules/next/dist/client/with-router.d.ts(1,8): error TS1259: Module '"/Users/lucas/Desktop/audiorepurpose/node_modules/@types/react/index"' can only be default-imported using the 'esModuleInterop' flag
+node_modules/next/dist/lib/metadata/metadata.d.ts(1,8): error TS1259: Module '"/Users/lucas/Desktop/audiorepurpose/node_modules/@types/react/index"' can only be default-imported using the 'esModuleInterop' flag
+node_modules/next/dist/next-devtools/userspace/pages/pages-dev-overlay-setup.d.ts(1,8): error TS1259: Module '"/Users/lucas/Desktop/audiorepurpose/node_modules/@types/react/index"' can only be default-imported using the 'esModuleInterop' flag
+node_modules/next/dist/server/app-render/entry-base.d.ts(1,114): error TS2307: Cannot find module 'react-server-dom-webpack/server' or its corresponding type declarations.
+node_modules/next/dist/server/app-render/entry-base.d.ts(2,27): error TS2307: Cannot find module 'react-server-dom-webpack/static' or its corresponding type declarations.
+node_modules/next/dist/server/web/spec-extension/adapters/headers.d.ts(39,16): error TS2304: Cannot find name 'HeadersIterator'.
+node_modules/next/dist/server/web/spec-extension/adapters/headers.d.ts(40,13): error TS2304: Cannot find name 'HeadersIterator'.
+node_modules/next/dist/server/web/spec-extension/adapters/headers.d.ts(41,15): error TS2304: Cannot find name 'HeadersIterator'.
+node_modules/next/dist/server/web/spec-extension/adapters/headers.d.ts(42,26): error TS2304: Cannot find name 'HeadersIterator'.
+node_modules/next/dist/shared/lib/app-router-context.shared-runtime.d.ts(4,8): error TS1259: Module '"/Users/lucas/Desktop/audiorepurpose/node_modules/@types/react/index"' can only be default-imported using the 'esModuleInterop' flag
+node_modules/next/dist/shared/lib/app-router-types.d.ts(7,13): error TS1259: Module '"/Users/lucas/Desktop/audiorepurpose/node_modules/@types/react/index"' can only be default-imported using the 'esModuleInterop' flag
+node_modules/next/dist/shared/lib/head-manager-context.shared-runtime.d.ts(1,8): error TS1259: Module '"/Users/lucas/Desktop/audiorepurpose/node_modules/@types/react/index"' can only be default-imported using the 'esModuleInterop' flag
+node_modules/next/dist/shared/lib/image-config-context.shared-runtime.d.ts(1,8): error TS1259: Module '"/Users/lucas/Desktop/audiorepurpose/node_modules/@types/react/index"' can only be default-imported using the 'esModuleInterop' flag
+node_modules/next/dist/shared/lib/loadable-context.shared-runtime.d.ts(1,8): error TS1259: Module '"/Users/lucas/Desktop/audiorepurpose/node_modules/@types/react/index"' can only be default-imported using the 'esModuleInterop' flag
+node_modules/next/dist/shared/lib/loadable.shared-runtime.d.ts(21,8): error TS1259: Module '"/Users/lucas/Desktop/audiorepurpose/node_modules/@types/react/index"' can only be default-imported using the 'esModuleInterop' flag
+node_modules/next/dist/shared/lib/router-context.shared-runtime.d.ts(1,8): error TS1259: Module '"/Users/lucas/Desktop/audiorepurpose/node_modules/@types/react/index"' can only be default-imported using the 'esModuleInterop' flag
+node_modules/next/dist/shared/lib/server-inserted-html.shared-runtime.d.ts(1,8): error TS1259: Module '"/Users/lucas/Desktop/audiorepurpose/node_modules/@types/react/index"' can only be default-imported using the 'esModuleInterop' flag
+node_modules/next/dist/shared/lib/utils.d.ts(10,13): error TS1192: Module '"fs"' has no default export.

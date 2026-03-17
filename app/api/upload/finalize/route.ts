@@ -1,280 +1,173 @@
 import { NextRequest, NextResponse } from 'next/server';
-import { Buffer } from 'buffer';
-import { PutObjectCommand } from '@aws-sdk/client-s3';
-import { r2Client, BUCKET_NAME } from '@/lib/r2';
 import { supabaseAdmin } from '@/lib/supabase/server';
-import { computeAudioFingerprint } from '@/lib/audio-fingerprint';
-import { getCachedTranscription, applyCachedTranscriptionToProject } from '@/lib/transcription-cache';
-import { ESTIMATED_BITRATE_BPS } from '@/lib/upload-constants';
+import { updateProcessingProgress } from '@/lib/progress-tracker';
+import { HeadObjectCommand } from '@aws-sdk/client-s3';
+import { r2Client, BUCKET_NAME } from '@/lib/r2';
+import { verifyUploadToken } from '@/lib/upload-token';
+import { getInternalJobToken } from '@/lib/internal-job-auth';
+import { deleteProjectAudioObject } from '@/lib/audio-retention';
+import { getAppBaseUrl } from '@/lib/app-url';
+import { scheduleBackgroundTask } from '@/lib/background-task';
 
-// Import the upload sessions map from the chunk route
-// In production, you'd want to use Redis or another persistent store
-declare global {
-  var uploadSessions: Map<string, {
-    chunks: Map<number, ArrayBuffer>;
-    metadata: {
-      fileName: string;
-      totalChunks: number;
-      uploadId: string;
-      projectId?: string;
-      fileSize?: number;
-    };
-    createdAt: number;
-  }>;
-}
-
-// Use global variable to persist sessions across route calls
-if (!global.uploadSessions) {
-  global.uploadSessions = new Map();
-}
-
-const uploadSessions = global.uploadSessions;
-
-const sanitizeFileName = (name: string) => {
-  const normalized = name
-    .normalize('NFKD')
-    .replace(/[\u0300-\u036f]/g, '');
-  const sanitized = normalized
-    .replace(/[^a-zA-Z0-9.-]/g, '_')
-    .replace(/_{2,}/g, '_')
-    .replace(/^_+|_+$/g, '');
-  return sanitized || 'audio_upload';
-};
-
-type PerformanceLevel = 'basic' | 'pro' | 'premium';
-
-const legacyToCurrentLevel = (value?: string | null): PerformanceLevel | null => {
-  if (!value) return null;
-  if (value === 'basic' || value === 'pro' || value === 'premium') return value as PerformanceLevel;
-  if (value === 'low') return 'basic';
-  if (value === 'medium') return 'pro';
-  if (value === 'high') return 'premium';
-  return null;
-};
-
-const normalizePerformanceLevel = (value: PerformanceLevel | string | undefined): PerformanceLevel => {
-  return legacyToCurrentLevel(value) || 'premium';
-};
+export const runtime = 'nodejs';
+export const maxDuration = 300; // Allow background tasks to run up to 5 mins
 
 export async function POST(request: NextRequest) {
   try {
-    const { uploadId, fileName, totalChunks, fileSize, performanceLevel: requestedLevel } = await request.json();
-    const performanceLevel = normalizePerformanceLevel(requestedLevel);
-
-    if (!uploadId || !fileName || !totalChunks) {
-      return NextResponse.json(
-        { error: 'Missing required finalization parameters' },
-        { status: 400 }
-      );
-    }
-
-    console.log(`Finalizing upload ${uploadId} for ${fileName}`);
-    console.log(`[UPLOAD][CHUNKED] Selected performance level: ${performanceLevel}`);
-
-    // Get upload session
-    const session = uploadSessions.get(uploadId);
-    if (!session) {
-      return NextResponse.json(
-        { error: 'Upload session not found' },
-        { status: 404 }
-      );
-    }
-
-    // Verify all chunks are received
-    if (session.chunks.size !== totalChunks) {
-      return NextResponse.json(
-        { error: `Missing chunks: expected ${totalChunks}, got ${session.chunks.size}` },
-        { status: 400 }
-      );
-    }
-
-    console.log(`All ${totalChunks} chunks received, assembling file...`);
-
-    // Assemble chunks into final file
-    const sortedChunks = Array.from({ length: totalChunks }, (_, i) => session.chunks.get(i))
-      .filter(chunk => chunk !== undefined) as ArrayBuffer[];
-
-    if (sortedChunks.length !== totalChunks) {
-      return NextResponse.json(
-        { error: 'Some chunks are missing or corrupted' },
-        { status: 400 }
-      );
-    }
-
-    // Combine all chunks
-    const totalSize = sortedChunks.reduce((sum, chunk) => sum + chunk.byteLength, 0);
-    const finalBuffer = new ArrayBuffer(totalSize);
-    const finalView = new Uint8Array(finalBuffer);
-    
-    let offset = 0;
-    for (const chunk of sortedChunks) {
-      finalView.set(new Uint8Array(chunk), offset);
-      offset += chunk.byteLength;
-    }
-
-    console.log(`Assembled file: ${totalSize} bytes`);
-    const finalNodeBuffer = Buffer.from(new Uint8Array(finalBuffer));
-    const audioFingerprint = computeAudioFingerprint(finalNodeBuffer);
-
-    // Get the authenticated user
     const authHeader = request.headers.get('authorization');
     const { data: { user }, error: authError } = await supabaseAdmin.auth.getUser(
       authHeader?.replace('Bearer ', '') || ''
     );
 
     if (authError || !user) {
-      return NextResponse.json(
-        { error: 'Authentication required for file upload' },
-        { status: 401 }
-      );
+      return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
     }
 
-    // Create project record
-    const projectTitle = fileName.replace(/\.[^/.]+$/, '').replace(/[_\-\+\[\]]/g, ' ').trim();
-    const estimatedDuration = Math.round(totalSize / (ESTIMATED_BITRATE_BPS / 8)); // Rough estimate
+    const body = await request.json();
+    const { projectId, objectKey, audioFingerprint, uploadToken, performanceLevel, speakerCount } = body;
 
-    const sanitizedBaseName = sanitizeFileName(fileName);
+    if (!uploadToken || typeof uploadToken !== 'string') {
+      return NextResponse.json({ error: 'Missing upload token' }, { status: 400 });
+    }
 
-    const { data: project, error: projectError } = await supabaseAdmin
+    const tokenPayload = verifyUploadToken(uploadToken);
+    if (
+      !tokenPayload ||
+      tokenPayload.projectId !== projectId ||
+      tokenPayload.objectKey !== objectKey ||
+      tokenPayload.audioFingerprint !== audioFingerprint ||
+      tokenPayload.userId !== user.id
+    ) {
+      return NextResponse.json({ error: 'Invalid upload token' }, { status: 400 });
+    }
+
+    // Verify project belongs to user
+    const { data: project, error: getError } = await supabaseAdmin
       .from('projects')
-      .insert({
-        user_id: user.id,
-        title: projectTitle,
-        audio_file_name: sanitizedBaseName,
-        audio_file_size: totalSize,
-        audio_duration: estimatedDuration,
-        audio_fingerprint: audioFingerprint,
-        status: 'uploading',
-        performance_level: performanceLevel
-      } as any)
-      .select()
-      .single() as { data: any; error: any };
+      .select('user_id, status, audio_file_name, audio_deleted_at')
+      .eq('id', projectId)
+      .single();
 
-    if (projectError || !project) {
-      console.error('Project creation error:', projectError);
+    if (getError || !project || project.user_id !== user.id) {
+      return NextResponse.json({ error: 'Project not found or unauthorized' }, { status: 403 });
+    }
+
+    if (project.status === 'cancelled') {
+      if (project.audio_file_name && !project.audio_deleted_at) {
+        try {
+          await deleteProjectAudioObject({
+            id: projectId,
+            audio_file_name: project.audio_file_name,
+            audio_deleted_at: project.audio_deleted_at,
+          }, { markDeleted: true });
+        } catch (error) {
+          console.error('[FINALIZE] Cancelled project cleanup failed:', error);
+        }
+      }
       return NextResponse.json(
-        { error: `Database error: ${projectError?.message || 'Unknown error'}` },
-        { status: 500 }
+        { error: 'Upload was cancelled', phase: 'finalizing', retryable: false },
+        { status: 409 }
       );
     }
 
-    console.log('Project created:', project.id);
-
-    // Upload assembled file to R2
-    const storageFileName = `${project.id}/${sanitizedBaseName}`;
+    if (project.status === 'completed' || project.status === 'failed') {
+      return NextResponse.json(
+        { error: 'Project is not in an uploadable state', phase: 'finalizing', retryable: false },
+        { status: 409 }
+      );
+    }
 
     try {
-      await r2Client.send(new PutObjectCommand({
-        Bucket: BUCKET_NAME,
-        Key: storageFileName,
-        Body: finalNodeBuffer,
-        ContentType: 'audio/mpeg',
-      }));
-      console.log('File uploaded to R2:', storageFileName);
-    } catch (uploadError: any) {
-      console.error('R2 upload error:', uploadError);
-
-      // Clean up project record
-      await supabaseAdmin
-        .from('projects')
-        .delete()
-        .eq('id', project.id);
-
-      return NextResponse.json(
-        { error: `Storage error: ${uploadError?.message || 'R2 upload failed'}` },
-        { status: 500 }
-      );
-    }
-
-    if (!global.uploadedFiles) {
-      global.uploadedFiles = new Map();
-    }
-    const inMemoryFile = {
-      buffer: finalBuffer,
-      contentType: 'audio/mpeg',
-      originalName: fileName,
-      size: totalSize
-    };
-    global.uploadedFiles.set(storageFileName, inMemoryFile);
-    if (sanitizedBaseName !== storageFileName) {
-      global.uploadedFiles.set(sanitizedBaseName, inMemoryFile);
-    }
-
-    // Check for cached transcription (base layer only)
-    const cachedTranscription = await getCachedTranscription(audioFingerprint);
-    if (cachedTranscription) {
-      const hydrated = await applyCachedTranscriptionToProject(
-        project.id,
-        cachedTranscription,
-        estimatedDuration
-      );
-
-      if (hydrated) {
-        console.log(`[UPLOAD][CHUNKED] ♻️ Found cached transcription for fingerprint ${audioFingerprint}`);
-        console.log(`[UPLOAD][CHUNKED] 🎯 Will apply tier-specific features based on performance level`);
-
-        // Increment reference count
-        const { incrementReferenceCount } = await import('@/lib/transcription-cache');
-        await incrementReferenceCount(audioFingerprint);
-
-        // Continue to transcription endpoint to apply tier-specific features
-        // Do NOT return early - let the tier processing happen
-      }
-    }
-
-    // Update project status
-    const { error: updateError } = await supabaseAdmin
-      .from('projects')
-      // @ts-expect-error - Supabase types issue with update
-      .update({
-        status: 'processing',
-        processing_started_at: new Date().toISOString()
-      })
-      .eq('id', project.id);
-
-    if (updateError) {
-      console.error('Project update error:', updateError);
-    }
-
-    // Clean up upload session
-    uploadSessions.delete(uploadId);
-
-    // Start transcription process if any OpenAI key is available
-    if (process.env.OPENAI_API_KEY_NONOPTIN || process.env.OPENAI_API_KEY_OPTIN || process.env.OPENAI_API_KEY) {
-      const diarizationProvider = (process.env.ASSEMBLYAI_API_KEY || process.env.ASSEMBLYAI_ACCESS_KEY) ? 'assemblyai' : 'deepgram';
-      console.log(`[UPLOAD][CHUNKED] Starting transcription with provider: ${diarizationProvider}`);
-
-      fetch(`${process.env.VERCEL_URL || 'http://localhost:3000'}/api/transcribe`, {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-        },
-        body: JSON.stringify({
-          projectId: project.id,
-          fileName: storageFileName,
-          fingerprint: audioFingerprint,
-          performanceLevel,
-          diarizationProvider
-        })
-      }).catch(error => {
-        console.error('Failed to start transcription:', error);
+      await updateProcessingProgress(projectId, {
+        stage: 'finalizing',
+        progress: 0,
+        message: 'Verifying uploaded audio...'
       });
+
+      const head = await r2Client.send(new HeadObjectCommand({
+        Bucket: BUCKET_NAME,
+        Key: objectKey,
+      }));
+      if (!head.ContentLength || head.ContentLength <= 0) {
+        return NextResponse.json({ error: 'Uploaded file is empty or unavailable' }, { status: 400 });
+      }
+    } catch (error) {
+      console.error('R2 verification failed:', error);
+      return NextResponse.json({ error: 'Uploaded file not found in storage' }, { status: 400 });
     }
 
-    return NextResponse.json({
-      success: true,
-      projectId: project.id,
-      uploadId,
-      message: 'Chunked upload completed successfully, transcription starting...',
-      fileSize: totalSize,
-      chunks: totalChunks
+    // Update progress: upload complete, starting transcription
+    await updateProcessingProgress(projectId, {
+      stage: 'transcribing',
+      progress: 0,
+      message: 'Upload complete. Starting transcription...'
     });
 
+    // Legacy status update
+    await supabaseAdmin
+      .from('projects')
+      // @ts-ignore
+      .update({ processing_started_at: new Date().toISOString() })
+      .eq('id', projectId);
+
+    // Call /api/transcribe using fireAndForget
+    if (process.env.OPENAI_API_KEY_OPTIN) {
+      const diarizationProvider = (process.env.ASSEMBLYAI_API_KEY || process.env.ASSEMBLYAI_ACCESS_KEY) ? 'assemblyai' : 'deepgram';
+
+      const baseUrl = getAppBaseUrl();
+
+      const internalJobToken = getInternalJobToken();
+      const transcribeHeaders: Record<string, string> = {
+        'Content-Type': 'application/json',
+      };
+      if (authHeader) {
+        transcribeHeaders.Authorization = authHeader;
+      }
+      if (internalJobToken) {
+        transcribeHeaders['x-internal-job-token'] = internalJobToken;
+      }
+
+      scheduleBackgroundTask(
+        fetch(`${baseUrl}/api/transcribe`, {
+          method: 'POST',
+          headers: transcribeHeaders,
+          body: JSON.stringify({
+            projectId,
+            fileName: objectKey,
+            fingerprint: audioFingerprint,
+            performanceLevel,
+            diarizationProvider,
+            ...(speakerCount && { speakerCount })
+          })
+        })
+          .then(async (res) => {
+            if (!res.ok) {
+              const body = await res.text();
+              console.error('Transcription start failed:', res.status, body.slice(0, 200));
+              if (res.status === 409) {
+                return;
+              }
+              await (supabaseAdmin.from('projects') as any)
+                .update({ status: 'failed', processing_stage: 'failed', processing_message: `Transcription failed: ${res.status}` })
+                .eq('id', projectId)
+                .neq('status', 'cancelled');
+            }
+          })
+          .catch(async (error) => {
+            console.error('Failed to start transcription:', error);
+            await (supabaseAdmin.from('projects') as any)
+              .update({ status: 'failed', processing_stage: 'failed', processing_message: `Queue error: ${error.message}` })
+              .eq('id', projectId)
+              .neq('status', 'cancelled');
+          })
+      );
+    } else {
+      console.warn('OPENAI_API_KEY_OPTIN not found, transcription skipped');
+    }
+
+    return NextResponse.json({ success: true, message: 'Transcription queued' });
   } catch (error) {
-    console.error('Upload finalization error:', error);
-    return NextResponse.json(
-      { error: 'Failed to finalize upload' },
-      { status: 500 }
-    );
+    console.error('Finalize error:', error);
+    return NextResponse.json({ error: 'Failed to finalize upload' }, { status: 500 });
   }
 }

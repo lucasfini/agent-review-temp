@@ -10,9 +10,7 @@ interface AuthContextType {
   session: Session | null;
   loading: boolean;
   isDemoMode: boolean;
-  signUp: (email: string, password: string, name?: string, consents?: {
-    openaiDataSharingOptIn?: boolean;
-  }) => Promise<{ error: any }>;
+  signUp: (email: string, password: string, name?: string) => Promise<{ data: any; error: any }>;
   signIn: (email: string, password: string) => Promise<{ error: any }>;
   signInWithGoogle: () => Promise<{ error: any }>;
   signOut: () => Promise<{ error: any }>;
@@ -43,21 +41,34 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
 
         if (event === 'SIGNED_IN' && session?.user) {
           try {
-            const pending = typeof window !== 'undefined'
-              ? window.localStorage.getItem('signup_consents')
-              : null;
-            if (pending) {
-              const parsed = JSON.parse(pending);
+            const getCookie = (name: string) => {
+              if (typeof document === 'undefined') return null;
+              const value = `; ${document.cookie}`;
+              const parts = value.split(`; ${name}=`);
+              if (parts.length === 2) return parts.pop()?.split(';').shift() || null;
+              return null;
+            };
+
+            const pendingCookie = getCookie('signup_consents');
+
+            // Also check localStorage just in case of laggy transition for existing users
+            const pendingLocal = typeof window !== 'undefined' ? window.localStorage.getItem('signup_consents') : null;
+
+            if (pendingCookie || pendingLocal) {
+              const parsed = JSON.parse(pendingCookie ? decodeURIComponent(pendingCookie) : pendingLocal!);
               const now = new Date().toISOString();
               await supabase.auth.updateUser({
                 data: {
                   terms_accepted_at: parsed.termsAcceptedAt || now,
                   privacy_accepted_at: parsed.privacyAcceptedAt || now,
-                  openai_data_sharing_opt_in: Boolean(parsed.openaiOptIn),
-                  openai_data_sharing_opt_in_at: parsed.openaiOptIn ? (parsed.openaiOptInAt || now) : null,
                 }
               });
-              window.localStorage.removeItem('signup_consents');
+              if (typeof document !== 'undefined') {
+                document.cookie = 'signup_consents=; path=/; max-age=0; secure; samesite=lax';
+              }
+              if (typeof window !== 'undefined') {
+                window.localStorage.removeItem('signup_consents');
+              }
             }
           } catch (error) {
             console.warn('[AUTH] Failed to persist signup consents:', error);
@@ -69,9 +80,9 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
     return () => subscription.unsubscribe();
   }, []);
 
-  const signUp = async (email: string, password: string, name?: string, consents?: { openaiDataSharingOptIn?: boolean }) => {
+  const signUp = async (email: string, password: string, name?: string) => {
     const now = new Date().toISOString();
-    const { error } = await supabase.auth.signUp({
+    const { data, error } = await supabase.auth.signUp({
       email,
       password,
       options: {
@@ -80,12 +91,10 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
           ...(name ? { full_name: name } : {}),
           terms_accepted_at: now,
           privacy_accepted_at: now,
-          openai_data_sharing_opt_in: Boolean(consents?.openaiDataSharingOptIn),
-          openai_data_sharing_opt_in_at: consents?.openaiDataSharingOptIn ? now : null,
         },
       },
     });
-    return { error };
+    return { data, error };
   };
 
   const signIn = async (email: string, password: string) => {

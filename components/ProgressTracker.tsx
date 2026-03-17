@@ -6,7 +6,7 @@ import {
   Tag, Cog, CheckCircle2, UserCheck, Award, BookOpen,
   Lightbulb, Quote
 } from 'lucide-react';
-import { getTierStages, calculateOverallProgress, type ProcessingStage } from '@/lib/tier-progress-config';
+import { getTierStages, calculateOverallProgress, getUserFacingProcessingMessage, type ProcessingStage } from '@/lib/tier-progress-config';
 import { type TierLevel } from '@/lib/tier-config';
 
 interface ProgressData {
@@ -14,7 +14,7 @@ interface ProgressData {
   processing_progress: number;
   processing_message?: string;
   status: string;
-  performance_level?: TierLevel;
+  performance_level?: string;
 }
 
 interface ProgressTrackerProps {
@@ -42,7 +42,7 @@ const ICON_MAP: Record<string, React.ComponentType<{ className?: string }>> = {
 
 export default function ProgressTracker({
   projectId,
-  performanceLevel = 'basic',
+  performanceLevel = 'standard',
   onComplete,
   pollInterval = 2000,
   className = ''
@@ -77,9 +77,11 @@ export default function ProgressTracker({
 
         setProgressData(newProgressData);
 
-        // Update tier if backend provides it
+        // Update tier if backend provides it (normalize legacy values)
         if (newProgressData.performance_level) {
-          setTier(newProgressData.performance_level);
+          const rawT = newProgressData.performance_level;
+          const norm = rawT === 'basic' ? 'standard' : rawT === 'premium' ? 'pro' : rawT;
+          setTier(norm as TierLevel);
         }
 
         // If completed or failed, stop polling
@@ -126,8 +128,8 @@ export default function ProgressTracker({
 
   if (!progressData) {
     return (
-      <div className={`p-4 bg-slate-800/50 border border-slate-700 rounded-lg ${className}`}>
-        <div className="flex items-center space-x-2 text-slate-400">
+      <div className={`p-4 bg-slate-100/60 dark:bg-slate-800/50 border border-slate-300 dark:border-slate-700 rounded-lg ${className}`}>
+        <div className="flex items-center space-x-2 text-slate-500 dark:text-slate-400">
           <Loader2 className="h-5 w-5 animate-spin" />
           <span className="text-sm">Loading progress...</span>
         </div>
@@ -144,6 +146,11 @@ export default function ProgressTracker({
 
   // Calculate overall progress using tier-aware calculation
   const overallProgress = calculateOverallProgress(tier, currentStage, currentProgress);
+  const userFacingMessage = getUserFacingProcessingMessage(
+    tier,
+    currentStage,
+    progressData.processing_message
+  );
 
   if (status === 'failed') {
     return (
@@ -169,9 +176,7 @@ export default function ProgressTracker({
           <div className="flex-1">
             <p className="text-sm font-medium">Processing Complete!</p>
             <p className="text-xs text-green-400 mt-1">
-              {tier === 'premium' ? 'All premium features ready' :
-               tier === 'pro' ? 'Enhanced content ready' :
-               'Transcription ready'}
+              {tier === 'pro' ? 'Full analysis ready' : 'Transcription ready'}
             </p>
           </div>
         </div>
@@ -180,16 +185,15 @@ export default function ProgressTracker({
   }
 
   return (
-    <div className={`p-4 bg-slate-900 border border-slate-700 rounded-lg ${className}`}>
+    <div className={`p-4 bg-slate-50 dark:bg-slate-900 border border-slate-300 dark:border-slate-700 rounded-lg ${className}`}>
       {/* Header with tier badge and overall progress */}
       <div className="flex items-center justify-between mb-4">
         <div className="flex items-center space-x-2">
           <Loader2 className="h-5 w-5 animate-spin text-blue-600" />
-          <span className="text-sm font-medium text-slate-50">Processing Audio</span>
+          <span className="text-sm font-medium text-slate-900 dark:text-slate-50">Processing Audio</span>
           <span className={`text-xs px-2 py-0.5 rounded-full font-medium ${
-            tier === 'premium' ? 'bg-purple-100 text-purple-400' :
-            tier === 'pro' ? 'bg-blue-100 text-blue-400' :
-            'bg-slate-800 text-slate-300'
+            tier === 'pro' ? 'bg-violet-100 text-violet-600 dark:text-violet-400' :
+            'bg-slate-100 dark:bg-slate-800 text-slate-600 dark:text-slate-300'
           }`}>
             {tier.toUpperCase()}
           </span>
@@ -199,7 +203,7 @@ export default function ProgressTracker({
 
       {/* Progress bar */}
       <div className="mb-4">
-        <div className="w-full bg-slate-700 rounded-full h-2">
+        <div className="w-full bg-slate-200 dark:bg-slate-700 rounded-full h-2">
           <div
             className="bg-blue-600 h-2 rounded-full transition-all duration-500 ease-out"
             style={{ width: `${overallProgress}%` }}
@@ -221,7 +225,7 @@ export default function ProgressTracker({
             <div
               key={stageDef.id}
               className={`flex items-center space-x-3 p-2 rounded transition-colors ${
-                isActive ? 'bg-blue-900/20' : isCompleted ? 'bg-green-900/20' : 'bg-slate-800/50'
+                isActive ? 'bg-blue-50 dark:bg-blue-900/20' : isCompleted ? 'bg-green-50 dark:bg-green-900/20' : 'bg-slate-100/60 dark:bg-slate-800/50'
               }`}
             >
               <div className={`flex-shrink-0 ${
@@ -237,13 +241,13 @@ export default function ProgressTracker({
               </div>
               <div className="flex-1 min-w-0">
                 <p className={`text-xs font-medium ${
-                  isCompleted ? 'text-green-300' : isActive ? 'text-blue-300' : 'text-slate-400'
+                  isCompleted ? 'text-green-600 dark:text-green-300' : isActive ? 'text-blue-600 dark:text-blue-300' : 'text-slate-500 dark:text-slate-400'
                 }`}>
                   {stageDef.displayName}
                 </p>
-                {isActive && progressData.processing_message && (
-                  <p className="text-xs text-slate-400 mt-0.5 truncate">
-                    {progressData.processing_message}
+                {isActive && userFacingMessage && (
+                  <p className="text-xs text-slate-500 dark:text-slate-400 mt-0.5 truncate">
+                    {userFacingMessage}
                   </p>
                 )}
               </div>

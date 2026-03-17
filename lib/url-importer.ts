@@ -14,8 +14,10 @@ if (ffmpegPath) {
   ffmpeg.setFfmpegPath(ffmpegPath);
 }
 
-const bufferToArrayBuffer = (buffer: Buffer) => {
-  return buffer.buffer.slice(buffer.byteOffset, buffer.byteOffset + buffer.byteLength);
+const bufferToArrayBuffer = (buffer: Buffer): ArrayBuffer => {
+  const bytes = new Uint8Array(buffer.byteLength);
+  bytes.set(buffer);
+  return bytes.buffer;
 };
 
 const isPrivateIpv4 = (ip: string) => {
@@ -110,12 +112,19 @@ const getFileNameFromHeaders = (headers: Headers, fallback: string) => {
 export const downloadYouTubeAudio = async (url: string) => {
   const tmpDir = await fs.mkdtemp(path.join(os.tmpdir(), 'yt-import-'));
   try {
-    // Fetch metadata (title) — fast, no download
-    const info = await youtubedl(url, {
-      dumpSingleJson: true,
-      noPlaylist: true,
-    }) as { title?: string };
-    const title = (info.title || 'YouTube import').replace(/[/\\:*?"<>|]/g, '-');
+    // Metadata lookup is useful for naming, but it should not block imports.
+    let title = 'YouTube import';
+    try {
+      const info = await youtubedl(url, {
+        dumpSingleJson: true,
+        noPlaylist: true,
+      }) as { title?: string };
+      title = info.title || title;
+    } catch (error) {
+      console.warn('[URL IMPORT] YouTube metadata lookup failed, continuing with fallback title:', error);
+    }
+
+    title = title.replace(/[/\\:*?"<>|]/g, '-');
 
     // Download best audio to temp file
     const outputTemplate = path.join(tmpDir, 'audio.%(ext)s');
@@ -179,7 +188,7 @@ export const downloadDirectMedia = async (url: string) => {
   };
 };
 
-export const extractAudioFromVideoBuffer = async (buffer: ArrayBuffer) => {
+export const extractAudioFromVideoBuffer = async (buffer: ArrayBufferLike) => {
   if (!ffmpegPath) {
     throw new Error('FFmpeg binary not available for video extraction');
   }
@@ -197,7 +206,7 @@ export const extractAudioFromVideoBuffer = async (buffer: ArrayBuffer) => {
         .audioQuality(2)
         .save(outputPath)
         .on('end', () => resolve())
-        .on('error', (err) => reject(err));
+        .on('error', (err: Error) => reject(err));
     });
 
     const audioBuffer = await fs.readFile(outputPath);

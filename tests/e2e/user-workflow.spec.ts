@@ -20,8 +20,8 @@ test.describe('AudioRepurpose User Workflows', () => {
       await expect(page.locator('h1')).toBeVisible();
       
       // Should see some form of upload interface or call-to-action
-      const uploadButton = page.locator('button:has-text("Upload"), input[type="file"]').first();
-      await expect(uploadButton).toBeVisible();
+      const primaryCta = page.locator('a[href="/auth/signup"], a[href="/auth/demo"]').first();
+      await expect(primaryCta).toBeVisible();
     });
 
     test('should navigate to waitlist signup', async ({ page }) => {
@@ -47,7 +47,7 @@ test.describe('AudioRepurpose User Workflows', () => {
 
     test('should show authentication options', async ({ page }) => {
       // Look for login/signup links or buttons
-      const authElements = page.locator('text=/login|sign|auth/i, [href*="login"], [href*="sign"]');
+      const authElements = page.locator('a[href*="/auth/login"], a[href*="/auth/signup"]');
       
       if (await authElements.count() > 0) {
         await expect(authElements.first()).toBeVisible();
@@ -58,7 +58,7 @@ test.describe('AudioRepurpose User Workflows', () => {
   test.describe('Authentication Flow', () => {
     test('should navigate to login page', async ({ page }) => {
       // Try to find and click login link
-      const loginLink = page.locator('text=/login/i, [href*="login"]').first();
+      const loginLink = page.locator('a[href*="/auth/login"]').first();
       
       if (await loginLink.isVisible()) {
         await loginLink.click();
@@ -75,7 +75,7 @@ test.describe('AudioRepurpose User Workflows', () => {
 
     test('should navigate to signup page', async ({ page }) => {
       // Try to find and click signup link
-      const signupLink = page.locator('text=/sign.*up|register/i, [href*="signup"], [href*="register"]').first();
+      const signupLink = page.locator('a[href*="/auth/signup"]').first();
       
       if (await signupLink.isVisible()) {
         await signupLink.click();
@@ -85,13 +85,13 @@ test.describe('AudioRepurpose User Workflows', () => {
         
         // Should see signup form
         await expect(page.locator('input[type="email"]')).toBeVisible();
-        await expect(page.locator('input[type="password"]')).toBeVisible();
+        await expect(page.locator('input[type="password"]').first()).toBeVisible();
       }
     });
 
     test('should handle login form validation', async ({ page }) => {
       // Navigate to login page if it exists
-      const loginLink = page.locator('text=/login/i, [href*="login"]').first();
+      const loginLink = page.locator('a[href*="/auth/login"]').first();
       
       if (await loginLink.isVisible()) {
         await loginLink.click();
@@ -126,7 +126,7 @@ test.describe('AudioRepurpose User Workflows', () => {
     test('should show file upload interface', async ({ page }) => {
       // Look for file upload elements
       const fileInput = page.locator('input[type="file"]');
-      const uploadArea = page.locator('[data-testid="upload"], .upload, text=/upload|drop/i').first();
+      const uploadArea = page.getByText(/upload|drop/i).first();
       
       if (await fileInput.count() > 0 || await uploadArea.count() > 0) {
         // File upload interface exists
@@ -193,7 +193,7 @@ test.describe('AudioRepurpose User Workflows', () => {
   test.describe('Dashboard and Project Management', () => {
     test('should navigate to dashboard when available', async ({ page }) => {
       // Look for dashboard link
-      const dashboardLink = page.locator('text=/dashboard/i, [href*="dashboard"]').first();
+      const dashboardLink = page.locator('a[href*="/dashboard"]').first();
       
       if (await dashboardLink.isVisible()) {
         await dashboardLink.click();
@@ -225,10 +225,10 @@ test.describe('AudioRepurpose User Workflows', () => {
     test('should handle project status updates', async ({ page }) => {
       // This would test real-time status updates
       // For now, just check if status elements exist
-      const statusElements = page.locator('text=/status|processing|completed|failed/i, [data-testid*="status"]');
+      const statusElements = page.getByText(/status|processing|completed|failed/i).first();
       
       if (await statusElements.count() > 0) {
-        await expect(statusElements.first()).toBeVisible();
+        await expect(statusElements).toBeVisible();
       }
     });
   });
@@ -352,7 +352,7 @@ test.describe('AudioRepurpose User Workflows', () => {
       await page.goto('/this-page-does-not-exist');
       
       // Should show 404 or error page
-      await expect(page.locator('text=/404|not.*found|error/i')).toBeVisible();
+      await expect(page.getByRole('heading', { name: /404|could not be found/i }).first()).toBeVisible();
     });
 
     test('should handle JavaScript errors gracefully', async ({ page }) => {

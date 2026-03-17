@@ -10,19 +10,22 @@
 // Negative lookahead to prevent common English words from being captured as names.
 // Without this, "I'm in full support" extracts "in", "I'm so happy" extracts "so", etc.
 const NON_NAME_LOOKAHEAD = '(?!(?:in|on|at|to|by|of|or|an|as|if|so|no|up|me|we|he|us|it|my|am|is|be|do|go|not|but|yet|nor|for|and|the|oh|ok|ah|um|uh|all|too|now|out|off|own|its|has|had|was|are|her|his|our|who|how|why|can|did|got|get|let|say|see|may|way|old|new|big|few|far|ago|run|put|set|try|ask|use|lot|bit|per|via|yes|here|very|just|also|going|trying|from|with|one|two|sure|glad|happy|sorry|back|well|still|over|only|like|more|than|into|been|have|will|done|really|truly|actually|currently|honestly|running|looking|hoping|feeling|speaking|working|living|studying|coming|based|born|originally)\\b)';
+const TITLED_NAME = '(?:Dr\\.?|Doctor|Prof\\.?|Professor|Mr\\.?|Mrs\\.?|Ms\\.?|Miss|Mx\\.?)\\s+[A-Z][a-z]+(?:\\s+[A-Z][a-z]+){0,2}';
+const PLAIN_NAME = '[A-Z]{2,}|[a-z]{2,}|[A-Z][a-z]+(?:\\s+[A-Z][a-z]+){0,2}';
+const SELF_ID_NAME_CAPTURE = `(${TITLED_NAME}|${PLAIN_NAME})`;
 
 export const STRONG_SELF_ID_PATTERNS = [
   // "My name is Colin Scott" - captures proper names (Colin Scott)
   // Also handles initials/nicknames: "JJ", "jj", "DJ"
-  new RegExp(`\\b(?:my name is|My name is|MY NAME IS)\\s+${NON_NAME_LOOKAHEAD}([A-Z]{2,}|[a-z]{2,}|[A-Z][a-z]+(?:\\s+[A-Z][a-z]+){0,2})(?:\\s|[.,!?]|$)`),
+  new RegExp(`\\b(?:my name is|My name is|MY NAME IS)\\s+${NON_NAME_LOOKAHEAD}${SELF_ID_NAME_CAPTURE}(?:\\s|[.,!?]|$)`),
 
   // "I'm Colin Scott" or "I am Colin Scott"
   // Requires capitalization OR all-caps/all-lowercase for initials (JJ, jj, DJ, etc.)
-  new RegExp(`\\bI'?m\\s+${NON_NAME_LOOKAHEAD}([A-Z]{2,}|[a-z]{2,}|[A-Z][a-z]+(?:\\s+[A-Z][a-z]+){0,2})(?:\\s|[.,!?]|$)`),
-  new RegExp(`\\bI am\\s+${NON_NAME_LOOKAHEAD}([A-Z]{2,}|[a-z]{2,}|[A-Z][a-z]+(?:\\s+[A-Z][a-z]+){0,2})(?:\\s|[.,!?]|$)`),
+  new RegExp(`\\bI'?m\\s+${NON_NAME_LOOKAHEAD}${SELF_ID_NAME_CAPTURE}(?:\\s|[.,!?]|$)`),
+  new RegExp(`\\bI am\\s+${NON_NAME_LOOKAHEAD}${SELF_ID_NAME_CAPTURE}(?:\\s|[.,!?]|$)`),
 
   // "This is Colin speaking" or "This is Colin here"
-  new RegExp(`\\b(?:this is|This is|THIS IS)\\s+${NON_NAME_LOOKAHEAD}([A-Z]{2,}|[a-z]{2,}|[A-Z][a-z]+(?:\\s+[A-Z][a-z]+){0,2})\\s+(?:speaking|here|Speaking|Here)`),
+  new RegExp(`\\b(?:this is|This is|THIS IS)\\s+${NON_NAME_LOOKAHEAD}${SELF_ID_NAME_CAPTURE}\\s+(?:speaking|here|Speaking|Here)`),
 ];
 
 /**

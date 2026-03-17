@@ -17,7 +17,7 @@ export async function POST(request: NextRequest) {
 
   const body = await request.json().catch(() => ({}));
   const itemId = body?.itemId;
-  const performanceLevel = body?.performanceLevel || 'premium';
+  const performanceLevel = body?.performanceLevel || 'pro';
 
   if (!itemId) {
     return NextResponse.json({ error: 'Missing itemId' }, { status: 400 });

@@ -52,15 +52,15 @@ function InsightCard({ opportunity, showProject, formatRelativeDate, status }: I
   return (
     <div
       className={cn(
-        "group rounded-xl p-4 transition-all relative bg-slate-950 border shadow-sm",
+        "group rounded-xl p-4 transition-all relative bg-white dark:bg-slate-950 border shadow-sm",
         isPaused
-          ? "opacity-60 grayscale-[50%] border-slate-800/40"
-          : "border-slate-800/60 hover:border-slate-700 hover:shadow-md"
+          ? "opacity-60 grayscale-[50%] border-slate-200 dark:border-slate-800/40"
+          : "border-slate-200 dark:border-slate-800/60 hover:border-slate-300 dark:hover:border-slate-700 hover:shadow-md"
       )}
     >
       {isPaused && (
         <div className="absolute top-2 right-2 z-10">
-           <span className="inline-flex items-center gap-1 bg-slate-700/80 backdrop-blur-sm text-slate-400 text-[10px] font-semibold px-2 py-0.5 rounded-full border border-slate-600">
+           <span className="inline-flex items-center gap-1 bg-slate-200/80 dark:bg-slate-700/80 backdrop-blur-sm text-slate-500 dark:text-slate-400 text-[10px] font-semibold px-2 py-0.5 rounded-full border border-slate-300 dark:border-slate-600">
              <PauseCircle className="h-3 w-3" />
              Goal Paused
            </span>
@@ -71,7 +71,7 @@ function InsightCard({ opportunity, showProject, formatRelativeDate, status }: I
       <div className="flex items-start gap-3 mb-3">
         <div className={cn(
           "flex-shrink-0 p-2 rounded-lg border",
-          isPaused ? "bg-slate-800 text-slate-400 border-slate-700" :
+          isPaused ? "bg-slate-100 dark:bg-slate-800 text-slate-500 dark:text-slate-400 border-slate-200 dark:border-slate-700" :
           isGap
             ? "bg-red-500/10 text-red-500 border-red-500/20"
             : isMedium
@@ -88,16 +88,16 @@ function InsightCard({ opportunity, showProject, formatRelativeDate, status }: I
           <div className="flex items-center gap-2 flex-wrap pr-16">
             <h4 className={cn(
               "text-sm font-semibold",
-              isPaused ? "text-slate-300" : "text-slate-50"
+              isPaused ? "text-slate-600 dark:text-slate-300" : "text-slate-900 dark:text-slate-50"
             )}>
               {opportunity.label}
             </h4>
-            <span className="bg-slate-900 text-slate-300 border border-slate-800 px-2 py-0.5 rounded-full text-[10px] font-medium tracking-wide uppercase">
+            <span className="bg-slate-100 dark:bg-slate-900 text-slate-600 dark:text-slate-300 border border-slate-200 dark:border-slate-800 px-2 py-0.5 rounded-full text-[10px] font-medium tracking-wide uppercase">
               {opportunity.type}
               <span className="sr-only"> — severity: {opportunity.severity}</span>
             </span>
           </div>
-          <p className="text-xs text-slate-400 mt-0.5">
+          <p className="text-xs text-slate-500 dark:text-slate-400 mt-0.5">
             {formatRelativeDate(opportunity.created_at)}
           </p>
         </div>
@@ -105,24 +105,24 @@ function InsightCard({ opportunity, showProject, formatRelativeDate, status }: I
 
       {/* Project Source */}
       {showProject && opportunity.projectTitle && (
-        <div className="flex items-center gap-1.5 text-xs text-slate-400 mb-2">
+        <div className="flex items-center gap-1.5 text-xs text-slate-500 dark:text-slate-400 mb-2">
           <FileText className="h-3 w-3" />
           <span className="font-medium truncate">{opportunity.projectTitle}</span>
         </div>
       )}
 
       {/* Summary */}
-      <p className="text-slate-300 text-sm mb-3 leading-relaxed">
+      <p className="text-slate-600 dark:text-slate-300 text-sm mb-3 leading-relaxed">
         {opportunity.summary}
       </p>
 
       {/* Action */}
-      <div className="mt-4 pt-3 border-t border-slate-800/60 flex items-center gap-2">
+      <div className="mt-4 pt-3 border-t border-slate-200 dark:border-slate-800/60 flex items-center gap-2">
         <ArrowRight className={cn(
           "h-4 w-4 flex-shrink-0 mt-0.5",
-          isPaused ? "text-slate-600" : "text-slate-500"
+          isPaused ? "text-slate-400 dark:text-slate-600" : "text-slate-500"
         )} />
-        <p className="text-xs font-medium text-slate-300 transition-colors group-hover:text-white">
+        <p className="text-xs font-medium text-slate-600 dark:text-slate-300 transition-colors group-hover:text-slate-900 dark:group-hover:text-white">
           {opportunity.recommendedAction || 'Review AI suggestion'}
         </p>
       </div>
@@ -144,10 +144,10 @@ export function InsightsGrid({
 
   if (opportunities.length === 0) {
     return (
-      <div className="bg-slate-800/50 rounded-xl border border-dashed border-slate-600 p-8 text-center">
+      <div className="bg-slate-100/80 dark:bg-slate-800/50 rounded-xl border border-dashed border-slate-300 dark:border-slate-600 p-8 text-center">
         <TrendingUp className="h-10 w-10 text-slate-500 mx-auto mb-3" />
-        <h4 className="text-sm font-medium text-slate-50 mb-1">No insights yet</h4>
-        <p className="text-sm text-slate-400">
+        <h4 className="text-sm font-medium text-slate-900 dark:text-slate-50 mb-1">No insights yet</h4>
+        <p className="text-sm text-slate-500 dark:text-slate-400">
           Run analytics on your projects to discover opportunities and gaps.
         </p>
       </div>
@@ -186,8 +186,7 @@ export function InsightsGrid({
       {/* Section Header */}
       <div className="flex items-center justify-between">
         <div>
-          <h3 className="text-base font-semibold text-slate-50">Opportunities & Gaps</h3>
-          <p className="text-sm text-slate-400">
+          <p className="text-sm text-slate-500 dark:text-slate-400">
             {opportunities.length} insight{opportunities.length !== 1 ? 's' : ''} detected
             {projectIdFilter && <span className="text-blue-600 ml-1">(filtered)</span>}
           </p>
@@ -195,16 +194,16 @@ export function InsightsGrid({
         <div className="flex items-center gap-3 text-xs">
           <span className="flex items-center gap-1.5">
             <span className="w-2.5 h-2.5 rounded-full bg-red-500" aria-hidden="true" />
-            <span className="text-slate-400">Gaps ({gaps.length})</span>
+            <span className="text-slate-500 dark:text-slate-400">Gaps ({gaps.length})</span>
           </span>
           <span className="flex items-center gap-1.5">
             <span className="w-2.5 h-2.5 rounded-full bg-amber-500" aria-hidden="true" />
-            <span className="text-slate-400">Needs attention ({mediumItems.length})</span>
+            <span className="text-slate-500 dark:text-slate-400">Needs attention ({mediumItems.length})</span>
           </span>
           {pausedOps.length > 0 && (
              <span className="flex items-center gap-1.5">
                <span className="w-2.5 h-2.5 rounded-full bg-slate-500" aria-hidden="true" />
-               <span className="text-slate-400">Paused ({pausedOps.length})</span>
+               <span className="text-slate-500 dark:text-slate-400">Paused ({pausedOps.length})</span>
              </span>
           )}
         </div>

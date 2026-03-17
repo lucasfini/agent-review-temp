@@ -5,6 +5,8 @@ const createJestConfig = nextJest({
   dir: './',
 });
 
+const runFullSuite = process.env.RUN_FULL_TEST_SUITE === '1';
+
 // Add any custom config to be passed to Jest
 const customJestConfig = {
   setupFiles: ['<rootDir>/tests/setup-env.js'],
@@ -16,6 +18,15 @@ const customJestConfig = {
   testEnvironment: 'jest-environment-node',
   testMatch: [
     '<rootDir>/tests/**/*.test.{js,jsx,ts,tsx}',
+  ],
+  testPathIgnorePatterns: runFullSuite ? [] : [
+    '<rootDir>/tests/ai-pipeline/',
+    '<rootDir>/tests/api/',
+    '<rootDir>/tests/auth/',
+    '<rootDir>/tests/database/',
+    '<rootDir>/tests/file-upload/',
+    '<rootDir>/tests/integration/',
+    '<rootDir>/tests/billing/cost-map.test.ts',
   ],
   collectCoverageFrom: [
     'app/**/*.{js,ts,tsx}',

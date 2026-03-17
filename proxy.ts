@@ -2,6 +2,7 @@ import { createServerClient, type CookieOptions } from '@supabase/ssr'
 import { NextResponse, type NextRequest } from 'next/server'
 import { Ratelimit } from '@upstash/ratelimit'
 import { Redis } from '@upstash/redis'
+import { isAdminEmail } from '@/lib/admin-access'
 
 // Lazy-initialize so missing env vars only error at request time, not build time
 let ratelimit: Ratelimit | null = null
@@ -20,6 +21,13 @@ function getRatelimit(): Ratelimit | null {
 
 export async function proxy(request: NextRequest) {
   const { pathname } = request.nextUrl
+
+  // Canonicalize admin URLs to /admin/* (outside dashboard shell/sidebar)
+  if (pathname === '/dashboard/admin' || pathname.startsWith('/dashboard/admin/')) {
+    const redirectUrl = request.nextUrl.clone()
+    redirectUrl.pathname = pathname.replace('/dashboard/admin', '/admin')
+    return NextResponse.redirect(redirectUrl)
+  }
 
   // ── Rate limiting for API routes ──────────────────────────────────────────
   // Skip Stripe webhook (Stripe IPs vary and it retries legitimately)
@@ -100,6 +108,36 @@ export async function proxy(request: NextRequest) {
   )
 
   await supabase.auth.getSession()
+  const { data: { user } } = await supabase.auth.getUser()
+
+  const isProtectedRoute =
+    pathname.startsWith('/dashboard') ||
+    pathname.startsWith('/admin') ||
+    pathname.startsWith('/api/user/')
+
+  if (isProtectedRoute && !user) {
+    if (pathname.startsWith('/api/')) {
+      return NextResponse.json({ error: 'Unauthorized' }, { status: 401 })
+    }
+    const redirectUrl = request.nextUrl.clone()
+    redirectUrl.pathname = '/auth/login'
+    redirectUrl.searchParams.set('redirect_to', pathname)
+    return NextResponse.redirect(redirectUrl)
+  }
+
+  // Admin route guard at edge (primary authz still enforced in API/routes)
+  if (pathname.startsWith('/admin') && user) {
+    const isAllowedAdmin = isAdminEmail(user.email)
+
+    if (!isAllowedAdmin) {
+      if (pathname.startsWith('/api/')) {
+        return NextResponse.json({ error: 'Forbidden' }, { status: 403 })
+      }
+      const redirectUrl = request.nextUrl.clone()
+      redirectUrl.pathname = '/dashboard'
+      return NextResponse.redirect(redirectUrl)
+    }
+  }
 
   return response
 }

@@ -1,11 +1,9 @@
 "use client";
 
-import { useState, useEffect, useMemo } from 'react';
-import Link from 'next/link';
-import { useSearchParams } from 'next/navigation';
+import { useState, useEffect, useMemo, type ChangeEvent } from 'react';
+import Image from 'next/image';
+import { useRouter, useSearchParams } from 'next/navigation';
 import {
-  User,
-  CreditCard,
   BarChart3,
   Mail,
   Lock,
@@ -18,8 +16,8 @@ import {
   ChevronDown,
   ChevronUp,
   AlertTriangle,
-  Globe,
-  Bell,
+  Camera,
+  Trash2,
 } from 'lucide-react';
 import {
   AreaChart,
@@ -32,11 +30,13 @@ import {
 } from 'recharts';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
 import { Badge } from '@/components/ui/badge';
+import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle } from '@/components/ui/dialog';
 import { cn } from '@/lib/utils';
 import { useAuth } from '@/lib/auth/context';
 import CreditPackages from '@/components/billing/credit-packages';
-import { estimateTranscriptionCost } from '@/lib/billing/cost-map';
 import { supabase } from '@/lib/supabase/client';
+import { toast } from 'sonner';
+import { formatSiteCreditDeltaFromUsd, formatSiteCreditsFromUsd } from '@/lib/billing/display';
 
 // ============================================================================
 // TYPES
@@ -75,8 +75,8 @@ interface UsageEvent {
 }
 
 interface UnifiedSettingsProps {
-  userId: string;
   userEmail: string;
+  forcedSection?: 'preferences' | 'billing' | 'usage';
 }
 
 type IntegrationProvider = 'zoom' | 'microsoft';
@@ -93,10 +93,7 @@ interface IntegrationStatus {
 // ============================================================================
 
 function formatAmount(amount: number): string {
-  const abs = Math.abs(amount);
-  if (abs === 0) return '$0.00';
-  if (abs < 0.01) return `$${abs.toFixed(4)}`;
-  return `$${abs.toFixed(2)}`;
+  return formatSiteCreditDeltaFromUsd(amount);
 }
 
 // ============================================================================
@@ -128,23 +125,23 @@ function BalanceBanner({ balance }: { balance: Balance | null }) {
   return (
     <div className={cn(
       "rounded-xl border p-6",
-      isLow ? "border-amber-800/30 bg-amber-900/20" : "border-slate-700 bg-slate-900"
+      isLow ? "border-amber-200 bg-amber-50 dark:border-amber-800/30 dark:bg-amber-900/20" : "border-slate-300 dark:border-slate-700 bg-slate-50 dark:bg-slate-900"
     )}>
       <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-4">
         <div>
-          <p className="text-sm font-medium text-slate-400 mb-1">Credit Balance</p>
-          <p className="text-4xl font-bold text-slate-50">{formatAmount(current)}</p>
-          <p className="text-sm text-slate-400 mt-1">
-            {formatAmount(spent)} spent of {formatAmount(total)} total
+          <p className="text-sm font-medium text-slate-500 dark:text-slate-400 mb-1">Credit Balance</p>
+          <p className="text-4xl font-bold text-slate-900 dark:text-slate-50">{formatSiteCreditsFromUsd(current)}</p>
+          <p className="text-sm text-slate-500 dark:text-slate-400 mt-1">
+            {formatSiteCreditsFromUsd(spent)} spent of {formatSiteCreditsFromUsd(total)} total
           </p>
         </div>
 
         <div className="flex-1 max-w-xs">
-          <div className="flex items-center justify-between text-xs text-slate-400 mb-1.5">
+          <div className="flex items-center justify-between text-xs text-slate-500 dark:text-slate-400 mb-1.5">
             <span>{pctRemaining}% remaining</span>
-            <span>{formatAmount(current)} left</span>
+            <span>{formatSiteCreditsFromUsd(current)} left</span>
           </div>
-          <div className="h-2.5 bg-slate-700 rounded-full overflow-hidden">
+          <div className="h-2.5 bg-slate-200 dark:bg-slate-700 rounded-full overflow-hidden">
             <div
               className={cn(
                 "h-full rounded-full transition-all duration-500",
@@ -157,7 +154,7 @@ function BalanceBanner({ balance }: { balance: Balance | null }) {
       </div>
 
       {isLow && (
-        <div className="mt-4 flex items-center gap-2 text-sm text-amber-400">
+        <div className="mt-4 flex items-center gap-2 text-sm text-amber-700 dark:text-amber-400">
           <AlertTriangle className="h-4 w-4 flex-shrink-0" />
           <span>Low balance — add credits to keep processing projects.</span>
         </div>
@@ -184,31 +181,31 @@ function UsageAreaChart({ data }: { data: Array<{ date: string; cost: number; ev
             <stop offset="95%" stopColor="#3b82f6" stopOpacity={0} />
           </linearGradient>
         </defs>
-        <CartesianGrid strokeDasharray="3 3" stroke="#334155" vertical={false} />
+        <CartesianGrid strokeDasharray="3 3" stroke="#cbd5e1" vertical={false} />
         <XAxis
           dataKey="date"
-          tick={{ fill: '#94a3b8', fontSize: 11 }}
+          tick={{ fill: '#64748b', fontSize: 11 }}
           tickLine={false}
-          axisLine={{ stroke: '#334155' }}
+          axisLine={{ stroke: '#cbd5e1' }}
         />
         <YAxis
-          tick={{ fill: '#94a3b8', fontSize: 11 }}
+          tick={{ fill: '#64748b', fontSize: 11 }}
           tickLine={false}
           axisLine={false}
-          tickFormatter={(value) => `$${value}`}
+          tickFormatter={(value) => formatSiteCreditsFromUsd(Number(value))}
         />
         <Tooltip
           contentStyle={{
-            backgroundColor: '#1e293b',
-            border: '1px solid #334155',
+            backgroundColor: '#ffffff',
+            border: '1px solid #e2e8f0',
             borderRadius: '8px',
             padding: '8px 12px',
-            boxShadow: '0 4px 6px -1px rgb(0 0 0 / 0.3)',
+            boxShadow: '0 4px 6px -1px rgb(15 23 42 / 0.12)',
           }}
-          formatter={(value: number, name: string) => [
-            name === 'cost' ? formatAmount(value) : value,
-            name === 'cost' ? 'Cost' : 'Events'
-          ]}
+          formatter={(value: number | undefined, name: string | undefined) => {
+            const isCost = name === 'cost';
+            return [isCost ? formatAmount(value ?? 0) : (value ?? 0), isCost ? 'Cost' : 'Events'];
+          }}
         />
         <Area
           type="monotone"
@@ -227,34 +224,31 @@ function UsageAreaChart({ data }: { data: Array<{ date: string; cost: number; ev
 // MAIN COMPONENT
 // ============================================================================
 
-export default function UnifiedSettings({ userId, userEmail }: UnifiedSettingsProps) {
-  const { session } = useAuth();
+export default function UnifiedSettings({ userEmail, forcedSection }: UnifiedSettingsProps) {
+  const { session, isDemoMode } = useAuth();
+  const router = useRouter();
   const searchParams = useSearchParams();
-  const section = searchParams.get('section') || 'general';
+  const rawSection = forcedSection || searchParams.get('section') || 'preferences';
+  const section = rawSection === 'general' ? 'preferences' : rawSection;
 
   // Provider detection
   const isGoogleAuth = ((session?.user?.app_metadata?.providers as string[] | undefined) ?? []).includes('google');
 
-  // General tab state
-  const [displayName, setDisplayName] = useState('');
-  const [email, setEmail] = useState(userEmail);
-  const [currentPassword, setCurrentPassword] = useState('');
+  // Preferences state
+  const [username, setUsername] = useState('');
+  const [firstName, setFirstName] = useState('');
+  const [lastName, setLastName] = useState('');
+  const [email] = useState(userEmail);
+  const [avatarUrl, setAvatarUrl] = useState('');
+  const [avatarFile, setAvatarFile] = useState<File | null>(null);
+  const [avatarPreview, setAvatarPreview] = useState<string | null>(null);
+  const [deleteConfirmation, setDeleteConfirmation] = useState('');
+  const [deleteModalOpen, setDeleteModalOpen] = useState(false);
+  const [confirmPassword, setConfirmPassword] = useState('');
   const [newPassword, setNewPassword] = useState('');
   const [savingProfile, setSavingProfile] = useState(false);
   const [profileMessage, setProfileMessage] = useState<{ type: 'success' | 'error'; text: string } | null>(null);
-
-  // Preferences state
-  const [timezone, setTimezone] = useState('America/New_York');
-  const [locale, setLocale] = useState('en-US');
-  const [outputPreference, setOutputPreference] = useState('balanced');
-
-  // Notifications state
-  const [notifications, setNotifications] = useState({
-    processing_complete: true,
-    processing_failed: true,
-    low_credits: true,
-    weekly_summary: false,
-  });
+  const [deletingAccount, setDeletingAccount] = useState(false);
 
   // Billing tab state
   const [balance, setBalance] = useState<Balance | null>(null);
@@ -272,10 +266,18 @@ export default function UnifiedSettings({ userId, userEmail }: UnifiedSettingsPr
   const [integrations, setIntegrations] = useState<IntegrationStatus[]>([]);
   const [integrationsLoading, setIntegrationsLoading] = useState(false);
   const [integrationsError, setIntegrationsError] = useState<string | null>(null);
-  const [dataSharingOptIn, setDataSharingOptIn] = useState<boolean | null>(null);
-  const [dataSharingSaving, setDataSharingSaving] = useState(false);
 
   const TRANSACTIONS_PER_PAGE = 10;
+  const deleteTarget = username.trim() || email.trim();
+  const deleteTargetLabel = username.trim() ? 'username' : 'email';
+  const isDeleteConfirmationValid = username.trim()
+    ? deleteConfirmation.trim() === username.trim()
+    : deleteConfirmation.trim().toLowerCase() === email.trim().toLowerCase();
+
+  const friendlyError = (fallback: string, error: unknown) => {
+    if (error instanceof Error && error.message) return error.message;
+    return fallback;
+  };
 
   // Fetch billing data
   useEffect(() => {
@@ -341,27 +343,45 @@ export default function UnifiedSettings({ userId, userEmail }: UnifiedSettingsPr
   useEffect(() => {
     const fetchUserPrefs = async () => {
       try {
+        if (session?.access_token) {
+          const res = await fetch('/api/user/preferences', {
+            headers: { Authorization: `Bearer ${session.access_token}` }
+          });
+          if (res.ok) {
+            const data = await res.json();
+            setUsername(data.username || '');
+            setFirstName(data.firstName || '');
+            setLastName(data.lastName || '');
+            setAvatarUrl(data.avatarUrl || '');
+            return;
+          }
+        }
+
         const { data } = await supabase.auth.getUser();
         const meta = data.user?.user_metadata || {};
-        setDataSharingOptIn(Boolean(meta.openai_data_sharing_opt_in));
-        setDisplayName(meta.display_name || meta.full_name || '');
-        if (meta.timezone) setTimezone(meta.timezone);
-        if (meta.locale) setLocale(meta.locale);
-        if (meta.output_preference) setOutputPreference(meta.output_preference);
-        if (meta.notifications) {
-          setNotifications({
-            processing_complete: meta.notifications.processing_complete ?? true,
-            processing_failed: meta.notifications.processing_failed ?? true,
-            low_credits: meta.notifications.low_credits ?? true,
-            weekly_summary: meta.notifications.weekly_summary ?? false,
-          });
-        }
+        const fullName = typeof meta.full_name === 'string' ? meta.full_name : '';
+        setUsername(typeof meta.username === 'string' ? meta.username : '');
+        setFirstName(typeof meta.first_name === 'string' ? meta.first_name : fullName.split(' ')[0] || '');
+        setLastName(typeof meta.last_name === 'string' ? meta.last_name : fullName.split(' ').slice(1).join(' '));
+        setAvatarUrl(typeof meta.avatar_url === 'string' ? meta.avatar_url : typeof meta.picture === 'string' ? meta.picture : '');
       } catch (error) {
         console.warn('Failed to load user preferences:', error);
       }
     };
     fetchUserPrefs();
-  }, []);
+  }, [session?.access_token]);
+
+  useEffect(() => {
+    if (!avatarFile) {
+      setAvatarPreview(null);
+      return;
+    }
+
+    const objectUrl = URL.createObjectURL(avatarFile);
+    setAvatarPreview(objectUrl);
+
+    return () => URL.revokeObjectURL(objectUrl);
+  }, [avatarFile]);
 
   // Fetch usage data
   useEffect(() => {
@@ -478,26 +498,194 @@ export default function UnifiedSettings({ userId, userEmail }: UnifiedSettingsPr
 
   // Handlers
   const handleSaveProfile = async () => {
+    if (isDemoMode) {
+      toast.error('Demo account settings are read-only.');
+      return;
+    }
+
     setSavingProfile(true);
     setProfileMessage(null);
 
     try {
-      const updateData: Record<string, unknown> = {
-        timezone,
-        locale,
-        output_preference: outputPreference,
-        notifications,
-      };
-      if (!isGoogleAuth) {
-        updateData.display_name = displayName;
+      const trimmedUsername = username.trim();
+      const trimmedFirst = firstName.trim();
+      const trimmedLast = lastName.trim();
+      const fullName = [trimmedFirst, trimmedLast].filter(Boolean).join(' ').trim();
+      const displayName = fullName || trimmedUsername;
+      let nextAvatarUrl = avatarUrl.trim();
+
+      if (!isGoogleAuth && avatarFile) {
+        if (!session?.access_token) {
+          throw new Error('You need to be signed in to upload a profile photo.');
+        }
+
+        const uploadData = new FormData();
+        uploadData.append('file', avatarFile);
+
+        const uploadRes = await fetch('/api/user/avatar', {
+          method: 'POST',
+          headers: {
+            Authorization: `Bearer ${session.access_token}`
+          },
+          body: uploadData,
+        });
+
+        if (!uploadRes.ok) {
+          const error = await uploadRes.json().catch(() => ({}));
+          throw new Error(error.error || 'Failed to upload profile photo.');
+        }
+
+        const uploadResult = await uploadRes.json();
+        nextAvatarUrl = uploadResult.avatarUrl || '';
       }
-      const { error } = await supabase.auth.updateUser({ data: updateData });
-      if (error) throw error;
+
+      const updateData: Record<string, unknown> = {
+        username: trimmedUsername,
+        first_name: trimmedFirst,
+        last_name: trimmedLast,
+        full_name: fullName,
+        display_name: displayName,
+        avatar_url: nextAvatarUrl || null,
+      };
+      const { error: profileError } = await supabase.auth.updateUser({ data: updateData });
+      if (profileError) throw profileError;
+
+      if (!session?.access_token) {
+        throw new Error('You need to be signed in to save preferences.');
+      }
+
+      const prefsRes = await fetch('/api/user/preferences', {
+        method: 'PUT',
+        headers: {
+          'Content-Type': 'application/json',
+          Authorization: `Bearer ${session.access_token}`
+        },
+        body: JSON.stringify({
+          username: trimmedUsername,
+          firstName: trimmedFirst,
+          lastName: trimmedLast,
+          avatarUrl: nextAvatarUrl,
+        })
+      });
+
+      if (!prefsRes.ok) {
+        const error = await prefsRes.json().catch(() => ({}));
+        throw new Error(error.error || 'Failed to save preferences.');
+      }
+
+      if (!isGoogleAuth && newPassword.trim()) {
+        if (newPassword.length < 8) {
+          throw new Error('Password must be at least 8 characters long.');
+        }
+        if (newPassword !== confirmPassword) {
+          throw new Error('New password and confirmation do not match.');
+        }
+
+        const { error: passwordError } = await supabase.auth.updateUser({ password: newPassword });
+        if (passwordError) throw passwordError;
+      }
+
       setProfileMessage({ type: 'success', text: 'Settings saved successfully' });
+      setAvatarUrl(nextAvatarUrl);
+      setAvatarFile(null);
+      setNewPassword('');
+      setConfirmPassword('');
     } catch (error) {
-      setProfileMessage({ type: 'error', text: 'Failed to save settings' });
+      setProfileMessage({ type: 'error', text: friendlyError('Failed to save settings.', error) });
     } finally {
       setSavingProfile(false);
+    }
+  };
+
+  const handleAvatarSelection = (event: ChangeEvent<HTMLInputElement>) => {
+    const file = event.target.files?.[0] || null;
+    if (!file) return;
+
+    const allowedTypes = new Set(['image/jpeg', 'image/png', 'image/webp']);
+    if (!allowedTypes.has(file.type)) {
+      setProfileMessage({ type: 'error', text: 'Use a JPG, PNG, or WebP image.' });
+      event.target.value = '';
+      return;
+    }
+
+    if (file.size > 5 * 1024 * 1024) {
+      setProfileMessage({ type: 'error', text: 'Profile photos must be 5MB or smaller.' });
+      event.target.value = '';
+      return;
+    }
+
+    setProfileMessage(null);
+    setAvatarFile(file);
+    event.target.value = '';
+  };
+
+  const handleRemoveAvatar = async () => {
+    if (isDemoMode) {
+      toast.error('Demo account settings are read-only.');
+      return;
+    }
+
+    if (!session?.access_token) {
+      setProfileMessage({ type: 'error', text: 'You need to be signed in to remove your profile photo.' });
+      return;
+    }
+
+    setSavingProfile(true);
+    setProfileMessage(null);
+
+    try {
+      const response = await fetch('/api/user/avatar', {
+        method: 'DELETE',
+        headers: {
+          Authorization: `Bearer ${session.access_token}`
+        }
+      });
+
+      if (!response.ok) {
+        const error = await response.json().catch(() => ({}));
+        throw new Error(error.error || 'Failed to remove profile photo.');
+      }
+
+      const metaUpdate = await supabase.auth.updateUser({
+        data: { avatar_url: null }
+      });
+      if (metaUpdate.error) throw metaUpdate.error;
+
+      setAvatarUrl('');
+      setAvatarFile(null);
+      setProfileMessage({ type: 'success', text: 'Profile photo removed.' });
+    } catch (error) {
+      setProfileMessage({ type: 'error', text: friendlyError('Failed to remove profile photo.', error) });
+    } finally {
+      setSavingProfile(false);
+    }
+  };
+
+  const handleDeleteAccount = async () => {
+    if (isDemoMode) {
+      toast.error('Demo accounts cannot be deleted from the demo environment.');
+      return;
+    }
+
+    try {
+      setDeletingAccount(true);
+      if (!session?.access_token) {
+        throw new Error('You need to be signed in to delete your account.');
+      }
+      const res = await fetch('/api/user/delete-account', {
+        method: 'DELETE',
+        headers: { 'Authorization': `Bearer ${session.access_token}` }
+      });
+      if (!res.ok) {
+        const error = await res.json();
+        throw new Error(error.error || 'Failed to delete account');
+      }
+      // Log out
+      await supabase.auth.signOut();
+      router.push('/auth/login?deleted=true');
+    } catch (error) {
+      toast.error(friendlyError('Failed to delete account.', error));
+      setDeletingAccount(false);
     }
   };
 
@@ -534,428 +722,351 @@ export default function UnifiedSettings({ userId, userEmail }: UnifiedSettingsPr
     });
   };
 
-  const handleToggleDataSharing = async () => {
-    if (dataSharingOptIn === null) return;
-    setDataSharingSaving(true);
-    try {
-      const next = !dataSharingOptIn;
-      const now = new Date().toISOString();
-      await supabase.auth.updateUser({
-        data: {
-          openai_data_sharing_opt_in: next,
-          openai_data_sharing_opt_in_at: next ? now : null,
-        }
-      });
-      setDataSharingOptIn(next);
-    } catch (error) {
-      console.error('Failed to update data sharing preference:', error);
-    } finally {
-      setDataSharingSaving(false);
-    }
-  };
-
   const startOAuth = async (provider: IntegrationProvider) => {
+    if (isDemoMode) {
+      toast.error('Demo accounts cannot connect integrations.');
+      return;
+    }
     if (!session?.access_token) return;
-    const res = await fetch(`/api/integrations/${provider}/start?mode=json`, {
-      headers: { Authorization: `Bearer ${session.access_token}` }
-    });
-    if (!res.ok) return;
-    const data = await res.json();
-    if (data?.url) {
+    try {
+      const res = await fetch(`/api/integrations/${provider}/start?mode=json`, {
+        headers: { Authorization: `Bearer ${session.access_token}` }
+      });
+      if (!res.ok) {
+        throw new Error(`Unable to connect ${provider === 'zoom' ? 'Zoom' : 'Microsoft Teams'} right now.`);
+      }
+      const data = await res.json();
+      if (!data?.url) {
+        throw new Error('Missing redirect URL.');
+      }
       window.location.href = data.url;
+    } catch (error) {
+      toast.error(friendlyError('Failed to start the integration connection.', error));
     }
   };
 
   const disconnectProvider = async (provider: IntegrationProvider) => {
+    if (isDemoMode) {
+      toast.error('Demo accounts cannot manage integrations.');
+      return;
+    }
     if (!session?.access_token) return;
-    const res = await fetch('/api/integrations/disconnect', {
-      method: 'POST',
-      headers: {
-        'Content-Type': 'application/json',
-        Authorization: `Bearer ${session.access_token}`
-      },
-      body: JSON.stringify({ provider })
-    });
-    if (!res.ok) return;
-    setIntegrations(prev =>
-      prev.map(i => i.provider === provider ? { ...i, connected: false } : i)
-    );
+    try {
+      const res = await fetch('/api/integrations/disconnect', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          Authorization: `Bearer ${session.access_token}`
+        },
+        body: JSON.stringify({ provider })
+      });
+      if (!res.ok) {
+        throw new Error(`Unable to disconnect ${provider === 'zoom' ? 'Zoom' : 'Microsoft Teams'}.`);
+      }
+      setIntegrations(prev =>
+        prev.map(i => i.provider === provider ? { ...i, connected: false } : i)
+      );
+      toast.success(`${provider === 'zoom' ? 'Zoom' : 'Microsoft Teams'} disconnected`);
+    } catch (error) {
+      toast.error(friendlyError('Failed to disconnect the integration.', error));
+    }
   };
 
   return (
-    <div className="max-w-5xl mx-auto">
-        {/* Tab navigation */}
-        <div className="flex gap-1 mb-8 border-b border-slate-800">
-          {[
-            { label: 'General', href: '/dashboard/settings?section=general', id: 'general', icon: <User className="h-4 w-4" /> },
-            { label: 'Billing', href: '/dashboard/settings?section=billing', id: 'billing', icon: <CreditCard className="h-4 w-4" /> },
-            { label: 'Usage', href: '/dashboard/settings?section=usage', id: 'usage', icon: <BarChart3 className="h-4 w-4" /> },
-          ].map((tab) => (
-            <Link
-              key={tab.id}
-              href={tab.href}
-              {...(tab.id === 'usage' ? { 'data-tour': 'usage-tab' } : {})}
-              className={cn(
-                'flex items-center gap-2 px-4 py-2.5 text-sm font-medium rounded-t-lg border-b-2 -mb-px transition-colors',
-                section === tab.id
-                  ? 'border-blue-500 text-blue-400 bg-blue-500/5'
-                  : 'border-transparent text-slate-400 hover:text-slate-200 hover:border-slate-600'
-              )}
-            >
-              {tab.icon}
-              {tab.label}
-            </Link>
-          ))}
-        </div>
+    <div className="py-6">
 
-        {/* ================================================================ */}
-        {/* GENERAL */}
-        {/* ================================================================ */}
-        {section === 'general' && (
-          <div className="space-y-6">
-            {/* Profile Section */}
+      {/* ================================================================ */}
+      {/* PREFERENCES */}
+      {/* ================================================================ */}
+      {section === 'preferences' && (
+        <div className="space-y-6">
+          {isDemoMode && (
+            <div className="rounded-xl border border-amber-200 bg-amber-50 px-4 py-3 text-sm text-amber-700 dark:border-amber-800/30 dark:bg-amber-900/20 dark:text-amber-300">
+              Demo account settings are read-only. Sign up to edit your profile, password, integrations, and account controls.
+            </div>
+          )}
+
+          {/* Profile Section */}
+          <Card>
+            <CardHeader>
+              <div className="flex items-center justify-between">
+                <div>
+                  <CardTitle>Profile Information</CardTitle>
+                  <CardDescription>
+                    Keep your account details current and easy to manage
+                  </CardDescription>
+                </div>
+                {isGoogleAuth && (
+                  <span className="inline-flex items-center gap-1.5 px-2.5 py-1 text-xs font-medium bg-slate-100 dark:bg-slate-800 border border-slate-300 dark:border-slate-700 text-slate-600 dark:text-slate-300 rounded-full">
+                    <svg className="h-3.5 w-3.5" viewBox="0 0 24 24" aria-hidden="true">
+                      <path fill="#4285F4" d="M22.56 12.25c0-.78-.07-1.53-.2-2.25H12v4.26h5.92c-.26 1.37-1.04 2.53-2.21 3.31v2.77h3.57c2.08-1.92 3.28-4.74 3.28-8.09z" />
+                      <path fill="#34A853" d="M12 23c2.97 0 5.46-.98 7.28-2.66l-3.57-2.77c-.98.66-2.23 1.06-3.71 1.06-2.86 0-5.29-1.93-6.16-4.53H2.18v2.84C3.99 20.53 7.7 23 12 23z" />
+                      <path fill="#FBBC05" d="M5.84 14.09c-.22-.66-.35-1.36-.35-2.09s.13-1.43.35-2.09V7.07H2.18C1.43 8.55 1 10.22 1 12s.43 3.45 1.18 4.93l3.66-2.84z" />
+                      <path fill="#EA4335" d="M12 5.38c1.62 0 3.06.56 4.21 1.64l3.15-3.15C17.45 2.09 14.97 1 12 1 7.7 1 3.99 3.47 2.18 7.07l3.66 2.84c.87-2.6 3.3-4.53 6.16-4.53z" />
+                    </svg>
+                    Google Account
+                  </span>
+                )}
+              </div>
+            </CardHeader>
+            <CardContent className="space-y-5">
+              <div className="space-y-4">
+                {!isGoogleAuth && (
+                  <div>
+                    <label className="block text-sm font-medium text-slate-700 dark:text-slate-300 mb-1">
+                      Profile Photo
+                    </label>
+                    <div className="flex flex-col gap-3 rounded-lg border border-slate-300 bg-white p-3 dark:border-slate-700 dark:bg-slate-800/60 sm:flex-row sm:items-center sm:justify-between">
+                      <div className="flex items-center gap-3 min-w-0">
+                        {avatarPreview || avatarUrl ? (
+                          <Image
+                            src={avatarPreview || avatarUrl}
+                            alt="Profile preview"
+                            width={48}
+                            height={48}
+                            className="h-12 w-12 rounded-xl object-cover border border-slate-300 dark:border-slate-600"
+                          />
+                        ) : (
+                          <div className="flex h-12 w-12 items-center justify-center rounded-xl border border-dashed border-slate-300 bg-slate-50 text-slate-400 dark:border-slate-600 dark:bg-slate-900 dark:text-slate-500">
+                            <Camera className="h-5 w-5" />
+                          </div>
+                        )}
+                        <div className="min-w-0">
+                          <p className="text-sm font-medium text-slate-900 dark:text-slate-100">
+                            Add a profile photo
+                          </p>
+                          <p className="text-xs text-slate-500 dark:text-slate-400">
+                            JPG, PNG, or WebP up to 5MB
+                          </p>
+                        </div>
+                      </div>
+                      <div className="flex items-center gap-2">
+                        <label className="inline-flex cursor-pointer items-center gap-2 rounded-lg border border-slate-300 bg-slate-50 px-3 py-2 text-sm font-medium text-slate-700 transition-colors hover:bg-slate-100 dark:border-slate-600 dark:bg-slate-900 dark:text-slate-200 dark:hover:bg-slate-800">
+                          <Camera className="h-4 w-4" />
+                          Choose photo
+                          <input
+                            type="file"
+                            accept="image/png,image/jpeg,image/webp"
+                            onChange={handleAvatarSelection}
+                            disabled={savingProfile}
+                            className="sr-only"
+                          />
+                        </label>
+                        {(avatarPreview || avatarUrl) && (
+                          <button
+                            type="button"
+                            onClick={handleRemoveAvatar}
+                            disabled={savingProfile}
+                            className="inline-flex items-center gap-2 rounded-lg border border-slate-300 bg-white px-3 py-2 text-sm font-medium text-slate-600 transition-colors hover:bg-slate-50 hover:text-red-600 disabled:opacity-50 dark:border-slate-600 dark:bg-slate-900 dark:text-slate-300 dark:hover:bg-slate-800 dark:hover:text-red-400"
+                          >
+                            <Trash2 className="h-4 w-4" />
+                            Remove
+                          </button>
+                        )}
+                      </div>
+                    </div>
+                  </div>
+                )}
+                <div>
+                  <label htmlFor="username" className="block text-sm font-medium text-slate-700 dark:text-slate-300 mb-1">
+                    Username
+                  </label>
+                  <input
+                    id="username"
+                    type="text"
+                    value={username}
+                    onChange={(e) => setUsername(e.target.value)}
+                    disabled={isDemoMode || savingProfile}
+                    placeholder="@yourname"
+                    className="w-full px-3 py-2 border border-slate-300 dark:border-slate-700 bg-white dark:bg-slate-800 text-slate-900 dark:text-slate-200 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-transparent disabled:opacity-50 disabled:cursor-not-allowed"
+                  />
+                </div>
+                <div>
+                  <label htmlFor="first-name" className="block text-sm font-medium text-slate-700 dark:text-slate-300 mb-1">
+                    First Name
+                  </label>
+                  <input
+                    id="first-name"
+                    type="text"
+                    value={firstName}
+                    onChange={(e) => setFirstName(e.target.value)}
+                    disabled={isDemoMode || savingProfile}
+                    placeholder="First name"
+                    className="w-full px-3 py-2 border border-slate-300 dark:border-slate-700 bg-white dark:bg-slate-800 text-slate-900 dark:text-slate-200 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-transparent disabled:opacity-50 disabled:cursor-not-allowed"
+                  />
+                </div>
+                <div>
+                  <label htmlFor="last-name" className="block text-sm font-medium text-slate-700 dark:text-slate-300 mb-1">
+                    Last Name
+                  </label>
+                  <input
+                    id="last-name"
+                    type="text"
+                    value={lastName}
+                    onChange={(e) => setLastName(e.target.value)}
+                    disabled={isDemoMode || savingProfile}
+                    placeholder="Last name"
+                    className="w-full px-3 py-2 border border-slate-300 dark:border-slate-700 bg-white dark:bg-slate-800 text-slate-900 dark:text-slate-200 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-transparent disabled:opacity-50 disabled:cursor-not-allowed"
+                  />
+                </div>
+                <div>
+                  <label className="block text-sm font-medium text-slate-700 dark:text-slate-300 mb-1">
+                    Email Address
+                  </label>
+                  <div className="relative" title="To change your email address, please contact support">
+                    <Mail className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-slate-500" />
+                    <input
+                      type="email"
+                      value={email}
+                      disabled
+                      className="w-full pl-10 pr-3 py-2 border border-slate-300 dark:border-slate-700 bg-slate-100 dark:bg-slate-800 text-slate-500 dark:text-slate-400 rounded-lg text-sm cursor-not-allowed opacity-60"
+                    />
+                  </div>
+                  <p className="mt-1 text-xs text-slate-500">Contact support to change your email</p>
+                </div>
+              </div>
+
+              {!isGoogleAuth && (
+                <>
+                  {profileMessage && (
+                    <div className={cn(
+                      "p-3 rounded-lg text-sm",
+                      profileMessage.type === 'success'
+                        ? "bg-green-50 text-green-700 dark:bg-green-900/20 dark:text-green-400"
+                        : "bg-red-50 text-red-700 dark:bg-red-900/20 dark:text-red-400"
+                    )}>
+                      {profileMessage.text}
+                    </div>
+                  )}
+                </>
+              )}
+
+              <div className="flex justify-end pt-1">
+                <button
+                  type="button"
+                  onClick={handleSaveProfile}
+                  disabled={isDemoMode || savingProfile}
+                  className="inline-flex items-center gap-2 px-3 py-1.5 bg-blue-600 text-white text-xs font-medium rounded-lg hover:bg-blue-700 disabled:opacity-50 transition-colors"
+                >
+                  {savingProfile ? (
+                    <Loader2 className="h-3.5 w-3.5 animate-spin" />
+                  ) : (
+                    <Save className="h-3.5 w-3.5" />
+                  )}
+                  Save
+                </button>
+              </div>
+            </CardContent>
+          </Card>
+
+          {/* Password Section — email/password users only */}
+          {!isGoogleAuth && (
             <Card>
               <CardHeader>
-                <div className="flex items-center justify-between">
-                  <div>
-                    <CardTitle>Profile Information</CardTitle>
-                    <CardDescription>
-                      {isGoogleAuth
-                        ? 'Your name and email are managed by Google'
-                        : 'Update your account display name'}
-                    </CardDescription>
-                  </div>
-                  {isGoogleAuth && (
-                    <span className="inline-flex items-center gap-1.5 px-2.5 py-1 text-xs font-medium bg-slate-800 border border-slate-700 text-slate-300 rounded-full">
-                      <svg className="h-3.5 w-3.5" viewBox="0 0 24 24" aria-hidden="true">
-                        <path fill="#4285F4" d="M22.56 12.25c0-.78-.07-1.53-.2-2.25H12v4.26h5.92c-.26 1.37-1.04 2.53-2.21 3.31v2.77h3.57c2.08-1.92 3.28-4.74 3.28-8.09z"/>
-                        <path fill="#34A853" d="M12 23c2.97 0 5.46-.98 7.28-2.66l-3.57-2.77c-.98.66-2.23 1.06-3.71 1.06-2.86 0-5.29-1.93-6.16-4.53H2.18v2.84C3.99 20.53 7.7 23 12 23z"/>
-                        <path fill="#FBBC05" d="M5.84 14.09c-.22-.66-.35-1.36-.35-2.09s.13-1.43.35-2.09V7.07H2.18C1.43 8.55 1 10.22 1 12s.43 3.45 1.18 4.93l3.66-2.84z"/>
-                        <path fill="#EA4335" d="M12 5.38c1.62 0 3.06.56 4.21 1.64l3.15-3.15C17.45 2.09 14.97 1 12 1 7.7 1 3.99 3.47 2.18 7.07l3.66 2.84c.87-2.6 3.3-4.53 6.16-4.53z"/>
-                      </svg>
-                      Google Account
-                    </span>
-                  )}
-                </div>
+                <CardTitle>Change Password</CardTitle>
+                <CardDescription>
+                  Update your password to keep your account secure
+                </CardDescription>
               </CardHeader>
               <CardContent className="space-y-4">
                 <div className="grid gap-4 md:grid-cols-2">
                   <div>
-                    <label className="block text-sm font-medium text-slate-300 mb-1">
-                      Display Name
+                    <label htmlFor="confirm-new-password" className="block text-sm font-medium text-slate-700 dark:text-slate-300 mb-1">
+                      Confirm New Password
                     </label>
-                    <input
-                      type="text"
-                      value={displayName}
-                      onChange={(e) => setDisplayName(e.target.value)}
-                      disabled={isGoogleAuth || savingProfile}
-                      placeholder="Your name"
-                      className="w-full px-3 py-2 border border-slate-700 bg-slate-800 text-slate-200 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-transparent disabled:opacity-50 disabled:cursor-not-allowed"
-                    />
-                    {isGoogleAuth && (
-                      <p className="mt-1 text-xs text-slate-500">Managed by your Google account</p>
-                    )}
-                  </div>
-                  <div>
-                    <label className="block text-sm font-medium text-slate-300 mb-1">
-                      Email Address
-                    </label>
-                    <div className="relative" title="To change your email address, please contact support">
-                      <Mail className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-slate-500" />
+                    <div className="relative">
+                      <Lock className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-slate-500" />
                       <input
-                        type="email"
-                        value={email}
-                        disabled
-                        className="w-full pl-10 pr-3 py-2 border border-slate-700 bg-slate-800 text-slate-400 rounded-lg text-sm cursor-not-allowed opacity-60"
+                        id="confirm-new-password"
+                        type="password"
+                        value={confirmPassword}
+                        onChange={(e) => setConfirmPassword(e.target.value)}
+                        placeholder="Re-enter new password"
+                        disabled={isDemoMode}
+                        className="w-full pl-10 pr-3 py-2 border border-slate-300 dark:border-slate-700 bg-white dark:bg-slate-800 text-slate-900 dark:text-slate-200 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-transparent"
                       />
                     </div>
-                    <p className="mt-1 text-xs text-slate-500">Contact support to change your email</p>
                   </div>
-                </div>
-
-                {!isGoogleAuth && (
-                  <>
-                    {profileMessage && (
-                      <div className={cn(
-                        "p-3 rounded-lg text-sm",
-                        profileMessage.type === 'success' ? "bg-green-900/20 text-green-400" : "bg-red-900/20 text-red-400"
-                      )}>
-                        {profileMessage.text}
-                      </div>
-                    )}
-                  </>
-                )}
-              </CardContent>
-            </Card>
-
-            {/* Password Section — email/password users only */}
-            {!isGoogleAuth && (
-              <Card>
-                <CardHeader>
-                  <CardTitle>Change Password</CardTitle>
-                  <CardDescription>
-                    Update your password to keep your account secure
-                  </CardDescription>
-                </CardHeader>
-                <CardContent className="space-y-4">
-                  <div className="grid gap-4 md:grid-cols-2">
-                    <div>
-                      <label className="block text-sm font-medium text-slate-300 mb-1">
-                        Current Password
-                      </label>
-                      <div className="relative">
-                        <Lock className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-slate-500" />
-                        <input
-                          type="password"
-                          value={currentPassword}
-                          onChange={(e) => setCurrentPassword(e.target.value)}
-                          placeholder="Enter current password"
-                          className="w-full pl-10 pr-3 py-2 border border-slate-700 bg-slate-800 text-slate-200 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-transparent"
-                        />
-                      </div>
-                    </div>
-                    <div>
-                      <label className="block text-sm font-medium text-slate-300 mb-1">
-                        New Password
-                      </label>
-                      <div className="relative">
-                        <Lock className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-slate-500" />
-                        <input
-                          type="password"
-                          value={newPassword}
-                          onChange={(e) => setNewPassword(e.target.value)}
-                          placeholder="Enter new password"
-                          className="w-full pl-10 pr-3 py-2 border border-slate-700 bg-slate-800 text-slate-200 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-transparent"
-                        />
-                      </div>
-                    </div>
-                  </div>
-                </CardContent>
-              </Card>
-            )}
-
-            {/* Preferences Section */}
-            <Card>
-              <CardHeader>
-                <div className="flex items-center gap-2">
-                  <Globe className="h-4 w-4 text-slate-400" />
                   <div>
-                    <CardTitle>Preferences</CardTitle>
-                    <CardDescription>
-                      Set your timezone, locale, and default content style
-                    </CardDescription>
-                  </div>
-                </div>
-              </CardHeader>
-              <CardContent className="space-y-4">
-                <div className="grid gap-4 md:grid-cols-3">
-                  <div>
-                    <label className="block text-sm font-medium text-slate-300 mb-1">
-                      Timezone
+                    <label htmlFor="new-password" className="block text-sm font-medium text-slate-700 dark:text-slate-300 mb-1">
+                      New Password
                     </label>
-                    <select
-                      value={timezone}
-                      onChange={(e) => setTimezone(e.target.value)}
-                      className="w-full px-3 py-2 border border-slate-700 bg-slate-800 text-slate-200 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-blue-500"
-                    >
-                      <option value="America/New_York">Eastern Time (ET)</option>
-                      <option value="America/Chicago">Central Time (CT)</option>
-                      <option value="America/Denver">Mountain Time (MT)</option>
-                      <option value="America/Los_Angeles">Pacific Time (PT)</option>
-                      <option value="America/Anchorage">Alaska Time (AKT)</option>
-                      <option value="Pacific/Honolulu">Hawaii Time (HT)</option>
-                      <option value="Europe/London">London (GMT)</option>
-                      <option value="Europe/Paris">Paris (CET)</option>
-                      <option value="Europe/Berlin">Berlin (CET)</option>
-                      <option value="Asia/Tokyo">Tokyo (JST)</option>
-                      <option value="Asia/Shanghai">Shanghai (CST)</option>
-                      <option value="Asia/Kolkata">India (IST)</option>
-                      <option value="Australia/Sydney">Sydney (AEDT)</option>
-                      <option value="UTC">UTC</option>
-                    </select>
-                  </div>
-                  <div>
-                    <label className="block text-sm font-medium text-slate-300 mb-1">
-                      Date Format / Locale
-                    </label>
-                    <select
-                      value={locale}
-                      onChange={(e) => setLocale(e.target.value)}
-                      className="w-full px-3 py-2 border border-slate-700 bg-slate-800 text-slate-200 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-blue-500"
-                    >
-                      <option value="en-US">English (US) — MM/DD/YYYY</option>
-                      <option value="en-GB">English (UK) — DD/MM/YYYY</option>
-                      <option value="en-CA">English (CA) — YYYY-MM-DD</option>
-                      <option value="fr-FR">French — DD/MM/YYYY</option>
-                      <option value="de-DE">German — DD.MM.YYYY</option>
-                      <option value="ja-JP">Japanese — YYYY年MM月DD日</option>
-                      <option value="zh-CN">Chinese (Simplified)</option>
-                    </select>
-                  </div>
-                  <div>
-                    <label className="block text-sm font-medium text-slate-300 mb-1">
-                      Default Output Style
-                    </label>
-                    <select
-                      value={outputPreference}
-                      onChange={(e) => setOutputPreference(e.target.value)}
-                      className="w-full px-3 py-2 border border-slate-700 bg-slate-800 text-slate-200 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-blue-500"
-                    >
-                      <option value="concise">Concise — shorter, punchy outputs</option>
-                      <option value="balanced">Balanced — default length</option>
-                      <option value="detailed">Detailed — longer, thorough outputs</option>
-                    </select>
-                  </div>
-                </div>
-              </CardContent>
-            </Card>
-
-            {/* Notifications Section */}
-            <Card>
-              <CardHeader>
-                <div className="flex items-center gap-2">
-                  <Bell className="h-4 w-4 text-slate-400" />
-                  <div>
-                    <CardTitle>Notifications</CardTitle>
-                    <CardDescription>
-                      Choose which alerts you want to receive
-                    </CardDescription>
-                  </div>
-                </div>
-              </CardHeader>
-              <CardContent className="space-y-0 divide-y divide-slate-800">
-                {([
-                  { key: 'processing_complete' as const, label: 'Processing Complete', description: 'When your audio has finished transcribing and generating content' },
-                  { key: 'processing_failed' as const, label: 'Processing Failed', description: 'When an upload or AI generation job fails' },
-                  { key: 'low_credits' as const, label: 'Low Credits', description: 'When your credit balance drops below a threshold' },
-                  { key: 'weekly_summary' as const, label: 'Weekly Summary', description: 'A weekly digest of your usage and activity' },
-                ] as const).map(({ key, label, description }) => (
-                  <div key={key} className="flex items-center justify-between py-3.5 first:pt-0 last:pb-0">
-                    <div>
-                      <p className="text-sm font-medium text-slate-200">{label}</p>
-                      <p className="text-xs text-slate-500 mt-0.5">{description}</p>
-                    </div>
-                    <button
-                      type="button"
-                      role="switch"
-                      aria-checked={notifications[key]}
-                      onClick={() => setNotifications(prev => ({ ...prev, [key]: !prev[key] }))}
-                      className={cn(
-                        'relative inline-flex h-5 w-9 flex-shrink-0 cursor-pointer rounded-full border-2 border-transparent transition-colors duration-200',
-                        notifications[key] ? 'bg-blue-600' : 'bg-slate-700'
-                      )}
-                    >
-                      <span
-                        className={cn(
-                          'pointer-events-none inline-block h-4 w-4 transform rounded-full bg-white shadow transition duration-200',
-                          notifications[key] ? 'translate-x-4' : 'translate-x-0'
-                        )}
+                    <div className="relative">
+                      <Lock className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-slate-500" />
+                      <input
+                        id="new-password"
+                        type="password"
+                        value={newPassword}
+                        onChange={(e) => setNewPassword(e.target.value)}
+                        placeholder="Enter new password"
+                        disabled={isDemoMode}
+                        className="w-full pl-10 pr-3 py-2 border border-slate-300 dark:border-slate-700 bg-white dark:bg-slate-800 text-slate-900 dark:text-slate-200 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-transparent"
                       />
-                    </button>
+                    </div>
+                    <p className="mt-1 text-xs text-slate-500">Use at least 8 characters.</p>
                   </div>
-                ))}
-              </CardContent>
-            </Card>
-
-            {/* Global Save Button (covers Profile, Preferences, Notifications) */}
-            <div className="flex items-center justify-between">
-              <div>
-                {profileMessage && (
-                  <p className={cn(
-                    "text-sm",
-                    profileMessage.type === 'success' ? "text-green-400" : "text-red-400"
-                  )}>
-                    {profileMessage.text}
-                  </p>
-                )}
-              </div>
-              <button
-                type="button"
-                onClick={handleSaveProfile}
-                disabled={savingProfile}
-                className="inline-flex items-center gap-2 px-4 py-2 bg-blue-600 text-white text-sm font-medium rounded-lg hover:bg-blue-700 disabled:opacity-50 transition-colors"
-              >
-                {savingProfile ? (
-                  <Loader2 className="h-4 w-4 animate-spin" />
-                ) : (
-                  <Save className="h-4 w-4" />
-                )}
-                Save Settings
-              </button>
-            </div>
-
-            {/* Data & AI Preferences */}
-            <Card>
-              <CardHeader>
-                <CardTitle>Data & AI</CardTitle>
-                <CardDescription>
-                  Control whether your data is shared with OpenAI for free token benefits
-                </CardDescription>
-              </CardHeader>
-              <CardContent className="space-y-4">
-                <div className="flex items-start justify-between gap-4">
-                  <div>
-                    <p className="text-sm font-medium text-slate-200">
-                      Share data with OpenAI (opt-in)
-                    </p>
-                    <p className="text-xs text-slate-500 mt-1 max-w-md">
-                      If enabled, we will route your AI processing through the OpenAI project with data sharing enabled.
-                      You can change this anytime.
-                    </p>
-                  </div>
-                  <button
-                    type="button"
-                    onClick={handleToggleDataSharing}
-                    disabled={dataSharingSaving || dataSharingOptIn === null}
-                    className={`px-3 py-2 text-xs font-semibold rounded-lg border transition-colors ${
-                      dataSharingOptIn
-                        ? 'bg-emerald-900/20 border-emerald-700 text-emerald-300'
-                        : 'bg-slate-800 border-slate-700 text-slate-300'
-                    } ${dataSharingSaving ? 'opacity-50 cursor-not-allowed' : 'hover:bg-slate-700/50'}`}
-                  >
-                    {dataSharingOptIn ? 'Opted In' : 'Not Opted In'}
-                  </button>
                 </div>
               </CardContent>
             </Card>
+          )}
 
-            {/* Integrations Section */}
-            <Card>
-              <CardHeader>
-                <CardTitle>Integrations</CardTitle>
-                <CardDescription>
-                  Connect Zoom or Microsoft Teams to import recordings
-                </CardDescription>
-              </CardHeader>
-              <CardContent className="space-y-4">
-                {integrationsLoading && (
-                  <div className="text-sm text-slate-400">Loading integrations...</div>
-                )}
-                {!integrationsLoading && integrationsError && (
-                  <div className="text-sm text-red-400">{integrationsError}</div>
-                )}
-                {!integrationsLoading && !integrationsError && (
-                  <div className="grid gap-3 md:grid-cols-2">
-                    {(['zoom', 'microsoft'] as IntegrationProvider[]).map(provider => {
-                      const status = integrations.find(i => i.provider === provider);
-                      const connected = status?.connected;
-                      return (
-                        <div key={provider} className="border border-slate-700 rounded-lg p-4">
-                          <div className="flex items-start justify-between">
-                            <div>
-                              <p className="text-sm font-semibold text-slate-50">
-                                {provider === 'zoom' ? 'Zoom' : 'Microsoft Teams'}
-                              </p>
-                              <p className="text-xs text-slate-400 mt-1">
-                                {connected
-                                  ? `Connected${status?.metadata?.email ? ` • ${status.metadata.email}` : ''}`
-                                  : 'Not connected'}
-                              </p>
-                            </div>
-                            <span className={`text-xs px-2 py-1 rounded-full ${connected ? 'bg-green-900/20 text-green-400' : 'bg-slate-800 text-slate-400'}`}>
-                              {connected ? 'Connected' : 'Disconnected'}
-                            </span>
+          {/* Data & AI */}
+          <Card>
+            <CardHeader>
+              <CardTitle>Data & AI</CardTitle>
+              <CardDescription>
+                How AudioRepurpose handles AI processing for your account
+              </CardDescription>
+            </CardHeader>
+            <CardContent className="space-y-4">
+              <p className="text-sm text-slate-600 dark:text-slate-300">
+                AudioRepurpose uses OpenAI-backed processing for supported transcription cleanup, speaker workflows,
+                and content generation features across the platform.
+              </p>
+              <p className="text-xs text-slate-500 dark:text-slate-400">
+                For account-specific issues or AI-related feedback, use the Contact Us page.
+              </p>
+            </CardContent>
+          </Card>
+
+          {/* Integrations Section */}
+          <Card>
+            <CardHeader>
+              <CardTitle>Integrations</CardTitle>
+              <CardDescription>
+                Connect Zoom or Microsoft Teams to import recordings
+              </CardDescription>
+            </CardHeader>
+            <CardContent className="space-y-4">
+              {integrationsLoading && (
+                <div className="text-sm text-slate-400">Loading integrations...</div>
+              )}
+              {!integrationsLoading && integrationsError && (
+                <div className="text-sm text-red-400">{integrationsError}</div>
+              )}
+              {!integrationsLoading && !integrationsError && (
+                <div className="grid gap-3 md:grid-cols-2">
+                  {(['zoom', 'microsoft'] as IntegrationProvider[]).map(provider => {
+                    const status = integrations.find(i => i.provider === provider);
+                    const connected = status?.connected;
+                    return (
+                      <div key={provider} className="border border-slate-300 dark:border-slate-700 rounded-lg p-4">
+                        <div className="flex items-start justify-between">
+                          <div>
+                            <p className="text-sm font-semibold text-slate-900 dark:text-slate-50">
+                              {provider === 'zoom' ? 'Zoom' : 'Microsoft Teams'}
+                            </p>
+                            <p className="text-xs text-slate-500 dark:text-slate-400 mt-1">
+                              {connected
+                                ? `Connected${status?.metadata?.email ? ` • ${status.metadata.email}` : ''}`
+                                : 'Not connected'}
+                            </p>
                           </div>
+                          <span className={`text-xs px-2 py-1 rounded-full ${connected ? 'bg-green-100 dark:bg-green-900/20 text-green-700 dark:text-green-400' : 'bg-slate-100 dark:bg-slate-800 text-slate-500 dark:text-slate-400'}`}>
+                            {connected ? 'Connected' : 'Disconnected'}
+                          </span>
+                        </div>
+                        {!isDemoMode && (
                           <div className="mt-4 flex gap-2">
                             {!connected ? (
                               <button
@@ -969,374 +1080,425 @@ export default function UnifiedSettings({ userId, userEmail }: UnifiedSettingsPr
                               <button
                                 type="button"
                                 onClick={() => disconnectProvider(provider)}
-                                className="px-3 py-2 text-sm font-medium bg-slate-800 text-slate-300 rounded-lg hover:bg-slate-700 transition-colors"
+                                className="px-3 py-2 text-sm font-medium bg-slate-100 dark:bg-slate-800 text-slate-700 dark:text-slate-300 rounded-lg hover:bg-slate-200 dark:hover:bg-slate-700 transition-colors"
                               >
                                 Disconnect
                               </button>
                             )}
                           </div>
-                        </div>
-                      );
-                    })}
+                        )}
+                      </div>
+                    );
+                  })}
+                </div>
+              )}
+            </CardContent>
+          </Card>
+
+          {/* Danger Zone */}
+          <Card className="border-red-900/50">
+            <CardHeader>
+              <CardTitle className="text-red-600 dark:text-red-500">Danger Zone</CardTitle>
+              <CardDescription className="text-red-600/80 dark:text-red-400/80">
+                Irreversible actions for your account
+              </CardDescription>
+            </CardHeader>
+            <CardContent>
+              <div className="flex flex-col gap-4 sm:flex-row sm:items-center sm:justify-between">
+                <div>
+                  <h3 className="text-sm font-medium text-slate-800 dark:text-slate-200">Delete Account</h3>
+                  <p className="text-sm text-slate-500 dark:text-slate-400 mt-1 max-w-lg">
+                    Permanently delete your account, projects, and all associated media from our servers. This action cannot be undone.
+                  </p>
+                </div>
+                {!isDemoMode && (
+                  <button
+                    type="button"
+                    onClick={() => {
+                      setDeleteConfirmation('');
+                      setDeleteModalOpen(true);
+                    }}
+                    disabled={deletingAccount}
+                    className="inline-flex w-fit whitespace-nowrap rounded-lg border border-red-200 bg-red-50 px-4 py-2 font-medium text-red-700 transition-colors hover:bg-red-100 hover:text-red-800 disabled:opacity-50 sm:self-start dark:border-red-800 dark:bg-red-900/50 dark:text-red-500 dark:hover:bg-red-800 dark:hover:text-red-100"
+                  >
+                    Delete Account
+                  </button>
+                )}
+              </div>
+            </CardContent>
+          </Card>
+          <Dialog open={deleteModalOpen} onOpenChange={setDeleteModalOpen}>
+            <DialogContent className="sm:max-w-md">
+              <DialogHeader>
+                <DialogTitle className="text-red-600 dark:text-red-500">Delete Account</DialogTitle>
+                <DialogDescription>
+                  This permanently deletes your account, projects, and media. Type your {deleteTargetLabel} to continue.
+                </DialogDescription>
+              </DialogHeader>
+              <div className="space-y-4">
+                <div className="rounded-lg border border-red-200/80 bg-red-50/70 p-4 dark:border-red-900/60 dark:bg-red-950/30">
+                  <p className="text-sm font-medium text-red-700 dark:text-red-400">
+                    Are you sure you want to delete your account?
+                  </p>
+                  <p className="mt-1 text-sm text-red-700/80 dark:text-red-400/80">
+                    Type <span className="font-semibold">{deleteTarget}</span> to confirm.
+                  </p>
+                </div>
+                <div>
+                  <label className="mb-1 block text-sm font-medium text-slate-700 dark:text-slate-300">
+                    {deleteTargetLabel === 'username' ? 'Username' : 'Email'}
+                  </label>
+                  <input
+                    type="text"
+                    value={deleteConfirmation}
+                    onChange={(e) => setDeleteConfirmation(e.target.value)}
+                    disabled={deletingAccount}
+                    placeholder={`Type your ${deleteTargetLabel}`}
+                    className="w-full rounded-lg border border-slate-300 bg-white px-3 py-2 text-sm text-slate-900 focus:border-transparent focus:outline-none focus:ring-2 focus:ring-red-500 disabled:opacity-50 dark:border-slate-700 dark:bg-slate-900 dark:text-slate-100"
+                  />
+                  <p className="mt-2 text-xs text-slate-500 dark:text-slate-400">
+                    The delete button stays disabled until the value matches exactly.
+                  </p>
+                </div>
+                <div className="flex justify-end gap-2">
+                  <button
+                    type="button"
+                    onClick={() => {
+                      setDeleteModalOpen(false);
+                      setDeleteConfirmation('');
+                    }}
+                    disabled={deletingAccount}
+                    className="rounded-lg border border-slate-300 bg-white px-4 py-2 text-sm font-medium text-slate-700 transition-colors hover:bg-slate-50 disabled:opacity-50 dark:border-slate-700 dark:bg-slate-900 dark:text-slate-200 dark:hover:bg-slate-800"
+                  >
+                    Cancel
+                  </button>
+                  <button
+                    type="button"
+                    onClick={handleDeleteAccount}
+                    disabled={deletingAccount || !isDeleteConfirmationValid}
+                    className="rounded-lg border border-red-200 bg-red-50 px-4 py-2 text-sm font-medium text-red-700 transition-colors hover:bg-red-100 hover:text-red-800 disabled:opacity-50 dark:border-red-800 dark:bg-red-900/50 dark:text-red-500 dark:hover:bg-red-800 dark:hover:text-red-100"
+                  >
+                    {deletingAccount ? 'Deleting...' : 'Delete Account'}
+                  </button>
+                </div>
+              </div>
+            </DialogContent>
+          </Dialog>
+        </div>
+      )}
+
+      {/* ================================================================ */}
+      {/* BILLING */}
+      {/* ================================================================ */}
+      {section === 'billing' && (
+        loadingBilling ? (
+          <div className="animate-pulse space-y-6">
+            <div className="h-32 bg-slate-200 dark:bg-slate-700 rounded-lg" />
+            <div className="h-48 bg-slate-200 dark:bg-slate-700 rounded-lg" />
+            <div className="h-64 bg-slate-200 dark:bg-slate-700 rounded-lg" />
+          </div>
+        ) : (
+          <div className="space-y-6">
+            {/* Balance Banner */}
+            <BalanceBanner balance={balance} />
+
+            {/* Credit Packages — always visible */}
+            <Card>
+              <CardHeader>
+                <CardTitle>Purchase Credits</CardTitle>
+                <CardDescription>Select a package to add credits to your account</CardDescription>
+              </CardHeader>
+              <CardContent>
+                <CreditPackages />
+              </CardContent>
+            </Card>
+
+            {/* Transaction History Table */}
+            <Card>
+              <CardHeader>
+                <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-4">
+                  <div>
+                    <CardTitle>Transaction History</CardTitle>
+                    <CardDescription>View and export your billing history</CardDescription>
+                  </div>
+                  <div className="flex items-center gap-2">
+                    <div className="relative flex-1 sm:flex-none">
+                      <Search className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-slate-500" />
+                      <input
+                        type="text"
+                        placeholder="Search..."
+                        value={transactionSearch}
+                        onChange={(e) => setTransactionSearch(e.target.value)}
+                        className="pl-9 pr-3 py-1.5 text-sm border border-slate-300 dark:border-slate-700 bg-white dark:bg-slate-800 text-slate-900 dark:text-slate-200 rounded-lg w-full sm:w-40 focus:outline-none focus:ring-2 focus:ring-blue-500"
+                      />
+                    </div>
+                    <button
+                      type="button"
+                      onClick={handleExportTransactions}
+                      className="flex-shrink-0 inline-flex items-center gap-1 px-3 py-1.5 text-sm font-medium text-slate-600 dark:text-slate-300 bg-white dark:bg-slate-900 border border-slate-300 dark:border-slate-700 rounded-lg hover:bg-slate-50 dark:hover:bg-slate-800/50"
+                    >
+                      <Download className="h-4 w-4" />
+                      Export
+                    </button>
+                  </div>
+                </div>
+              </CardHeader>
+              <CardContent className="p-0">
+                {filteredTransactions.length === 0 ? (
+                  <div className="py-12 text-center text-slate-400">
+                    No transactions found
+                  </div>
+                ) : (
+                  <>
+                    <div className="overflow-x-auto">
+                      <table className="w-full text-sm">
+                        <thead>
+                          <tr className="border-b border-slate-200 dark:border-slate-800 bg-slate-50 dark:bg-slate-800/30">
+                            <th className="text-left font-medium text-slate-500 dark:text-slate-400 px-3 sm:px-6 py-3 w-8"></th>
+                            <th className="text-left font-medium text-slate-500 dark:text-slate-400 px-3 sm:px-6 py-3">Date</th>
+                            <th className="hidden sm:table-cell text-left font-medium text-slate-500 dark:text-slate-400 px-3 sm:px-6 py-3">Type</th>
+                            <th className="text-left font-medium text-slate-500 dark:text-slate-400 px-3 sm:px-6 py-3">Description</th>
+                            <th className="hidden md:table-cell text-left font-medium text-slate-500 dark:text-slate-400 px-3 sm:px-6 py-3">Invoice</th>
+                            <th className="text-right font-medium text-slate-500 dark:text-slate-400 px-3 sm:px-6 py-3">Amount</th>
+                          </tr>
+                        </thead>
+                        <tbody className="divide-y divide-slate-200 dark:divide-slate-800">
+                          {filteredTransactions.map((transaction) => {
+                            const isGrouped = transaction.type === 'grouped';
+                            const isExpanded = expandedGroups.has(transaction.id);
+
+                            return (
+                              <>{/* Fragment for group + children */}
+                                <tr
+                                  key={transaction.id}
+                                  className={cn(
+                                    "hover:bg-slate-50 dark:hover:bg-slate-800/30",
+                                    isGrouped && "cursor-pointer"
+                                  )}
+                                  onClick={isGrouped ? () => toggleGroup(transaction.id) : undefined}
+                                >
+                                  <td className="px-3 sm:px-6 py-3 w-8">
+                                    {isGrouped && (
+                                      isExpanded
+                                        ? <ChevronUp className="h-4 w-4 text-slate-500" />
+                                        : <ChevronDown className="h-4 w-4 text-slate-500" />
+                                    )}
+                                  </td>
+                                  <td className="px-3 sm:px-6 py-3 text-slate-500 dark:text-slate-400 whitespace-nowrap">
+                                    {new Date(transaction.createdAt).toLocaleDateString('en-US', {
+                                      month: 'short',
+                                      day: 'numeric',
+                                      year: 'numeric'
+                                    })}
+                                  </td>
+                                  <td className="hidden sm:table-cell px-3 sm:px-6 py-3">
+                                    <TransactionTypeBadge type={transaction.transactionType} />
+                                  </td>
+                                  <td className="px-3 sm:px-6 py-3 text-slate-700 dark:text-slate-300 max-w-[140px] sm:max-w-xs truncate">
+                                    {transaction.reason || '-'}
+                                    {isGrouped && transaction.childCount && (
+                                      <span className="ml-2 text-xs text-slate-400 dark:text-slate-500">
+                                        ({transaction.childCount} items)
+                                      </span>
+                                    )}
+                                  </td>
+                                  <td className="hidden md:table-cell px-3 sm:px-6 py-3 text-slate-600 dark:text-slate-300">
+                                    {isGrouped ? '-' : (transaction.invoiceNumber || '-')}
+                                  </td>
+                                  <td className={cn(
+                                    "px-3 sm:px-6 py-3 text-right font-semibold whitespace-nowrap",
+                                    transaction.amount > 0 ? "text-green-600" : "text-slate-900 dark:text-slate-50"
+                                  )}>
+                                    {transaction.amount > 0 ? '+' : ''}{formatAmount(transaction.amount)}
+                                  </td>
+                                </tr>
+                                {/* Expanded children */}
+                                {isGrouped && isExpanded && transaction.children?.map((child, idx) => (
+                                  <tr key={`${transaction.id}-child-${idx}`} className="bg-slate-100/80 dark:bg-slate-800/50">
+                                    <td className="px-3 sm:px-6 py-2"></td>
+                                    <td className="px-3 sm:px-6 py-2 text-xs text-slate-400 dark:text-slate-500 whitespace-nowrap">
+                                      {new Date(child.createdAt).toLocaleTimeString('en-US', {
+                                        hour: 'numeric',
+                                        minute: '2-digit',
+                                      })}
+                                    </td>
+                                    <td className="hidden sm:table-cell px-3 sm:px-6 py-2"></td>
+                                    <td className="pl-8 sm:pl-12 pr-3 sm:pr-6 py-2 text-xs text-slate-500 dark:text-slate-400">
+                                      {child.reason}
+                                    </td>
+                                    <td className="hidden md:table-cell px-3 sm:px-6 py-2"></td>
+                                    <td className="px-3 sm:px-6 py-2 text-right text-xs text-slate-500 dark:text-slate-400">
+                                      {formatAmount(child.amount)}
+                                    </td>
+                                  </tr>
+                                ))}
+                              </>
+                            );
+                          })}
+                        </tbody>
+                      </table>
+                    </div>
+
+                    {/* Pagination */}
+                    <div className="flex items-center justify-between px-3 sm:px-6 py-3 border-t border-slate-200 dark:border-slate-800 bg-slate-50 dark:bg-slate-800/30">
+                      <span className="text-sm text-slate-500 dark:text-slate-400">
+                        Showing {((transactionPage - 1) * TRANSACTIONS_PER_PAGE) + 1} to {Math.min(transactionPage * TRANSACTIONS_PER_PAGE, transactionTotal)} of {transactionTotal}
+                      </span>
+                      <div className="flex items-center gap-1">
+                        <button
+                          type="button"
+                          onClick={() => setTransactionPage(p => Math.max(1, p - 1))}
+                          disabled={transactionPage === 1}
+                          className="p-1 rounded hover:bg-slate-200 dark:hover:bg-slate-700 disabled:opacity-50 disabled:cursor-not-allowed"
+                        >
+                          <ChevronLeft className="h-5 w-5" />
+                        </button>
+                        <button
+                          type="button"
+                          onClick={() => setTransactionPage(p => p + 1)}
+                          disabled={transactionPage * TRANSACTIONS_PER_PAGE >= transactionTotal}
+                          className="p-1 rounded hover:bg-slate-200 dark:hover:bg-slate-700 disabled:opacity-50 disabled:cursor-not-allowed"
+                        >
+                          <ChevronRight className="h-5 w-5" />
+                        </button>
+                      </div>
+                    </div>
+                  </>
+                )}
+              </CardContent>
+            </Card>
+          </div>
+        )
+      )}
+
+      {/* ================================================================ */}
+      {/* USAGE */}
+      {/* ================================================================ */}
+      {section === 'usage' && (
+        loadingUsage ? (
+          <div className="animate-pulse space-y-6">
+            <div className="grid grid-cols-1 sm:grid-cols-3 gap-4">
+              {[1, 2, 3].map(i => (
+                <div key={i} className="h-24 bg-slate-200 dark:bg-slate-700 rounded-lg" />
+              ))}
+            </div>
+            <div className="h-80 bg-slate-200 dark:bg-slate-700 rounded-lg" />
+          </div>
+        ) : usageEvents.length === 0 ? (
+          <Card>
+            <CardContent className="py-16">
+              <div className="text-center">
+                <BarChart3 className="h-12 w-12 mx-auto mb-4 text-slate-500" />
+                <h3 className="text-lg font-medium text-slate-900 dark:text-slate-50 mb-1">No usage data yet</h3>
+                <p className="text-sm text-slate-400 max-w-sm mx-auto">
+                  Start processing podcasts and generating content to see your usage statistics and trends here.
+                </p>
+              </div>
+            </CardContent>
+          </Card>
+        ) : (
+          <div className="space-y-6">
+            {/* Usage KPIs */}
+            <div className="grid gap-4 md:grid-cols-3">
+              <Card>
+                <CardContent className="pt-6">
+                  <p className="text-sm font-medium text-slate-500 dark:text-slate-400">Total Cost</p>
+                  <p className="text-2xl font-bold text-slate-900 dark:text-slate-50 mt-1">{formatAmount(usageStats.totalCost)}</p>
+                  <p className="text-xs text-slate-400 dark:text-slate-500 mt-1">{usageStats.totalEvents} API calls</p>
+                </CardContent>
+              </Card>
+              <Card>
+                <CardContent className="pt-6">
+                  <p className="text-sm font-medium text-slate-500 dark:text-slate-400">Projects Processed</p>
+                  <p className="text-2xl font-bold text-slate-900 dark:text-slate-50 mt-1">{usageStats.projectCount}</p>
+                  <p className="text-xs text-slate-400 dark:text-slate-500 mt-1">Unique projects</p>
+                </CardContent>
+              </Card>
+              <Card>
+                <CardContent className="pt-6">
+                  <p className="text-sm font-medium text-slate-500 dark:text-slate-400">Avg Cost / Project</p>
+                  <p className="text-2xl font-bold text-slate-900 dark:text-slate-50 mt-1">
+                    {usageStats.projectCount > 0
+                      ? formatAmount(usageStats.totalCost / usageStats.projectCount)
+                      : '$0.00'}
+                  </p>
+                  <p className="text-xs text-slate-400 dark:text-slate-500 mt-1">Per project average</p>
+                </CardContent>
+              </Card>
+            </div>
+
+            {/* Usage Trend Chart */}
+            <Card>
+              <CardHeader>
+                <CardTitle>Usage Trends</CardTitle>
+                <CardDescription>Your spending over the last 30 days</CardDescription>
+              </CardHeader>
+              <CardContent>
+                <UsageAreaChart data={usageTrend} />
+              </CardContent>
+            </Card>
+
+            {/* Per-Project Breakdown */}
+            <Card>
+              <CardHeader>
+                <CardTitle>Cost by Project</CardTitle>
+                <CardDescription>Spending breakdown per project</CardDescription>
+              </CardHeader>
+              <CardContent>
+                {usageByProject.length === 0 ? (
+                  <div className="py-8 text-center text-slate-400">
+                    <BarChart3 className="h-10 w-10 mx-auto mb-3 text-slate-500" />
+                    <p className="text-sm">No project usage data available</p>
+                  </div>
+                ) : (
+                  <div className="divide-y divide-slate-200 dark:divide-slate-800">
+                    {(() => {
+                      const maxCost = Math.max(...usageByProject.map(p => p.cost));
+                      const colors = ['#3b82f6', '#10b981', '#f59e0b', '#8b5cf6', '#ec4899', '#06b6d4'];
+
+                      return usageByProject.map((project, index) => {
+                        const barWidth = maxCost > 0 ? (project.cost / maxCost) * 100 : 0;
+
+                        return (
+                          <div key={project.id} className="py-3 first:pt-0 last:pb-0">
+                            <div className="flex items-center justify-between mb-2">
+                              <div className="flex items-center gap-2">
+                                <div
+                                  className="w-3 h-3 rounded-full flex-shrink-0"
+                                  style={{ backgroundColor: colors[index % colors.length] }}
+                                />
+                                <span className="text-sm font-medium text-slate-900 dark:text-slate-50">
+                                  {project.title}
+                                </span>
+                                <span className="text-xs text-slate-400 dark:text-slate-500">
+                                  {project.events} calls, {project.serviceCount} services
+                                </span>
+                              </div>
+                              <span className="text-sm font-semibold text-slate-900 dark:text-slate-50">
+                                {formatAmount(project.cost)}
+                              </span>
+                            </div>
+                            <div className="h-1.5 bg-slate-200 dark:bg-slate-800 rounded-full overflow-hidden">
+                              <div
+                                className="h-full rounded-full transition-all duration-500"
+                                style={{
+                                  width: `${barWidth}%`,
+                                  backgroundColor: colors[index % colors.length]
+                                }}
+                              />
+                            </div>
+                          </div>
+                        );
+                      });
+                    })()}
                   </div>
                 )}
               </CardContent>
             </Card>
           </div>
-        )}
+        )
+      )}
 
-        {/* ================================================================ */}
-        {/* BILLING */}
-        {/* ================================================================ */}
-        {section === 'billing' && (
-          loadingBilling ? (
-            <div className="animate-pulse space-y-6">
-              <div className="h-32 bg-slate-700 rounded-lg" />
-              <div className="h-48 bg-slate-700 rounded-lg" />
-              <div className="h-64 bg-slate-700 rounded-lg" />
-            </div>
-          ) : (
-            <div className="space-y-6">
-              {/* Balance Banner */}
-              <BalanceBanner balance={balance} />
-
-              {/* 1-Hour Cost Estimate */}
-              {(() => {
-                const basic = estimateTranscriptionCost({ durationSeconds: 3600, tier: 'basic' });
-                const pro = estimateTranscriptionCost({ durationSeconds: 3600, tier: 'pro' });
-                const premium = estimateTranscriptionCost({ durationSeconds: 3600, tier: 'premium' });
-                return (
-                  <Card>
-                    <CardHeader>
-                      <CardTitle>Estimated Cost — 1 Hour of Audio</CardTitle>
-                      <CardDescription>
-                        Includes 35% service markup. Actual cost depends on recording length and word density.
-                      </CardDescription>
-                    </CardHeader>
-                    <CardContent>
-                      <div className="grid grid-cols-1 sm:grid-cols-3 gap-6">
-                        <div className="flex flex-col gap-1">
-                          <div className="flex items-baseline gap-2">
-                            <span className="text-2xl font-semibold text-slate-50">~${basic.total.toFixed(2)}</span>
-                            <span className="text-xs font-medium text-slate-400 uppercase tracking-wide">Basic</span>
-                          </div>
-                          <p className="text-sm text-slate-400">Transcription + speaker labels</p>
-                        </div>
-                        <div className="flex flex-col gap-1">
-                          <div className="flex items-baseline gap-2">
-                            <span className="text-2xl font-semibold text-slate-50">~${pro.total.toFixed(2)}</span>
-                            <span className="text-xs font-medium text-blue-600 uppercase tracking-wide">Pro</span>
-                          </div>
-                          <p className="text-sm text-slate-400">+ Speaker names, AI summary</p>
-                        </div>
-                        <div className="flex flex-col gap-1">
-                          <div className="flex items-baseline gap-2">
-                            <span className="text-2xl font-semibold text-slate-50">~${premium.total.toFixed(2)}</span>
-                            <span className="text-xs font-medium text-purple-600 uppercase tracking-wide">Premium</span>
-                          </div>
-                          <p className="text-sm text-slate-400">+ Chapters, takeaways, quotes, insights</p>
-                        </div>
-                      </div>
-                    </CardContent>
-                  </Card>
-                );
-              })()}
-
-              {/* Credit Packages — always visible */}
-              <Card>
-                <CardHeader>
-                  <CardTitle>Purchase Credits</CardTitle>
-                  <CardDescription>Select a package to add credits to your account</CardDescription>
-                </CardHeader>
-                <CardContent>
-                  <CreditPackages />
-                </CardContent>
-              </Card>
-
-              {/* Transaction History Table */}
-              <Card>
-                <CardHeader>
-                  <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-4">
-                    <div>
-                      <CardTitle>Transaction History</CardTitle>
-                      <CardDescription>View and export your billing history</CardDescription>
-                    </div>
-                    <div className="flex items-center gap-2">
-                      <div className="relative">
-                        <Search className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-slate-500" />
-                        <input
-                          type="text"
-                          placeholder="Search..."
-                          value={transactionSearch}
-                          onChange={(e) => setTransactionSearch(e.target.value)}
-                          className="pl-9 pr-3 py-1.5 text-sm border border-slate-700 bg-slate-800 text-slate-200 rounded-lg w-40 focus:outline-none focus:ring-2 focus:ring-blue-500"
-                        />
-                      </div>
-                      <button
-                        type="button"
-                        onClick={handleExportTransactions}
-                        className="inline-flex items-center gap-1 px-3 py-1.5 text-sm font-medium text-slate-300 bg-slate-900 border border-slate-700 rounded-lg hover:bg-slate-800/50"
-                      >
-                        <Download className="h-4 w-4" />
-                        Export
-                      </button>
-                    </div>
-                  </div>
-                </CardHeader>
-                <CardContent className="p-0">
-                  {filteredTransactions.length === 0 ? (
-                    <div className="py-12 text-center text-slate-400">
-                      No transactions found
-                    </div>
-                  ) : (
-                    <>
-                      <div className="overflow-x-auto">
-                        <table className="w-full text-sm">
-                          <thead>
-                            <tr className="border-b border-slate-800 bg-slate-800/30">
-                              <th className="text-left font-medium text-slate-400 px-6 py-3 w-8"></th>
-                              <th className="text-left font-medium text-slate-400 px-6 py-3">Date</th>
-                              <th className="text-left font-medium text-slate-400 px-6 py-3">Type</th>
-                              <th className="text-left font-medium text-slate-400 px-6 py-3">Description</th>
-                              <th className="text-left font-medium text-slate-400 px-6 py-3">Invoice</th>
-                              <th className="text-right font-medium text-slate-400 px-6 py-3">Amount</th>
-                            </tr>
-                          </thead>
-                          <tbody className="divide-y divide-slate-800">
-                            {filteredTransactions.map((transaction) => {
-                              const isGrouped = transaction.type === 'grouped';
-                              const isExpanded = expandedGroups.has(transaction.id);
-
-                              return (
-                                <>{/* Fragment for group + children */}
-                                  <tr
-                                    key={transaction.id}
-                                    className={cn(
-                                      "hover:bg-slate-800/30",
-                                      isGrouped && "cursor-pointer"
-                                    )}
-                                    onClick={isGrouped ? () => toggleGroup(transaction.id) : undefined}
-                                  >
-                                    <td className="px-6 py-3 w-8">
-                                      {isGrouped && (
-                                        isExpanded
-                                          ? <ChevronUp className="h-4 w-4 text-slate-500" />
-                                          : <ChevronDown className="h-4 w-4 text-slate-500" />
-                                      )}
-                                    </td>
-                                    <td className="px-6 py-3 text-slate-400">
-                                      {new Date(transaction.createdAt).toLocaleDateString('en-US', {
-                                        month: 'short',
-                                        day: 'numeric',
-                                        year: 'numeric'
-                                      })}
-                                    </td>
-                                    <td className="px-6 py-3">
-                                      <TransactionTypeBadge type={transaction.transactionType} />
-                                    </td>
-                                    <td className="px-6 py-3 text-slate-300 max-w-xs truncate">
-                                      {transaction.reason || '-'}
-                                      {isGrouped && transaction.childCount && (
-                                        <span className="ml-2 text-xs text-slate-500">
-                                          ({transaction.childCount} items)
-                                        </span>
-                                      )}
-                                    </td>
-                                    <td className="px-6 py-3 text-slate-300">
-                                      {isGrouped ? '-' : (transaction.invoiceNumber || '-')}
-                                    </td>
-                                    <td className={cn(
-                                      "px-6 py-3 text-right font-semibold",
-                                      transaction.amount > 0 ? "text-green-600" : "text-slate-50"
-                                    )}>
-                                      {transaction.amount > 0 ? '+' : ''}{formatAmount(transaction.amount)}
-                                    </td>
-                                  </tr>
-                                  {/* Expanded children */}
-                                  {isGrouped && isExpanded && transaction.children?.map((child, idx) => (
-                                    <tr key={`${transaction.id}-child-${idx}`} className="bg-slate-800/50/80">
-                                      <td className="px-6 py-2"></td>
-                                      <td className="px-6 py-2 text-xs text-slate-500">
-                                        {new Date(child.createdAt).toLocaleTimeString('en-US', {
-                                          hour: 'numeric',
-                                          minute: '2-digit',
-                                        })}
-                                      </td>
-                                      <td className="px-6 py-2"></td>
-                                      <td className="pl-12 pr-6 py-2 text-xs text-slate-400">
-                                        {child.reason}
-                                      </td>
-                                      <td className="px-6 py-2 text-right text-xs text-slate-400">
-                                        {formatAmount(child.amount)}
-                                      </td>
-                                    </tr>
-                                  ))}
-                                </>
-                              );
-                            })}
-                          </tbody>
-                        </table>
-                      </div>
-
-                      {/* Pagination */}
-                      <div className="flex items-center justify-between px-6 py-3 border-t border-slate-800 bg-slate-800/30">
-                        <span className="text-sm text-slate-400">
-                          Showing {((transactionPage - 1) * TRANSACTIONS_PER_PAGE) + 1} to {Math.min(transactionPage * TRANSACTIONS_PER_PAGE, transactionTotal)} of {transactionTotal}
-                        </span>
-                        <div className="flex items-center gap-1">
-                          <button
-                            type="button"
-                            onClick={() => setTransactionPage(p => Math.max(1, p - 1))}
-                            disabled={transactionPage === 1}
-                            className="p-1 rounded hover:bg-slate-700 disabled:opacity-50 disabled:cursor-not-allowed"
-                          >
-                            <ChevronLeft className="h-5 w-5" />
-                          </button>
-                          <button
-                            type="button"
-                            onClick={() => setTransactionPage(p => p + 1)}
-                            disabled={transactionPage * TRANSACTIONS_PER_PAGE >= transactionTotal}
-                            className="p-1 rounded hover:bg-slate-700 disabled:opacity-50 disabled:cursor-not-allowed"
-                          >
-                            <ChevronRight className="h-5 w-5" />
-                          </button>
-                        </div>
-                      </div>
-                    </>
-                  )}
-                </CardContent>
-              </Card>
-            </div>
-          )
-        )}
-
-        {/* ================================================================ */}
-        {/* USAGE */}
-        {/* ================================================================ */}
-        {section === 'usage' && (
-          loadingUsage ? (
-            <div className="animate-pulse space-y-6">
-              <div className="grid grid-cols-3 gap-4">
-                {[1, 2, 3].map(i => (
-                  <div key={i} className="h-24 bg-slate-700 rounded-lg" />
-                ))}
-              </div>
-              <div className="h-80 bg-slate-700 rounded-lg" />
-            </div>
-          ) : usageEvents.length === 0 ? (
-            <Card>
-              <CardContent className="py-16">
-                <div className="text-center">
-                  <BarChart3 className="h-12 w-12 mx-auto mb-4 text-slate-500" />
-                  <h3 className="text-lg font-medium text-slate-50 mb-1">No usage data yet</h3>
-                  <p className="text-sm text-slate-400 max-w-sm mx-auto">
-                    Start processing podcasts and generating content to see your usage statistics and trends here.
-                  </p>
-                </div>
-              </CardContent>
-            </Card>
-          ) : (
-            <div className="space-y-6">
-              {/* Usage KPIs */}
-              <div className="grid gap-4 md:grid-cols-3">
-                <Card>
-                  <CardContent className="pt-6">
-                    <p className="text-sm font-medium text-slate-400">Total Cost</p>
-                    <p className="text-2xl font-bold text-slate-50 mt-1">{formatAmount(usageStats.totalCost)}</p>
-                    <p className="text-xs text-slate-500 mt-1">{usageStats.totalEvents} API calls</p>
-                  </CardContent>
-                </Card>
-                <Card>
-                  <CardContent className="pt-6">
-                    <p className="text-sm font-medium text-slate-400">Projects Processed</p>
-                    <p className="text-2xl font-bold text-slate-50 mt-1">{usageStats.projectCount}</p>
-                    <p className="text-xs text-slate-500 mt-1">Unique projects</p>
-                  </CardContent>
-                </Card>
-                <Card>
-                  <CardContent className="pt-6">
-                    <p className="text-sm font-medium text-slate-400">Avg Cost / Project</p>
-                    <p className="text-2xl font-bold text-slate-50 mt-1">
-                      {usageStats.projectCount > 0
-                        ? formatAmount(usageStats.totalCost / usageStats.projectCount)
-                        : '$0.00'}
-                    </p>
-                    <p className="text-xs text-slate-500 mt-1">Per project average</p>
-                  </CardContent>
-                </Card>
-              </div>
-
-              {/* Usage Trend Chart */}
-              <Card>
-                <CardHeader>
-                  <CardTitle>Usage Trends</CardTitle>
-                  <CardDescription>Your spending over the last 30 days</CardDescription>
-                </CardHeader>
-                <CardContent>
-                  <UsageAreaChart data={usageTrend} />
-                </CardContent>
-              </Card>
-
-              {/* Per-Project Breakdown */}
-              <Card>
-                <CardHeader>
-                  <CardTitle>Cost by Project</CardTitle>
-                  <CardDescription>Spending breakdown per project</CardDescription>
-                </CardHeader>
-                <CardContent>
-                  {usageByProject.length === 0 ? (
-                    <div className="py-8 text-center text-slate-400">
-                      <BarChart3 className="h-10 w-10 mx-auto mb-3 text-slate-500" />
-                      <p className="text-sm">No project usage data available</p>
-                    </div>
-                  ) : (
-                    <div className="divide-y divide-slate-800">
-                      {(() => {
-                        const maxCost = Math.max(...usageByProject.map(p => p.cost));
-                        const colors = ['#3b82f6', '#10b981', '#f59e0b', '#8b5cf6', '#ec4899', '#06b6d4'];
-
-                        return usageByProject.map((project, index) => {
-                          const barWidth = maxCost > 0 ? (project.cost / maxCost) * 100 : 0;
-
-                          return (
-                            <div key={project.id} className="py-3 first:pt-0 last:pb-0">
-                              <div className="flex items-center justify-between mb-2">
-                                <div className="flex items-center gap-2">
-                                  <div
-                                    className="w-3 h-3 rounded-full flex-shrink-0"
-                                    style={{ backgroundColor: colors[index % colors.length] }}
-                                  />
-                                  <span className="text-sm font-medium text-slate-50">
-                                    {project.title}
-                                  </span>
-                                  <span className="text-xs text-slate-500">
-                                    {project.events} calls, {project.serviceCount} services
-                                  </span>
-                                </div>
-                                <span className="text-sm font-semibold text-slate-50">
-                                  {formatAmount(project.cost)}
-                                </span>
-                              </div>
-                              <div className="h-1.5 bg-slate-800 rounded-full overflow-hidden">
-                                <div
-                                  className="h-full rounded-full transition-all duration-500"
-                                  style={{
-                                    width: `${barWidth}%`,
-                                    backgroundColor: colors[index % colors.length]
-                                  }}
-                                />
-                              </div>
-                            </div>
-                          );
-                        });
-                      })()}
-                    </div>
-                  )}
-                </CardContent>
-              </Card>
-            </div>
-          )
-        )}
     </div>
   );
 }

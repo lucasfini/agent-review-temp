@@ -8,6 +8,7 @@ import { NextRequest, NextResponse } from 'next/server';
 import Stripe from 'stripe';
 import { supabaseAdmin } from '@/lib/supabase/server';
 import { addCredit } from '@/lib/billing/credit';
+import { getTotalCredits, resolveCreditPackage } from '@/lib/billing/credit-packages';
 import { isAdminEmail } from '@/lib/admin-access';
 
 const stripe = new Stripe(process.env.STRIPE_SECRET_KEY!, {
@@ -75,7 +76,7 @@ export async function POST(request: NextRequest) {
       .eq('user_id', userId)
       .eq('transaction_type', 'purchase')
       .contains('metadata', { sessionId })
-      .single();
+      .maybeSingle();
 
     if (existingTransaction) {
       return NextResponse.json({
@@ -87,17 +88,28 @@ export async function POST(request: NextRequest) {
     }
 
     // Process the payment
-    const creditsAmount = parseFloat(session.metadata?.creditsAmount || '0');
-    const baseAmount = parseFloat(session.metadata?.baseAmount || '0');
-    const bonusAmount = parseFloat(session.metadata?.bonusAmount || '0');
     const packageId = session.metadata?.packageId;
+    const pkg = resolveCreditPackage(
+      packageId || '',
+      session.metadata?.customAmount ? Number(session.metadata.customAmount) : undefined
+    );
 
-    if (!creditsAmount) {
+    if (!pkg) {
       return NextResponse.json(
-        { error: 'Invalid credits amount in session' },
+        { error: 'Invalid credit package in session' },
         { status: 400 }
       );
     }
+
+    const expectedAmountCents = Math.round(pkg.price * 100);
+    if ((session.amount_total || 0) !== expectedAmountCents) {
+      return NextResponse.json(
+        { error: 'Checkout amount mismatch in session' },
+        { status: 400 }
+      );
+    }
+
+    const creditsAmount = getTotalCredits(pkg);
 
     console.log(`Processing ${creditsAmount} credits for user ${userId}`);
 
@@ -119,8 +131,8 @@ export async function POST(request: NextRequest) {
       metadata: {
         sessionId: session.id,
         packageId,
-        baseAmount,
-        bonusAmount,
+        baseAmount: pkg.amount,
+        bonusAmount: pkg.bonus,
         amountPaid: (session.amount_total || 0) / 100,
         customerEmail: session.customer_email,
         adminProcessed: true,

@@ -4,19 +4,15 @@ import { r2Client, BUCKET_NAME } from '@/lib/r2';
 import { supabaseAdmin } from '@/lib/supabase/server';
 import { updateProcessingProgress } from '@/lib/progress-tracker';
 import { computeAudioFingerprint } from '@/lib/audio-fingerprint';
+import { getInternalJobToken } from '@/lib/internal-job-auth';
+import { getAudioExpiryDate } from '@/lib/audio-retention';
+import { getAppBaseUrl } from '@/lib/app-url';
+import { scheduleBackgroundTask } from '@/lib/background-task';
 
-type PerformanceLevel = 'basic' | 'pro' | 'premium';
+type PerformanceLevel = 'standard' | 'pro';
 
 const MAX_FILE_SIZE = 500 * 1024 * 1024;
 
-declare global {
-  var uploadedFiles: Map<string, {
-    buffer: ArrayBuffer;
-    contentType: string;
-    originalName: string;
-    size: number;
-  }>;
-}
 
 const sanitizeFileName = (name: string) => {
   const normalized = name
@@ -30,11 +26,11 @@ const sanitizeFileName = (name: string) => {
 };
 
 const normalizePerformanceLevel = (value?: string | null): PerformanceLevel => {
-  if (value === 'basic' || value === 'pro' || value === 'premium') return value;
-  if (value === 'low') return 'basic';
+  if (value === 'standard' || value === 'pro') return value;
+  if (value === 'basic' || value === 'low') return 'standard';
+  if (value === 'premium' || value === 'high') return 'pro';
   if (value === 'medium') return 'pro';
-  if (value === 'high') return 'premium';
-  return 'premium';
+  return 'pro';
 };
 
 export async function importRecording(params: {
@@ -59,24 +55,39 @@ export async function importRecording(params: {
   const estimatedDuration = Math.round(size / (128000 / 8));
   const fingerprint = computeAudioFingerprint(Buffer.from(buffer));
 
-  const { data: project, error: projectError } = await supabaseAdmin
+  let insertData: any = {
+    user_id: userId,
+    title,
+    audio_file_name: sanitizedBaseName,
+    audio_file_size: size,
+    audio_duration: estimatedDuration,
+    audio_expires_at: getAudioExpiryDate(),
+    audio_fingerprint: fingerprint,
+    status: 'uploading',
+    processing_stage: 'uploading',
+    processing_progress: 0,
+    processing_message: 'Importing audio file...',
+    stage_started_at: new Date().toISOString(),
+    performance_level: level
+  };
+
+  let { data: project, error: projectError } = await supabaseAdmin
     .from('projects')
-    .insert({
-      user_id: userId,
-      title,
-      audio_file_name: sanitizedBaseName,
-      audio_file_size: size,
-      audio_duration: estimatedDuration,
-      audio_fingerprint: fingerprint,
-      status: 'uploading',
-      processing_stage: 'uploading',
-      processing_progress: 0,
-      processing_message: 'Importing audio file...',
-      stage_started_at: new Date().toISOString(),
-      performance_level: level
-    } as any)
+    .insert(insertData)
     .select()
     .single() as { data: any; error: any };
+
+  if (projectError && projectError.message?.includes(`'audio_expires_at'`)) {
+    const legacyInsertData = { ...insertData };
+    delete legacyInsertData.audio_expires_at;
+    const retry = await supabaseAdmin
+      .from('projects')
+      .insert(legacyInsertData)
+      .select()
+      .single() as { data: any; error: any };
+    project = retry.data;
+    projectError = retry.error;
+  }
 
   if (projectError || !project) {
     throw new Error(projectError?.message || 'Failed to create project');
@@ -97,19 +108,6 @@ export async function importRecording(params: {
     throw new Error(uploadError?.message || 'Failed to upload audio file to R2');
   }
 
-  if (!global.uploadedFiles) {
-    global.uploadedFiles = new Map();
-  }
-  const inMemoryFile = {
-    buffer,
-    contentType,
-    originalName: fileName,
-    size
-  };
-  global.uploadedFiles.set(storagePath, inMemoryFile);
-  if (sanitizedBaseName !== storagePath) {
-    global.uploadedFiles.set(sanitizedBaseName, inMemoryFile);
-  }
 
   await updateProcessingProgress(project.id, {
     stage: 'transcribing',
@@ -122,24 +120,29 @@ export async function importRecording(params: {
     .update({ processing_started_at: new Date().toISOString() } as any)
     .eq('id', project.id);
 
-  let baseUrl = process.env.VERCEL_URL || 'http://localhost:3000';
-  if (baseUrl && !baseUrl.startsWith('http://') && !baseUrl.startsWith('https://')) {
-    baseUrl = `https://${baseUrl}`;
+  const baseUrl = getAppBaseUrl();
+
+  const internalJobToken = getInternalJobToken();
+  const headers: Record<string, string> = { 'Content-Type': 'application/json' };
+  if (internalJobToken) {
+    headers['x-internal-job-token'] = internalJobToken;
   }
 
-  fetch(`${baseUrl}/api/transcribe`, {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({
-      projectId: project.id,
-      fileName: storagePath,
-      fingerprint,
-      performanceLevel: level,
-      diarizationProvider: (process.env.ASSEMBLYAI_API_KEY || process.env.ASSEMBLYAI_ACCESS_KEY) ? 'assemblyai' : 'deepgram',
-      ...(speakerCount ? { speakerCount } : {}),
-      ...(externalSource ? { externalSource } : {})
-    })
-  }).catch(() => undefined);
+  scheduleBackgroundTask(
+    fetch(`${baseUrl}/api/transcribe`, {
+      method: 'POST',
+      headers,
+      body: JSON.stringify({
+        projectId: project.id,
+        fileName: storagePath,
+        fingerprint,
+        performanceLevel: level,
+        diarizationProvider: (process.env.ASSEMBLYAI_API_KEY || process.env.ASSEMBLYAI_ACCESS_KEY) ? 'assemblyai' : 'deepgram',
+        ...(speakerCount ? { speakerCount } : {}),
+        ...(externalSource ? { externalSource } : {})
+      })
+    }).catch((e) => console.error('Background transcription fetch failed:', e))
+  );
 
   return {
     projectId: project.id,

@@ -33,6 +33,36 @@ interface ClassificationSignal {
   evidence?: string;
 }
 
+function isLikelyPanelPodcast(params: {
+  speakerCount: number;
+  hasModeratorSignal: boolean;
+  hasAlphabeticalMention: boolean;
+  hasInterviewStyle: boolean;
+  hasConversationalStyle: boolean;
+  moderatorConfidence: number;
+  dominantRatio: number;
+}): boolean {
+  const {
+    speakerCount,
+    hasModeratorSignal,
+    hasAlphabeticalMention,
+    hasInterviewStyle,
+    hasConversationalStyle,
+    moderatorConfidence,
+    dominantRatio,
+  } = params;
+
+  if (!hasModeratorSignal || hasAlphabeticalMention) return false;
+  if (speakerCount < 3 || speakerCount > 4) return false;
+
+  // Host-led market/panel podcasts often look "moderated" without being debates.
+  // Bias these mixed-format shows toward PODCAST unless there are formal-debate cues.
+  const hostLedButConversational = dominantRatio >= 0.15 && dominantRatio <= 0.5;
+  const informalFormatSignal = hasInterviewStyle || hasConversationalStyle;
+
+  return informalFormatSignal && hostLedButConversational && moderatorConfidence < 0.9;
+}
+
 // Procedural/moderator language patterns
 const MODERATOR_PATTERNS = [
   /\b(?:next (?:we have|up is|is)|let's (?:hear from|welcome|turn to)|over to you)/gi,
@@ -265,6 +295,15 @@ export function classifyProjectType(
 
   // Signal 7: Turn frequency (debates have structured turns, podcasts are more chaotic)
   const hasStructuredTurns = dynamics.turnFrequency > 2 && dynamics.turnFrequency < 8;
+  const panelPodcastSignal = isLikelyPanelPodcast({
+    speakerCount: dynamics.speakerCount,
+    hasModeratorSignal,
+    hasAlphabeticalMention,
+    hasInterviewStyle,
+    hasConversationalStyle,
+    moderatorConfidence: moderatorDetection.confidence,
+    dominantRatio: dynamics.dominantRatio,
+  });
   signals.push({
     signal: 'structured_turns',
     weight: 0.5,
@@ -272,19 +311,39 @@ export function classifyProjectType(
     evidence: `Turn frequency: ${dynamics.turnFrequency.toFixed(1)}/min`,
   });
 
+  signals.push({
+    signal: 'panel_podcast_shape',
+    weight: 1.0,
+    detected: panelPodcastSignal,
+    evidence: panelPodcastSignal
+      ? 'Moderator-like host with 2-3 guests, but conversational/panel podcast cues dominate'
+      : undefined,
+  });
+
   // Classification logic
   let type: ProjectType;
   let confidence: number;
+  const formalDebateSignal =
+    hasAlphabeticalMention ||
+    dynamics.speakerCount >= 5 ||
+    (hasModeratorSignal &&
+      hasStructuredTurns &&
+      moderatorDetection.confidence >= 0.9 &&
+      !hasInterviewStyle &&
+      !hasConversationalStyle);
 
   if (isSingleSpeaker || isDominantSpeaker) {
     // MONOLOGUE: Single speaker or one speaker dominates >85%
     type = 'MONOLOGUE';
     confidence = isDominantSpeaker ? 0.7 + (dynamics.dominantRatio - 0.85) : 0.95;
-  } else if (hasModeratorSignal && isMultiSpeaker) {
+  } else if (hasModeratorSignal && isMultiSpeaker && formalDebateSignal && !panelPodcastSignal) {
     // DEBATE: Moderator + 3+ speakers
     type = 'DEBATE';
     confidence = 0.6 + (moderatorDetection.confidence * 0.3);
     if (hasAlphabeticalMention) confidence += 0.1;
+  } else if (panelPodcastSignal) {
+    type = 'PODCAST';
+    confidence = hasConversationalStyle ? 0.82 : 0.74;
   } else if (isTwoSpeaker && hasInterviewStyle && !hasConversationalStyle) {
     // INTERVIEW: 2 speakers with interview-style Q&A
     type = 'INTERVIEW';

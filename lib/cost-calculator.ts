@@ -225,21 +225,17 @@ export function formatCost(cost: number): string {
  */
 export function estimateCost(
   audioSeconds: number,
-  performanceLevel: 'basic' | 'standard' | 'premium'
+  performanceLevel: 'standard' | 'pro' | 'basic' | 'premium'
 ): number {
   const minutes = audioSeconds / 60;
 
   switch (performanceLevel) {
+    case 'standard':
     case 'basic':
       // AssemblyAI transcription + diarization (numbered speakers)
       return minutes * PRICING.ASSEMBLYAI_UNIVERSAL.perMinute;
 
-    case 'standard':
-      // AssemblyAI + AI name extraction + summary
-      const baseTranscription = minutes * PRICING.ASSEMBLYAI_UNIVERSAL.perMinute;
-      const estimatedGeneration = 0.05; // AI enhancement
-      return baseTranscription + estimatedGeneration;
-
+    case 'pro':
     case 'premium':
       // AssemblyAI + full AI enhancement (names, roles, chapters, takeaways, quotes)
       const premiumTranscription = minutes * PRICING.ASSEMBLYAI_UNIVERSAL.perMinute;

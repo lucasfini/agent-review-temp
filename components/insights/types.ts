@@ -3,6 +3,31 @@ export type Category = 'concept' | 'person' | 'tool';
 export interface InsightSource {
   title: string;
   url: string;
+  type?: string;
+  description?: string;
+}
+
+export interface PersonProfile {
+  whoTheyAre?: string;
+  currentWork?: string;
+  notableBackground?: string;
+  whyRelevant?: string;
+}
+
+export interface ConceptProfile {
+  plainEnglish?: string;
+  coreMechanism?: string;
+  inThisEpisode?: string;
+  whyRelevant?: string;
+  relatedIdeas?: string[];
+}
+
+export interface ToolProfile {
+  whatItIs?: string;
+  primaryUseCase?: string;
+  whoUsesIt?: string;
+  whyRelevant?: string;
+  alternatives?: string[];
 }
 
 export interface Insight {
@@ -12,6 +37,9 @@ export interface Insight {
   definition: string; // 1-2 sentences
   significance: string; // "Why it matters"
   sources: InsightSource[];
+  personProfile?: PersonProfile;
+  conceptProfile?: ConceptProfile;
+  toolProfile?: ToolProfile;
   // For matching in transcript
   matchText?: string;
   matchVariants?: string[];

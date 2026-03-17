@@ -28,22 +28,22 @@ export function KPICard({
   return (
     <div
       className={cn(
-        "relative overflow-hidden rounded-lg border border-slate-800 bg-slate-900 p-4 shadow-sm transition-all hover:shadow-md",
+        "relative overflow-hidden rounded-lg border border-slate-200 bg-white p-4 shadow-sm transition-all hover:shadow-md dark:border-slate-800 dark:bg-slate-900",
         className
       )}
     >
       <div className="flex items-start justify-between">
         <div className="space-y-1">
-          <p className="text-sm font-medium text-slate-400">{title}</p>
-          <p className="text-2xl font-semibold tracking-tight text-slate-50">
+          <p className="text-sm font-medium text-slate-500 dark:text-slate-400">{title}</p>
+          <p className="text-2xl font-semibold tracking-tight text-slate-900 dark:text-slate-50">
             {value}
           </p>
           {subtitle && (
-            <p className="text-xs text-slate-500">{subtitle}</p>
+            <p className="text-xs text-slate-500 dark:text-slate-400">{subtitle}</p>
           )}
         </div>
         {icon && (
-          <div className="rounded-lg bg-slate-800 p-2 text-slate-400">
+          <div className="rounded-lg bg-slate-100 p-2 text-slate-600 dark:bg-slate-800 dark:text-slate-400">
             {icon}
           </div>
         )}
@@ -53,9 +53,9 @@ export function KPICard({
           <span
             className={cn(
               "inline-flex items-center gap-0.5 rounded-full px-2 py-0.5 text-xs font-medium",
-              trend.direction === "up" && "bg-green-900/30 text-green-400",
-              trend.direction === "down" && "bg-red-900/30 text-red-400",
-              trend.direction === "neutral" && "bg-slate-800 text-slate-400"
+              trend.direction === "up" && "bg-green-100 text-green-700 dark:bg-green-900/30 dark:text-green-400",
+              trend.direction === "down" && "bg-red-100 text-red-700 dark:bg-red-900/30 dark:text-red-400",
+              trend.direction === "neutral" && "bg-slate-100 text-slate-600 dark:bg-slate-800 dark:text-slate-400"
             )}
           >
             {trend.direction === "up" && <TrendingUp className="h-3 w-3" />}
@@ -64,7 +64,7 @@ export function KPICard({
             {trend.value > 0 ? "+" : ""}{trend.value}%
           </span>
           {trend.label && (
-            <span className="text-xs text-slate-500">{trend.label}</span>
+            <span className="text-xs text-slate-500 dark:text-slate-400">{trend.label}</span>
           )}
         </div>
       )}
@@ -92,10 +92,10 @@ export function CollapsibleStatsRow({
         onClick={() => setIsCollapsed(!isCollapsed)}
         className="mb-3 flex w-full items-center justify-between text-left"
       >
-        <span className="text-sm font-medium text-slate-400 uppercase tracking-wider">
+        <span className="text-sm font-medium uppercase tracking-wider text-slate-500 dark:text-slate-400">
           {title}
         </span>
-        <span className="text-xs text-slate-500 hover:text-slate-300">
+        <span className="text-xs text-slate-500 hover:text-slate-700 dark:hover:text-slate-300">
           {isCollapsed ? "Show" : "Hide"}
         </span>
       </button>

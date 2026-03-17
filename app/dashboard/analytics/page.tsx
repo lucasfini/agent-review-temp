@@ -1,19 +1,19 @@
 'use client';
 
 import { useState, useEffect, useMemo, useCallback } from 'react';
-import type { FormEvent } from 'react';
 import { useSearchParams, useRouter } from 'next/navigation';
 import {
   ChevronDown,
   X,
   Target,
-  Calendar,
   Lightbulb,
   BookOpen,
   Upload,
   BarChart3,
   AlertCircle,
-  Loader2
+  Loader2,
+  FileText,
+  DollarSign
 } from 'lucide-react';
 import { useAuth } from '@/lib/auth/context';
 import { DemoTour } from '@/components/demo/DemoTour';
@@ -23,11 +23,12 @@ import { toast } from 'sonner';
 import ConfirmModal from '@/components/ui/confirm-modal';
 
 // New analytics components
-import { KPIGrid } from '@/components/analytics/KPIGrid';
-import { ContentMixSection } from '@/components/analytics/ContentCharts';
+import { KPIGrid, type AnalyticsKpiCard } from '@/components/analytics/KPIGrid';
 import { GoalsSection } from '@/components/analytics/GoalsSection';
 import { InsightsGrid } from '@/components/analytics/InsightsGrid';
 import { InsightsHeader } from '@/components/analytics/InsightsHeader';
+import { ProjectAnalysisSection } from '@/components/analytics/ProjectAnalysisSection';
+import { RunAnalysisSection } from '@/components/analytics/RunAnalysisSection';
 
 // ============================================================================
 // TYPES
@@ -139,31 +140,14 @@ interface AnalyticsData {
     records: InsightRecord[];
     summary: InsightsSummary;
   };
-  rawOutputs: Array<{ id: string; project_id: string; ai_cost_usd: number; created_at: string }>;
+  rawOutputs: Array<{ id: string; project_id: string; ai_cost_usd: number; created_at: string; type: string }>;
   // Real computed data
   trends: {
-    projects: TrendData;
-    outputs: TrendData;
-    processing: TrendData;
     spend: TrendData;
   };
   sparklines: {
-    projects: SparklinePoint[];
-    outputs: SparklinePoint[];
-    processing: SparklinePoint[];
     spend: SparklinePoint[];
   };
-  goalProgress: GoalProgressEntry[];
-}
-
-interface TopicHeatEntry {
-  id: string;
-  label: string;
-  mentions: number;
-  avgShare: number;
-  goalAligned: boolean;
-  lastMention: string | null;
-  status: 'Under' | 'Balanced' | 'Over';
 }
 
 // ============================================================================
@@ -240,27 +224,8 @@ interface GoalProgressEntry {
   progressPercent: number;
 }
 
-/**
- * Bucket records by created_at into 6 time periods and count per bucket.
- */
-function computeSparklineFromDates(
-  records: Array<{ created_at: string }>,
-  timeRange: '7d' | '30d' | '90d'
-): SparklinePoint[] {
-  const buckets = 6;
-  const now = Date.now();
-  const rangeDays = timeRange === '7d' ? 7 : timeRange === '30d' ? 30 : 90;
-  const rangeMs = rangeDays * 24 * 60 * 60 * 1000;
-  const bucketSize = rangeMs / buckets;
-
-  const counts = new Array(buckets).fill(0);
-  for (const record of records) {
-    const age = now - new Date(record.created_at).getTime();
-    if (age > rangeMs || age < 0) continue;
-    const idx = Math.min(buckets - 1, Math.floor((rangeMs - age) / bucketSize));
-    counts[idx]++;
-  }
-  return counts.map(value => ({ value }));
+function formatCurrency(amount: number) {
+  return new Intl.NumberFormat('en-US', { style: 'currency', currency: 'USD' }).format(amount);
 }
 
 /**
@@ -303,6 +268,83 @@ function computeTrend(current: number, previous: number): TrendData {
     direction: pct > 0 ? 'up' : 'down',
     label: 'vs last period'
   };
+}
+
+function computeMetricTrend(
+  current: number,
+  previous: number,
+  betterWhen: 'higher' | 'lower'
+): TrendData & { tone: 'positive' | 'negative' | 'neutral' } {
+  const base = computeTrend(current, previous);
+  if (base.direction === 'neutral') {
+    return { ...base, tone: 'neutral' };
+  }
+
+  const improved =
+    betterWhen === 'higher'
+      ? current >= previous
+      : current <= previous;
+
+  return {
+    ...base,
+    tone: improved ? 'positive' : 'negative'
+  };
+}
+
+function deriveSnapshotCoverageScore(snapshot: CoverageSnapshotRecord | null): number {
+  if (!snapshot) return 0;
+  const analyticsScore = Number(snapshot.analytics?.coverageScore);
+  if (Number.isFinite(analyticsScore) && analyticsScore > 0) {
+    return Math.round(analyticsScore);
+  }
+
+  const topics = Array.isArray(snapshot.topics) ? snapshot.topics : [];
+  if (!topics.length) return 0;
+
+  const totalMentions = topics.reduce((sum, topic) => sum + Number(topic.mentionCount || 0), 0) || 1;
+  const evennessBase =
+    -topics.reduce((acc, topic) => {
+      const share = typeof topic.shareOfVoice === 'number'
+        ? Number(topic.shareOfVoice)
+        : Number(topic.mentionCount || 0) / totalMentions;
+      return acc + (share > 0 ? share * Math.log(share) : 0);
+    }, 0) / Math.log(topics.length || 1);
+  const evenness = Number.isFinite(evennessBase) ? evennessBase : 0;
+  const topicDepth = Math.min(topics.length / 6, 1);
+  return Math.round(((evenness * 0.65) + (topicDepth * 0.35)) * 100);
+}
+
+function buildSnapshotSparkline(
+  snapshots: CoverageSnapshotRecord[],
+  metric: (snapshot: CoverageSnapshotRecord) => number
+): SparklinePoint[] {
+  const ordered = [...snapshots]
+    .sort((a, b) => new Date(a.created_at).getTime() - new Date(b.created_at).getTime())
+    .slice(-6);
+
+  if (ordered.length === 0) {
+    return Array.from({ length: 6 }, () => ({ value: 0 }));
+  }
+
+  const points = ordered.map((snapshot) => ({ value: metric(snapshot) }));
+  while (points.length < 6) {
+    points.unshift({ value: 0 });
+  }
+  return points;
+}
+
+function sumOutputSpendForWindow(
+  outputs: Array<{ created_at: string; ai_cost_usd: number }>,
+  start: Date,
+  end: Date
+) {
+  return outputs.reduce((sum, output) => {
+    const created = new Date(output.created_at);
+    if (created >= start && created < end) {
+      return sum + Number(output.ai_cost_usd || 0);
+    }
+    return sum;
+  }, 0);
 }
 
 /**
@@ -427,82 +469,6 @@ function summarizeCoverage(
   };
 }
 
-function buildTopicHeat(
-  snapshots: CoverageSnapshotRecord[],
-  goals: NarrativeGoalRecord[],
-  projectIds?: string[]
-): TopicHeatEntry[] {
-  let filteredSnapshots = snapshots;
-  if (projectIds && projectIds.length > 0) {
-    filteredSnapshots = snapshots.filter(s => projectIds.includes(s.project_id));
-  }
-
-  if (!filteredSnapshots.length) return [];
-
-  const goalMatchers = new Set(
-    goals.map(goal => (goal.topic_id || goal.topic_label || '').toLowerCase())
-  );
-
-  const topicMap = new Map<string, {
-    id: string;
-    label: string;
-    mentions: number;
-    shareTotal: number;
-    samples: number;
-    goalAligned: boolean;
-    lastMention: string | null;
-  }>();
-
-  filteredSnapshots.forEach(snapshot => {
-    const topics = Array.isArray(snapshot.topics) ? snapshot.topics : [];
-    topics.forEach((topic: any) => {
-      const key = String(topic.id || topic.label || 'topic');
-      const label = String(topic.label || topic.id || 'Topic');
-      const entry = topicMap.get(key) || {
-        id: key,
-        label,
-        mentions: 0,
-        shareTotal: 0,
-        samples: 0,
-        goalAligned: false,
-        lastMention: null
-      };
-
-      entry.mentions += Number(topic.mentionCount || 0);
-      entry.shareTotal += Number(topic.shareOfVoice || 0);
-      entry.samples += 1;
-      entry.goalAligned =
-        entry.goalAligned ||
-        goalMatchers.has(key.toLowerCase()) ||
-        goalMatchers.has(label.toLowerCase());
-      if (!entry.lastMention || new Date(snapshot.created_at) > new Date(entry.lastMention)) {
-        entry.lastMention = snapshot.created_at;
-      }
-
-      topicMap.set(key, entry);
-    });
-  });
-
-  return Array.from(topicMap.values())
-    .map(entry => {
-      const avgShare = entry.samples ? (entry.shareTotal / entry.samples) : 0;
-      let status: TopicHeatEntry['status'] = 'Balanced';
-      if (avgShare > 0.4) status = 'Over';
-      else if (avgShare < 0.12) status = 'Under';
-
-      return {
-        id: entry.id,
-        label: entry.label,
-        mentions: entry.mentions,
-        avgShare: Number(avgShare.toFixed(2)),
-        goalAligned: entry.goalAligned,
-        lastMention: entry.lastMention,
-        status
-      };
-    })
-    .sort((a, b) => b.mentions - a.mentions);
-}
-
 // ============================================================================
 // SUB-COMPONENTS
 // ============================================================================
@@ -515,7 +481,7 @@ function ProjectSwitcher({
 }: {
   projects: ProjectSummary[];
   selectedProjectId: string | null;
-  onSelect: (projectId: string | null) => void;
+  onSelect: (projectId: string) => void;
 }) {
   const [isOpen, setIsOpen] = useState(false);
 
@@ -530,17 +496,13 @@ function ProjectSwitcher({
         onClick={() => setIsOpen(!isOpen)}
         aria-haspopup="listbox"
         aria-expanded={isOpen}
-        aria-label={`Filter projects: ${selectedProject ? selectedProject.title : 'All Projects'}`}
-        className={`inline-flex items-center gap-2 px-4 py-2 text-sm font-medium rounded-lg transition-colors ${
-          selectedProject
-            ? 'bg-blue-900/20 text-blue-400'
-            : 'text-slate-400 hover:text-slate-50 hover:bg-slate-800/50'
-        }`}
+        aria-label={`Selected project: ${selectedProject ? selectedProject.title : 'Select project'}`}
+        className="inline-flex w-full max-w-[min(100%,28rem)] items-center gap-2 rounded-lg border border-slate-300 bg-transparent px-4 py-2.5 text-sm font-medium text-slate-700 transition-colors hover:bg-slate-50 active:bg-slate-100 dark:border-slate-700 dark:text-slate-200 dark:hover:bg-slate-900 dark:active:bg-slate-800 sm:w-auto sm:min-w-[20rem]"
       >
-        <span className="max-w-[200px] truncate">
-          {selectedProject ? selectedProject.title : 'All Projects'}
+        <span className="min-w-0 flex-1 truncate text-left">
+          {selectedProject ? selectedProject.title : 'Select project'}
         </span>
-        <ChevronDown className={`h-4 w-4 transition-transform ${isOpen ? 'rotate-180' : ''}`} />
+        <ChevronDown className={`h-4 w-4 shrink-0 transition-transform ${isOpen ? 'rotate-180' : ''}`} />
       </button>
 
       {isOpen && (
@@ -549,23 +511,8 @@ function ProjectSwitcher({
           <div
             role="listbox"
             aria-label="Select project"
-            className="absolute left-0 mt-2 w-64 bg-slate-900 border border-slate-700 rounded-lg shadow-lg z-20 max-h-80 overflow-y-auto"
+            className="absolute left-0 mt-2 w-64 bg-white dark:bg-slate-900 border border-slate-300 dark:border-slate-700 rounded-lg shadow-lg z-20 max-h-80 overflow-y-auto text-slate-900 dark:text-slate-50"
           >
-            <button
-              type="button"
-              role="option"
-              aria-selected={!selectedProjectId}
-              onClick={() => {
-                onSelect(null);
-                setIsOpen(false);
-              }}
-              className={`w-full text-left px-4 py-2 text-sm hover:bg-slate-800/50 ${
-                !selectedProjectId ? 'bg-blue-900/20 text-blue-400 font-medium' : 'text-slate-300'
-              }`}
-            >
-              All Projects
-            </button>
-            <div className="border-t border-slate-800" />
             {projects.map(project => (
               <button
                 key={project.id}
@@ -576,12 +523,12 @@ function ProjectSwitcher({
                   onSelect(project.id);
                   setIsOpen(false);
                 }}
-                className={`w-full text-left px-4 py-2 text-sm hover:bg-slate-800/50 ${
-                  selectedProjectId === project.id ? 'bg-blue-900/20 text-blue-400 font-medium' : 'text-slate-300'
+                className={`w-full text-left px-4 py-2 text-sm hover:bg-slate-50 dark:hover:bg-slate-800/50 ${
+                  selectedProjectId === project.id ? 'bg-blue-50 dark:bg-blue-900/20 text-blue-600 dark:text-blue-400 font-medium' : 'text-slate-600 dark:text-slate-300'
                 }`}
               >
                 <span className="block truncate">{project.title || 'Untitled'}</span>
-                <span className="text-xs text-slate-400">
+                <span className="text-xs text-slate-500 dark:text-slate-400">
                   {new Date(project.created_at).toLocaleDateString()}
                 </span>
               </button>
@@ -609,37 +556,37 @@ function ExampleGoalsModal({
     <div className="fixed inset-0 z-50 overflow-y-auto" role="dialog" aria-modal="true" aria-labelledby="example-goals-title">
       <div className="flex min-h-full items-center justify-center p-4">
         <div className="fixed inset-0 bg-black/30" onClick={onClose} />
-        <div className="relative bg-slate-900 rounded-xl shadow-2xl max-w-2xl w-full max-h-[80vh] overflow-hidden">
-          <div className="flex items-center justify-between p-4 border-b border-slate-700">
+        <div className="relative bg-white dark:bg-slate-900 rounded-xl shadow-2xl max-w-2xl w-full max-h-[80vh] overflow-hidden">
+          <div className="flex items-center justify-between p-4 border-b border-slate-300 dark:border-slate-700">
             <div className="flex items-center gap-2">
               <BookOpen className="h-5 w-5 text-indigo-600" />
-              <h2 id="example-goals-title" className="text-lg font-semibold text-slate-50">Example Goals Library</h2>
+              <h2 id="example-goals-title" className="text-lg font-semibold text-slate-900 dark:text-slate-50">Example Goals Library</h2>
             </div>
             <button
               type="button"
               onClick={onClose}
-              className="p-1 rounded-full hover:bg-slate-800"
+              className="p-1 rounded-full hover:bg-slate-100 dark:hover:bg-slate-800"
               aria-label="Close example goals"
             >
-              <X className="h-5 w-5 text-slate-400" />
+              <X className="h-5 w-5 text-slate-500 dark:text-slate-400" />
             </button>
           </div>
           <div className="p-4 overflow-y-auto max-h-[calc(80vh-80px)] space-y-4">
             {EXAMPLE_NARRATIVE_GOALS.map((category, idx) => (
-              <div key={idx} className="bg-slate-800/50 rounded-lg p-4">
-                <h3 className="font-semibold text-slate-50 mb-1">{category.category}</h3>
-                <p className="text-xs text-slate-400 mb-3">{category.description}</p>
+              <div key={idx} className="bg-slate-100 dark:bg-slate-800/50 rounded-lg p-4">
+                <h3 className="font-semibold text-slate-900 dark:text-slate-50 mb-1">{category.category}</h3>
+                <p className="text-xs text-slate-500 dark:text-slate-400 mb-3">{category.description}</p>
                 <div className="space-y-2">
                   {category.examples.map((example, exIdx) => (
                     <div
                       key={exIdx}
-                      className="bg-slate-900 rounded-lg border border-slate-700 p-3 hover:border-indigo-300 transition-colors"
+                      className="bg-white dark:bg-slate-900 rounded-lg border border-slate-300 dark:border-slate-700 p-3 hover:border-indigo-300 transition-colors"
                     >
                       <div className="flex items-start justify-between gap-2">
                         <div className="min-w-0">
-                          <p className="text-sm font-medium text-slate-50">{example.label}</p>
-                          <p className="text-xs text-slate-400 mt-0.5">{example.description}</p>
-                          <div className="flex items-center gap-2 mt-2 text-xs text-slate-400">
+                          <p className="text-sm font-medium text-slate-900 dark:text-slate-50">{example.label}</p>
+                          <p className="text-xs text-slate-500 dark:text-slate-400 mt-0.5">{example.description}</p>
+                          <div className="flex items-center gap-2 mt-2 text-xs text-slate-500 dark:text-slate-400">
                             <span className="uppercase font-semibold text-indigo-600">{example.type}</span>
                             <span>•</span>
                             <span>{example.target} mention{example.target !== 1 ? 's' : ''}</span>
@@ -661,7 +608,7 @@ function ExampleGoalsModal({
                               cadence: example.cadence
                             });
                           }}
-                          className="flex-shrink-0 text-xs font-medium text-indigo-600 hover:text-indigo-300"
+                          className="flex-shrink-0 text-xs font-medium text-indigo-600 hover:text-indigo-500 dark:hover:text-indigo-300"
                         >
                           + Add
                         </button>
@@ -692,6 +639,7 @@ export default function AnalyticsPage() {
 
   const [analytics, setAnalytics] = useState<AnalyticsData | null>(null);
   const [loading, setLoading] = useState(true);
+  const [analyticsError, setAnalyticsError] = useState<string | null>(null);
   const [timeRange, setTimeRange] = useState<'7d' | '30d' | '90d'>('30d');
 
   // Tab state
@@ -700,22 +648,15 @@ export default function AnalyticsPage() {
   // Goal form state
   const [goalSaving, setGoalSaving] = useState(false);
   const [goalError, setGoalError] = useState('');
-  const [archivingGoal, setArchivingGoal] = useState<string | null>(null);
   const [pendingArchiveGoal, setPendingArchiveGoal] = useState<{ id: string; label: string } | null>(null);
   const [exampleGoalsModalOpen, setExampleGoalsModalOpen] = useState(false);
   const [selectedSnapshotId, setSelectedSnapshotId] = useState<string | null>(null);
-  const [bannerDismissed, setBannerDismissed] = useState(false);
   const { runningCoverageIds, startCoverage, stopCoverage } = useCoverageProgress();
 
-  useEffect(() => {
-    if (user) {
-      fetchAnalytics();
-    }
-  }, [user, timeRange]);
-
-  const fetchAnalytics = async () => {
+  const fetchAnalytics = useCallback(async () => {
     try {
       setLoading(true);
+      setAnalyticsError(null);
 
       if (!user?.id) {
         setLoading(false);
@@ -727,47 +668,31 @@ export default function AnalyticsPage() {
       const startDate = new Date(now.getTime() - rangeDays * 24 * 60 * 60 * 1000);
       const prevStartDate = new Date(startDate.getTime() - rangeDays * 24 * 60 * 60 * 1000);
 
-      // Fetch current period projects
+      // Fetch all projects for project-first analytics
       const { data: projects, error: projectsError } = await supabase
         .from('projects')
         .select('*')
         .eq('user_id', user.id)
-        .gte('created_at', startDate.toISOString())
         .order('created_at', { ascending: false }) as { data: any[] | null; error: any };
 
       if (projectsError) {
         console.error('Error fetching projects:', projectsError);
+        setAnalyticsError('We could not load your analytics right now. Please try again.');
         return;
       }
 
-      // Fetch current period outputs
+      // Fetch all outputs so project content mix and spend trends can be derived locally
       const { data: outputs, error: outputsError } = await supabase
         .from('outputs')
         .select('*')
         .eq('user_id', user.id)
-        .gte('created_at', startDate.toISOString())
         .order('created_at', { ascending: false }) as { data: any[] | null; error: any };
 
       if (outputsError) {
         console.error('Error fetching outputs:', outputsError);
+        setAnalyticsError('We could not load your analytics right now. Please try again.');
         return;
       }
-
-      // Fetch previous period projects (lightweight — just for trend comparison)
-      const { data: prevProjects } = await supabase
-        .from('projects')
-        .select('id, created_at, processing_time_seconds')
-        .eq('user_id', user.id)
-        .gte('created_at', prevStartDate.toISOString())
-        .lt('created_at', startDate.toISOString()) as { data: any[] | null; error: any };
-
-      // Fetch previous period outputs (lightweight)
-      const { data: prevOutputs } = await supabase
-        .from('outputs')
-        .select('id, ai_cost_usd, created_at')
-        .eq('user_id', user.id)
-        .gte('created_at', prevStartDate.toISOString())
-        .lt('created_at', startDate.toISOString()) as { data: any[] | null; error: any };
 
       // Fetch coverage snapshots
       const { data: coverageSnapshots, error: coverageError } = await supabase
@@ -813,9 +738,6 @@ export default function AnalyticsPage() {
       // ---- Compute real values ----
       const safeProjects = projects || [];
       const safeOutputs = outputs || [];
-      const safePrevProjects = prevProjects || [];
-      const safePrevOutputs = prevOutputs || [];
-
       const totalProjects = safeProjects.length;
       const totalOutputs = safeOutputs.length;
       const totalProcessingTime = safeProjects.reduce((sum: number, p: any) => sum + (p.processing_time_seconds || 0), 0);
@@ -832,30 +754,24 @@ export default function AnalyticsPage() {
       // Fallback to flat estimate only if all real costs are 0
       const totalAiSpend = realAiSpend > 0 ? realAiSpend : safeOutputs.length * 0.05;
 
-      // Previous period totals for trends
-      const prevTotalProjects = safePrevProjects.length;
-      const prevTotalOutputs = safePrevOutputs.length;
-      const prevProcessingTime = safePrevProjects.reduce((sum: number, p: any) => sum + (p.processing_time_seconds || 0), 0);
-      const prevAiSpend = safePrevOutputs.reduce((sum: number, o: any) => sum + Number(o.ai_cost_usd || 0), 0);
+      const currentSpend = sumOutputSpendForWindow(
+        safeOutputs.map((o: any) => ({ created_at: o.created_at, ai_cost_usd: Number(o.ai_cost_usd || 0) })),
+        startDate,
+        now
+      );
+      const previousSpend = sumOutputSpendForWindow(
+        safeOutputs.map((o: any) => ({ created_at: o.created_at, ai_cost_usd: Number(o.ai_cost_usd || 0) })),
+        prevStartDate,
+        startDate
+      );
 
-      // Real trends
       const trends = {
-        projects: computeTrend(totalProjects, prevTotalProjects),
-        outputs: computeTrend(totalOutputs, prevTotalOutputs),
-        processing: computeTrend(totalProcessingTime, prevProcessingTime),
-        spend: computeTrend(totalAiSpend, prevAiSpend || (safePrevOutputs.length * 0.05))
+        spend: computeTrend(currentSpend, previousSpend)
       };
 
-      // Real sparklines
       const sparklines = {
-        projects: computeSparklineFromDates(safeProjects, timeRange),
-        outputs: computeSparklineFromDates(safeOutputs, timeRange),
-        processing: computeSparklineFromValues(
-          safeProjects.map((p: any) => ({ created_at: p.created_at, value: p.processing_time_seconds || 0 })),
-          timeRange
-        ),
         spend: computeSparklineFromValues(
-          safeOutputs.map((o: any) => ({ created_at: o.created_at, value: Number(o.ai_cost_usd || 0.05) })),
+          safeOutputs.map((o: any) => ({ created_at: o.created_at, value: Number(o.ai_cost_usd || 0) })),
           timeRange
         )
       };
@@ -888,8 +804,6 @@ export default function AnalyticsPage() {
       const coverageSummary = summarizeCoverage(coverageSnapshotData, coverageGoalData);
 
       // Real goal progress
-      const goalProgress = computeAllGoalProgress(coverageGoalData, coverageSnapshotData);
-
       const projectSummaries: ProjectSummary[] = safeProjects.map((project: any) => ({
         id: project.id,
         title: project.title,
@@ -923,55 +837,90 @@ export default function AnalyticsPage() {
         },
         trends,
         sparklines,
-        goalProgress,
         rawOutputs: safeOutputs.map((o: any) => ({
           id: o.id,
           project_id: o.project_id,
           ai_cost_usd: Number(o.ai_cost_usd || 0),
-          created_at: o.created_at
+          created_at: o.created_at,
+          type: o.type || 'unknown'
         }))
       });
     } catch (error) {
       console.error('Error fetching analytics:', error);
+      setAnalyticsError('We could not load your analytics right now. Please try again.');
     } finally {
       setLoading(false);
     }
-  };
+  }, [timeRange, user?.id]);
+
+  useEffect(() => {
+    if (user) {
+      fetchAnalytics();
+    }
+  }, [fetchAnalytics, user]);
 
   // ============================================================================
   // COMPUTED VALUES
   // ============================================================================
 
-  const selectedProjectIds = useMemo(() => {
-    if (!projectIdFromUrl) return undefined;
-    return [projectIdFromUrl];
-  }, [projectIdFromUrl]);
-
-  const filteredCoverageSummary = useMemo(() => {
-    if (!analytics?.coverage) return analytics?.coverage?.summary;
-    return summarizeCoverage(analytics.coverage.snapshots, analytics.coverage.goals, selectedProjectIds);
-  }, [analytics, selectedProjectIds]);
-
-  const allTopics = useMemo(() => {
-    if (!analytics?.coverage) return [];
-    return buildTopicHeat(analytics.coverage.snapshots, analytics.coverage.goals, selectedProjectIds);
-  }, [analytics, selectedProjectIds]);
-
   const coverageGoals = analytics?.coverage?.goals || [];
   const demoGoalsFallback = [
-    { topic_id: 'ai-healthcare', topic_label: 'AI in Healthcare', goal_type: 'include', target_mentions: 3, cadence_days: 30, status: 'active', created_at: new Date().toISOString(), updated_at: new Date().toISOString() },
-    { topic_id: 'leadership-mindset', topic_label: 'Leadership Mindset', goal_type: 'include', target_mentions: 2, cadence_days: 30, status: 'active', created_at: new Date().toISOString(), updated_at: new Date().toISOString() },
-    { topic_id: 'cta-newsletter', topic_label: 'Subscribe to Newsletter', goal_type: 'cta', target_mentions: 1, cadence_days: 30, status: 'active', created_at: new Date().toISOString(), updated_at: new Date().toISOString() },
+    { id: 'demo-ai-healthcare', topic_id: 'ai-healthcare', topic_label: 'AI in Healthcare', goal_type: 'include', target_mentions: 3, cadence_days: 30, status: 'active', created_at: new Date().toISOString(), updated_at: new Date().toISOString() },
+    { id: 'demo-leadership-mindset', topic_id: 'leadership-mindset', topic_label: 'Leadership Mindset', goal_type: 'include', target_mentions: 2, cadence_days: 30, status: 'active', created_at: new Date().toISOString(), updated_at: new Date().toISOString() },
+    { id: 'demo-cta-newsletter', topic_id: 'cta-newsletter', topic_label: 'Subscribe to Newsletter', goal_type: 'cta', target_mentions: 1, cadence_days: 30, status: 'active', created_at: new Date().toISOString(), updated_at: new Date().toISOString() },
   ];
   const effectiveGoals = isDemoMode && coverageGoals.length === 0 ? demoGoalsFallback : coverageGoals;
+
+  const projectTitleMap = useMemo(() => {
+    const map: Record<string, string> = {};
+    for (const p of (analytics?.projectsSummary || [])) {
+      map[p.id] = p.title;
+    }
+    return map;
+  }, [analytics?.projectsSummary]);
+
+  const selectedProject = useMemo(
+    () => analytics?.projectsSummary.find((project) => project.id === projectIdFromUrl) || null,
+    [analytics?.projectsSummary, projectIdFromUrl]
+  );
+
+  const projectSnapshots = useMemo(() => {
+    if (!analytics || !projectIdFromUrl) return [];
+    return analytics.coverage.snapshots.filter((snapshot) => snapshot.project_id === projectIdFromUrl);
+  }, [analytics, projectIdFromUrl]);
+
+  const latestSnapshot = projectSnapshots[0] || null;
+  const previousSnapshot = projectSnapshots[1] || null;
+
+  const selectedSnapshot = useMemo(() => {
+    if (!selectedSnapshotId) return latestSnapshot;
+    return projectSnapshots.find((snapshot) => snapshot.id === selectedSnapshotId) || latestSnapshot;
+  }, [selectedSnapshotId, projectSnapshots, latestSnapshot]);
+
+  const selectedProjectOutputs = useMemo(() => {
+    if (!analytics || !projectIdFromUrl) return [];
+    return analytics.rawOutputs.filter((output) => output.project_id === projectIdFromUrl);
+  }, [analytics, projectIdFromUrl]);
+
+  const selectedProjectInsights = useMemo(() => {
+    if (!analytics || !projectIdFromUrl) return [];
+    return analytics.insights.records.filter((insight) => insight.project_id === projectIdFromUrl);
+  }, [analytics, projectIdFromUrl]);
+
+  const selectedProjectHasTranscript = Boolean(selectedProject?.transcription_text && selectedProject.transcription_text.length > 0);
+  const selectedProjectHasSnapshot = projectSnapshots.length > 0;
+
+  const selectedGoalProgress = useMemo(
+    () => computeAllGoalProgress(effectiveGoals, projectSnapshots),
+    [effectiveGoals, projectSnapshots]
+  );
 
   const suggestedGoals = useMemo(() => {
     const suggestions: { label: string; type: string; target: number; cadence: number | null }[] = [];
     const seen = new Set<string>();
-    const snapshots = (analytics?.coverage?.snapshots || []).slice(0, 5);
     const normalize = (val: any) => String(val || '').trim();
 
-    snapshots.forEach(snapshot => {
+    projectSnapshots.slice(0, 5).forEach((snapshot) => {
       (snapshot.topics || []).forEach((topic: any) => {
         const label = normalize(topic.label || topic.name || topic.title || topic.id);
         if (!label) return;
@@ -992,60 +941,181 @@ export default function AnalyticsPage() {
 
     if (suggestions.length > 0) return suggestions.slice(0, 6);
     return CURATED_GOAL_PRESETS.slice(0, 6) as { label: string; type: string; target: number; cadence: number | null }[];
-  }, [analytics]);
+  }, [projectSnapshots]);
 
-  const coverageTimeline = useMemo(() => {
-    const snapshots = analytics?.coverage?.snapshots || [];
-    if (!selectedProjectIds) return snapshots.slice(0, 10);
-    return snapshots.filter(s => selectedProjectIds.includes(s.project_id)).slice(0, 10);
-  }, [analytics, selectedProjectIds]);
+  const coverageTimeline = useMemo(() => projectSnapshots.slice(0, 10), [projectSnapshots]);
 
-  const projectTitleMap = useMemo(() => {
-    const map: Record<string, string> = {};
-    for (const p of (analytics?.projectsSummary || [])) {
-      map[p.id] = p.title;
-    }
-    return map;
-  }, [analytics?.projectsSummary]);
+  const displayedOpportunities = useMemo(() => {
+    const snapshot = selectedSnapshot;
+    if (!snapshot) return [];
+    return (snapshot.opportunities || []).map((op: any, index: number) => ({
+      id: `${snapshot.id}-${index}`,
+      label: op.label || 'Opportunity',
+      type: op.type || 'balanced',
+      severity: op.severity || 'medium',
+      summary: op.summary || '',
+      recommendedAction: op.recommendedAction || '',
+      projectTitle: snapshot.project_title,
+      created_at: snapshot.created_at,
+      topicId: op.topicId
+    }));
+  }, [selectedSnapshot]);
+
+  const topicHeat = useMemo(() => {
+    const topics = Array.isArray(selectedSnapshot?.topics) ? selectedSnapshot.topics : [];
+    return topics
+      .map((topic: any) => ({
+        label: String(topic.label || topic.id || 'Topic'),
+        shareOfVoice: typeof topic.shareOfVoice === 'number' ? Number(topic.shareOfVoice) : 0,
+        mentionCount: Number(topic.mentionCount || 0)
+      }))
+      .sort((a, b) => b.shareOfVoice - a.shareOfVoice || b.mentionCount - a.mentionCount);
+  }, [selectedSnapshot]);
+
+  const selectedProjectContentBreakdown = useMemo(() => {
+    return selectedProjectOutputs.reduce((acc, output) => {
+      const key = output.type || 'unknown';
+      acc[key] = (acc[key] || 0) + 1;
+      return acc;
+    }, {} as Record<string, number>);
+  }, [selectedProjectOutputs]);
+
+  const currentRangeStart = useMemo(() => {
+    const rangeDays = timeRange === '7d' ? 7 : timeRange === '30d' ? 30 : 90;
+    return new Date(Date.now() - rangeDays * 24 * 60 * 60 * 1000);
+  }, [timeRange]);
+
+  const previousRangeStart = useMemo(() => {
+    const rangeDays = timeRange === '7d' ? 7 : timeRange === '30d' ? 30 : 90;
+    return new Date(currentRangeStart.getTime() - rangeDays * 24 * 60 * 60 * 1000);
+  }, [currentRangeStart, timeRange]);
 
   const filteredAiSpend = useMemo(() => {
-    if (!analytics) return 0;
-    const filteredOutputs = projectIdFromUrl
-      ? analytics.rawOutputs.filter(o => o.project_id === projectIdFromUrl)
-      : analytics.rawOutputs;
-    const filteredSnapshots = projectIdFromUrl
-      ? analytics.coverage.snapshots.filter(s => s.project_id === projectIdFromUrl)
-      : analytics.coverage.snapshots;
-    const filteredInsights = projectIdFromUrl
-      ? analytics.insights.records.filter(i => i.project_id === projectIdFromUrl)
-      : analytics.insights.records;
-    const outputCost = filteredOutputs.reduce((sum, o) => sum + o.ai_cost_usd, 0);
-    const snapshotCost = filteredSnapshots.reduce((sum, s) => sum + Number(s.ai_cost_usd || s.ai_usage?.costUsd || 0), 0);
-    const insightCost = filteredInsights.reduce((sum, i) => sum + Number(i.cost_usd || 0), 0);
-    const realSpend = outputCost + snapshotCost + insightCost;
-    return realSpend > 0 ? realSpend : filteredOutputs.length * 0.05;
-  }, [analytics, projectIdFromUrl]);
+    const now = new Date();
+    const outputCost = sumOutputSpendForWindow(selectedProjectOutputs, currentRangeStart, now);
+    const snapshotCost = projectSnapshots.reduce((sum, snapshot) => {
+      const created = new Date(snapshot.created_at);
+      if (created >= currentRangeStart && created < now) {
+        return sum + Number(snapshot.ai_cost_usd || snapshot.ai_usage?.costUsd || 0);
+      }
+      return sum;
+    }, 0);
+    const insightCost = selectedProjectInsights.reduce((sum, insight) => {
+      const created = new Date(insight.created_at);
+      if (created >= currentRangeStart && created < now) {
+        return sum + Number(insight.cost_usd || 0);
+      }
+      return sum;
+    }, 0);
+    return outputCost + snapshotCost + insightCost;
+  }, [selectedProjectOutputs, projectSnapshots, selectedProjectInsights, currentRangeStart]);
 
-  // Stale detection logic
+  const previousAiSpend = useMemo(() => {
+    const outputCost = sumOutputSpendForWindow(selectedProjectOutputs, previousRangeStart, currentRangeStart);
+    const snapshotCost = projectSnapshots.reduce((sum, snapshot) => {
+      const created = new Date(snapshot.created_at);
+      if (created >= previousRangeStart && created < currentRangeStart) {
+        return sum + Number(snapshot.ai_cost_usd || snapshot.ai_usage?.costUsd || 0);
+      }
+      return sum;
+    }, 0);
+    const insightCost = selectedProjectInsights.reduce((sum, insight) => {
+      const created = new Date(insight.created_at);
+      if (created >= previousRangeStart && created < currentRangeStart) {
+        return sum + Number(insight.cost_usd || 0);
+      }
+      return sum;
+    }, 0);
+    return outputCost + snapshotCost + insightCost;
+  }, [selectedProjectOutputs, projectSnapshots, selectedProjectInsights, previousRangeStart, currentRangeStart]);
+
+  const aiSpendSparkline = useMemo(() => {
+    const spendRecords = [
+      ...selectedProjectOutputs.map((output) => ({ created_at: output.created_at, value: Number(output.ai_cost_usd || 0) })),
+      ...projectSnapshots.map((snapshot) => ({ created_at: snapshot.created_at, value: Number(snapshot.ai_cost_usd || snapshot.ai_usage?.costUsd || 0) })),
+      ...selectedProjectInsights.map((insight) => ({ created_at: insight.created_at, value: Number(insight.cost_usd || 0) })),
+    ];
+    return computeSparklineFromValues(spendRecords, timeRange);
+  }, [selectedProjectOutputs, projectSnapshots, selectedProjectInsights, timeRange]);
+
+  const analysisMetrics = useMemo(() => {
+    const topicCoverageCurrent = deriveSnapshotCoverageScore(latestSnapshot);
+    const topicCoveragePrevious = deriveSnapshotCoverageScore(previousSnapshot);
+    const ctaGapCurrent = (latestSnapshot?.opportunities || []).filter((op: any) => op.type === 'cta-gap').length;
+    const ctaGapPrevious = (previousSnapshot?.opportunities || []).filter((op: any) => op.type === 'cta-gap').length;
+    const editorialDebtCurrent = (latestSnapshot?.opportunities || []).filter((op: any) => ['debt', 'underrepresented'].includes(op.type)).length;
+    const editorialDebtPrevious = (previousSnapshot?.opportunities || []).filter((op: any) => ['debt', 'underrepresented'].includes(op.type)).length;
+
+    const cards: AnalyticsKpiCard[] = [
+      {
+        title: 'Topic Coverage',
+        value: selectedProjectHasSnapshot ? `${topicCoverageCurrent}%` : '--',
+        note: 'Share of voice mapped across recurring themes.',
+        trend: {
+          ...computeMetricTrend(topicCoverageCurrent, topicCoveragePrevious, 'higher'),
+          label: 'vs previous run'
+        },
+        sparkline: buildSnapshotSparkline(projectSnapshots, deriveSnapshotCoverageScore),
+        icon: <FileText className="h-5 w-5" />,
+        iconBg: 'bg-cyan-50 text-cyan-600 dark:bg-cyan-900/20 dark:text-cyan-300',
+        sparklineColor: '#38bdf8'
+      },
+      {
+        title: 'CTA Cadence',
+        value: selectedProjectHasSnapshot ? `${ctaGapCurrent} ${ctaGapCurrent === 1 ? 'gap' : 'gaps'}` : '--',
+        note: 'Missed asks detected before publishing.',
+        trend: {
+          ...computeMetricTrend(ctaGapCurrent, ctaGapPrevious, 'lower'),
+          label: 'vs previous run'
+        },
+        sparkline: buildSnapshotSparkline(projectSnapshots, (snapshot) => (snapshot.opportunities || []).filter((op: any) => op.type === 'cta-gap').length),
+        icon: <Target className="h-5 w-5" />,
+        iconBg: 'bg-amber-50 text-amber-600 dark:bg-amber-900/20 dark:text-amber-300',
+        sparklineColor: '#f59e0b'
+      },
+      {
+        title: 'Editorial Debt',
+        value: selectedProjectHasSnapshot ? `${editorialDebtCurrent}` : '--',
+        note: 'Under-covered ideas surfaced for follow-up.',
+        trend: {
+          ...computeMetricTrend(editorialDebtCurrent, editorialDebtPrevious, 'lower'),
+          label: 'vs previous run'
+        },
+        sparkline: buildSnapshotSparkline(projectSnapshots, (snapshot) => (snapshot.opportunities || []).filter((op: any) => ['debt', 'underrepresented'].includes(op.type)).length),
+        icon: <Lightbulb className="h-5 w-5" />,
+        iconBg: 'bg-fuchsia-50 text-fuchsia-600 dark:bg-fuchsia-900/20 dark:text-fuchsia-300',
+        sparklineColor: '#a855f7'
+      },
+      {
+        title: 'AI Spend',
+        value: formatCurrency(filteredAiSpend),
+        note: `${timeRange.toUpperCase()} spend across outputs and analysis runs.`,
+        trend: {
+          ...computeTrend(filteredAiSpend, previousAiSpend),
+          tone: filteredAiSpend <= previousAiSpend ? 'positive' : 'negative',
+          label: 'vs last period'
+        },
+        sparkline: aiSpendSparkline,
+        icon: <DollarSign className="h-5 w-5" />,
+        iconBg: 'bg-blue-50 text-blue-600 dark:bg-blue-900/20 dark:text-blue-300',
+        sparklineColor: '#3b82f6'
+      }
+    ];
+
+    return {
+      topicCoverageCurrent,
+      ctaGapCurrent,
+      editorialDebtCurrent,
+      cards
+    };
+  }, [latestSnapshot, previousSnapshot, selectedProjectHasSnapshot, projectSnapshots, filteredAiSpend, previousAiSpend, aiSpendSparkline, timeRange]);
+
   const isStale = useMemo(() => {
-    if (!analytics?.coverage?.snapshots?.length) return false;
-    
-    // Get latest analysis timestamp (respecting filter if active)
-    let snapshots = analytics.coverage.snapshots;
-    if (selectedProjectIds && selectedProjectIds.length > 0) {
-      snapshots = snapshots.filter(s => selectedProjectIds.includes(s.project_id));
-    }
-    
-    if (!snapshots.length) return false;
-    
-    const lastAnalysisTime = Math.max(...snapshots.map(s => new Date(s.created_at).getTime()));
-    
-    // Get latest goal modification
-    if (!analytics.coverage.goals.length) return false;
-    const goalsLastModified = Math.max(...analytics.coverage.goals.map(g => new Date(g.updated_at).getTime()));
-    
-    return goalsLastModified > lastAnalysisTime;
-  }, [analytics, selectedProjectIds]);
+    if (!projectSnapshots.length || !analytics?.coverage.goals.length) return false;
+    const lastAnalysisTime = Math.max(...projectSnapshots.map(s => new Date(s.created_at).getTime()));
+    const lastGoalChange = Math.max(...analytics.coverage.goals.map(g => new Date(g.updated_at).getTime()));
+    return lastGoalChange > lastAnalysisTime;
+  }, [analytics, projectSnapshots]);
 
   const goalsLastModified = useMemo(() => {
     if (!analytics?.coverage?.goals?.length) return null;
@@ -1058,58 +1128,38 @@ export default function AnalyticsPage() {
   }, [analytics?.coverage?.goals]);
 
   // Projects with transcription but no coverage snapshot
-  const unanalyzedProjects = useMemo(() => {
-    if (!analytics?.projectsSummary || !analytics?.coverage?.snapshots) return [];
-    const analyzedProjectIds = new Set(analytics.coverage.snapshots.map(s => s.project_id));
-    return analytics.projectsSummary.filter(
-      p => p.transcription_text && p.transcription_text.length > 0 && !analyzedProjectIds.has(p.id)
-    );
-  }, [analytics]);
+  useEffect(() => {
+    if (!analytics?.projectsSummary?.length) return;
 
-  const displayedOpportunities = useMemo(() => {
-    if (selectedSnapshotId && analytics?.coverage?.snapshots) {
-      const snapshot = analytics.coverage.snapshots.find(s => s.id === selectedSnapshotId);
-      if (snapshot) {
-        return (snapshot.opportunities || []).map((op: any, index: number) => ({
-          id: `${snapshot.id}-${index}`,
-          label: op.label || 'Opportunity',
-          type: op.type || 'balanced',
-          severity: op.severity || 'medium',
-          summary: op.summary || '',
-          recommendedAction: op.recommendedAction || '',
-          projectTitle: snapshot.project_title,
-          created_at: snapshot.created_at,
-          topicId: op.topicId
-        }));
-      }
+    const hasValidSelection = projectIdFromUrl && analytics.projectsSummary.some((project) => project.id === projectIdFromUrl);
+    if (hasValidSelection) return;
+
+    const latestAnalyzedProjectId = analytics.coverage.snapshots[0]?.project_id || null;
+    const latestTranscribedProjectId = analytics.projectsSummary.find((project) => project.transcription_text)?.id || null;
+    const fallbackProjectId = latestAnalyzedProjectId || latestTranscribedProjectId || analytics.projectsSummary[0]?.id;
+
+    if (fallbackProjectId) {
+      const params = new URLSearchParams(searchParams.toString());
+      params.set('projectId', fallbackProjectId);
+      router.replace(`/dashboard/analytics?${params.toString()}`);
     }
-    return filteredCoverageSummary?.latestOpportunities || [];
-  }, [selectedSnapshotId, analytics?.coverage?.snapshots, filteredCoverageSummary]);
+  }, [analytics, projectIdFromUrl, router, searchParams]);
+
+  useEffect(() => {
+    if (selectedSnapshotId && !projectSnapshots.some((snapshot) => snapshot.id === selectedSnapshotId)) {
+      setSelectedSnapshotId(null);
+    }
+  }, [projectSnapshots, selectedSnapshotId]);
 
   // ============================================================================
   // HANDLERS
   // ============================================================================
 
-  const handleProjectSelect = useCallback((projectId: string | null) => {
+  const handleProjectSelect = useCallback((projectId: string) => {
     const params = new URLSearchParams(searchParams.toString());
-    if (projectId) {
-      params.set('projectId', projectId);
-    } else {
-      params.delete('projectId');
-    }
+    params.set('projectId', projectId);
     router.push(`/dashboard/analytics?${params.toString()}`);
   }, [router, searchParams]);
-
-  const formatDuration = (seconds: number) => {
-    const hours = Math.floor(seconds / 3600);
-    const minutes = Math.floor((seconds % 3600) / 60);
-    if (hours > 0) return `${hours}h ${minutes}m`;
-    return `${minutes}m`;
-  };
-
-  const formatCurrency = (amount: number) => {
-    return new Intl.NumberFormat('en-US', { style: 'currency', currency: 'USD' }).format(amount);
-  };
 
   const formatRelativeDate = (timestamp: string) => {
     const date = new Date(timestamp);
@@ -1157,7 +1207,7 @@ export default function AnalyticsPage() {
     try {
       const { error } = await supabase
         .from('narrative_goals')
-        // @ts-expect-error - Supabase types issue
+        // @ts-ignore - Supabase types issue
         .update({ status: nextStatus })
         .eq('id', goalId);
 
@@ -1165,10 +1215,11 @@ export default function AnalyticsPage() {
       await fetchAnalytics();
     } catch (err) {
       console.error('Failed to update goal status:', err);
+      toast.error('Failed to update goal status. Please try again.');
     }
   };
 
-  const handleArchiveGoal = (goalId: string, goalLabel: string) => {
+  const handleArchiveGoal = async (goalId: string, goalLabel: string) => {
     if (!user?.id) return;
     setPendingArchiveGoal({ id: goalId, label: goalLabel });
   };
@@ -1176,11 +1227,10 @@ export default function AnalyticsPage() {
   const confirmArchiveGoal = async () => {
     if (!pendingArchiveGoal || !user?.id) return;
     const { id: goalId, label: goalLabel } = pendingArchiveGoal;
-    setArchivingGoal(goalId);
     try {
       const { error } = await supabase
         .from('narrative_goals')
-        // @ts-expect-error - Supabase types issue
+        // @ts-ignore - Supabase types issue
         .update({ status: 'archived' })
         .eq('id', goalId)
         .eq('user_id', user.id);
@@ -1191,7 +1241,6 @@ export default function AnalyticsPage() {
     } catch (error: any) {
       toast.error(`Failed to archive goal: ${error.message}`);
     } finally {
-      setArchivingGoal(null);
       setPendingArchiveGoal(null);
     }
   };
@@ -1214,6 +1263,7 @@ export default function AnalyticsPage() {
       await fetchAnalytics();
     } catch (error) {
       console.error('Error running coverage:', error);
+      toast.error('Coverage analysis could not be started. Please try again.');
     } finally {
       stopCoverage(projectId);
     }
@@ -1228,18 +1278,39 @@ export default function AnalyticsPage() {
       <div className="p-6">
         <div className="max-w-7xl mx-auto">
           <div className="animate-pulse space-y-6">
-            <div className="h-8 bg-slate-700 rounded w-1/4" />
-            <div className="grid grid-cols-4 gap-4">
+            <div className="h-8 bg-slate-200 dark:bg-slate-700 rounded w-1/4" />
+            <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
               {[1, 2, 3, 4].map(i => (
-                <div key={i} className="h-28 bg-slate-700 rounded-xl" />
+                <div key={i} className="h-28 bg-slate-100 dark:bg-slate-700 rounded-xl" />
               ))}
             </div>
-            <div className="grid grid-cols-2 gap-6">
-              <div className="h-64 bg-slate-700 rounded-xl" />
-              <div className="h-64 bg-slate-700 rounded-xl" />
+            <div className="grid grid-cols-1 sm:grid-cols-2 gap-6">
+              <div className="h-64 bg-slate-100 dark:bg-slate-700 rounded-xl" />
+              <div className="h-64 bg-slate-100 dark:bg-slate-700 rounded-xl" />
             </div>
-            <div className="h-80 bg-slate-700 rounded-xl" />
+            <div className="h-80 bg-slate-100 dark:bg-slate-700 rounded-xl" />
           </div>
+        </div>
+      </div>
+    );
+  }
+
+  if (analyticsError && !analytics) {
+    return (
+      <div className="p-6 bg-slate-50 dark:bg-slate-800/50 min-h-screen">
+        <div className="max-w-lg mx-auto text-center pt-20">
+          <div className="mx-auto w-16 h-16 rounded-2xl bg-red-900/20 flex items-center justify-center mb-6">
+            <AlertCircle className="h-8 w-8 text-red-400" />
+          </div>
+          <h1 className="text-2xl font-bold text-slate-900 dark:text-slate-50 mb-3">Analytics unavailable</h1>
+          <p className="text-slate-500 dark:text-slate-400 mb-8">{analyticsError}</p>
+          <button
+            onClick={fetchAnalytics}
+            className="inline-flex items-center gap-2 px-6 py-3 text-sm font-medium text-white bg-blue-600 rounded-lg hover:bg-blue-700 transition-colors"
+          >
+            <Loader2 className="h-4 w-4" />
+            Retry
+          </button>
         </div>
       </div>
     );
@@ -1247,16 +1318,16 @@ export default function AnalyticsPage() {
 
   if (!analytics || analytics.totalProjects === 0) {
     return (
-      <div className="p-6 bg-slate-800/50 min-h-screen">
+      <div className="p-6 bg-slate-50 dark:bg-slate-800/50 min-h-screen">
         <div className="max-w-lg mx-auto text-center pt-20">
           <div className="mx-auto w-16 h-16 rounded-2xl bg-blue-900/20 flex items-center justify-center mb-6">
             <BarChart3 className="h-8 w-8 text-blue-600" />
           </div>
-          <h1 className="text-2xl font-bold text-slate-50 mb-3">No analytics yet</h1>
-          <p className="text-slate-400 mb-2">
+          <h1 className="text-2xl font-bold text-slate-900 dark:text-slate-50 mb-3">No analytics yet</h1>
+          <p className="text-slate-500 dark:text-slate-400 mb-2">
             Upload and transcribe your first podcast or audio file to unlock analytics.
           </p>
-          <p className="text-sm text-slate-400 mb-8">
+          <p className="text-sm text-slate-500 dark:text-slate-400 mb-8">
             You&apos;ll see real KPI trends, content breakdowns, topic coverage, narrative goal tracking, and AI-driven insights — all computed from your actual data.
           </p>
           <button
@@ -1271,12 +1342,21 @@ export default function AnalyticsPage() {
     );
   }
 
+  if (!selectedProject) {
+    return null;
+  }
+
   // ============================================================================
   // RENDER
   // ============================================================================
 
   return (
-    <div className="p-4 lg:p-6 bg-slate-800/50 min-h-screen">
+    <div className="p-3 sm:p-4 lg:p-6 bg-white dark:bg-slate-800/50 min-h-screen">
+      {analyticsError && (
+        <div className="max-w-7xl mx-auto mb-4 rounded-lg border border-red-800/40 bg-red-900/20 px-4 py-3 text-sm text-red-300">
+          {analyticsError}
+        </div>
+      )}
       <ConfirmModal
         isOpen={!!pendingArchiveGoal}
         onClose={() => setPendingArchiveGoal(null)}
@@ -1289,125 +1369,73 @@ export default function AnalyticsPage() {
       <div className="max-w-7xl mx-auto space-y-6">
 
         {/* ================================================================== */}
-        {/* HEADER: Title + Date Range */}
+        {/* HEADER: Title + Controls */}
         {/* ================================================================== */}
-        <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-4">
+        <div className="flex items-start justify-between gap-3">
           <div>
-            <h1 className="text-2xl font-bold text-slate-50">Analytics</h1>
-            <p className="text-sm text-slate-400 mt-0.5">Insights and trends from your content</p>
+            <h1 className="text-2xl font-bold text-slate-900 dark:text-slate-50">Analytics</h1>
           </div>
-
-          <div className="flex items-center gap-4" data-tour="analytics-controls">
-            <ProjectSwitcher
-              projects={analytics.projectsSummary}
-              selectedProjectId={projectIdFromUrl}
-              onSelect={handleProjectSelect}
-            />
-            <div className="flex items-center gap-1 bg-slate-900 rounded-lg p-1 shadow-sm border border-slate-800">
+          <div className="ml-auto flex items-center gap-1 self-start rounded-lg border border-slate-200 bg-white p-1 shadow-sm dark:border-slate-800 dark:bg-slate-900">
               {(['7d', '30d', '90d'] as const).map((range) => (
                 <button
                   key={range}
                   onClick={() => setTimeRange(range)}
                   className={`px-3 py-1.5 rounded-md text-sm font-medium transition-colors ${
                     timeRange === range
-                      ? 'bg-gray-900 text-white'
-                      : 'text-slate-400 hover:text-slate-50'
+                      ? 'text-blue-600 dark:text-blue-400'
+                      : 'text-slate-500 dark:text-slate-400 hover:text-slate-900 dark:hover:text-slate-50'
                   }`}
                 >
                   {range.toUpperCase()}
                 </button>
               ))}
-            </div>
+          </div>
+        </div>
+
+        <div className="flex flex-wrap items-center gap-3">
+          <ProjectSwitcher
+            projects={analytics.projectsSummary}
+            selectedProjectId={projectIdFromUrl}
+            onSelect={handleProjectSelect}
+          />
+          <div className="ml-auto flex items-center gap-3">
+            <RunAnalysisSection
+              selectedProject={selectedProject}
+              selectedHasTranscript={selectedProjectHasTranscript}
+              selectedHasSnapshot={selectedProjectHasSnapshot}
+              runningCoverageIds={runningCoverageIds}
+              onRunAnalysis={handleRunCoverage}
+            />
+            <span className="inline-flex items-center rounded-lg border border-slate-300 bg-transparent px-3 py-2.5 text-[11px] font-semibold uppercase tracking-[0.14em] text-slate-600 dark:border-slate-700 dark:text-slate-300">
+              {selectedProjectHasSnapshot ? 'Analyzed' : selectedProjectHasTranscript ? 'Ready to analyze' : 'Transcript required'}
+            </span>
           </div>
         </div>
 
         {/* ================================================================== */}
-        {/* ROW 1: KPI Cards with Sparklines */}
+        {/* ROW 1: KPI Cards */}
         {/* ================================================================== */}
         <div data-tour="analytics-kpis">
-        <KPIGrid
-          totalProjects={analytics.totalProjects}
-          projectsTrend={analytics.trends.projects}
-          projectsSparkline={analytics.sparklines.projects}
-          totalOutputs={analytics.totalOutputs}
-          outputsTrend={analytics.trends.outputs}
-          outputsSparkline={analytics.sparklines.outputs}
-          processingTime={formatDuration(analytics.totalProcessingTime)}
-          processingTrend={analytics.trends.processing}
-          processingSparkline={analytics.sparklines.processing}
-          aiSpend={formatCurrency(filteredAiSpend)}
-          aiSpendLabel={projectIdFromUrl ? 'AI Spend (this project)' : 'Est. AI Spend'}
-          spendTrend={analytics.trends.spend}
-          spendSparkline={analytics.sparklines.spend}
-        />
+          <KPIGrid cards={analysisMetrics.cards} />
         </div>
 
         {/* ================================================================== */}
-        {/* ROW 2: Content Mix + Top Topics */}
+        {/* ROW 2: Project Analysis */}
         {/* ================================================================== */}
         <div data-tour="analytics-content-mix">
-          <ContentMixSection
-            contentBreakdown={analytics.contentBreakdown}
-            topTopics={allTopics.map(t => ({ label: t.label, mentions: t.mentions }))}
+          <ProjectAnalysisSection
+            contentBreakdown={selectedProjectContentBreakdown}
+            topics={topicHeat}
+            hasSnapshot={selectedProjectHasSnapshot}
           />
         </div>
 
         {/* ================================================================== */}
-        {/* Unanalyzed Projects Banner */}
-        {/* ================================================================== */}
-        {!bannerDismissed && unanalyzedProjects.length > 0 && (
-          <div className="bg-blue-900/20 border border-blue-800/30 rounded-xl p-4 flex items-start gap-3" role="alert" data-tour="analytics-banner">
-            <AlertCircle className="h-5 w-5 text-blue-600 flex-shrink-0 mt-0.5" />
-            <div className="flex-1 min-w-0">
-              <h4 className="text-sm font-semibold text-blue-200">
-                {unanalyzedProjects.length} project{unanalyzedProjects.length !== 1 ? 's' : ''} ready for analysis
-              </h4>
-              <p className="text-sm text-blue-300 mt-1">
-                These projects have transcriptions but haven&apos;t been analyzed yet. Run analytics to see topic coverage and insights.
-              </p>
-              <div className="flex flex-wrap gap-2 mt-3">
-                {unanalyzedProjects.slice(0, 3).map(project => (
-                  <button
-                    key={project.id}
-                    onClick={() => handleRunCoverage(project.id)}
-                    disabled={runningCoverageIds.has(project.id)}
-                    className="inline-flex items-center gap-1 px-3 py-1.5 text-xs font-medium text-blue-400 bg-slate-900 border border-blue-800/30 rounded-lg hover:bg-blue-100 transition-colors disabled:opacity-60 disabled:cursor-not-allowed"
-                    aria-label={`Run analytics on ${project.title}`}
-                  >
-                    {runningCoverageIds.has(project.id) ? (
-                      <Loader2 className="h-3 w-3 animate-spin" />
-                    ) : (
-                      <BarChart3 className="h-3 w-3" />
-                    )}
-                    <span className="truncate max-w-[150px]">
-                      {runningCoverageIds.has(project.id) ? 'Analyzing...' : (project.title || 'Untitled')}
-                    </span>
-                  </button>
-                ))}
-                {unanalyzedProjects.length > 3 && (
-                  <span className="text-xs text-blue-600 self-center">
-                    +{unanalyzedProjects.length - 3} more
-                  </span>
-                )}
-              </div>
-            </div>
-            <button
-              type="button"
-              onClick={() => setBannerDismissed(true)}
-              className="flex-shrink-0 p-1 rounded hover:bg-blue-100 transition-colors"
-              aria-label="Dismiss banner"
-            >
-              <X className="h-4 w-4 text-blue-600" />
-            </button>
-          </div>
-        )}
-
-        {/* ================================================================== */}
         {/* ROW 3: Tab Section (Insights & Goals) */}
         {/* ================================================================== */}
-        <div className="bg-slate-900 rounded-xl shadow-sm border border-slate-800" role="region" aria-label="Insights and goals">
+        <div className="bg-white dark:bg-slate-900 rounded-xl shadow-sm border border-slate-200 dark:border-slate-800" role="region" aria-label="Insights and goals">
           {/* Tab Header */}
-          <div className="border-b border-slate-800 p-1">
+          <div className="border-b border-slate-200 dark:border-slate-800 p-1">
             <nav className="flex gap-1" role="tablist" aria-label="Analytics sections">
               <button
                 id="tab-insights"
@@ -1417,8 +1445,8 @@ export default function AnalyticsPage() {
                 onClick={() => setActiveTab('insights')}
                 className={`flex items-center gap-2 px-4 py-2.5 text-sm font-medium rounded-lg transition-colors ${
                   activeTab === 'insights'
-                    ? 'bg-gray-900 text-white'
-                    : 'text-slate-400 hover:text-slate-50 hover:bg-slate-800/50'
+                    ? 'bg-white dark:bg-slate-900 text-slate-900 dark:text-white shadow'
+                    : 'text-slate-500 dark:text-slate-400 hover:text-slate-900 dark:hover:text-slate-50 hover:bg-slate-50 dark:hover:bg-slate-800/50'
                 }`}
               >
                 <Lightbulb className="h-4 w-4" />
@@ -1433,8 +1461,8 @@ export default function AnalyticsPage() {
                 onClick={() => setActiveTab('goals')}
                 className={`flex items-center gap-2 px-4 py-2.5 text-sm font-medium rounded-lg transition-colors ${
                   activeTab === 'goals'
-                    ? 'bg-gray-900 text-white'
-                    : 'text-slate-400 hover:text-slate-50 hover:bg-slate-800/50'
+                    ? 'bg-white dark:bg-slate-900 text-slate-900 dark:text-white shadow'
+                    : 'text-slate-500 dark:text-slate-400 hover:text-slate-900 dark:hover:text-slate-50 hover:bg-slate-50 dark:hover:bg-slate-800/50'
                 }`}
               >
                 <Target className="h-4 w-4" />
@@ -1459,7 +1487,7 @@ export default function AnalyticsPage() {
               />
               <InsightsGrid
                 opportunities={displayedOpportunities}
-                projectIdFilter={projectIdFromUrl}
+                projectIdFilter={selectedProject.id}
                 formatRelativeDate={formatRelativeDate}
                 goals={effectiveGoals}
               />
@@ -1470,7 +1498,7 @@ export default function AnalyticsPage() {
             <div id="tabpanel-goals" role="tabpanel" aria-labelledby="tab-goals" className="p-6" data-tour="analytics-goals-panel">
               <GoalsSection
                 goals={effectiveGoals}
-                goalProgress={analytics.goalProgress}
+                goalProgress={selectedGoalProgress}
                 onSaveGoal={saveGoal}
                 onToggleStatus={handleToggleGoalStatus}
                 onArchive={handleArchiveGoal}
@@ -1478,6 +1506,7 @@ export default function AnalyticsPage() {
                 suggestedGoals={suggestedGoals}
                 isSaving={goalSaving}
                 error={goalError}
+                readOnly={isDemoMode}
               />
             </div>
           )}

@@ -1,5 +1,6 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { supabaseAdmin } from '@/lib/supabase/server';
+import { RouteAccessError, requireProjectOwner } from '@/lib/api/route-auth';
 
 // Force dynamic to prevent caching
 export const dynamic = 'force-dynamic';
@@ -12,12 +13,17 @@ export async function POST(
   try {
     const { id: projectId } = await params;
     const { name, role } = await request.json();
+    const { user } = await requireProjectOwner(request, projectId, 'speaker_data');
 
     if (!projectId || !name?.trim()) {
       return NextResponse.json(
         { error: 'Missing required fields' },
         { status: 400 }
       );
+    }
+
+    if (user.email === process.env.DEMO_EMAIL) {
+      return NextResponse.json({ error: 'Demo account is read-only' }, { status: 403 });
     }
 
     // Fetch current speaker data
@@ -50,7 +56,7 @@ export async function POST(
 
     const { data: savedAdd, error: updateError } = await supabaseAdmin
       .from('projects')
-      // @ts-expect-error - Supabase types issue with update
+      // @ts-ignore - Supabase types issue with update
       .update({ speaker_data: speakerData })
       .eq('id', projectId)
       .select('speaker_data')
@@ -64,6 +70,9 @@ export async function POST(
     return NextResponse.json({ success: true, speakerId, updatedSpeakerData: savedAdd.speaker_data });
 
   } catch (error) {
+    if (error instanceof RouteAccessError) {
+      return NextResponse.json({ error: error.message }, { status: error.status });
+    }
     console.error('Add speaker error:', error);
     return NextResponse.json({ error: 'Internal server error' }, { status: 500 });
   }
@@ -76,6 +85,7 @@ export async function PATCH(
   try {
     const { id: projectId } = await params;
     const { speakerId, newName, speakerData } = await request.json();
+    const { user } = await requireProjectOwner(request, projectId);
 
     if (!projectId || !speakerId || !newName || !speakerData) {
       return NextResponse.json(
@@ -84,10 +94,14 @@ export async function PATCH(
       );
     }
 
+    if (user.email === process.env.DEMO_EMAIL) {
+      return NextResponse.json({ error: 'Demo account is read-only' }, { status: 403 });
+    }
+
     // Update the speaker data in the database
     const { error } = await supabaseAdmin
       .from('projects')
-      // @ts-expect-error - Supabase types issue with update
+      // @ts-ignore - Supabase types issue with update
       .update({
         speaker_data: speakerData
       })
@@ -107,6 +121,9 @@ export async function PATCH(
     });
 
   } catch (error) {
+    if (error instanceof RouteAccessError) {
+      return NextResponse.json({ error: error.message }, { status: error.status });
+    }
     console.error('Speaker update error:', error);
     return NextResponse.json(
       { error: 'Internal server error' },

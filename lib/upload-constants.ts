@@ -8,6 +8,7 @@ export const ALLOWED_TYPES = [
   'audio/wav',
   'audio/mp4',
   'audio/m4a',
+  'audio/x-m4a',   // macOS/Chrome reports M4A as this
   'audio/flac',
   'audio/ogg',
   'audio/webm',

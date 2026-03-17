@@ -7,7 +7,7 @@
 
 import { createClient } from '@supabase/supabase-js';
 import { getAICompletion, type AIMessage } from './ai-providers/multi-provider';
-import { generateResearchLinksForInsights, type PerplexitySource } from './ai-providers/perplexity';
+import { generateResearchLinksForInsights, type PerplexitySource, type PersonResearchProfile } from './ai-providers/perplexity';
 import { getPrompt, prompts } from '@/lib/prompts/loader';
 import type { InsightExtractionVars } from '@/lib/prompts/types';
 import { trackOpenAIUsage, trackAnthropicUsage } from '@/lib/billing/track-usage';
@@ -54,6 +54,44 @@ export interface InsightExtractionResult {
 export interface EnrichedInsight extends ExtractedInsight {
   external_sources: PerplexitySource[];
 }
+
+type SpeakerInsightCandidate = {
+  speakerId: string;
+  label: string;
+  role: string;
+  roleSummary?: string;
+  confidence: number;
+  segmentCount: number;
+  totalDuration: number;
+  transcriptExcerpt: string;
+};
+
+type PersonProfileRelationshipType =
+  | 'person_summary'
+  | 'current_work'
+  | 'notable_background'
+  | 'episode_relevance';
+
+const NON_SUBSTANTIVE_SPEAKER_ROLES = new Set([
+  'advertiser',
+  'quoted_audio',
+  'sponsor_voice',
+  'promo_voice',
+  'call_to_action',
+]);
+
+const SUBSTANTIVE_SPEAKER_ROLES = new Set([
+  'host',
+  'co_host',
+  'guest',
+  'candidate',
+  'moderator',
+  'interviewer',
+  'panelist',
+  'expert_commentator',
+  'storyteller',
+  'narrator',
+]);
 
 /**
  * Main orchestration function to process insights for a project
@@ -105,17 +143,23 @@ export async function processInsightsForProject(
       projectId
     );
 
-    if (extractionResult.insights.length === 0) {
+    const mergedInsights = mergeSpeakerPeopleInsights(
+      extractionResult.insights,
+      project.speaker_data,
+      project.title
+    );
+
+    if (mergedInsights.length === 0) {
       console.warn('[Insights] No insights extracted');
       return { success: true, insightCount: 0, totalCost: extractionResult.cost_usd };
     }
 
-    console.log(`[Insights] Extracted ${extractionResult.insights.length} insights`);
+    console.log(`[Insights] Extracted ${mergedInsights.length} insights`);
 
     // Step 2: Enrich top insights with research links from Perplexity
     console.log('[Insights] Enriching top insights with research links...');
     const enrichedInsights = await enrichTopInsightsWithResearch(
-      extractionResult.insights,
+      mergedInsights,
       5 // Top 5 insights get research links
     );
 
@@ -369,6 +413,277 @@ function parseInsightsFromResponse(responseText: string): ExtractedInsight[] {
   }
 }
 
+function slugifyEntityId(value: string): string {
+  return value
+    .toLowerCase()
+    .replace(/[^a-z0-9]+/g, '-')
+    .replace(/^-+|-+$/g, '') || 'person';
+}
+
+function normalizeInsightLabel(value: string): string {
+  return value.trim().toLowerCase().replace(/\s+/g, ' ');
+}
+
+function isPlaceholderSpeakerName(name: string): boolean {
+  return (
+    !name ||
+    /^speaker(?:\s+|_)\d+$/i.test(name) ||
+    /^unknown$/i.test(name) ||
+    /^advertiser$/i.test(name)
+  );
+}
+
+function humanizeSpeakerRole(role: string): string {
+  return role
+    .replace(/_/g, ' ')
+    .replace(/\b\w/g, (char) => char.toUpperCase());
+}
+
+function trimInsightExcerpt(text: string, maxLength: number = 220): string {
+  const normalized = text.replace(/\s+/g, ' ').trim();
+  if (normalized.length <= maxLength) {
+    return normalized;
+  }
+  return `${normalized.slice(0, maxLength - 1).trimEnd()}…`;
+}
+
+function buildSpeakerInsightSummary(
+  candidate: SpeakerInsightCandidate,
+  projectTitle?: string | null
+): Pick<ExtractedInsight, 'simple_definition' | 'full_explanation' | 'why_it_matters'> {
+  const roleLabel = humanizeSpeakerRole(candidate.role || 'speaker').toLowerCase();
+  const topicLabel = projectTitle?.trim() ? `"${projectTitle.trim()}"` : 'this episode';
+  const rolePreamble = candidate.roleSummary?.trim()
+    ? candidate.roleSummary.trim()
+    : `${candidate.label} is a ${roleLabel} in ${topicLabel}.`;
+
+  return {
+    simple_definition: `${candidate.label} is a ${roleLabel} featured in this conversation.`,
+    full_explanation: `${rolePreamble} Their remarks help frame the discussion in ${topicLabel} and clarify how their perspective fits into the broader topic.`,
+    why_it_matters: `${candidate.label} is one of the core voices shaping the conversation in ${topicLabel}, so understanding who they are makes the episode easier to follow.`,
+  };
+}
+
+function enrichPersonInsightProfile(
+  insight: ExtractedInsight,
+  personProfile?: PersonResearchProfile
+): ExtractedInsight {
+  if (insight.category !== 'person' || !personProfile) {
+    return insight;
+  }
+
+  const summary = personProfile.summary?.trim();
+  const currentWork = personProfile.current_work?.trim();
+  const notableBackground = personProfile.notable_background?.trim();
+
+  const fullExplanation = [
+    insight.full_explanation?.trim(),
+    currentWork,
+    notableBackground,
+  ].filter(Boolean).join(' ');
+
+  return {
+    ...insight,
+    simple_definition: summary || insight.simple_definition,
+    full_explanation: fullExplanation || insight.full_explanation,
+    relationships: mergeProfileRelationships(
+      insight.relationships,
+      buildPersonProfileRelationships({
+        label: insight.label,
+        summary: summary || insight.simple_definition,
+        currentWork,
+        notableBackground,
+        episodeRelevance: insight.why_it_matters,
+      })
+    ),
+  };
+}
+
+function buildPersonProfileRelationships(params: {
+  label: string;
+  summary?: string;
+  currentWork?: string;
+  notableBackground?: string;
+  episodeRelevance?: string;
+}): Array<{ type: PersonProfileRelationshipType; entityId: string; description: string }> {
+  const entityId = `person-${slugifyEntityId(params.label)}`;
+  const entries: Array<{ type: PersonProfileRelationshipType; entityId: string; description: string }> = [];
+
+  if (params.summary?.trim()) {
+    entries.push({ type: 'person_summary', entityId, description: params.summary.trim() });
+  }
+  if (params.currentWork?.trim()) {
+    entries.push({ type: 'current_work', entityId, description: params.currentWork.trim() });
+  }
+  if (params.notableBackground?.trim()) {
+    entries.push({ type: 'notable_background', entityId, description: params.notableBackground.trim() });
+  }
+  if (params.episodeRelevance?.trim()) {
+    entries.push({ type: 'episode_relevance', entityId, description: params.episodeRelevance.trim() });
+  }
+
+  return entries;
+}
+
+function mergeProfileRelationships(
+  existing: Array<{ type: string; entityId: string; description: string }> | undefined,
+  incoming: Array<{ type: PersonProfileRelationshipType; entityId: string; description: string }>
+) {
+  const merged = new Map<string, { type: string; entityId: string; description: string }>();
+
+  for (const item of existing || []) {
+    if (item?.type && item?.description) {
+      merged.set(item.type, item);
+    }
+  }
+
+  for (const item of incoming) {
+    merged.set(item.type, item);
+  }
+
+  return Array.from(merged.values());
+}
+
+export function buildSpeakerPeopleInsights(
+  speakerData: any,
+  projectTitle?: string | null
+): ExtractedInsight[] {
+  const speakers = speakerData?.speakers;
+  if (!speakers || typeof speakers !== 'object') {
+    return [];
+  }
+
+  return Object.entries(speakers)
+    .map(([speakerId, rawSpeaker]): SpeakerInsightCandidate | null => {
+      const speaker = rawSpeaker as any;
+      const label = (
+        speaker.customName ||
+        speaker.finalName ||
+        speaker.extractedName?.name ||
+        speaker.fallbackName ||
+        speaker.name ||
+        ''
+      ).trim();
+
+      if (!label || isPlaceholderSpeakerName(label)) {
+        return null;
+      }
+
+      const role = String(speaker.role || 'unknown').toLowerCase();
+      if (NON_SUBSTANTIVE_SPEAKER_ROLES.has(role)) {
+        return null;
+      }
+
+      const segmentCount = Number(speaker.segmentCount || 0);
+      const totalDuration = Number(speaker.totalDuration || 0);
+      const isSubstantive = SUBSTANTIVE_SPEAKER_ROLES.has(role) || segmentCount >= 2 || totalDuration >= 30;
+      if (!isSubstantive) {
+        return null;
+      }
+
+      const excerptSegment = Array.isArray(speaker.segments)
+        ? [...speaker.segments]
+            .filter(segment => typeof segment?.text === 'string' && segment.text.trim().length > 0)
+            .sort((a, b) => (b.endTime - b.startTime) - (a.endTime - a.startTime))[0]
+        : null;
+
+      return {
+        speakerId,
+        label,
+        role,
+        roleSummary: speaker.roleSummary || speaker.summary,
+        confidence: Math.min(0.99, Math.max(0.6, Number(speaker.roleConfidence || speaker.confidence || 0.78))),
+        segmentCount,
+        totalDuration,
+        transcriptExcerpt: trimInsightExcerpt(excerptSegment?.text || ''),
+      };
+    })
+    .filter((candidate): candidate is SpeakerInsightCandidate => candidate !== null)
+    .map((candidate) => {
+      const summary = buildSpeakerInsightSummary(candidate, projectTitle);
+
+      return {
+        entity_id: `person-${slugifyEntityId(candidate.label)}`,
+        label: candidate.label,
+        category: 'person' as const,
+        match_text: candidate.label,
+        match_variants: [candidate.label.split(' ')[0]].filter(Boolean),
+        transcript_excerpts: candidate.transcriptExcerpt
+          ? [{ text: candidate.transcriptExcerpt }]
+          : [],
+        simple_definition: summary.simple_definition,
+        full_explanation: summary.full_explanation,
+        related_concepts: [],
+        why_it_matters: summary.why_it_matters,
+        relationships: buildPersonProfileRelationships({
+          label: candidate.label,
+          summary: summary.simple_definition,
+          currentWork: candidate.roleSummary || `${candidate.label} is featured as a ${humanizeSpeakerRole(candidate.role || 'speaker').toLowerCase()} in this conversation.`,
+          notableBackground: candidate.segmentCount > 0
+            ? `${candidate.label} speaks across ${candidate.segmentCount} segment${candidate.segmentCount === 1 ? '' : 's'} in this episode, making them one of the main voices to track.`
+            : undefined,
+          episodeRelevance: summary.why_it_matters,
+        }),
+        confidence: candidate.confidence,
+      };
+    });
+}
+
+export function mergeSpeakerPeopleInsights(
+  insights: ExtractedInsight[],
+  speakerData: any,
+  projectTitle?: string | null
+): ExtractedInsight[] {
+  const merged = new Map<string, ExtractedInsight>();
+
+  for (const insight of insights) {
+    merged.set(normalizeInsightLabel(insight.label), insight);
+  }
+
+  for (const speakerInsight of buildSpeakerPeopleInsights(speakerData, projectTitle)) {
+    const key = normalizeInsightLabel(speakerInsight.label);
+    const existing = merged.get(key);
+
+    if (!existing) {
+      merged.set(key, speakerInsight);
+      continue;
+    }
+
+    if (existing.category !== 'person') {
+      continue;
+    }
+
+    merged.set(key, {
+      ...existing,
+      entity_id: existing.entity_id || speakerInsight.entity_id,
+      transcript_excerpts: existing.transcript_excerpts?.length
+        ? existing.transcript_excerpts
+        : speakerInsight.transcript_excerpts,
+      simple_definition: existing.simple_definition || speakerInsight.simple_definition,
+      full_explanation: existing.full_explanation || speakerInsight.full_explanation,
+      why_it_matters: existing.why_it_matters || speakerInsight.why_it_matters,
+      match_variants: Array.from(new Set([...(existing.match_variants || []), ...(speakerInsight.match_variants || [])])),
+      relationships: mergeProfileRelationships(existing.relationships, (speakerInsight.relationships || []) as Array<any>),
+      confidence: Math.max(existing.confidence || 0, speakerInsight.confidence || 0),
+    });
+  }
+
+  return Array.from(merged.values());
+}
+
+export function rankPersonSources(sources: PerplexitySource[]): PerplexitySource[] {
+  return [...sources].sort((left, right) => {
+    const leftWikipedia = left.type === 'wikipedia' || left.url?.includes('wikipedia.org');
+    const rightWikipedia = right.type === 'wikipedia' || right.url?.includes('wikipedia.org');
+
+    if (leftWikipedia !== rightWikipedia) {
+      return leftWikipedia ? -1 : 1;
+    }
+
+    return 0;
+  });
+}
+
 /**
  * Enrich top N insights with research links from Perplexity
  */
@@ -383,9 +698,20 @@ export async function enrichTopInsightsWithResearch(
   }));
 
   scored.sort((a, b) => b.score - a.score);
-
-  const topInsights = scored.slice(0, maxCount).map((item) => item.insight);
-  const remainingInsights = scored.slice(maxCount).map((item) => item.insight);
+  const prioritizedPeople = scored
+    .filter(item => item.insight.category === 'person')
+    .map(item => item.insight);
+  const otherTopInsights = scored
+    .filter(item => item.insight.category !== 'person')
+    .slice(0, Math.max(0, maxCount - prioritizedPeople.length))
+    .map(item => item.insight);
+  const topInsights = Array.from(new Map(
+    [...prioritizedPeople, ...otherTopInsights].map(insight => [insight.entity_id, insight])
+  ).values());
+  const enrichedIds = new Set(topInsights.map(insight => insight.entity_id));
+  const remainingInsights = scored
+    .map((item) => item.insight)
+    .filter(insight => !enrichedIds.has(insight.entity_id));
 
   console.log(`[Enrichment] Enriching top ${topInsights.length} insights with research links`);
 
@@ -402,9 +728,12 @@ export async function enrichTopInsightsWithResearch(
   // Merge results
   const enriched: EnrichedInsight[] = topInsights.map((insight) => {
     const research = researchResults.get(insight.label);
+    const enrichedInsight = enrichPersonInsightProfile(insight, research?.personProfile);
     return {
-      ...insight,
-      external_sources: research?.sources || [],
+      ...enrichedInsight,
+      external_sources: insight.category === 'person'
+        ? rankPersonSources(research?.sources || [])
+        : research?.sources || [],
     };
   });
 

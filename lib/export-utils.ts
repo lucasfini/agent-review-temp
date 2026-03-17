@@ -39,6 +39,33 @@ interface SocialQuote {
   timestamp?: number;
 }
 
+interface ExportInsightSource {
+  title: string;
+  url: string;
+  type?: string;
+  description?: string;
+}
+
+interface ExportInsightPersonProfile {
+  who_they_are?: string;
+  current_work?: string;
+  notable_background?: string;
+  why_relevant?: string;
+}
+
+interface ExportInsight {
+  id: string;
+  entity_id: string;
+  label: string;
+  category: 'concept' | 'person' | 'tool';
+  simple_definition?: string;
+  full_explanation?: string;
+  why_it_matters?: string;
+  external_sources?: ExportInsightSource[];
+  transcript_excerpts?: Array<{ text?: string }>;
+  person_profile?: ExportInsightPersonProfile;
+}
+
 interface ExportProject {
   id: string;
   title: string;
@@ -49,10 +76,11 @@ interface ExportProject {
   chapters?: Chapter[];
   key_takeaways?: Takeaway[];
   social_quotes?: SocialQuote[];
+  insights?: ExportInsight[];
   speaker_data?: any;
 }
 
-export type CoreContentType = 'transcript' | 'conversation' | 'summary' | 'chapters' | 'takeaways' | 'quotes';
+export type CoreContentType = 'transcript' | 'conversation' | 'summary' | 'chapters' | 'takeaways' | 'quotes' | 'insights';
 
 export interface ExportManifestItem {
   projectId: string;
@@ -207,6 +235,41 @@ function formatConversationTimestamp(startTime?: number, endTime?: number): stri
   return `[${start} + ${duration.toFixed(1)}s]`;
 }
 
+function formatInsightsContent(project: ExportProject): string {
+  const insights = project.insights || [];
+  if (!insights.length) return '';
+
+  return insights.map((insight, idx) => {
+    const lines: string[] = [`${idx + 1}. ${insight.label} (${insight.category})`];
+    const personProfile = insight.person_profile;
+    const mainText =
+      insight.full_explanation ||
+      insight.simple_definition ||
+      personProfile?.who_they_are ||
+      '';
+
+    if (mainText) lines.push(mainText);
+    if (personProfile?.current_work) lines.push(`Current work: ${personProfile.current_work}`);
+    if (personProfile?.notable_background) lines.push(`Background: ${personProfile.notable_background}`);
+
+    const relevance = personProfile?.why_relevant || insight.why_it_matters;
+    if (relevance) lines.push(`Why it matters: ${relevance}`);
+
+    const excerpt = insight.transcript_excerpts?.find((item) => item?.text)?.text;
+    if (excerpt) lines.push(`Transcript excerpt: "${excerpt}"`);
+
+    if (insight.external_sources?.length) {
+      lines.push('Sources:');
+      for (const source of insight.external_sources) {
+        const descriptor = source.description ? ` - ${source.description}` : '';
+        lines.push(`- ${source.title}${source.url ? ` (${source.url})` : ''}${descriptor}`);
+      }
+    }
+
+    return lines.join('\n');
+  }).join('\n\n');
+}
+
 /**
  * Format core content as markdown
  */
@@ -354,6 +417,22 @@ ${takeawaysText}
 ---
 
 ${quotesText}
+
+---
+*Exported from AudioRepurpose*
+`;
+
+    case 'insights':
+      if (!project.insights || project.insights.length === 0) return null;
+      return `# Insights
+
+**Project:** ${project.title}
+**Total Insights:** ${project.insights.length}
+**Exported:** ${date}
+
+---
+
+${formatInsightsContent(project)}
 
 ---
 *Exported from AudioRepurpose*
@@ -521,6 +600,23 @@ ${'-'.repeat(40)}
 Exported from AudioRepurpose
 `;
 
+    case 'insights':
+      if (!project.insights || project.insights.length === 0) return null;
+      return `INSIGHTS
+${'='.repeat(8)}
+
+Project: ${project.title}
+Total Insights: ${project.insights.length}
+Exported: ${date}
+
+${'-'.repeat(40)}
+
+${formatInsightsContent(project)}
+
+${'-'.repeat(40)}
+Exported from AudioRepurpose
+`;
+
     default:
       return null;
   }
@@ -574,6 +670,9 @@ function formatAsJSON(projects: ExportProject[], manifest: ExportManifestItem[])
       }
       if (selectedCore.includes('quotes') && project.social_quotes) {
         coreContent.quotes = project.social_quotes;
+      }
+      if (selectedCore.includes('insights') && project.insights) {
+        coreContent.insights = project.insights;
       }
 
       return {
@@ -962,6 +1061,7 @@ async function exportAsPDF(
         chapters: 'Chapters',
         takeaways: 'Key Takeaways',
         quotes: 'Quotes',
+        insights: 'Insights',
       };
 
       let content = '';
@@ -1007,6 +1107,9 @@ async function exportAsPDF(
               `"${q.quote}"${q.speaker ? `\n— ${q.speaker}` : ''}${q.timestamp ? ` (${formatDuration(q.timestamp)})` : ''}`
             ).join('\n\n');
           }
+          break;
+        case 'insights':
+          content = formatInsightsContent(project);
           break;
       }
 

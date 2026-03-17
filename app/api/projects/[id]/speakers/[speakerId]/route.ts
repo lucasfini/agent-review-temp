@@ -1,5 +1,6 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { supabaseAdmin } from '@/lib/supabase/server';
+import { RouteAccessError, requireProjectOwner } from '@/lib/api/route-auth';
 
 export const dynamic = 'force-dynamic';
 export const revalidate = 0;
@@ -11,9 +12,14 @@ export async function PATCH(
   try {
     const { id: projectId, speakerId } = await params;
     const { action, newName, newRole, reassignToSpeakerId } = await request.json();
+    const { user } = await requireProjectOwner(request, projectId, 'speaker_data');
 
     if (!projectId || !speakerId || !action) {
       return NextResponse.json({ error: 'Missing required fields' }, { status: 400 });
+    }
+
+    if (user.email === process.env.DEMO_EMAIL) {
+      return NextResponse.json({ error: 'Demo account is read-only' }, { status: 403 });
     }
 
     const { data: project, error: fetchError } = await supabaseAdmin
@@ -97,7 +103,7 @@ export async function PATCH(
 
     const { data: saved, error: updateError } = await supabaseAdmin
       .from('projects')
-      // @ts-expect-error - Supabase types issue with update
+      // @ts-ignore - Supabase types issue with update
       .update({ speaker_data: speakerData })
       .eq('id', projectId)
       .select('speaker_data')
@@ -111,6 +117,9 @@ export async function PATCH(
     return NextResponse.json({ success: true, updatedSpeakerData: saved.speaker_data });
 
   } catch (error) {
+    if (error instanceof RouteAccessError) {
+      return NextResponse.json({ error: error.message }, { status: error.status });
+    }
     console.error('PATCH speaker error:', error);
     return NextResponse.json({ error: 'Internal server error' }, { status: 500 });
   }
@@ -123,12 +132,17 @@ export async function DELETE(
   try {
     const { id: projectId, speakerId } = await params;
     const { action, reassignToSpeakerId } = await request.json();
+    const { user } = await requireProjectOwner(request, projectId, 'speaker_data');
 
     if (!projectId || !speakerId || !action) {
       return NextResponse.json({ error: 'Missing required fields' }, { status: 400 });
     }
     if (action === 'reassign' && !reassignToSpeakerId) {
       return NextResponse.json({ error: 'Missing reassignToSpeakerId' }, { status: 400 });
+    }
+
+    if (user.email === process.env.DEMO_EMAIL) {
+      return NextResponse.json({ error: 'Demo account is read-only' }, { status: 403 });
     }
 
     const { data: project, error: fetchError } = await supabaseAdmin
@@ -199,7 +213,7 @@ export async function DELETE(
 
     const { data: savedDelete, error: updateError } = await supabaseAdmin
       .from('projects')
-      // @ts-expect-error - Supabase types issue with update
+      // @ts-ignore - Supabase types issue with update
       .update({ speaker_data: updatedSpeakerData })
       .eq('id', projectId)
       .select('speaker_data')
@@ -213,6 +227,9 @@ export async function DELETE(
     return NextResponse.json({ success: true, updatedSpeakerData: savedDelete.speaker_data });
 
   } catch (error) {
+    if (error instanceof RouteAccessError) {
+      return NextResponse.json({ error: error.message }, { status: error.status });
+    }
     console.error('Delete speaker error:', error);
     return NextResponse.json({ error: 'Internal server error' }, { status: 500 });
   }

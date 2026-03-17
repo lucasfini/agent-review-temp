@@ -1,5 +1,6 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { supabaseAdmin } from '@/lib/supabase/server';
+import { RouteAccessError, requireProjectOwner } from '@/lib/api/route-auth';
 
 // Helper function to generate keywords from speaker name for matching
 function generateKeywordsFromName(name: string): string[] {
@@ -26,6 +27,7 @@ export async function GET(
 ) {
   try {
     const { id: projectId } = await params;
+    await requireProjectOwner(request, projectId, 'preset_speakers, speaker_keywords');
 
     const { data, error } = await supabaseAdmin
       .from('projects')
@@ -43,6 +45,9 @@ export async function GET(
     });
 
   } catch (error: any) {
+    if (error instanceof RouteAccessError) {
+      return NextResponse.json({ error: error.message }, { status: error.status });
+    }
     return NextResponse.json({ error: error.message }, { status: 500 });
   }
 }
@@ -55,9 +60,14 @@ export async function PATCH(
   try {
     const { id: projectId } = await params;
     const { rosterSpeakers } = await request.json();
+    const { user } = await requireProjectOwner(request, projectId);
 
     if (!Array.isArray(rosterSpeakers)) {
       return NextResponse.json({ error: 'Invalid roster format' }, { status: 400 });
+    }
+
+    if (user.email === process.env.DEMO_EMAIL) {
+      return NextResponse.json({ error: 'Demo account is read-only' }, { status: 403 });
     }
 
     // Validate speakers
@@ -89,6 +99,9 @@ export async function PATCH(
     return NextResponse.json({ success: true });
 
   } catch (error: any) {
+    if (error instanceof RouteAccessError) {
+      return NextResponse.json({ error: error.message }, { status: error.status });
+    }
     return NextResponse.json({ error: error.message }, { status: 500 });
   }
 }

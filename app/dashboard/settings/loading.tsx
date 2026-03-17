@@ -2,7 +2,7 @@ import { Skeleton } from "@/components/ui/skeleton";
 
 export default function SettingsLoading() {
   return (
-    <div className="p-6 max-w-3xl space-y-8 animate-in fade-in duration-200">
+    <div className="p-3 sm:p-6 max-w-3xl space-y-8 animate-in fade-in duration-200">
       {/* Page header */}
       <div className="space-y-2">
         <Skeleton className="h-7 w-32" />

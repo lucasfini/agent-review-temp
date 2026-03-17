@@ -1,7 +1,7 @@
 // AI-powered name extraction from podcast transcriptions
 // Uses segment-based mapping for accurate speaker attribution
 import { getAICompletion, AICompletionResponse } from '@/lib/ai-providers/multi-provider';
-import { SpeakerSegment, DetectedSpeaker } from './types';
+import { SpeakerSegment, DetectedSpeaker, SpeakerRole } from './types';
 import { getPrompt, prompts } from '@/lib/prompts/loader';
 import type { SpeakerNameExtractionVars } from '@/lib/prompts/types';
 import { logUsageEvent, debitCredit } from '@/lib/billing/credit';
@@ -19,7 +19,7 @@ export interface ExtractedName {
 export interface NamedSpeaker extends DetectedSpeaker {
   extractedName: ExtractedName | null;
   finalName: string;
-  role?: string;
+  role?: SpeakerRole;
   roleConfidence?: number;
   roleSummary?: string;
   roleEvidence?: string[];
@@ -28,7 +28,7 @@ export interface NamedSpeaker extends DetectedSpeaker {
 
   // Roster matching metadata
   rosterMatched?: boolean;
-  rosterMatchMethod?: 'self_intro' | 'speaking_time' | 'introduced_by_other' | 'keyword_freq' | 'speaker_order';
+  rosterMatchMethod?: 'self_intro' | 'speaking_time' | 'introduced_by_other' | 'keyword_freq' | 'speaker_order' | 'force_assigned';
   rosterMatchConfidence?: number;
 }
 
@@ -61,6 +61,15 @@ interface RoleCandidate {
   speakerId: string;
   confidence: number;
   evidence: string;
+}
+
+function normalizeSpeakerRole(role?: string | null): SpeakerRole | undefined {
+  if (!role) return undefined;
+  if (role === 'cohost') return 'co_host';
+  if (role === 'moderator') return 'host';
+  if (role === 'other') return 'unknown';
+  const validRoles: SpeakerRole[] = ['host', 'co_host', 'candidate', 'guest', 'advertiser', 'narrator', 'quoted_audio', 'unknown'];
+  return validRoles.includes(role as SpeakerRole) ? (role as SpeakerRole) : undefined;
 }
 
 /**
@@ -900,7 +909,7 @@ async function extractSpeakerNamesHybrid(
         finalName: extractedResult.name,
         rosterMatched: false,
         // NEW: Add role as metadata/badge
-        role: roleCandidate?.role,
+        role: normalizeSpeakerRole(roleCandidate?.role),
         roleConfidence: roleCandidate?.confidence
       };
     } else {
@@ -911,7 +920,7 @@ async function extractSpeakerNamesHybrid(
         extractedName: null,
         finalName: fallbackName,
         rosterMatched: false,
-        role: roleCandidate?.role,
+        role: normalizeSpeakerRole(roleCandidate?.role),
         roleConfidence: roleCandidate?.confidence
       };
     }
@@ -987,7 +996,7 @@ export async function extractSpeakerNames(
               context: match.evidence.join(' | ')
             },
             finalName: match.rosterSpeaker.name,
-            role: match.rosterSpeaker.role || undefined,
+            role: normalizeSpeakerRole(match.rosterSpeaker.role),
             customName: match.rosterSpeaker.name,
             rosterMatched: true,
             rosterMatchMethod: match.matchMethod,
@@ -1109,7 +1118,10 @@ function extractRoleFromSegments(speaker: DetectedSpeaker): string | null {
  * Note: finalName takes precedence over extractedName because role classification
  * and other processes update finalName without updating extractedName.
  */
-export function getSpeakerDisplayName(namedSpeaker: NamedSpeaker): string {
+export function getSpeakerDisplayName(namedSpeaker?: NamedSpeaker | null): string {
+  if (!namedSpeaker) {
+    return 'Unknown Speaker';
+  }
   if (namedSpeaker.customName && namedSpeaker.customName.trim().length > 0) {
     return namedSpeaker.customName.trim();
   }

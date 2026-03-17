@@ -48,10 +48,10 @@ export function SpeakerRosterForm({ speakers, onChange }: SpeakerRosterFormProps
     <div className="mb-6">
       <div className="flex items-center justify-between mb-3">
         <div>
-          <h3 className="text-sm font-semibold text-slate-100">
+          <h3 className="text-sm font-semibold text-slate-900 dark:text-slate-100">
             Speaker Roster (Optional)
           </h3>
-          <p className="text-xs text-slate-400 mt-1">
+          <p className="mt-1 text-xs text-slate-500 dark:text-slate-400">
             Pre-define speaker names to improve accuracy and save editing time
           </p>
         </div>
@@ -74,12 +74,12 @@ export function SpeakerRosterForm({ speakers, onChange }: SpeakerRosterFormProps
       </div>
 
       {showForm && (
-        <div className="border border-slate-700 rounded-lg p-4 space-y-3 bg-slate-900 shadow-sm">
+        <div className="space-y-3 rounded-lg border border-slate-200 bg-white p-4 shadow-sm dark:border-slate-700 dark:bg-slate-900">
           {/* Existing speakers */}
           {speakers.length > 0 && (
             <div className="space-y-3">
               {speakers.map((speaker, index) => (
-                <div key={speaker.id} className="flex items-start gap-3 p-3 bg-slate-800/50 rounded-lg border border-slate-700">
+                <div key={speaker.id} className="flex items-start gap-3 rounded-lg border border-slate-200 bg-slate-50 p-3 dark:border-slate-700 dark:bg-slate-800/50">
                   <div className="flex-shrink-0 w-8 h-8 rounded-full bg-blue-100 text-blue-600 flex items-center justify-center text-sm font-semibold">
                     {index + 1}
                   </div>
@@ -91,14 +91,14 @@ export function SpeakerRosterForm({ speakers, onChange }: SpeakerRosterFormProps
                         value={speaker.name}
                         onChange={(e) => updateSpeaker(speaker.id, { name: e.target.value })}
                         placeholder="Full Name *"
-                        className="text-sm border border-slate-600 rounded px-3 py-2 focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-transparent"
+                        className="rounded border border-slate-300 bg-white px-3 py-2 text-sm text-slate-900 focus:border-transparent focus:outline-none focus:ring-2 focus:ring-blue-500 dark:border-slate-600 dark:bg-slate-900 dark:text-slate-100"
                         required
                       />
 
                       <select
                         value={speaker.role || ''}
                         onChange={(e) => updateSpeaker(speaker.id, { role: e.target.value as any || null })}
-                        className="text-sm border border-slate-600 rounded px-3 py-2 focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-transparent"
+                        className="rounded border border-slate-300 bg-white px-3 py-2 text-sm text-slate-900 focus:border-transparent focus:outline-none focus:ring-2 focus:ring-blue-500 dark:border-slate-600 dark:bg-slate-900 dark:text-slate-100"
                       >
                         <option value="">Role (optional)</option>
                         {SPEAKER_ROLES.map(role => (
@@ -112,14 +112,14 @@ export function SpeakerRosterForm({ speakers, onChange }: SpeakerRosterFormProps
                       value={speaker.description || ''}
                       onChange={(e) => updateSpeaker(speaker.id, { description: e.target.value })}
                       placeholder="Description (optional, e.g., 'CEO of TechCorp')"
-                      className="w-full text-sm border border-slate-600 rounded px-3 py-2 focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-transparent"
+                      className="w-full rounded border border-slate-300 bg-white px-3 py-2 text-sm text-slate-900 focus:border-transparent focus:outline-none focus:ring-2 focus:ring-blue-500 dark:border-slate-600 dark:bg-slate-900 dark:text-slate-100"
                     />
                   </div>
 
                   <button
                     onClick={() => removeSpeaker(speaker.id)}
                     type="button"
-                    className="flex-shrink-0 p-2 text-red-500 hover:text-red-400 hover:bg-red-900/20 rounded transition-colors"
+                    className="flex-shrink-0 rounded p-2 text-red-600 transition-colors hover:bg-red-50 hover:text-red-700 dark:text-red-500 dark:hover:bg-red-900/20 dark:hover:text-red-400"
                     title="Remove speaker"
                   >
                     <Trash2 className="h-4 w-4" />
@@ -134,7 +134,7 @@ export function SpeakerRosterForm({ speakers, onChange }: SpeakerRosterFormProps
             <button
               onClick={addSpeaker}
               type="button"
-              className="w-full border-2 border-dashed border-slate-600 rounded-lg px-4 py-3 text-sm text-slate-400 hover:border-blue-400 hover:text-blue-600 hover:bg-blue-900/20 transition-colors inline-flex items-center justify-center gap-2"
+              className="inline-flex w-full items-center justify-center gap-2 rounded-lg border-2 border-dashed border-slate-300 px-4 py-3 text-sm text-slate-600 transition-colors hover:border-blue-400 hover:bg-blue-50 hover:text-blue-700 dark:border-slate-600 dark:text-slate-400 dark:hover:bg-blue-900/20 dark:hover:text-blue-600"
             >
               <User className="w-4 h-4" />
               Add Speaker ({speakers.length}/10)
@@ -143,9 +143,9 @@ export function SpeakerRosterForm({ speakers, onChange }: SpeakerRosterFormProps
 
           {/* Helper text */}
           {speakers.length > 0 && (
-            <div className="flex items-start gap-2 p-3 bg-blue-900/20 border border-blue-800/30 rounded-lg">
+            <div className="flex items-start gap-2 rounded-lg border border-blue-200 bg-blue-50 p-3 dark:border-blue-800/30 dark:bg-blue-900/20">
               <div className="text-blue-600 mt-0.5">💡</div>
-              <p className="text-xs text-blue-400">
+              <p className="text-xs text-blue-700 dark:text-blue-400">
                 <strong>Tip:</strong> Add speakers in order of appearance. The host should typically be first, followed by guests.
                 This helps improve automatic matching accuracy.
               </p>

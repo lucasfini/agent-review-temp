@@ -18,7 +18,7 @@ export async function POST(request: NextRequest) {
   const body = await request.json().catch(() => ({}));
   const meetingId = body?.meetingId;
   const fileId = body?.fileId;
-  const performanceLevel = body?.performanceLevel || 'premium';
+  const performanceLevel = body?.performanceLevel || 'pro';
 
   if (!meetingId || !fileId) {
     return NextResponse.json({ error: 'Missing meetingId or fileId' }, { status: 400 });

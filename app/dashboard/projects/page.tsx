@@ -7,6 +7,7 @@ import { FileText, Clock, CheckCircle, AlertCircle, Eye, Download, Share2, Refre
 import { DropdownMenu, DropdownMenuItem, DropdownMenuSeparator } from '@/components/ui/dropdown-menu';
 import ConfirmModal from '@/components/ui/confirm-modal';
 import { useAuth } from '@/lib/auth/context';
+import { useUserPrefs } from '@/lib/hooks/useUserPrefs';
 import { supabase } from '@/lib/supabase/client';
 import { DemoTour } from '@/components/demo/DemoTour';
 import { useCoverageProgress } from '@/lib/context/coverage-progress';
@@ -22,17 +23,20 @@ import type { CostEstimate } from '@/lib/cost-estimation';
 import type { ContentBlock } from '@/lib/content-types';
 import type { AudioPlayerRef } from '@/lib/hooks/useSpeakerSample';
 import { useProjectRefresh, useSpeakerDataRefresh } from '@/lib/hooks/useProjectRefresh';
+import { emitProjectMutation } from '@/lib/project-events';
 
 type ProjectType = 'DEBATE' | 'INTERVIEW' | 'PODCAST' | 'MONOLOGUE' | 'OTHER';
 
 interface Project {
   id: string;
   title: string;
-  status: 'uploading' | 'processing' | 'completed' | 'failed';
+  status: 'uploading' | 'processing' | 'completed' | 'failed' | 'cancelled';
   created_at: string;
   audio_duration?: number;
   audio_file_size?: number;
   audio_file_name?: string;
+  audio_expires_at?: string | null;
+  audio_deleted_at?: string | null;
   processing_time_seconds?: number;
   transcription_text?: string;
   selected_content_types?: string[];
@@ -40,7 +44,7 @@ interface Project {
   audio_duration_seconds?: number;
   transcription_segments?: string;
   speaker_data?: any;
-  performance_level?: 'basic' | 'pro' | 'premium';
+  performance_level?: string;
   project_type?: ProjectType;
   processing_stage?: string;
   ai_summary?: string;
@@ -60,6 +64,28 @@ interface Project {
     timestamp?: number;
     platform?: string;
   }>;
+  insights?: Array<{
+    id: string;
+    entity_id: string;
+    label: string;
+    category: 'concept' | 'person' | 'tool';
+    simple_definition?: string;
+    full_explanation?: string;
+    why_it_matters?: string;
+    external_sources?: Array<{
+      title: string;
+      url: string;
+      type?: string;
+      description?: string;
+    }>;
+    transcript_excerpts?: Array<{ text?: string }>;
+    person_profile?: {
+      who_they_are?: string;
+      current_work?: string;
+      notable_background?: string;
+      why_relevant?: string;
+    };
+  }>;
 }
 
 interface Output {
@@ -74,13 +100,13 @@ interface Output {
 }
 
 const SPEAKER_BADGE_CLASSES: Record<string, string> = {
-  blue: 'text-blue-300 bg-blue-900/30 border border-blue-800/40',
-  green: 'text-green-300 bg-green-900/25 border border-green-800/40',
-  purple: 'text-violet-300 bg-violet-900/30 border border-violet-800/40',
-  orange: 'text-orange-300 bg-orange-900/25 border border-orange-800/40',
-  pink: 'text-rose-300 bg-rose-900/25 border border-rose-800/40',
-  indigo: 'text-indigo-300 bg-indigo-900/30 border border-indigo-800/40',
-  slate: 'text-slate-300 bg-slate-800/60 border border-slate-700/60',
+  blue: 'text-blue-700 dark:text-blue-300 bg-blue-100 dark:bg-blue-900/30 border border-blue-300 dark:border-blue-800/40',
+  green: 'text-green-700 dark:text-green-300 bg-green-100 dark:bg-green-900/25 border border-green-300 dark:border-green-800/40',
+  purple: 'text-violet-700 dark:text-violet-300 bg-violet-100 dark:bg-violet-900/30 border border-violet-300 dark:border-violet-800/40',
+  orange: 'text-orange-700 dark:text-orange-300 bg-orange-100 dark:bg-orange-900/25 border border-orange-300 dark:border-orange-800/40',
+  pink: 'text-rose-700 dark:text-rose-300 bg-rose-100 dark:bg-rose-900/25 border border-rose-300 dark:border-rose-800/40',
+  indigo: 'text-indigo-700 dark:text-indigo-300 bg-indigo-100 dark:bg-indigo-900/30 border border-indigo-300 dark:border-indigo-800/40',
+  slate: 'text-slate-600 dark:text-slate-300 bg-slate-100 dark:bg-slate-800/60 border border-slate-300 dark:border-slate-700/60',
 };
 
 const getSpeakerBadgeClasses = (speakerId: string) => {
@@ -88,6 +114,25 @@ const getSpeakerBadgeClasses = (speakerId: string) => {
   const match = colorClass.match(/text-([a-z]+)-/);
   const base = match?.[1] ?? 'slate';
   return SPEAKER_BADGE_CLASSES[base] ?? SPEAKER_BADGE_CLASSES.slate;
+};
+
+const isProjectAudioExpired = (project: Project | null): boolean => {
+  if (!project) return false;
+  if (project.audio_deleted_at) return true;
+  if (!project.audio_expires_at) return false;
+  return new Date(project.audio_expires_at).getTime() <= Date.now();
+};
+
+const formatAudioExpiry = (value?: string | null, locale?: string, timezone?: string): string | null => {
+  if (!value) return null;
+  return new Date(value).toLocaleString(locale, {
+    ...(timezone ? { timeZone: timezone } : {}),
+    month: 'short',
+    day: 'numeric',
+    year: 'numeric',
+    hour: 'numeric',
+    minute: '2-digit',
+  });
 };
 
 export default function ProjectsPage() {
@@ -116,9 +161,9 @@ export default function ProjectsPage() {
   const isReaderScrollingRef = useRef(false);
   const [showTimestamps, setShowTimestamps] = useState(true);
   const [selectedSpeaker, setSelectedSpeaker] = useState<string | null>(null);
-  const [projectsSidebarOpen, setProjectsSidebarOpen] = useState(true);
+  const [projectsSidebarOpen, setProjectsSidebarOpen] = useState(false);
   const [searchTerm, setSearchTerm] = useState('');
-  const [tierFilter, setTierFilter] = useState<'all' | 'basic' | 'pro' | 'premium'>('all');
+  const [tierFilter, setTierFilter] = useState<'all' | 'standard' | 'pro'>('all');
   const [sortBy, setSortBy] = useState<'recent' | 'oldest' | 'name-asc' | 'name-desc'>('recent');
   const [expandedFeatures, setExpandedFeatures] = useState<Set<string>>(new Set());
 
@@ -139,7 +184,7 @@ export default function ProjectsPage() {
   }>>([]);
 
   // Right sidebar (Context) state
-  const [contextSidebarOpen, setContextSidebarOpen] = useState(true);
+  const [contextSidebarOpen, setContextSidebarOpen] = useState(false);
   const [activeSpeakerId, setActiveSpeakerId] = useState<string | null>(null);
   const [activeInsightId, setActiveInsightId] = useState<string | null>(null);
   const isCenterWide = !projectsSidebarOpen && !contextSidebarOpen;
@@ -190,9 +235,12 @@ export default function ProjectsPage() {
   const [applyingTouchup, setApplyingTouchup] = useState(false);
   const [scrollToSegmentIndex, setScrollToSegmentIndex] = useState<number | null>(null);
 
-  const { user, isDemoMode } = useAuth();
+  const { user, session, isDemoMode } = useAuth();
+  const prefs = useUserPrefs();
   const searchParams = useSearchParams();
   const router = useRouter();
+  const selectedProjectAudioExpired = isProjectAudioExpired(selectedProject);
+  const selectedProjectAudioExpiryLabel = formatAudioExpiry(selectedProject?.audio_expires_at, prefs.locale, prefs.timezone);
 
   // Keep ref in sync with selectedProject for use in realtime callbacks
   useEffect(() => {
@@ -220,8 +268,8 @@ export default function ProjectsPage() {
         hasSpeakerData: !!freshProject.speaker_data,
         speakerNames: freshProject.speaker_data?.speakers
           ? Object.values(freshProject.speaker_data.speakers)
-              .map((s: any) => s.finalName || s.fallbackName)
-              .filter(Boolean)
+            .map((s: any) => s.finalName || s.fallbackName)
+            .filter(Boolean)
           : [],
       });
 
@@ -297,7 +345,16 @@ export default function ProjectsPage() {
         });
 
         if (!response.ok) {
-          console.error('Failed to get audio URL:', await response.text());
+          if (response.status === 410) {
+            const payload = await response.json().catch(() => ({}));
+            setSelectedProject((prev) => prev ? {
+              ...prev,
+              audio_deleted_at: prev.audio_deleted_at || new Date().toISOString(),
+              audio_expires_at: payload.audioExpiresAt || prev.audio_expires_at || null,
+            } : prev);
+          } else {
+            console.error('Failed to get audio URL:', await response.text());
+          }
           setAudioUrl(null);
           return;
         }
@@ -315,6 +372,13 @@ export default function ProjectsPage() {
 
   // Insights are fetched by ConversationView and reported back via onInsightsDataChange / onInsightsStatusChange callbacks.
   // No independent fetch needed here — single source of truth avoids race conditions.
+
+  // Open details panel when a project is selected
+  useEffect(() => {
+    if (selectedProject) {
+      setContextSidebarOpen(true);
+    }
+  }, [selectedProject?.id]);
 
   // Auto-select project from URL query parameter
   useEffect(() => {
@@ -440,11 +504,11 @@ export default function ProjectsPage() {
 
   const premiumFeaturedId = useMemo(() => {
     const target = projects.find(
-      p => p.performance_level === 'premium' && p.title?.includes('Future of Work Roundtable')
+      p => (p.performance_level === 'pro' || p.performance_level === 'premium') && p.title?.includes('Future of Work Roundtable')
     );
     if (target) return target.id;
-    const firstPremium = projects.find(p => p.performance_level === 'premium');
-    return firstPremium?.id ?? null;
+    const firstPro = projects.find(p => p.performance_level === 'pro' || p.performance_level === 'premium');
+    return firstPro?.id ?? null;
   }, [projects]);
 
   const accuracyPercent = useMemo(() => {
@@ -514,12 +578,13 @@ export default function ProjectsPage() {
     if (selectedProject.status !== 'completed') return;
 
     const aiProcessing = (selectedProject as any).speaker_data?.detectionMetadata?.aiProcessing || {};
-    const tier = (selectedProject as any).performance_level || 'basic';
+    const rawTier = (selectedProject as any).performance_level || 'standard';
+    const tier = rawTier === 'basic' ? 'standard' : rawTier === 'premium' ? 'pro' : rawTier;
 
     // Quick client-side check: are any expected features missing?
     const tier2flags: Record<string, string[]> = {
-      pro:     ['summary'],
-      premium: ['summary', 'chapters', 'takeaways', 'quotes'],
+      pro: ['summary'],
+      premium: ['summary', 'chapters', 'takeaways', 'quotes', 'insights'],
     };
     const expected = tier2flags[tier] || [];
     const hasMissing = expected.some((f) => !aiProcessing[f]);
@@ -529,12 +594,16 @@ export default function ProjectsPage() {
     let cancelled = false;
     setIsReconciling(true);
 
-    fetch(`/api/projects/${selectedProject.id}/reconcile`, { method: 'POST' })
+    fetch(`/api/projects/${selectedProject.id}/reconcile`, {
+      method: 'POST',
+      headers: session?.access_token ? { Authorization: `Bearer ${session.access_token}` } : {},
+    })
       .then((res) => res.json())
       .then((data) => {
         if (cancelled) return;
         setIsReconciling(false);
         if (data.totalFixed > 0) {
+          setInsightsRefreshToken(prev => prev + 1);
           // Refresh project data to pull in newly generated content
           setProjects((prev) =>
             prev.map((p) =>
@@ -549,7 +618,7 @@ export default function ProjectsPage() {
       });
 
     return () => { cancelled = true; };
-  // eslint-disable-next-line react-hooks/exhaustive-deps
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [selectedProject?.id, selectedProject?.status]);
 
   const showToast = useCallback((message: string, type: 'success' | 'error' = 'error') => {
@@ -733,9 +802,13 @@ export default function ProjectsPage() {
       );
     }
 
-    // Apply tier filter
+    // Apply tier filter (normalize legacy values for comparison)
     if (tierFilter !== 'all') {
-      filtered = filtered.filter(project => project.performance_level === tierFilter);
+      filtered = filtered.filter(project => {
+        const level = project.performance_level;
+        const normalized = level === 'basic' ? 'standard' : level === 'premium' ? 'pro' : level;
+        return normalized === tierFilter;
+      });
     }
 
     // Apply type filter
@@ -798,7 +871,10 @@ export default function ProjectsPage() {
     try {
       const response = await fetch('/api/generate-selected-content', {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
+        headers: {
+          'Content-Type': 'application/json',
+          ...(session?.access_token ? { Authorization: `Bearer ${session.access_token}` } : {}),
+        },
         body: JSON.stringify({
           projectId: selectedProjectForGeneration.id,
           blocks,
@@ -934,7 +1010,36 @@ export default function ProjectsPage() {
           .eq('project_id', projectId)
           .order('created_at', { ascending: false });
 
+        const { data: insightsData } = await supabase
+          .from('insights')
+          .select('id, entity_id, label, category, simple_definition, full_explanation, why_it_matters, external_sources, transcript_excerpts, relationships')
+          .eq('project_id', projectId)
+          .order('confidence', { ascending: false });
+
         const project = projectData || fallbackProject;
+
+        const buildPersonProfile = (insight: any) => {
+          if (insight.category !== 'person') return undefined;
+          const relationships = Array.isArray(insight.relationships) ? insight.relationships : [];
+          const getSection = (type: string) =>
+            relationships.find((relationship: any) => relationship?.type === type)?.description;
+
+          const whoTheyAre = getSection('person_summary') || insight.simple_definition || '';
+          const currentWork = getSection('current_work') || '';
+          const notableBackground = getSection('notable_background') || '';
+          const whyRelevant = getSection('episode_relevance') || insight.why_it_matters || '';
+
+          if (!whoTheyAre && !currentWork && !notableBackground && !whyRelevant) {
+            return undefined;
+          }
+
+          return {
+            who_they_are: whoTheyAre,
+            current_work: currentWork,
+            notable_background: notableBackground,
+            why_relevant: whyRelevant,
+          };
+        };
 
         return {
           ...project,
@@ -945,6 +1050,10 @@ export default function ProjectsPage() {
           chapters: (project as any).chapters,
           key_takeaways: (project as any).key_takeaways,
           social_quotes: (project as any).social_quotes,
+          insights: (insightsData || []).map((insight: any) => ({
+            ...insight,
+            person_profile: buildPersonProfile(insight),
+          })),
           speaker_data: (project as any).speaker_data,
         };
       })
@@ -986,6 +1095,7 @@ export default function ProjectsPage() {
       chapters: (p as any).chapters,
       key_takeaways: (p as any).key_takeaways,
       social_quotes: (p as any).social_quotes,
+      insights: (p as any).insights,
       speaker_data: (p as any).speaker_data,
     }));
 
@@ -1060,56 +1170,18 @@ export default function ProjectsPage() {
         // Continue with deletion even if cache cleanup fails
       }
 
-      // Delete all outputs first (due to foreign key constraints)
-      const { error: outputsError } = await supabase
-        .from('outputs')
-        .delete()
-        .eq('project_id', projectId);
+      const { data: { session } } = await supabase.auth.getSession();
+      const response = await fetch(`/api/projects/${projectId}`, {
+        method: 'DELETE',
+        headers: session?.access_token ? { Authorization: `Bearer ${session.access_token}` } : {},
+      });
 
-      if (outputsError) {
-        console.error('Error deleting outputs:', outputsError);
-        showToast('Failed to delete project outputs. Please try again.');
-        return;
+      if (!response.ok) {
+        const data = await response.json().catch(() => ({ error: 'Failed to delete project. Please try again.' }));
+        throw new Error(data.error || 'Failed to delete project. Please try again.');
       }
 
-      // Delete the project
-      const { error: projectError } = await supabase
-        .from('projects')
-        .delete()
-        .eq('id', projectId)
-        .eq('user_id', user.id); // Ensure user can only delete their own projects
-
-      if (projectError) {
-        console.error('Error deleting project:', projectError);
-        showToast('Failed to delete project. Please try again.');
-        return;
-      }
-
-      // Delete audio file from storage BEFORE updating state
-      // This ensures we have access to project data
-      const project = projects.find(p => p.id === projectId);
-      if (project?.audio_file_name) {
-        const fileName = `${projectId}/${project.audio_file_name}`;
-        console.log(`[DELETE] Attempting to delete audio file: ${fileName}`);
-
-        try {
-          const { data: { session } } = await supabase.auth.getSession();
-          await fetch(`/api/projects/${projectId}/audio`, {
-            method: 'DELETE',
-            headers: {
-              'Content-Type': 'application/json',
-              ...(session?.access_token ? { Authorization: `Bearer ${session.access_token}` } : {}),
-            },
-            body: JSON.stringify({ fileName }),
-          });
-          console.log('[DELETE] Audio file deleted from R2');
-        } catch (storageError) {
-          console.error('[DELETE] Error deleting audio file from R2:', storageError);
-          // Continue anyway - don't block project deletion if R2 cleanup fails
-        }
-      } else {
-        console.log('[DELETE] No audio file to delete for project:', projectId);
-      }
+      emitProjectMutation({ projectId, action: 'deleted' });
 
       // Remove project from local state
       setProjects(prev => prev.filter(p => p.id !== projectId));
@@ -1361,6 +1433,7 @@ export default function ProjectsPage() {
         .from('projects')
         .select('*, transcription_segments, speaker_data, performance_level, project_type, ai_summary, chapters, key_takeaways, social_quotes')
         .eq('user_id', user.id)
+        .neq('status', 'cancelled')
         .order('created_at', { ascending: false }) as { data: any[] | null; error: any };
 
       if (error) {
@@ -1396,7 +1469,7 @@ export default function ProjectsPage() {
   const fetchProjectOutputs = async (projectId: string) => {
     try {
       console.log('Fetching outputs for project:', projectId);
-      
+
       const { data: outputsData, error } = await supabase
         .from('outputs')
         .select('*')
@@ -1419,7 +1492,7 @@ export default function ProjectsPage() {
     const hrs = Math.floor(seconds / 3600);
     const mins = Math.floor((seconds % 3600) / 60);
     const secs = Math.floor(seconds % 60);
-    
+
     if (hrs > 0) {
       return `${hrs}:${mins.toString().padStart(2, '0')}:${secs.toString().padStart(2, '0')}`;
     }
@@ -1466,13 +1539,13 @@ export default function ProjectsPage() {
 
   const getPlatformColor = (output: Output) => {
     const platform = output.platform;
-    
+
     // Check metadata for specific platform types
     if (output.metadata?.platform) {
-       if (output.metadata.platform === 'Show Notes') return 'bg-indigo-100 text-indigo-300';
-       if (output.metadata.platform === 'Quote Graphic') return 'bg-amber-100 text-amber-300';
-       if (output.metadata.platform === 'Blog Post') return 'bg-emerald-100 text-emerald-800';
-       if (output.metadata.platform === 'Email Newsletter') return 'bg-orange-100 text-orange-800';
+      if (output.metadata.platform === 'Show Notes') return 'bg-indigo-100 text-indigo-300';
+      if (output.metadata.platform === 'Quote Graphic') return 'bg-amber-100 text-amber-300';
+      if (output.metadata.platform === 'Blog Post') return 'bg-emerald-100 text-emerald-800';
+      if (output.metadata.platform === 'Email Newsletter') return 'bg-orange-100 text-orange-800';
     }
 
     switch (platform) {
@@ -1483,9 +1556,9 @@ export default function ProjectsPage() {
       case 'instagram':
         return 'bg-pink-100 text-pink-800';
       case 'general':
-        return 'bg-slate-800 text-slate-100';
+        return 'bg-slate-100 dark:bg-slate-800 text-slate-800 dark:text-slate-100';
       default:
-        return 'bg-slate-800 text-slate-100';
+        return 'bg-slate-100 dark:bg-slate-800 text-slate-800 dark:text-slate-100';
     }
   };
 
@@ -1493,7 +1566,7 @@ export default function ProjectsPage() {
   const getOutputPlatformMeta = (output: Output): { letter: string; iconStyle: string } => {
     const rawPlatform = (output.metadata?.platform || output.platform || '').toLowerCase();
     if (rawPlatform.includes('twitter') || rawPlatform.includes('x thread') || rawPlatform === 'x') {
-      return { letter: 'X', iconStyle: 'bg-slate-950 text-white border-slate-700' };
+      return { letter: 'X', iconStyle: 'bg-white dark:bg-slate-950 text-slate-900 dark:text-white border-slate-300 dark:border-slate-700' };
     }
     if (rawPlatform.includes('linkedin')) {
       return { letter: 'in', iconStyle: 'bg-blue-600 text-white border-blue-500' };
@@ -1529,7 +1602,7 @@ export default function ProjectsPage() {
     if (output.metadata?.platform && output.metadata.platform !== 'General') {
       return output.metadata.platform;
     }
-    
+
     // Fallback if metadata.platform_label exists
     if (output.metadata?.platform_label) {
       return output.metadata.platform_label;
@@ -1554,40 +1627,30 @@ export default function ProjectsPage() {
     }
   };
 
-  const getTierBadge = (tier: 'basic' | 'pro' | 'premium' | undefined) => {
-    const tierConfig: Record<'basic' | 'pro' | 'premium', {
+  const getTierBadge = (tier: string | undefined) => {
+    // Normalize legacy values
+    const normalized = tier === 'basic' ? 'standard' : tier === 'premium' ? 'pro' : (tier || 'standard');
+    const tierConfig: Record<string, {
       icon: any;
       label: string;
       color: string;
       iconColor: string;
     }> = {
-      basic: {
+      standard: {
         icon: FileText,
-        label: 'Basic',
-        color: 'bg-slate-800/70 text-slate-300 border border-slate-700/60',
-        iconColor: 'text-slate-400'
+        label: 'Standard',
+        color: 'bg-slate-100 dark:bg-slate-800/70 text-slate-600 dark:text-slate-300 border border-slate-300 dark:border-slate-700/60',
+        iconColor: 'text-slate-500 dark:text-slate-400'
       },
       pro: {
-        icon: Star,
-        label: 'Pro',
-        color: 'bg-blue-900/30 text-blue-300 border border-blue-800/40',
-        iconColor: 'text-blue-300'
-      },
-      premium: {
         icon: Crown,
-        label: 'Premium',
-        color: 'bg-violet-900/30 text-violet-300 border border-violet-800/40',
-        iconColor: 'text-violet-300'
+        label: 'Pro',
+        color: 'bg-violet-100 dark:bg-violet-900/30 text-violet-700 dark:text-violet-300 border border-violet-300 dark:border-violet-800/40',
+        iconColor: 'text-violet-600 dark:text-violet-300'
       }
     };
 
-    // Ensure we have a valid tier, fallback to basic
-    const normalizedTier = (tier || 'basic') as 'basic' | 'pro' | 'premium';
-    const validTier: 'basic' | 'pro' | 'premium' = ['basic', 'pro', 'premium'].includes(normalizedTier)
-      ? normalizedTier
-      : 'basic';
-
-    const config = tierConfig[validTier];
+    const config = tierConfig[normalized] || tierConfig['standard'];
     const Icon = config.icon;
 
     return (
@@ -1611,36 +1674,36 @@ export default function ProjectsPage() {
       DEBATE: {
         icon: Users,
         label: 'Debate',
-        color: 'bg-amber-900/20 text-amber-400 border border-amber-800/30',
+        color: 'bg-amber-50 dark:bg-amber-900/20 text-amber-700 dark:text-amber-400 border border-amber-200 dark:border-amber-800/30',
         iconColor: 'text-amber-600',
         description: 'Panel discussion with moderator',
       },
       INTERVIEW: {
         icon: Mic,
         label: 'Interview',
-        color: 'bg-green-900/20 text-green-400 border border-green-800/30',
+        color: 'bg-green-50 dark:bg-green-900/20 text-green-700 dark:text-green-400 border border-green-200 dark:border-green-800/30',
         iconColor: 'text-green-600',
         description: '1-on-1 Q&A format',
       },
       PODCAST: {
         icon: Radio,
         label: 'Podcast',
-        color: 'bg-indigo-900/20 text-indigo-400 border border-indigo-800/30',
+        color: 'bg-indigo-50 dark:bg-indigo-900/20 text-indigo-700 dark:text-indigo-400 border border-indigo-200 dark:border-indigo-800/30',
         iconColor: 'text-indigo-600',
         description: 'Conversational show',
       },
       MONOLOGUE: {
         icon: User,
         label: 'Monologue',
-        color: 'bg-slate-800/50 text-slate-300 border border-slate-700',
-        iconColor: 'text-slate-300',
+        color: 'bg-slate-100 dark:bg-slate-800/50 text-slate-600 dark:text-slate-300 border border-slate-300 dark:border-slate-700',
+        iconColor: 'text-slate-500 dark:text-slate-300',
         description: 'Single speaker',
       },
       OTHER: {
         icon: HelpCircle,
         label: 'Other',
-        color: 'bg-slate-800/50 text-slate-400 border border-slate-700',
-        iconColor: 'text-slate-400',
+        color: 'bg-slate-100 dark:bg-slate-800/50 text-slate-500 dark:text-slate-400 border border-slate-300 dark:border-slate-700',
+        iconColor: 'text-slate-500 dark:text-slate-400',
         description: 'Unclassified format',
       },
     };
@@ -1660,11 +1723,12 @@ export default function ProjectsPage() {
   };
 
   const getContentAvailability = (project: Project) => {
-    const tier = project.performance_level || 'basic';
+    const rawTier = project.performance_level || 'standard';
+    const tier = rawTier === 'basic' ? 'standard' : rawTier === 'premium' ? 'pro' : rawTier;
     const features = [];
     const aiProcessing = (project.speaker_data as any)?.detectionMetadata?.aiProcessing || {};
 
-    // Basic tier - always available
+    // Standard tier - always available
     features.push({
       name: 'Transcription',
       available: !!project.transcription_text,
@@ -1679,11 +1743,11 @@ export default function ProjectsPage() {
       pending: false,
       icon: MessageCircle,
       color: 'text-green-600',
-      label: tier === 'basic' ? 'Generic' : 'Named'
+      label: tier === 'standard' ? 'Generic' : 'Named'
     });
 
-    // Pro tier and above
-    if (tier === 'pro' || tier === 'premium') {
+    // Pro tier: includes all enrichment features
+    if (tier === 'pro') {
       features.push({
         name: 'AI Summary',
         available: !!project.ai_summary,
@@ -1693,8 +1757,8 @@ export default function ProjectsPage() {
       });
     }
 
-    // Premium tier only
-    if (tier === 'premium') {
+    // Pro tier only (chapters, takeaways, etc.)
+    if (tier === 'pro') {
       features.push({
         name: 'Chapters',
         available: !!project.chapters && project.chapters.length > 0,
@@ -1731,10 +1795,10 @@ export default function ProjectsPage() {
       <div className="py-6">
         <div className="max-w-7xl mx-auto px-4 sm:px-6 md:px-8">
           <div className="animate-pulse">
-            <div className="h-8 bg-slate-700 rounded w-1/4 mb-4"></div>
+            <div className="h-8 bg-slate-200 dark:bg-slate-700 rounded w-1/4 mb-4"></div>
             <div className="space-y-4">
               {[1, 2, 3].map(i => (
-                <div key={i} className="h-24 bg-slate-700 rounded"></div>
+                <div key={i} className="h-24 bg-slate-200 dark:bg-slate-700 rounded"></div>
               ))}
             </div>
           </div>
@@ -1744,7 +1808,7 @@ export default function ProjectsPage() {
   }
 
   return (
-    <div className="dashboard-page flex flex-col h-screen w-full overflow-hidden bg-slate-950">
+    <div className="dashboard-page flex flex-col h-screen w-full overflow-hidden bg-white dark:bg-slate-950">
       <ConfirmModal
         isOpen={!!pendingDeleteProjectId}
         onClose={() => setPendingDeleteProjectId(null)}
@@ -1754,40 +1818,13 @@ export default function ProjectsPage() {
         confirmText="Delete"
         isDestructive
       />
-      {/* Sticky Header Bar */}
-      <header className="flex-shrink-0 h-12 bg-slate-900 border-b border-slate-700 px-6 flex items-center justify-between">
-        <div className="flex items-center gap-3">
-          <h1 className="text-base font-semibold text-slate-50">Content Library</h1>
-          <span className="text-xs text-slate-500 hidden sm:inline">
-            {projects.length} project{projects.length !== 1 ? 's' : ''}
-          </span>
-        </div>
-        <div className="flex items-center gap-2">
-          {/* Mobile sidebar toggles */}
-          <button
-            onClick={() => setProjectsSidebarOpen(!projectsSidebarOpen)}
-            className="lg:hidden p-2 text-slate-400 hover:text-slate-300 hover:bg-slate-800 rounded-md"
-            title={projectsSidebarOpen ? 'Hide projects' : 'Show projects'}
-          >
-            {projectsSidebarOpen ? <PanelLeftClose className="w-5 h-5" /> : <PanelLeftOpen className="w-5 h-5" />}
-          </button>
-          <button
-            onClick={() => setContextSidebarOpen(!contextSidebarOpen)}
-            className="lg:hidden p-2 text-slate-400 hover:text-slate-300 hover:bg-slate-800 rounded-md"
-            title={contextSidebarOpen ? 'Hide details' : 'Show details'}
-          >
-            {contextSidebarOpen ? <PanelRightClose className="w-5 h-5" /> : <PanelRightOpen className="w-5 h-5" />}
-          </button>
-        </div>
-      </header>
-
       {projects.length === 0 ? (
         // Empty state - full width centered
         <div className="flex-1 flex items-center justify-center p-8">
-          <div className="text-center py-12 px-8 bg-slate-900 rounded-lg shadow max-w-md">
+          <div className="text-center py-12 px-8 bg-slate-50 dark:bg-slate-900 rounded-lg shadow max-w-md">
             <FileText className="mx-auto h-12 w-12 text-slate-500" />
-            <h3 className="mt-2 text-sm font-medium text-slate-50">Your library is empty</h3>
-            <p className="mt-1 text-sm text-slate-400">
+            <h3 className="mt-2 text-sm font-medium text-slate-900 dark:text-slate-50">Your library is empty</h3>
+            <p className="mt-1 text-sm text-slate-500 dark:text-slate-400">
               Get started by uploading your first podcast episode.
             </p>
             <div className="mt-6">
@@ -1803,190 +1840,199 @@ export default function ProjectsPage() {
       ) : (
         /* 3-Column Dashboard Layout */
         <div className="flex flex-1 overflow-hidden">
-            {/* LEFT COLUMN: Projects List (25% on desktop) - Collapsible */}
-            <aside
-              data-tour="project-sidebar"
-              className={`flex-shrink-0 transition-all duration-300 ease-in-out border-r border-slate-800 bg-slate-900 flex flex-col overflow-hidden ${
-                projectsSidebarOpen
-                  ? 'w-80 lg:w-1/4 min-w-[280px] opacity-100'
-                  : 'w-0 opacity-0'
+          {/* LEFT COLUMN: Projects List (25% on desktop) - Collapsible */}
+          {/* Mobile backdrop for projects sidebar */}
+          {projectsSidebarOpen && (
+            <div
+              className="fixed inset-0 bg-black/60 z-20 lg:hidden"
+              onClick={() => setProjectsSidebarOpen(false)}
+              aria-hidden="true"
+            />
+          )}
+          <aside
+            data-tour="project-sidebar"
+            className={`flex-shrink-0 transition-all duration-300 ease-in-out border-r border-slate-200 dark:border-slate-800 bg-slate-50 dark:bg-slate-900 flex flex-col overflow-hidden ${projectsSidebarOpen
+              ? 'fixed inset-y-0 left-0 z-30 w-[85vw] max-w-xs opacity-100 shadow-2xl lg:static lg:inset-auto lg:z-auto lg:shadow-none lg:w-[520px] lg:flex-shrink-0 lg:min-w-[460px]'
+              : 'w-0 opacity-0 pointer-events-none'
               }`}
-            >
-              <div className="flex-shrink-0 p-5 pb-0 space-y-4">
-                {/* Header with Select Toggle */}
-                <div className="flex items-center justify-between">
-                  <h2 className="text-lg font-medium text-slate-50">Projects</h2>
-                  <button
-                    onClick={() => {
-                      if (selectionMode) {
-                        exitSelectionMode();
-                      } else {
-                        setSelectionMode(true);
-                      }
-                    }}
-                    className={`inline-flex items-center px-3 py-1.5 text-sm font-medium rounded-md transition-colors ${
-                      selectionMode
-                        ? 'bg-blue-900/40 text-blue-400 hover:bg-blue-900/60'
-                        : 'text-slate-400 hover:bg-slate-800'
-                    }`}
-                  >
-                    {selectionMode ? (
-                      <>
-                        <X className="w-4 h-4 mr-1.5" />
-                        Cancel
-                      </>
-                    ) : (
-                      <>
-                        <ListChecks className="w-4 h-4 mr-1.5" />
-                        Select
-                      </>
-                    )}
-                  </button>
+          >
+            <div className="flex-shrink-0 p-5 pb-0 space-y-4">
+              {/* Header with Select Toggle */}
+              <div className="flex items-center justify-between">
+                <div className="flex items-center gap-3">
+                  <h2 className="text-lg font-medium text-slate-900 dark:text-slate-50">Studio</h2>
+                  <span className="text-xs text-slate-500 hidden sm:inline">
+                    {projects.length} project{projects.length !== 1 ? 's' : ''}
+                  </span>
                 </div>
+                <button
+                  onClick={() => {
+                    if (selectionMode) {
+                      exitSelectionMode();
+                    } else {
+                      setSelectionMode(true);
+                    }
+                  }}
+                  className={`inline-flex items-center px-3 py-1.5 text-sm font-medium rounded-md transition-colors ${selectionMode
+                    ? 'bg-blue-100 dark:bg-blue-900/40 text-blue-600 dark:text-blue-400 hover:bg-blue-200 dark:hover:bg-blue-900/60'
+                    : 'text-slate-500 dark:text-slate-400 hover:bg-slate-100 dark:hover:bg-slate-800'
+                    }`}
+                >
+                  {selectionMode ? (
+                    <>
+                      <X className="w-4 h-4 mr-1.5" />
+                      Cancel
+                    </>
+                  ) : (
+                    <>
+                      <ListChecks className="w-4 h-4 mr-1.5" />
+                      Select
+                    </>
+                  )}
+                </button>
+              </div>
 
-                {/* Selection Mode Header */}
-                {selectionMode && (
-                  <div className="space-y-2">
-                    <div className="flex items-center justify-between bg-blue-900/20 px-3 py-2 rounded-lg border border-blue-500/30">
-                      <div className="flex items-center gap-2">
-                        <button
-                          onClick={toggleAllProjectSelection}
-                          className="p-1 hover:bg-blue-900/40 rounded transition-colors"
-                        >
-                          {selectedProjectIds.size === filteredAndSortedProjects.length && filteredAndSortedProjects.length > 0 ? (
-                            <CheckSquare className="w-4 h-4 text-blue-600" />
-                          ) : selectedProjectIds.size > 0 ? (
-                            <div className="w-4 h-4 border-2 border-blue-600 rounded bg-blue-600/20" />
-                          ) : (
-                            <Square className="w-4 h-4 text-blue-600" />
-                          )}
-                        </button>
-                        <span className="text-sm text-blue-400 font-medium">
-                          {selectedProjectIds.size} selected
-                        </span>
-                      </div>
-                      {selectedProjectIds.size > 0 && (
-                        <button
-                          onClick={() => setSelectedProjectIds(new Set())}
-                          className="text-xs text-blue-400 hover:text-blue-300"
-                        >
-                          Clear
-                        </button>
-                      )}
+              {/* Selection Mode Header */}
+              {selectionMode && (
+                <div className="space-y-2">
+                  <div className="flex items-center justify-between bg-blue-50 dark:bg-blue-900/20 px-3 py-2 rounded-lg border border-blue-300 dark:border-blue-500/30">
+                    <div className="flex items-center gap-2">
+                      <button
+                        onClick={toggleAllProjectSelection}
+                        className="p-1 hover:bg-blue-900/40 rounded transition-colors"
+                      >
+                        {selectedProjectIds.size === filteredAndSortedProjects.length && filteredAndSortedProjects.length > 0 ? (
+                          <CheckSquare className="w-4 h-4 text-blue-600" />
+                        ) : selectedProjectIds.size > 0 ? (
+                          <div className="w-4 h-4 border-2 border-blue-600 rounded bg-blue-600/20" />
+                        ) : (
+                          <Square className="w-4 h-4 text-blue-600" />
+                        )}
+                      </button>
+                      <span className="text-sm text-blue-600 dark:text-blue-400 font-medium">
+                        {selectedProjectIds.size} selected
+                      </span>
                     </div>
-                    {/* Export Button - shown when projects are selected */}
                     {selectedProjectIds.size > 0 && (
                       <button
-                        onClick={handleBulkExport}
-                        className="w-full inline-flex items-center justify-center px-4 py-2.5 bg-gradient-to-r from-blue-600 to-blue-700 text-white text-sm font-medium rounded-lg hover:from-blue-700 hover:to-blue-800 transition-all shadow-sm"
+                        onClick={() => setSelectedProjectIds(new Set())}
+                        className="text-xs text-blue-600 dark:text-blue-400 hover:text-blue-700 dark:hover:text-blue-300"
                       >
-                        <Download className="w-4 h-4 mr-2" />
-                        Export {selectedProjectIds.size} Project{selectedProjectIds.size !== 1 ? 's' : ''}
+                        Clear
                       </button>
                     )}
                   </div>
-                )}
+                  {/* Export Button - shown when projects are selected */}
+                  {selectedProjectIds.size > 0 && (
+                    <button
+                      onClick={handleBulkExport}
+                      className="w-full inline-flex items-center justify-center px-4 py-2.5 bg-gradient-to-r from-blue-600 to-blue-700 text-white text-sm font-medium rounded-lg hover:from-blue-700 hover:to-blue-800 transition-all shadow-sm"
+                    >
+                      <Download className="w-4 h-4 mr-2" />
+                      Export {selectedProjectIds.size} Project{selectedProjectIds.size !== 1 ? 's' : ''}
+                    </button>
+                  )}
+                </div>
+              )}
 
-                {/* Search Bar */}
-                <div className="relative">
-                  <Search className="absolute left-3 top-1/2 transform -translate-y-1/2 h-4 w-4 text-slate-500" />
-                  <input
-                    type="text"
-                    placeholder="Search projects..."
-                    value={searchTerm}
-                    onChange={(e) => setSearchTerm(e.target.value)}
-                    className="w-full pl-10 pr-4 py-2 border border-slate-700 bg-slate-800 text-slate-200 placeholder:text-slate-500 rounded-md text-sm focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-transparent"
-                  />
+              {/* Search Bar */}
+              <div className="relative">
+                <Search className="absolute left-3 top-1/2 transform -translate-y-1/2 h-4 w-4 text-slate-500" />
+                <input
+                  type="text"
+                  placeholder="Search projects..."
+                  value={searchTerm}
+                  onChange={(e) => setSearchTerm(e.target.value)}
+                  className="w-full pl-10 pr-4 py-2 border border-slate-300 dark:border-slate-700 bg-white dark:bg-slate-800 text-slate-700 dark:text-slate-200 placeholder:text-slate-400 dark:placeholder:text-slate-500 rounded-md text-sm focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-transparent"
+                />
+              </div>
+
+              {/* Filters */}
+              <div className="flex gap-2 flex-wrap">
+                {/* Tier Filter */}
+                <div className="flex-1 min-w-[140px]">
+                  <select
+                    value={tierFilter}
+                    onChange={(e) => setTierFilter(e.target.value as 'all' | 'standard' | 'pro')}
+                    className="w-full px-3 py-2 bg-white dark:bg-slate-800 border border-slate-300 dark:border-slate-700 text-slate-700 dark:text-slate-200 rounded-md text-sm focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-transparent"
+                  >
+                    <option value="all">All Tiers</option>
+                    <option value="standard">Standard</option>
+                    <option value="pro">Pro</option>
+                  </select>
                 </div>
 
-                {/* Filters */}
-                <div className="flex gap-2 flex-wrap">
-                  {/* Tier Filter */}
-                  <div className="flex-1 min-w-[140px]">
-                    <select
-                      value={tierFilter}
-                      onChange={(e) => setTierFilter(e.target.value as 'all' | 'basic' | 'pro' | 'premium')}
-                      className="w-full px-3 py-2 bg-slate-800 border border-slate-700 text-slate-200 rounded-md text-sm focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-transparent"
-                    >
-                      <option value="all">All Tiers</option>
-                      <option value="basic">Basic</option>
-                      <option value="pro">Pro</option>
-                      <option value="premium">Premium</option>
-                    </select>
-                  </div>
-
-                  {/* Sort By */}
-                  <div className="flex-1 min-w-[140px]">
-                    <select
-                      value={sortBy}
-                      onChange={(e) => setSortBy(e.target.value as 'recent' | 'oldest' | 'name-asc' | 'name-desc')}
-                      className="w-full px-3 py-2 bg-slate-800 border border-slate-700 text-slate-200 rounded-md text-sm focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-transparent"
-                    >
-                      <option value="recent">Recently Uploaded</option>
-                      <option value="oldest">Oldest First</option>
-                      <option value="name-asc">Name (A-Z)</option>
-                      <option value="name-desc">Name (Z-A)</option>
-                    </select>
-                  </div>
-
-                  {/* Type Filter */}
-                  <div className="w-full">
-                    <select
-                      value={typeFilter}
-                      onChange={(e) => setTypeFilter(e.target.value as 'all' | ProjectType)}
-                      className="w-full px-3 py-2 border border-slate-600 rounded-md text-sm focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-transparent"
-                    >
-                      <option value="all">All Types</option>
-                      <option value="DEBATE">Debate</option>
-                      <option value="INTERVIEW">Interview</option>
-                      <option value="PODCAST">Podcast</option>
-                      <option value="MONOLOGUE">Monologue</option>
-                      <option value="OTHER">Other</option>
-                    </select>
-                  </div>
+                {/* Sort By */}
+                <div className="flex-1 min-w-[140px]">
+                  <select
+                    value={sortBy}
+                    onChange={(e) => setSortBy(e.target.value as 'recent' | 'oldest' | 'name-asc' | 'name-desc')}
+                    className="w-full px-3 py-2 bg-white dark:bg-slate-800 border border-slate-300 dark:border-slate-700 text-slate-700 dark:text-slate-200 rounded-md text-sm focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-transparent"
+                  >
+                    <option value="recent">Recently Uploaded</option>
+                    <option value="oldest">Oldest First</option>
+                    <option value="name-asc">Name (A-Z)</option>
+                    <option value="name-desc">Name (Z-A)</option>
+                  </select>
                 </div>
 
-                {/* Results count */}
-                <div className="text-xs text-slate-400">
-                  {filteredAndSortedProjects.length} {filteredAndSortedProjects.length === 1 ? 'project' : 'projects'}
-                  {(searchTerm || tierFilter !== 'all' || typeFilter !== 'all') && ` (filtered from ${projects.length})`}
+                {/* Type Filter */}
+                <div className="w-full">
+                  <select
+                    value={typeFilter}
+                    onChange={(e) => setTypeFilter(e.target.value as 'all' | ProjectType)}
+                    className="w-full px-3 py-2 bg-white dark:bg-slate-800 border border-slate-300 dark:border-slate-600 text-slate-700 dark:text-slate-200 rounded-md text-sm focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-transparent"
+                  >
+                    <option value="all">All Types</option>
+                    <option value="DEBATE">Debate</option>
+                    <option value="INTERVIEW">Interview</option>
+                    <option value="PODCAST">Podcast</option>
+                    <option value="MONOLOGUE">Monologue</option>
+                    <option value="OTHER">Other</option>
+                  </select>
                 </div>
               </div>
 
-              {/* Scrollable Projects List */}
-              <div className="flex-1 overflow-y-auto px-5 pb-5 space-y-3">
-                {filteredAndSortedProjects.length === 0 ? (
-                  <div className="text-center py-8 text-slate-400">
-                    <FileText className="mx-auto h-8 w-8 text-slate-500 mb-2" />
-                    <p className="text-sm">No projects found</p>
-                    {(searchTerm || tierFilter !== 'all' || typeFilter !== 'all') && (
-                      <button
-                        onClick={() => {
-                          setSearchTerm('');
-                          setTierFilter('all');
-                          setTypeFilter('all');
-                        }}
-                        className="mt-2 text-xs text-blue-600 hover:text-blue-300"
-                      >
-                        Clear filters
-                      </button>
-                    )}
-                  </div>
-                ) : (
-                  filteredAndSortedProjects.map((project) => {
-                    const isProjectSelected = selectedProjectIds.has(project.id);
-                    const isActive = selectedProject?.id === project.id;
-                    return (
+              {/* Results count */}
+              <div className="text-xs text-slate-500 dark:text-slate-400">
+                {filteredAndSortedProjects.length} {filteredAndSortedProjects.length === 1 ? 'project' : 'projects'}
+                {(searchTerm || tierFilter !== 'all' || typeFilter !== 'all') && ` (filtered from ${projects.length})`}
+              </div>
+            </div>
+
+            {/* Scrollable Projects List */}
+            <div className="flex-1 overflow-y-auto px-5 pb-5 space-y-3">
+              {filteredAndSortedProjects.length === 0 ? (
+                <div className="text-center py-8 text-slate-500 dark:text-slate-400">
+                  <FileText className="mx-auto h-8 w-8 text-slate-400 dark:text-slate-500 mb-2" />
+                  <p className="text-sm">No projects found</p>
+                  {(searchTerm || tierFilter !== 'all' || typeFilter !== 'all') && (
+                    <button
+                      onClick={() => {
+                        setSearchTerm('');
+                        setTierFilter('all');
+                        setTypeFilter('all');
+                      }}
+                      className="mt-2 text-xs text-blue-600 hover:text-blue-300"
+                    >
+                      Clear filters
+                    </button>
+                  )}
+                </div>
+              ) : (
+                filteredAndSortedProjects.map((project) => {
+                  const isProjectSelected = selectedProjectIds.has(project.id);
+                  const isActive = selectedProject?.id === project.id;
+                  return (
                     <div
                       key={project.id}
                       {...(project.id === premiumFeaturedId ? { 'data-tour': 'premium-project' } : {})}
-                      className={`group p-4 rounded-xl transition-colors cursor-pointer border overflow-hidden ${
-                        selectionMode && isProjectSelected
-                          ? 'bg-blue-900/20 border-blue-400'
-                          : isActive
-                          ? 'bg-slate-800 border-blue-500 ring-1 ring-blue-500/50'
-                          : 'bg-slate-800/50 border-slate-800 hover:bg-slate-800 hover:border-slate-700'
-                      }`}
+                      className={`group p-4 rounded-xl transition-colors cursor-pointer border overflow-hidden ${selectionMode && isProjectSelected
+                        ? 'bg-blue-50 dark:bg-blue-900/20 border-blue-400'
+                        : isActive
+                          ? 'bg-slate-100 dark:bg-slate-800 border-blue-500 ring-1 ring-blue-500/50'
+                          : 'bg-white dark:bg-slate-800/50 border-slate-200 dark:border-slate-800 hover:bg-slate-50 dark:hover:bg-slate-800 hover:border-slate-300 dark:hover:border-slate-700'
+                        }`}
                       onClick={() => {
                         if (selectionMode) {
                           toggleProjectSelection(project.id);
@@ -2010,235 +2056,229 @@ export default function ProjectsPage() {
                         const pendingLabel = pendingFeatures.map(f => f.name).join(', ');
                         return (
                           <>
-                      {/* Top Row: Checkbox (selection mode), Title & Status */}
-                      <div className="flex justify-between items-start mb-1.5 gap-2">
-                        <div className="flex items-start gap-2 min-w-0 flex-1">
-                          {selectionMode && (
-                            <div className="flex-shrink-0 mt-0.5">
-                              {isProjectSelected ? (
-                                <CheckSquare className="w-4 h-4 text-blue-600" />
-                              ) : (
-                                <Square className="w-4 h-4 text-slate-500" />
+                            {/* Top Row: Checkbox (selection mode), Title & Status */}
+                            <div className="flex justify-between items-start mb-1.5 gap-2">
+                              <div className="flex items-start gap-2 min-w-0 flex-1">
+                                {selectionMode && (
+                                  <div className="flex-shrink-0 mt-0.5">
+                                    {isProjectSelected ? (
+                                      <CheckSquare className="w-4 h-4 text-blue-600" />
+                                    ) : (
+                                      <Square className="w-4 h-4 text-slate-500" />
+                                    )}
+                                  </div>
+                                )}
+                                <h3 className={`text-sm leading-snug text-slate-900 dark:text-slate-50 truncate ${selectedProject?.id === project.id ? 'font-semibold' : 'font-medium'
+                                  }`} title={project.title}>
+                                  {project.title}
+                                </h3>
+                              </div>
+                              <div className="flex-shrink-0 mt-0.5">
+                                {getStatusIcon(project.status)}
+                              </div>
+                            </div>
+
+                            {/* Middle Row: Tier & Features */}
+                            <div className="flex flex-wrap items-center gap-2 mb-3">
+                              {getTierBadge(project.performance_level)}
+
+                              {/* Compact Content Indicators */}
+                              {project.status === 'completed' && (
+                                <div className="flex items-center gap-1.5 text-xs text-slate-500 dark:text-slate-400">
+                                  {availableCount > 0 && (
+                                    <span className="flex items-center px-1.5 py-0.5 bg-green-50 dark:bg-green-900/20 text-green-700 dark:text-green-400 rounded text-[10px] font-medium">
+                                      {availableCount} Assets
+                                    </span>
+                                  )}
+                                  {pendingFeatures.length > 0 && (
+                                    <span
+                                      className="flex items-center px-1.5 py-0.5 bg-amber-50 dark:bg-amber-900/20 text-amber-700 dark:text-amber-400 rounded text-[10px] font-medium"
+                                      title={`Generating: ${pendingLabel}`}
+                                    >
+                                      Generating {pendingFeatures.length}
+                                    </span>
+                                  )}
+                                </div>
                               )}
                             </div>
-                          )}
-                          <h3 className={`text-sm leading-snug text-slate-50 truncate ${
-                            selectedProject?.id === project.id ? 'font-semibold' : 'font-medium'
-                          }`} title={project.title}>
-                            {project.title}
-                          </h3>
-                        </div>
-                        <div className="flex-shrink-0 mt-0.5">
-                          {getStatusIcon(project.status)}
-                        </div>
-                      </div>
 
-                      {/* Middle Row: Tier & Features */}
-                      <div className="flex flex-wrap items-center gap-2 mb-3">
-                        {getTierBadge(project.performance_level)}
-                        
-                        {/* Compact Content Indicators */}
-                        {project.status === 'completed' && (
-                          <div className="flex items-center gap-1.5 text-xs text-slate-400">
-                            {availableCount > 0 && (
-                              <span className="flex items-center px-1.5 py-0.5 bg-green-900/20 text-green-400 rounded text-[10px] font-medium">
-                                {availableCount} Assets
-                              </span>
-                            )}
-                            {pendingFeatures.length > 0 && (
-                              <span
-                                className="flex items-center px-1.5 py-0.5 bg-amber-900/20 text-amber-400 rounded text-[10px] font-medium"
-                                title={`Generating: ${pendingLabel}`}
-                              >
-                                Generating {pendingFeatures.length}
-                              </span>
-                            )}
-                          </div>
-                        )}
-                      </div>
-
-                      {/* Bottom Row: Metadata & Actions */}
-                      <div className="flex items-end justify-between pt-2 border-t border-slate-800">
-                        {/* Metadata */}
-                        <div className="flex flex-wrap items-center gap-x-3 gap-y-1 text-[11px] text-slate-400">
-                          <span>{new Date(project.created_at).toLocaleDateString()}</span>
-                          {project.audio_duration && (
-                            <span>{formatDuration(project.audio_duration)}</span>
-                          )}
-{project.project_type && getProjectTypeBadge(project.project_type)}
-                        </div>
-
-                        {/* Hover Actions */}
-                        {!isDemoMode && (
-                          <div className="flex items-center gap-1 opacity-0 group-hover:opacity-100 transition-opacity">
-                            {project.status === 'completed' && project.transcription_text && (
-                              <button
-                                onClick={(e) => {
-                                  e.stopPropagation();
-                                  handleGenerateContent(project);
-                                }}
-                                disabled={generatingProjects.has(project.id)}
-                                className="p-1 text-slate-500 hover:text-blue-600 transition-colors rounded hover:bg-blue-900/20"
-                                title={generatingProjects.has(project.id) ? "Generating..." : "Generate content"}
-                              >
-                                {generatingProjects.has(project.id) ? (
-                                  <Loader2 className="h-3.5 w-3.5 animate-spin text-blue-600" />
-                                ) : (
-                                  <Zap className="h-3.5 w-3.5" />
+                            {/* Bottom Row: Metadata & Actions */}
+                            <div className="flex items-end justify-between pt-2 border-t border-slate-200 dark:border-slate-800">
+                              {/* Metadata */}
+                              <div className="flex flex-wrap items-center gap-x-3 gap-y-1 text-[11px] text-slate-500 dark:text-slate-400">
+                                <span>{new Date(project.created_at).toLocaleDateString()}</span>
+                                {project.audio_duration && (
+                                  <span>{formatDuration(project.audio_duration)}</span>
                                 )}
-                              </button>
-                            )}
-                            <button
-                              onClick={(e) => {
-                                e.stopPropagation();
-                                handleDeleteProject(project.id);
-                              }}
-                              disabled={deletingProject === project.id}
-                              className="p-1 text-slate-500 hover:text-red-600 transition-colors rounded hover:bg-red-900/20"
-                              title="Delete project"
-                            >
-                              {deletingProject === project.id ? (
-                                <Loader2 className="h-3.5 w-3.5 animate-spin" />
-                              ) : (
-                                <Trash2 className="h-3.5 w-3.5" />
+                                {project.project_type && getProjectTypeBadge(project.project_type)}
+                              </div>
+
+                              {/* Hover Actions */}
+                              {!isDemoMode && (
+                                <div className="flex items-center gap-1 opacity-0 group-hover:opacity-100 transition-opacity">
+                                  {project.status === 'completed' && project.transcription_text && (
+                                    <button
+                                      onClick={(e) => {
+                                        e.stopPropagation();
+                                        handleGenerateContent(project);
+                                      }}
+                                      disabled={generatingProjects.has(project.id)}
+                                      className="p-1 text-slate-500 hover:text-blue-600 transition-colors rounded hover:bg-blue-50 dark:hover:bg-blue-900/20"
+                                      title={generatingProjects.has(project.id) ? "Generating..." : "Generate content"}
+                                    >
+                                      {generatingProjects.has(project.id) ? (
+                                        <Loader2 className="h-3.5 w-3.5 animate-spin text-blue-600" />
+                                      ) : (
+                                        <Zap className="h-3.5 w-3.5" />
+                                      )}
+                                    </button>
+                                  )}
+                                  <button
+                                    onClick={(e) => {
+                                      e.stopPropagation();
+                                      handleDeleteProject(project.id);
+                                    }}
+                                    disabled={deletingProject === project.id}
+                                    className="p-1 text-slate-500 hover:text-red-600 transition-colors rounded hover:bg-red-50 dark:hover:bg-red-900/20"
+                                    title="Delete project"
+                                  >
+                                    {deletingProject === project.id ? (
+                                      <Loader2 className="h-3.5 w-3.5 animate-spin" />
+                                    ) : (
+                                      <Trash2 className="h-3.5 w-3.5" />
+                                    )}
+                                  </button>
+                                </div>
                               )}
-                            </button>
-                          </div>
-                        )}
-                      </div>
+                            </div>
                           </>
                         );
                       })()}
                     </div>
                   );
-                  })
-                )}
-              </div>
+                })
+              )}
+            </div>
 
-            </aside>
+          </aside>
 
-            {/* MIDDLE COLUMN: Main Content Stage */}
-            <main
-              className={`flex-1 min-w-0 flex flex-col overflow-hidden transition-all duration-300 ease-in-out ${
-                !projectsSidebarOpen && !contextSidebarOpen ? 'lg:w-full' : 'lg:w-1/2'
+          {/* MIDDLE COLUMN: Main Content Stage */}
+          <main
+            className={`flex-1 min-w-0 flex flex-col overflow-hidden transition-all duration-300 ease-in-out ${!projectsSidebarOpen && !contextSidebarOpen ? 'lg:w-full' : 'lg:w-1/2'
               }`}
-            >
-              {selectedProject ? (
-                <div className="h-full flex flex-col bg-[#0F172A]">
-                  {/* Global Project Header */}
-                  <div className="flex-shrink-0 px-4 py-2.5 border-b border-slate-800 bg-slate-900/80">
-                    <div className="flex items-center justify-between gap-3">
-                      {/* Left: sidebar toggle + badges */}
-                      <div className="flex items-center gap-2 flex-shrink-0">
+          >
+            {selectedProject ? (
+              <div className="h-full flex flex-col bg-white dark:bg-[#0F172A]">
+                {/* Global Project Header */}
+                <div className="flex-shrink-0 px-4 py-2.5 border-b border-slate-200 dark:border-slate-800 bg-white/80 dark:bg-slate-900/80">
+                  <div className="flex items-center justify-between gap-3">
+                    {/* Left: sidebar toggle + badges */}
+                    <div className="flex items-center gap-2 flex-shrink-0">
+                      <button
+                        onClick={() => setProjectsSidebarOpen(!projectsSidebarOpen)}
+                        className="flex p-1.5 text-slate-500 dark:text-slate-400 hover:text-slate-700 dark:hover:text-slate-300 hover:bg-slate-100 dark:hover:bg-slate-800 rounded-md transition-colors"
+                        title={projectsSidebarOpen ? 'Hide projects' : 'Show projects'}
+                        aria-label={projectsSidebarOpen ? 'Hide projects sidebar' : 'Show projects sidebar'}
+                      >
+                        {projectsSidebarOpen ? <PanelLeftClose className="w-4 h-4" /> : <PanelLeftOpen className="w-4 h-4" />}
+                      </button>
+                      <div className="hidden sm:flex items-center gap-1.5">
+                        {getTierBadge(selectedProject.performance_level)}
+                        {selectedProject.project_type && getProjectTypeBadge(selectedProject.project_type)}
+                      </div>
+                    </div>
+
+                    {/* Center: Project title pill */}
+                    <div className="flex-1 flex justify-center min-w-0 px-2">
+                      {editingProjectTitle ? (
+                        <input
+                          type="text"
+                          value={editingTitleValue}
+                          onChange={(e) => setEditingTitleValue(e.target.value)}
+                          onKeyDown={(e) => {
+                            if (e.key === 'Enter') handleSaveProjectTitle();
+                            if (e.key === 'Escape') setEditingProjectTitle(false);
+                          }}
+                          onBlur={handleSaveProjectTitle}
+                          disabled={savingTitle}
+                          autoFocus
+                          className={`bg-slate-100/50 dark:bg-slate-800/50 text-slate-600 dark:text-slate-300 px-4 py-1.5 rounded-lg text-sm border border-blue-500/50 outline-none w-full text-center ${isCenterWide ? 'max-w-none' : 'max-w-2xl'
+                            }`}
+                        />
+                      ) : (
                         <button
-                          onClick={() => setProjectsSidebarOpen(!projectsSidebarOpen)}
-                          className="hidden lg:flex p-1.5 text-slate-400 hover:text-slate-300 hover:bg-slate-800 rounded-md transition-colors"
-                          title={projectsSidebarOpen ? 'Hide projects' : 'Show projects'}
+                          className={`group flex items-center justify-center gap-2 bg-slate-100/50 dark:bg-slate-800/50 text-slate-600 dark:text-slate-300 px-4 py-1.5 rounded-lg text-sm hover:bg-slate-100 dark:hover:bg-slate-800 transition-colors w-full truncate border border-transparent hover:border-slate-300 dark:hover:border-slate-700 ${isCenterWide ? 'max-w-none' : 'max-w-2xl'
+                            }`}
+                          onClick={() => { setEditingTitleValue(selectedProject.title); setEditingProjectTitle(true); }}
+                          title="Click to rename"
+                          aria-label="Rename project title"
                         >
-                          {projectsSidebarOpen ? <PanelLeftClose className="w-4 h-4" /> : <PanelLeftOpen className="w-4 h-4" />}
+                          <span className="truncate">{selectedProject.title}</span>
+                          <Pencil className="w-3 h-3 text-slate-500 opacity-0 group-hover:opacity-100 flex-shrink-0 transition-opacity" />
                         </button>
-                        <div className="hidden sm:flex items-center gap-1.5">
-                          {getTierBadge(selectedProject.performance_level)}
-                          {selectedProject.project_type && getProjectTypeBadge(selectedProject.project_type)}
+                      )}
+                    </div>
+
+                    {/* Right: Status + actions */}
+                    <div className="flex items-center gap-2 flex-shrink-0">
+                      {selectedProjectAudioExpired && (
+                        <div className="hidden sm:flex items-center gap-1.5 px-2.5 py-1 rounded-full bg-rose-500/10 text-rose-300 border border-rose-500/20 text-xs font-medium whitespace-nowrap">
+                          <Clock className="w-3 h-3 flex-shrink-0" />
+                          <span>Audio expired</span>
                         </div>
-                      </div>
-
-                      {/* Center: Project title pill */}
-                      <div className="flex-1 flex justify-center min-w-0 px-2">
-                        {editingProjectTitle ? (
-                          <input
-                            type="text"
-                            value={editingTitleValue}
-                            onChange={(e) => setEditingTitleValue(e.target.value)}
-                            onKeyDown={(e) => {
-                              if (e.key === 'Enter') handleSaveProjectTitle();
-                              if (e.key === 'Escape') setEditingProjectTitle(false);
-                            }}
-                            onBlur={handleSaveProjectTitle}
-                            disabled={savingTitle}
-                            autoFocus
-                            className={`bg-slate-800/50 text-slate-300 px-4 py-1.5 rounded-lg text-sm border border-blue-500/50 outline-none w-full text-center ${
-                              isCenterWide ? 'max-w-none' : 'max-w-2xl'
-                            }`}
-                          />
-                        ) : (
-                          <button
-                            className={`group flex items-center justify-center gap-2 bg-slate-800/50 text-slate-300 px-4 py-1.5 rounded-lg text-sm hover:bg-slate-800 transition-colors w-full truncate border border-transparent hover:border-slate-700 ${
-                              isCenterWide ? 'max-w-none' : 'max-w-2xl'
-                            }`}
-                            onClick={() => { setEditingTitleValue(selectedProject.title); setEditingProjectTitle(true); }}
-                            title="Click to rename"
-                          >
-                            <span className="truncate">{selectedProject.title}</span>
-                            <Pencil className="w-3 h-3 text-slate-500 opacity-0 group-hover:opacity-100 flex-shrink-0 transition-opacity" />
-                          </button>
-                        )}
-                      </div>
-
-                      {/* Right: Status + actions */}
-                      <div className="flex items-center gap-2 flex-shrink-0">
-                        {isReconciling && (
-                          <div className="hidden sm:flex items-center gap-1.5 px-2.5 py-1 rounded-full bg-blue-500/10 text-blue-400 border border-blue-500/20 text-xs font-medium">
-                            <Loader2 className="w-3 h-3 animate-spin flex-shrink-0" />
-                            <span>Repairing&hellip;</span>
+                      )}
+                      {isReconciling && (
+                        <div className="hidden sm:flex items-center gap-1.5 px-2.5 py-1 rounded-full bg-blue-500/10 text-blue-400 border border-blue-500/20 text-xs font-medium">
+                          <Loader2 className="w-3 h-3 animate-spin flex-shrink-0" />
+                          <span>Repairing&hellip;</span>
+                        </div>
+                      )}
+                      {selectedProject.status === 'completed' && (
+                        <div className="hidden sm:flex relative group">
+                          <div className="flex items-center gap-1.5 px-2.5 py-1 rounded-full bg-emerald-500/10 text-emerald-400 border border-emerald-500/20 text-xs font-medium cursor-default whitespace-nowrap">
+                            <CheckCircle className="w-3 h-3 flex-shrink-0" />
+                            <span>Processing complete</span>
                           </div>
-                        )}
-                        {selectedProject.status === 'completed' && (
-                          <div className="hidden sm:flex relative group">
-                            <div className="flex items-center gap-1.5 px-2.5 py-1 rounded-full bg-emerald-500/10 text-emerald-400 border border-emerald-500/20 text-xs font-medium cursor-default whitespace-nowrap">
-                              <CheckCircle className="w-3 h-3 flex-shrink-0" />
-                              <span>Processing complete</span>
-                            </div>
-                            {/* Tooltip on hover */}
-                            <div className="absolute bottom-full mb-2 left-1/2 -translate-x-1/2 opacity-0 group-hover:opacity-100 transition-opacity pointer-events-none z-50 bg-slate-800 border border-slate-700 rounded-xl shadow-xl p-3 w-56">
-                              <p className="text-[10px] font-semibold text-slate-500 uppercase tracking-widest mb-2">Completed Tasks</p>
-                              <div className="space-y-1.5 text-xs text-slate-300">
-                                <div className="flex items-center gap-2">
-                                  <CheckCircle className="w-3 h-3 text-emerald-400 flex-shrink-0" />
-                                  <span>Transcription (AssemblyAI)</span>
-                                </div>
-                                <div className="flex items-center gap-2">
-                                  <CheckCircle className="w-3 h-3 text-emerald-400 flex-shrink-0" />
-                                  <span>Speaker Attribution (AI Enhanced)</span>
-                                </div>
-                                <div className="flex items-center gap-2">
-                                  <CheckCircle className="w-3 h-3 text-emerald-400 flex-shrink-0" />
-                                  <span>Insight Extraction</span>
-                                </div>
+                          {/* Tooltip on hover */}
+                          <div className="absolute bottom-full mb-2 left-1/2 -translate-x-1/2 opacity-0 group-hover:opacity-100 transition-opacity pointer-events-none z-50 bg-white dark:bg-slate-800 border border-slate-200 dark:border-slate-700 rounded-xl shadow-xl p-3 w-56">
+                            <p className="text-[10px] font-semibold text-slate-400 dark:text-slate-500 uppercase tracking-widest mb-2">Completed Tasks</p>
+                            <div className="space-y-1.5 text-xs text-slate-600 dark:text-slate-300">
+                              <div className="flex items-center gap-2">
+                                <CheckCircle className="w-3 h-3 text-emerald-400 flex-shrink-0" />
+                                <span>Transcription (AssemblyAI)</span>
+                              </div>
+                              <div className="flex items-center gap-2">
+                                <CheckCircle className="h-3 w-3 text-emerald-400 flex-shrink-0" />
+                                <span>Speaker Attribution (AI Enhanced)</span>
+                              </div>
+                              <div className="flex items-center gap-2">
+                                <CheckCircle className="h-3 w-3 text-emerald-400 flex-shrink-0" />
+                                <span>Insight Extraction</span>
                               </div>
                             </div>
                           </div>
-                        )}
-                        {selectedProject.status === 'processing' && (
-                          <div className="hidden sm:flex items-center gap-1.5 px-2.5 py-1 rounded-full bg-amber-500/10 text-amber-400 border border-amber-500/20 text-xs font-medium whitespace-nowrap">
-                            <Loader2 className="w-3 h-3 animate-spin flex-shrink-0" />
-                            <span>{getProcessingStage(selectedProject)}</span>
-                          </div>
-                        )}
+                        </div>
+                      )}
+                      {selectedProject.status === 'processing' && (
+                        <div className="hidden sm:flex items-center gap-1.5 px-2.5 py-1 rounded-full bg-amber-500/10 text-amber-400 border border-amber-500/20 text-xs font-medium whitespace-nowrap">
+                          <Loader2 className="w-3 h-3 animate-spin flex-shrink-0" />
+                          <span>{getProcessingStage(selectedProject)}</span>
+                        </div>
+                      )}
+                      <div className="flex items-center gap-2">
                         <DropdownMenu
                           align="right"
                           trigger={
                             <button
                               type="button"
                               data-tour="export-btn"
-                              className="p-1.5 text-slate-500 hover:text-slate-400 hover:bg-slate-800 rounded-lg transition-colors"
+                              className="p-1.5 text-slate-500 dark:text-slate-300 hover:text-slate-900 dark:hover:text-white hover:bg-slate-100 dark:hover:bg-slate-800 rounded-lg transition-colors"
                             >
                               <MoreHorizontal className="w-4 h-4" />
                               <span className="sr-only">More actions</span>
                             </button>
                           }
                         >
-                          <DropdownMenuItem
-                            onClick={() => handleRunCoverage(selectedProject)}
-                            disabled={runningCoverageIds.has(selectedProject.id) || !selectedProject.transcription_text}
-                          >
-                            {runningCoverageIds.has(selectedProject.id) ? (
-                              <Loader2 className="w-4 h-4 animate-spin" />
-                            ) : (
-                              <ScanSearch className="w-4 h-4" />
-                            )}
-                            {runningCoverageIds.has(selectedProject.id) ? 'Analyzing...' : 'Run Analysis'}
-                          </DropdownMenuItem>
                           <DropdownMenuItem onClick={() => handleSingleExport(selectedProject)}>
                             <Download className="w-4 h-4" />
                             Export
@@ -2249,386 +2289,509 @@ export default function ProjectsPage() {
                             {refreshing ? 'Refreshing...' : 'Refresh'}
                           </DropdownMenuItem>
                         </DropdownMenu>
-                        {!isDemoMode && (
-                          <button
-                            onClick={() => handleGenerateContent(selectedProject)}
-                            disabled={generatingProjects.has(selectedProject.id)}
-                            className={`inline-flex items-center gap-1.5 px-3.5 py-1.5 text-sm font-medium rounded-lg transition-colors disabled:opacity-60 disabled:cursor-not-allowed ${
-                              generatingProjects.has(selectedProject.id)
-                                ? 'bg-blue-900/20 text-blue-400'
-                                : 'bg-blue-600 text-white hover:bg-blue-700'
-                            }`}
-                          >
-                            {generatingProjects.has(selectedProject.id) ? (
-                              <><Loader2 className="w-4 h-4 animate-spin" />Generating...</>
-                            ) : (
-                              <><Zap className="w-4 h-4" />Generate</>
-                            )}
-                          </button>
-                        )}
                         <button
                           onClick={() => setContextSidebarOpen(!contextSidebarOpen)}
-                          className="hidden lg:flex p-1.5 text-slate-400 hover:text-slate-300 hover:bg-slate-800 rounded-md transition-colors"
+                          className="flex p-1.5 text-slate-500 dark:text-slate-400 hover:text-slate-700 dark:hover:text-slate-300 hover:bg-slate-100 dark:hover:bg-slate-800 rounded-md transition-colors"
                           title={contextSidebarOpen ? 'Hide details panel' : 'Show details panel'}
+                          aria-label={contextSidebarOpen ? 'Hide details panel' : 'Show details panel'}
                         >
                           {contextSidebarOpen ? <PanelRightClose className="w-4 h-4" /> : <PanelRightOpen className="w-4 h-4" />}
                         </button>
                       </div>
                     </div>
                   </div>
+                </div>
 
-                  {/* Transcript panel (full width) */}
-                  <div className="flex flex-col min-h-0 flex-1 overflow-hidden">
+                {/* Transcript panel (full width) */}
+                <div className="flex flex-col min-h-0 flex-1 overflow-hidden">
 
-                    {/* Transcript Panel */}
-                    <div className="flex flex-col min-h-0 overflow-hidden">
-                      {/* Panel Header */}
-                      <div data-tour="transcript-header" className="flex-shrink-0 flex items-center justify-between px-4 py-3 border-b border-slate-800 bg-slate-900/50">
-                        <div className="flex items-center gap-2">
-                          <BarChart2 className="w-4 h-4 text-blue-400" />
-                          <span className="text-slate-100 font-semibold text-sm">Transcript</span>
-                        </div>
-                        <div className="flex items-center gap-2">
-                          {parsedSpeakerData && (
-                            <>
-                              <label className={`flex items-center gap-1 text-xs px-2 py-0.5 rounded-full border transition-colors cursor-pointer ${
-                                showTimestamps ? 'border-blue-800/30 bg-blue-900/20 text-blue-400' : 'border-slate-700 text-slate-500 hover:text-slate-400'
+                  {/* Transcript Panel */}
+                  <div className="flex flex-col min-h-0 overflow-hidden">
+                    {/* Panel Header */}
+                    <div data-tour="transcript-header" className="flex-shrink-0 flex items-center justify-between gap-3 px-4 py-3 border-b border-slate-200 dark:border-slate-800 bg-white/50 dark:bg-slate-900/50 overflow-x-auto">
+                      <div className="flex items-center gap-2 flex-shrink-0">
+                        <BarChart2 className="w-4 h-4 text-blue-600 dark:text-blue-400" />
+                        <span className="text-slate-800 dark:text-slate-100 font-semibold text-sm whitespace-nowrap">Transcript</span>
+                      </div>
+                      <div className="flex items-center justify-end gap-2 flex-shrink-0 whitespace-nowrap">
+                        {parsedSpeakerData && (
+                          <>
+                            <label className={`flex items-center gap-1 text-xs px-2 py-0.5 rounded-full border transition-colors cursor-pointer ${showTimestamps ? 'border-blue-300 dark:border-blue-800/30 bg-blue-50 dark:bg-blue-900/20 text-blue-600 dark:text-blue-400' : 'border-slate-300 dark:border-slate-700 text-slate-500 hover:text-slate-600 dark:hover:text-slate-400'
                               }`} title="Toggle timestamps">
-                                <input type="checkbox" checked={showTimestamps} onChange={(e) => setShowTimestamps(e.target.checked)} className="sr-only" />
-                                <Clock className="w-3 h-3" />
-                              </label>
-                              <button
-                                data-tour="view-toggle"
-                                onClick={() => setReaderView(v => !v)}
-                                className={`flex items-center gap-1 text-xs px-2 py-0.5 rounded-full border transition-colors ${
-                                  readerView ? 'border-blue-800/30 bg-blue-900/20 text-blue-400' : 'border-slate-700 text-slate-500 hover:text-slate-400'
+                              <input type="checkbox" checked={showTimestamps} onChange={(e) => setShowTimestamps(e.target.checked)} className="sr-only" aria-label="Toggle transcript timestamps" />
+                              <Clock className="w-3 h-3" />
+                            </label>
+                            <button
+                              data-tour="view-toggle"
+                              onClick={() => setReaderView(v => !v)}
+                              className={`flex items-center gap-1 text-xs px-2 py-0.5 rounded-full border transition-colors ${readerView ? 'border-blue-300 dark:border-blue-800/30 bg-blue-50 dark:bg-blue-900/20 text-blue-600 dark:text-blue-400' : 'border-slate-300 dark:border-slate-700 text-slate-500 hover:text-slate-600 dark:hover:text-slate-400'
                                 }`}
-                                title="Reader view"
-                              >
-                                <BookOpen className="w-3 h-3" />
-                              </button>
-                              <select
-                                value={selectedSpeaker || ''}
-                                onChange={(e) => setSelectedSpeaker(e.target.value || null)}
-                                className={`text-xs px-2 py-0.5 rounded-full border transition-colors bg-transparent ${
-                                  selectedSpeaker
-                                    ? 'border-blue-800/30 bg-blue-900/20 text-blue-400'
-                                    : 'border-slate-700 text-slate-500 hover:text-slate-400'
+                              title="Reader view"
+                              aria-label={readerView ? 'Disable reader view' : 'Enable reader view'}
+                            >
+                              <BookOpen className="w-3 h-3" />
+                            </button>
+                            <select
+                              value={selectedSpeaker || ''}
+                              onChange={(e) => setSelectedSpeaker(e.target.value || null)}
+                              className={`text-xs px-2 py-0.5 rounded-full border transition-colors bg-transparent ${selectedSpeaker
+                                ? 'border-blue-300 dark:border-blue-800/30 bg-blue-50 dark:bg-blue-900/20 text-blue-600 dark:text-blue-400'
+                                : 'border-slate-300 dark:border-slate-700 text-slate-500 hover:text-slate-600 dark:hover:text-slate-400'
                                 }`}
-                              >
-                                <option value="">All speakers</option>
-                                {Object.keys(parsedSpeakerData.speakers || {}).map((speakerId) => (
-                                  <option key={speakerId} value={speakerId}>
-                                    {getSpeakerDisplayName(parsedSpeakerData.speakers[speakerId])}
-                                  </option>
-                                ))}
-                              </select>
-                            </>
-                          )}
-                        </div>
-                      </div>
-
-                      {/* Status notices */}
-                      {(isProjectRefreshing || (projectPreviousStatus === 'processing' && selectedProject.status === 'completed')) && (
-                        <div className="flex-shrink-0 px-4 py-2 bg-slate-900 border-b border-slate-800">
-                          {isProjectRefreshing && (
-                            <div className="flex items-center gap-2 text-blue-400 text-sm">
-                              <RefreshCw className="h-3.5 w-3.5 animate-spin" />
-                              <span>Refreshing speaker data...</span>
-                            </div>
-                          )}
-                          {projectPreviousStatus === 'processing' && selectedProject.status === 'completed' && (
-                            <div className="flex items-center gap-2 text-green-400 text-sm">
-                              <CheckCircle className="h-3.5 w-3.5" />
-                              <span>Processing complete!</span>
-                            </div>
-                          )}
-                        </div>
-                      )}
-
-                      {/* Audio Player */}
-                      {audioUrl && (
-                        <AudioPlayer src={audioUrl} audioElementRef={audioElementRef} />
-                      )}
-
-                      {/* Transcript Body */}
-                      <div ref={readerScrollRef} className="flex-1 min-h-0 overflow-y-auto">
-                        {parsedSpeakerData ? (
-                          readerView ? (
-                            <div className="px-4 py-4 divide-y divide-slate-800/70 relative">
-                              {/* Resume follow-along button */}
-                              {readerAutoScrollPaused && (
-                                <div className="sticky top-2 z-10 flex justify-center mb-2 pointer-events-none">
-                                  <button
-                                    onClick={() => { isReaderScrollingRef.current = false; setReaderAutoScrollPaused(false); }}
-                                    className="pointer-events-auto flex items-center gap-1.5 px-3 py-1.5 text-[11px] font-medium text-slate-200 bg-slate-800/95 backdrop-blur-sm border border-slate-700 rounded-full shadow-lg hover:bg-slate-700 transition-colors"
-                                  >
-                                    ↓ Resume follow-along
-                                  </button>
-                                </div>
-                              )}
-                              {parsedSpeakerData.segments.map((segment: any, i: number) => {
-                                const speakerId = segment.finalSpeakerId || segment.speakerId;
-                                const speaker = parsedSpeakerData.speakers[speakerId];
-                                const speakerName = speaker?.finalName || speaker?.fallbackName || speaker?.name || speakerId;
-                                const badgeClasses = getSpeakerBadgeClasses(speakerId);
-                                const mins = Math.floor((segment.startTime || 0) / 60);
-                                const secs = Math.floor((segment.startTime || 0) % 60);
-                                const timestamp = `${mins}:${secs.toString().padStart(2, '0')}`;
-                                const isActive = readerActiveIndex === i;
-                                return (
-                                  <div
-                                    key={i}
-                                    id={`reader-segment-${i}`}
-                                    className={`flex items-baseline gap-3 py-2.5 px-2 -mx-2 rounded-lg cursor-pointer transition-all duration-300 ${
-                                      isActive
-                                        ? 'bg-blue-900/10 border-l-2 border-blue-500 pl-3 -ml-3 shadow-[inset_0_1px_0_0_rgba(255,255,255,0.05)]'
-                                        : 'hover:bg-slate-800/40'
-                                    }`}
-                                    onClick={() => {
-                                      const audio = audioElementRef.current;
-                                      if (!audio) return;
-                                      audio.currentTime = segment.startTime || 0;
-                                      isReaderScrollingRef.current = false;
-                                      setReaderAutoScrollPaused(false);
-                                      audio.play().catch(() => undefined);
-                                    }}
-                                  >
-                                    <span className="flex-shrink-0 text-[11px] font-mono text-slate-500 w-9 select-none">{timestamp}</span>
-                                    <span className={`flex-shrink-0 text-[11px] font-semibold px-2 py-0.5 rounded-full ${badgeClasses}`}>{speakerName}</span>
-                                    <span className={`text-[14px] leading-relaxed transition-colors duration-300 ${isActive ? 'text-slate-100' : 'text-slate-300'}`}>{segment.text}</span>
-                                  </div>
-                                );
-                              })}
-                            </div>
-                          ) : (
-                            <ConversationView
-                              speakerData={parsedSpeakerData}
-                              transcriptionText={selectedProject.transcription_text || ''}
-                              projectId={selectedProject.id}
-                              userTier={selectedProject.performance_level || 'basic'}
-                              onSpeakerUpdate={(updatedSpeakerData) => {
-                                setSelectedProject(prev => prev ? { ...prev, speaker_data: updatedSpeakerData } : null);
-                                setProjects(prev => prev.map(project =>
-                                  project.id === selectedProject.id ? { ...project, speaker_data: updatedSpeakerData } : project
-                                ));
-                              }}
-                              insightsSidebarOpen={insightsSidebarOpen}
-                              onInsightsSidebarChange={setInsightsSidebarOpen}
-                              onInsightsStatusChange={setInsightsStatus}
-                              onInsightsDataChange={setInsightsData}
-                              triggerInsightGeneration={triggerInsightGeneration}
-                              insightsRefreshToken={insightsRefreshToken}
-                              audioPlayerRef={audioPlayerRef}
-                              audioElementRef={audioElementRef}
-                              audioSrc={audioUrl}
-                              showTimestamps={showTimestamps}
-                              selectedSpeaker={selectedSpeaker}
-                              selectedSegments={selectedSegments}
-                              onToggleSegmentSelection={handleToggleSegmentSelection}
-                              scrollToSegmentIndex={scrollToSegmentIndex}
-                              onConfirmSegment={handleConfirmSegment}
-                            />
-                          )
-                        ) : selectedProject.transcription_text ? (
-                          <div className="px-4 py-4">
-                            <div className="text-[15px] text-slate-300 leading-relaxed whitespace-pre-wrap">
-                              {selectedProject.transcription_text}
-                            </div>
-                          </div>
-                        ) : (
-                          <div className="flex items-center justify-center h-full">
-                            <div className="text-center py-12 text-slate-400">
-                              <Loader2 className="h-8 w-8 mx-auto mb-3 animate-spin text-slate-500" />
-                              <p className="text-sm">Processing transcription...</p>
-                            </div>
-                          </div>
+                            >
+                              <option value="">All speakers</option>
+                              {Object.keys(parsedSpeakerData.speakers || {}).map((speakerId) => (
+                                <option key={speakerId} value={speakerId}>
+                                  {getSpeakerDisplayName(parsedSpeakerData.speakers[speakerId])}
+                                </option>
+                              ))}
+                            </select>
+                          </>
                         )}
-                      </div>
-
-                      {/* Transcript Footer */}
-                      <div className="flex-shrink-0 border-t border-slate-800 px-4 py-3">
-                        <p className="text-slate-500 text-xs">
-                          {parsedSpeakerData?.detectionMetadata?.totalSpeakers ?? 0} speakers detected
-                          {(selectedProject.audio_duration || selectedProject.audio_duration_seconds)
-                            ? ` | ${formatDuration(selectedProject.audio_duration || selectedProject.audio_duration_seconds || 0)}`
-                            : ''
-                          }
-                          {accuracyPercent !== null ? ` · ${accuracyPercent.toFixed(1)}% accuracy` : ''}
-                        </p>
+                        <button
+                          onClick={() => handleRunCoverage(selectedProject)}
+                          disabled={runningCoverageIds.has(selectedProject.id) || !selectedProject.transcription_text}
+                          className={`inline-flex items-center gap-1.5 px-2.5 py-1 text-xs font-medium rounded-md border transition-colors disabled:opacity-60 disabled:cursor-not-allowed ${runningCoverageIds.has(selectedProject.id)
+                            ? 'border-cyan-300 dark:border-cyan-800/40 bg-cyan-50 dark:bg-cyan-900/20 text-cyan-700 dark:text-cyan-300'
+                            : 'border-slate-300 dark:border-slate-700 bg-white dark:bg-slate-800/80 text-slate-700 dark:text-slate-100 hover:bg-slate-50 dark:hover:bg-slate-700'
+                            }`}
+                          title={!selectedProject.transcription_text ? 'Analysis requires a transcript' : 'Run analysis'}
+                        >
+                          {runningCoverageIds.has(selectedProject.id) ? (
+                            <><Loader2 className="w-4 h-4 animate-spin" />Analyzing...</>
+                          ) : (
+                            <><ScanSearch className="w-4 h-4" />Run Analysis</>
+                          )}
+                        </button>
+                        {!isDemoMode && (
+                          <button
+                            onClick={() => handleGenerateContent(selectedProject)}
+                            disabled={generatingProjects.has(selectedProject.id)}
+                            className={`inline-flex items-center gap-1.5 px-3 py-1 text-xs font-medium rounded-md transition-colors disabled:opacity-60 disabled:cursor-not-allowed ${generatingProjects.has(selectedProject.id)
+                              ? 'bg-blue-900/20 text-blue-400'
+                              : 'bg-blue-600 text-white hover:bg-blue-700'
+                              }`}
+                          >
+                            {generatingProjects.has(selectedProject.id) ? (
+                              <><Loader2 className="w-4 h-4 animate-spin" />Generating...</>
+                            ) : (
+                              <><Zap className="w-4 h-4" />Generate Content</>
+                            )}
+                          </button>
+                        )}
                       </div>
                     </div>
 
+                    {/* Status notices */}
+                    {(isProjectRefreshing || (projectPreviousStatus === 'processing' && selectedProject.status === 'completed')) && (
+                      <div className="flex-shrink-0 px-4 py-2 bg-white dark:bg-slate-900 border-b border-slate-200 dark:border-slate-800">
+                        {isProjectRefreshing && (
+                          <div className="flex items-center gap-2 text-blue-400 text-sm">
+                            <RefreshCw className="h-3.5 w-3.5 animate-spin" />
+                            <span>Refreshing speaker data...</span>
+                          </div>
+                        )}
+                        {projectPreviousStatus === 'processing' && selectedProject.status === 'completed' && (
+                          <div className="flex items-center gap-2 text-green-400 text-sm">
+                            <CheckCircle className="h-3.5 w-3.5" />
+                            <span>Processing complete!</span>
+                          </div>
+                        )}
+                      </div>
+                    )}
+
+                    <div className="flex-shrink-0 px-4 py-2 border-b border-slate-200 dark:border-slate-800 bg-slate-50/70 dark:bg-slate-950/70">
+                      {selectedProjectAudioExpired ? (
+                        <div className="flex items-center gap-2 text-rose-300 text-sm">
+                          <Clock className="h-3.5 w-3.5 flex-shrink-0" />
+                          <span>
+                            Source audio expired{selectedProjectAudioExpiryLabel ? ` on ${selectedProjectAudioExpiryLabel}` : ''}. Transcript and generated content remain available.
+                          </span>
+                        </div>
+                      ) : selectedProjectAudioExpiryLabel ? (
+                        <div className="flex items-center gap-2 text-slate-500 dark:text-slate-400 text-sm">
+                          <Clock className="h-3.5 w-3.5 flex-shrink-0" />
+                          <span>Source audio will be deleted on {selectedProjectAudioExpiryLabel}.</span>
+                        </div>
+                      ) : null}
+                    </div>
+
+                    {/* Audio Player */}
+                    {!selectedProjectAudioExpired && audioUrl && (
+                      <AudioPlayer src={audioUrl} audioElementRef={audioElementRef} />
+                    )}
+
+                    {/* Transcript Body */}
+                    <div ref={readerScrollRef} className="flex-1 min-h-0 overflow-y-auto">
+                      {parsedSpeakerData ? (
+                        readerView ? (
+                          <div className="px-4 py-4 divide-y divide-slate-200 dark:divide-slate-800/70 relative">
+                            {/* Resume follow-along button */}
+                            {readerAutoScrollPaused && (
+                              <div className="sticky top-2 z-10 flex justify-center mb-2 pointer-events-none">
+                                <button
+                                  onClick={() => { isReaderScrollingRef.current = false; setReaderAutoScrollPaused(false); }}
+                                  className="pointer-events-auto flex items-center gap-1.5 px-3 py-1.5 text-[11px] font-medium text-slate-700 dark:text-slate-200 bg-white/95 dark:bg-slate-800/95 backdrop-blur-sm border border-slate-200 dark:border-slate-700 rounded-full shadow-lg hover:bg-slate-50 dark:hover:bg-slate-700 transition-colors"
+                                >
+                                  ↓ Resume follow-along
+                                </button>
+                              </div>
+                            )}
+                            {parsedSpeakerData.segments.map((segment: any, i: number) => {
+                              const speakerId = segment.finalSpeakerId || segment.speakerId;
+                              const speaker = parsedSpeakerData.speakers[speakerId];
+                              const speakerName = speaker?.finalName || speaker?.fallbackName || speaker?.name || speakerId;
+                              const badgeClasses = getSpeakerBadgeClasses(speakerId);
+                              const mins = Math.floor((segment.startTime || 0) / 60);
+                              const secs = Math.floor((segment.startTime || 0) % 60);
+                              const timestamp = `${mins}:${secs.toString().padStart(2, '0')}`;
+                              const isActive = readerActiveIndex === i;
+                              return (
+                                <div
+                                  key={i}
+                                  id={`reader-segment-${i}`}
+                                  className={`flex items-baseline gap-3 py-2.5 px-2 -mx-2 rounded-lg cursor-pointer transition-all duration-300 ${isActive
+                                    ? 'bg-blue-50/50 dark:bg-blue-900/10 border-l-2 border-blue-500 pl-3 -ml-3 shadow-[inset_0_1px_0_0_rgba(255,255,255,0.05)]'
+                                    : 'hover:bg-slate-100/40 dark:hover:bg-slate-800/40'
+                                    }`}
+                                  onClick={() => {
+                                    const audio = audioElementRef.current;
+                                    if (!audio) return;
+                                    audio.currentTime = segment.startTime || 0;
+                                    isReaderScrollingRef.current = false;
+                                    setReaderAutoScrollPaused(false);
+                                    audio.play().catch(() => undefined);
+                                  }}
+                                >
+                                  <span className="flex-shrink-0 text-[11px] font-mono text-slate-500 w-9 select-none">{timestamp}</span>
+                                  <span className={`flex-shrink-0 text-[11px] font-semibold px-2 py-0.5 rounded-full ${badgeClasses}`}>{speakerName}</span>
+                                  <span className={`text-[14px] leading-relaxed transition-colors duration-300 ${isActive ? 'text-slate-900 dark:text-slate-100' : 'text-slate-600 dark:text-slate-300'}`}>{segment.text}</span>
+                                </div>
+                              );
+                            })}
+                          </div>
+                        ) : (
+                          <ConversationView
+                            speakerData={parsedSpeakerData}
+                            transcriptionText={selectedProject.transcription_text || ''}
+                            projectId={selectedProject.id}
+                            userTier={(selectedProject.performance_level === 'basic' ? 'standard' : selectedProject.performance_level === 'premium' ? 'pro' : selectedProject.performance_level) || 'standard'}
+                            onSpeakerUpdate={(updatedSpeakerData) => {
+                              setSelectedProject(prev => prev ? { ...prev, speaker_data: updatedSpeakerData } : null);
+                              setProjects(prev => prev.map(project =>
+                                project.id === selectedProject.id ? { ...project, speaker_data: updatedSpeakerData } : project
+                              ));
+                            }}
+                            insightsSidebarOpen={insightsSidebarOpen}
+                            onInsightsSidebarChange={setInsightsSidebarOpen}
+                            onInsightsStatusChange={setInsightsStatus}
+                            onInsightsDataChange={setInsightsData}
+                            triggerInsightGeneration={triggerInsightGeneration}
+                            insightsRefreshToken={insightsRefreshToken}
+                            audioPlayerRef={audioPlayerRef}
+                            audioElementRef={audioElementRef}
+                            audioSrc={audioUrl}
+                            showTimestamps={showTimestamps}
+                            selectedSpeaker={selectedSpeaker}
+                            selectedSegments={selectedSegments}
+                            onToggleSegmentSelection={handleToggleSegmentSelection}
+                            scrollToSegmentIndex={scrollToSegmentIndex}
+                            onConfirmSegment={handleConfirmSegment}
+                          />
+                        )
+                      ) : selectedProject.transcription_text ? (
+                        <div className="px-4 py-4">
+                          <div className="text-[15px] text-slate-600 dark:text-slate-300 leading-relaxed whitespace-pre-wrap">
+                            {selectedProject.transcription_text}
+                          </div>
+                        </div>
+                      ) : (
+                        <div className="flex items-center justify-center h-full">
+                          <div className="text-center py-12 text-slate-400">
+                            <Loader2 className="h-8 w-8 mx-auto mb-3 animate-spin text-slate-500" />
+                            <p className="text-sm">Processing transcription...</p>
+                          </div>
+                        </div>
+                      )}
+                    </div>
+
+                    {/* Transcript Footer */}
+                    <div className="flex-shrink-0 border-t border-slate-200 dark:border-slate-800 px-4 py-3">
+                      <p className="text-slate-400 dark:text-slate-500 text-xs">
+                        {parsedSpeakerData?.detectionMetadata?.totalSpeakers ?? 0} speakers detected
+                        {(selectedProject.audio_duration || selectedProject.audio_duration_seconds)
+                          ? ` | ${formatDuration(selectedProject.audio_duration || selectedProject.audio_duration_seconds || 0)}`
+                          : ''
+                        }
+                        {accuracyPercent !== null ? ` · ${accuracyPercent.toFixed(1)}% accuracy` : ''}
+                      </p>
+                    </div>
+                  </div>
+
+                </div>
+              </div>
+            ) : (
+              /* Empty state when no project selected */
+              <div className="h-full flex items-center justify-center bg-white dark:bg-[#0F172A] px-6 py-10">
+                <div className="w-full max-w-2xl rounded-3xl border border-slate-200/80 dark:border-slate-800 bg-gradient-to-br from-slate-50 via-white to-slate-100 dark:from-slate-950 dark:via-slate-900 dark:to-slate-950 shadow-[0_24px_80px_-40px_rgba(15,23,42,0.35)]">
+                  <div className="p-8 sm:p-10">
+                    <div className="inline-flex items-center gap-2 rounded-full border border-blue-200/80 dark:border-blue-500/20 bg-blue-50/80 dark:bg-blue-500/10 px-3 py-1 text-xs font-medium text-blue-700 dark:text-blue-300">
+                      <Sparkles className="h-3.5 w-3.5" />
+                      Studio workspace
+                    </div>
+
+                    <div className="mt-5 max-w-xl">
+                      <h3 className="text-2xl font-semibold tracking-tight text-slate-900 dark:text-slate-50">
+                        Select a project to open the studio
+                      </h3>
+                      <p className="mt-3 text-sm leading-6 text-slate-600 dark:text-slate-400">
+                        Open a transcript to review speakers, scan insights, and work through generated content without leaving this view.
+                      </p>
+                    </div>
+
+                    <div className="mt-8 grid gap-3 sm:grid-cols-3">
+                      <div className="rounded-2xl border border-slate-200 dark:border-slate-800 bg-white/80 dark:bg-slate-900/70 p-4">
+                        <BookOpen className="h-5 w-5 text-blue-600 dark:text-blue-400" />
+                        <p className="mt-3 text-sm font-medium text-slate-900 dark:text-slate-100">Transcript review</p>
+                        <p className="mt-1 text-xs leading-5 text-slate-500 dark:text-slate-400">Read the full transcript and jump between speakers quickly.</p>
+                      </div>
+                      <div className="rounded-2xl border border-slate-200 dark:border-slate-800 bg-white/80 dark:bg-slate-900/70 p-4">
+                        <Lightbulb className="h-5 w-5 text-amber-600 dark:text-amber-400" />
+                        <p className="mt-3 text-sm font-medium text-slate-900 dark:text-slate-100">Insights panel</p>
+                        <p className="mt-1 text-xs leading-5 text-slate-500 dark:text-slate-400">Surface concepts, people, and useful highlights from the conversation.</p>
+                      </div>
+                      <div className="rounded-2xl border border-slate-200 dark:border-slate-800 bg-white/80 dark:bg-slate-900/70 p-4">
+                        <MessageSquare className="h-5 w-5 text-emerald-600 dark:text-emerald-400" />
+                        <p className="mt-3 text-sm font-medium text-slate-900 dark:text-slate-100">Content outputs</p>
+                        <p className="mt-1 text-xs leading-5 text-slate-500 dark:text-slate-400">Open summaries, quotes, and other generated assets for each project.</p>
+                      </div>
+                    </div>
+
+                    <div className="mt-8 flex flex-wrap items-center gap-3">
+                      <button
+                        onClick={() => setProjectsSidebarOpen(true)}
+                        className="inline-flex items-center gap-2 rounded-xl bg-slate-900 px-4 py-2.5 text-sm font-medium text-white transition-colors hover:bg-slate-800 dark:bg-slate-100 dark:text-slate-900 dark:hover:bg-white"
+                      >
+                        <FileText className="h-4 w-4" />
+                        Browse projects
+                      </button>
+                      <Link
+                        href="/dashboard/upload"
+                        className="inline-flex items-center gap-2 rounded-xl border border-slate-300 dark:border-slate-700 px-4 py-2.5 text-sm font-medium text-slate-700 dark:text-slate-200 transition-colors hover:bg-slate-100 dark:hover:bg-slate-800"
+                      >
+                        <Zap className="h-4 w-4" />
+                        Upload a new project
+                      </Link>
+                    </div>
+
+                    {filteredAndSortedProjects.length > 0 && (
+                      <div className="mt-8 border-t border-slate-200 dark:border-slate-800 pt-6">
+                        <p className="text-xs font-medium uppercase tracking-[0.18em] text-slate-500 dark:text-slate-400">
+                          Recent projects
+                        </p>
+                        <div className="mt-3 grid gap-3 sm:grid-cols-3">
+                          {filteredAndSortedProjects.slice(0, 3).map((project) => (
+                            <button
+                              key={project.id}
+                              onClick={() => {
+                                router.push(`/dashboard/projects?id=${project.id}`);
+                                setSelectedProject(project);
+                                setShowFullTranscription(false);
+                                setInsightsSidebarOpen(false);
+                                setInsightsStatus({ count: 0, loading: true, generating: false });
+                                setInsightsData([]);
+                                setTriggerInsightGeneration(0);
+                                fetchProjectOutputs(project.id);
+                              }}
+                              className="rounded-2xl border border-slate-200 dark:border-slate-800 bg-white dark:bg-slate-900/80 p-4 text-left transition-colors hover:border-slate-300 hover:bg-slate-50 dark:hover:border-slate-700 dark:hover:bg-slate-900"
+                            >
+                              <p className="truncate text-sm font-medium text-slate-900 dark:text-slate-100">
+                                {project.title}
+                              </p>
+                              <p className="mt-1 text-xs text-slate-500 dark:text-slate-400">
+                                {new Date(project.created_at).toLocaleDateString()}
+                              </p>
+                              <div className="mt-3 inline-flex items-center rounded-full bg-slate-100 dark:bg-slate-800 px-2.5 py-1 text-[11px] font-medium text-slate-600 dark:text-slate-300">
+                                Open project
+                              </div>
+                            </button>
+                          ))}
+                        </div>
+                      </div>
+                    )}
+
+                    <button
+                      onClick={() => setProjectsSidebarOpen(true)}
+                      className="mt-6 lg:hidden inline-flex items-center gap-2 text-sm font-medium text-blue-600 dark:text-blue-400"
+                    >
+                      Open Projects
+                    </button>
                   </div>
                 </div>
-              ) : (
-                /* Empty state when no project selected */
-                <div className="h-full flex items-center justify-center bg-[#0F172A]">
-                  <div className="text-center py-12 px-6">
-                    <FileText className="mx-auto h-12 w-12 text-slate-600" />
-                    <h3 className="mt-3 text-sm font-medium text-slate-50">
-                      Select a project
-                    </h3>
-                    <p className="mt-1 text-sm text-slate-400 max-w-xs">
-                      Choose a project from the list on the left to view its details and content
-                    </p>
-                  </div>
-                </div>
-              )}
-            </main>
+              </div>
+            )}
+          </main>
 
-            {/* RIGHT COLUMN: Context Sidebar (25% on desktop) */}
-            <ContextSidebar
-              speakers={parsedSpeakerData?.speakers}
-              onSpeakerClick={(speakerId) => setActiveSpeakerId(speakerId)}
-              activeSpeakerId={activeSpeakerId}
-              projectId={selectedProject?.id}
-              segments={parsedSpeakerData?.segments}
-              selectedSegments={selectedSegments}
-              hasUncertainSegments={hasUncertainSegments}
-              onSelectAllUncertain={handleSelectAllUncertain}
-              onClearSelection={() => setSelectedSegments(new Set())}
-              onToggleSegmentSelection={handleToggleSegmentSelection}
-              onScrollToSegment={(idx) => {
-                setScrollToSegmentIndex(null);
-                setTimeout(() => setScrollToSegmentIndex(idx), 0);
-              }}
-              onConfirmSegment={handleConfirmSegment}
-              onSegmentReassign={handleSidebarSegmentReassign}
-              onSpeakerAdd={handleAddSpeaker}
-              onSpeakerDelete={handleDeleteSpeaker}
-              aiTouchupLoading={aiTouchupLoading}
-              onAiTouchup={handleAiTouchup}
-              aiTouchupResult={aiTouchupResult}
-              touchupPreview={touchupPreview}
-              applyingTouchup={applyingTouchup}
-              onApplyTouchup={handleApplyTouchup}
-              onTogglePreviewItem={handleTogglePreviewItem}
-              onDismissPreview={() => setTouchupPreview(null)}
-              onSpeakerRename={async (speakerId, newName) => {
-                if (!selectedProject?.id) return;
-                const res = await fetch(`/api/projects/${selectedProject.id}/speakers/${speakerId}`, {
-                  method: 'PATCH',
-                  headers: { 'Content-Type': 'application/json' },
-                  body: JSON.stringify({ action: 'rename', newName }),
-                });
-                if (!res.ok) return;
-                const data = await res.json();
-                if (data.updatedSpeakerData) {
-                  setSelectedProject(prev => prev ? { ...prev, speaker_data: data.updatedSpeakerData } : null);
-                  setProjects(prev => prev.map(p => p.id === selectedProject.id ? { ...p, speaker_data: data.updatedSpeakerData } : p));
-                }
-              }}
-              onSpeakerRoleChange={async (speakerId, newRole) => {
-                if (!selectedProject?.id) return;
-                const res = await fetch(`/api/projects/${selectedProject.id}/speakers/${speakerId}`, {
-                  method: 'PATCH',
-                  headers: { 'Content-Type': 'application/json' },
-                  body: JSON.stringify({ action: 'set_role', newRole }),
-                });
-                if (!res.ok) return;
-                const data = await res.json();
-                if (data.updatedSpeakerData) {
-                  setSelectedProject(prev => prev ? { ...prev, speaker_data: data.updatedSpeakerData } : null);
-                  setProjects(prev => prev.map(p => p.id === selectedProject.id ? { ...p, speaker_data: data.updatedSpeakerData } : p));
-                }
-              }}
-              onSpeakerMerge={async (sourceSpeakerId, targetSpeakerId) => {
-                if (!selectedProject?.id) return;
-                if (sourceSpeakerId === targetSpeakerId) return;
-
-                // Merge: delete source, reassign its segments to target
-                const response = await fetch(`/api/projects/${selectedProject.id}/speakers/${sourceSpeakerId}`, {
-                  method: 'PATCH',
-                  headers: { 'Content-Type': 'application/json' },
-                  body: JSON.stringify({
-                    action: 'reassign',
-                    reassignToSpeakerId: targetSpeakerId
-                  })
-                });
-
-                if (response.ok) {
-                  const refreshed = await fetch(`/api/projects/${selectedProject.id}`);
-                  if (refreshed.ok) {
-                    const updatedProject = await refreshed.json();
-                    setSelectedProject(prev => prev ? {
-                      ...prev,
-                      speaker_data: updatedProject.speaker_data
-                    } : null);
-                  }
-                }
-              }}
-              insights={insightsData}
-              activeInsightId={activeInsightId}
-              onInsightClick={(insightId) => setActiveInsightId(prev => prev === insightId ? null : insightId)}
-              insightsLoading={insightsStatus.loading}
-              insightsGenerating={insightsStatus.generating}
-              onGenerateInsights={() => setTriggerInsightGeneration(prev => prev + 1)}
-              summary={selectedProject?.ai_summary}
-              chapters={selectedProject?.chapters || []}
-              takeaways={selectedProject?.key_takeaways || []}
-              quotes={selectedProject?.social_quotes || []}
-              tier={selectedProject?.performance_level || 'basic'}
-              contentLoading={selectedProject?.status === 'processing' || isProjectRefreshing}
-              outputs={outputs}
-              onCopyOutput={handleCopyOutput}
-              onDownloadOutput={handleDownloadOutput}
-              onDeleteOutput={handleDeleteOutput}
-              deletingOutput={deletingOutput}
-              onGenerateContent={() => {
-                if (selectedProject) {
-                  setSelectedProjectForGeneration(selectedProject);
-                  setShowContentSelection(true);
-                }
-              }}
-              isOpen={contextSidebarOpen}
-              onClose={() => setContextSidebarOpen(false)}
-              readOnly={isDemoMode}
-              className={`flex-shrink-0 transition-all duration-300 ease-in-out overflow-hidden ${
-                contextSidebarOpen ? 'w-72 lg:w-1/4 min-w-[280px] opacity-100' : 'w-0 opacity-0'
-              }`}
+          {/* RIGHT COLUMN: Context Sidebar (25% on desktop) */}
+          {/* Mobile backdrop for context sidebar */}
+          {contextSidebarOpen && (
+            <div
+              className="fixed inset-0 bg-black/60 z-20 lg:hidden"
+              onClick={() => setContextSidebarOpen(false)}
+              aria-hidden="true"
             />
-          </div>
-        )}
+          )}
+          <ContextSidebar
+            speakers={parsedSpeakerData?.speakers}
+            onSpeakerClick={(speakerId) => setActiveSpeakerId(speakerId)}
+            activeSpeakerId={activeSpeakerId}
+            projectId={selectedProject?.id}
+            segments={parsedSpeakerData?.segments}
+            selectedSegments={selectedSegments}
+            hasUncertainSegments={hasUncertainSegments}
+            onSelectAllUncertain={handleSelectAllUncertain}
+            onClearSelection={() => setSelectedSegments(new Set())}
+            onToggleSegmentSelection={handleToggleSegmentSelection}
+            onScrollToSegment={(idx) => {
+              setScrollToSegmentIndex(null);
+              setTimeout(() => setScrollToSegmentIndex(idx), 0);
+            }}
+            onConfirmSegment={handleConfirmSegment}
+            onSegmentReassign={handleSidebarSegmentReassign}
+            onSpeakerAdd={handleAddSpeaker}
+            onSpeakerDelete={handleDeleteSpeaker}
+            aiTouchupLoading={aiTouchupLoading}
+            onAiTouchup={handleAiTouchup}
+            aiTouchupResult={aiTouchupResult}
+            touchupPreview={touchupPreview}
+            applyingTouchup={applyingTouchup}
+            onApplyTouchup={handleApplyTouchup}
+            onTogglePreviewItem={handleTogglePreviewItem}
+            onDismissPreview={() => setTouchupPreview(null)}
+            onSpeakerRename={async (speakerId, newName) => {
+              if (!selectedProject?.id) return;
+              const res = await fetch(`/api/projects/${selectedProject.id}/speakers/${speakerId}`, {
+                method: 'PATCH',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ action: 'rename', newName }),
+              });
+              if (!res.ok) return;
+              const data = await res.json();
+              if (data.updatedSpeakerData) {
+                setSelectedProject(prev => prev ? { ...prev, speaker_data: data.updatedSpeakerData } : null);
+                setProjects(prev => prev.map(p => p.id === selectedProject.id ? { ...p, speaker_data: data.updatedSpeakerData } : p));
+              }
+            }}
+            onSpeakerRoleChange={async (speakerId, newRole) => {
+              if (!selectedProject?.id) return;
+              const res = await fetch(`/api/projects/${selectedProject.id}/speakers/${speakerId}`, {
+                method: 'PATCH',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ action: 'set_role', newRole }),
+              });
+              if (!res.ok) return;
+              const data = await res.json();
+              if (data.updatedSpeakerData) {
+                setSelectedProject(prev => prev ? { ...prev, speaker_data: data.updatedSpeakerData } : null);
+                setProjects(prev => prev.map(p => p.id === selectedProject.id ? { ...p, speaker_data: data.updatedSpeakerData } : p));
+              }
+            }}
+            onSpeakerMerge={async (sourceSpeakerId, targetSpeakerId) => {
+              if (!selectedProject?.id) return;
+              if (sourceSpeakerId === targetSpeakerId) return;
 
-        {/* Content Selection Modal */}
-        <ContentSelectionModal
-          isOpen={showContentSelection && selectedProjectForGeneration !== null}
-          onClose={() => {
-            setShowContentSelection(false);
-            setSelectedProjectForGeneration(null);
-          }}
-          onConfirm={handleConfirmGeneration}
-          projectId={selectedProjectForGeneration?.id || ''}
-          transcriptionText={selectedProjectForGeneration?.transcription_text || ''}
-          projectTitle={selectedProjectForGeneration?.title || selectedProjectForGeneration?.audio_file_name || ''}
-        />
+              // Merge: delete source, reassign its segments to target
+              const response = await fetch(`/api/projects/${selectedProject.id}/speakers/${sourceSpeakerId}`, {
+                method: 'PATCH',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({
+                  action: 'reassign',
+                  reassignToSpeakerId: targetSpeakerId
+                })
+              });
 
-        {/* Export Modal */}
-        <ExportModal
-          isOpen={showExportModal}
-          onClose={() => {
-            setShowExportModal(false);
-            setExportProjects([]);
-          }}
-          projects={exportProjects}
-          onExport={handleExport}
-        />
+              if (response.ok) {
+                const refreshed = await fetch(`/api/projects/${selectedProject.id}`);
+                if (refreshed.ok) {
+                  const updatedProject = await refreshed.json();
+                  setSelectedProject(prev => prev ? {
+                    ...prev,
+                    speaker_data: updatedProject.speaker_data
+                  } : null);
+                }
+              }
+            }}
+            insights={insightsData}
+            activeInsightId={activeInsightId}
+            onInsightClick={(insightId) => setActiveInsightId(prev => prev === insightId ? null : insightId)}
+            insightsLoading={insightsStatus.loading}
+            insightsGenerating={insightsStatus.generating}
+            onGenerateInsights={() => setTriggerInsightGeneration(prev => prev + 1)}
+            summary={selectedProject?.ai_summary}
+            chapters={selectedProject?.chapters || []}
+            takeaways={selectedProject?.key_takeaways || []}
+            quotes={selectedProject?.social_quotes || []}
+            tier={(selectedProject?.performance_level === 'basic' ? 'standard' : selectedProject?.performance_level === 'premium' ? 'pro' : selectedProject?.performance_level) || 'standard'}
+            contentLoading={selectedProject?.status === 'processing' || isProjectRefreshing}
+            outputs={outputs}
+            onCopyOutput={handleCopyOutput}
+            onDownloadOutput={handleDownloadOutput}
+            onDeleteOutput={handleDeleteOutput}
+            deletingOutput={deletingOutput}
+            onGenerateContent={() => {
+              if (selectedProject) {
+                setSelectedProjectForGeneration(selectedProject);
+                setShowContentSelection(true);
+              }
+            }}
+            isOpen={contextSidebarOpen}
+            onClose={() => setContextSidebarOpen(false)}
+            readOnly={isDemoMode}
+            className={`transition-all duration-300 ease-in-out overflow-hidden ${contextSidebarOpen
+              ? 'fixed inset-y-0 right-0 z-30 w-[85vw] max-w-xs opacity-100 shadow-2xl lg:static lg:inset-auto lg:z-auto lg:shadow-none lg:flex-shrink-0 lg:w-[420px] lg:min-w-[380px]'
+              : 'w-0 opacity-0 pointer-events-none'
+              }`}
+          />
+        </div>
+      )}
 
-        {/* Toast Notification */}
-        {toast && (
-          <div className={`fixed top-4 right-4 z-50 flex items-center gap-2.5 px-4 py-3 rounded-lg shadow-lg text-sm font-medium text-white animate-in slide-in-from-top-2 duration-200 ${
-            toast.type === 'success' ? 'bg-green-600' : 'bg-red-600'
+      {/* Content Selection Modal */}
+      <ContentSelectionModal
+        isOpen={showContentSelection && selectedProjectForGeneration !== null}
+        onClose={() => {
+          setShowContentSelection(false);
+          setSelectedProjectForGeneration(null);
+        }}
+        onConfirm={handleConfirmGeneration}
+        projectId={selectedProjectForGeneration?.id || ''}
+        transcriptionText={selectedProjectForGeneration?.transcription_text || ''}
+        projectTitle={selectedProjectForGeneration?.title || selectedProjectForGeneration?.audio_file_name || ''}
+      />
+
+      {/* Export Modal */}
+      <ExportModal
+        isOpen={showExportModal}
+        onClose={() => {
+          setShowExportModal(false);
+          setExportProjects([]);
+        }}
+        projects={exportProjects}
+        onExport={handleExport}
+      />
+
+      {/* Toast Notification */}
+      {toast && (
+        <div className={`fixed top-4 right-4 z-50 flex items-center gap-2.5 px-4 py-3 rounded-lg shadow-lg text-sm font-medium text-white animate-in slide-in-from-top-2 duration-200 ${toast.type === 'success' ? 'bg-green-600' : 'bg-red-600'
           }`}>
-            {toast.type === 'success'
-              ? <CheckCircle className="w-4 h-4 flex-shrink-0" />
-              : <AlertCircle className="w-4 h-4 flex-shrink-0" />
-            }
-            <span>{toast.message}</span>
-          </div>
-        )}
+          {toast.type === 'success'
+            ? <CheckCircle className="w-4 h-4 flex-shrink-0" />
+            : <AlertCircle className="w-4 h-4 flex-shrink-0" />
+          }
+          <span>{toast.message}</span>
+        </div>
+      )}
 
-        {isDemoMode && <DemoTour chapter="projects" />}
+      {isDemoMode && <DemoTour chapter="projects" />}
     </div>
   );
 }

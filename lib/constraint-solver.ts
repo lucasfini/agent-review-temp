@@ -25,6 +25,11 @@ import {
   WEAK_INDIRECT_PATTERNS,
   TITLE_ADDRESS_PATTERNS,
 } from './self-id-patterns';
+import {
+  extractValidatedSelfIdName,
+  isValidProperNameCandidate,
+  isPlausibleHumanName,
+} from './name-interference';
 
 // ─────────────────────────────────────────────
 // Types
@@ -76,6 +81,13 @@ export interface ClusterAssignment {
   score: number;
   bindStrength: 'hard' | 'soft';
   contested: boolean;  // true if multiple identities compete for this cluster
+}
+
+function isUnnamedIdentity(identityId: string, roster: GPTSpeaker[]): boolean {
+  const speaker = roster.find(r => r.id === identityId);
+  if (!speaker) return false;
+  const name = speaker.name?.trim().toLowerCase();
+  return !speaker.name || speaker.role === 'unknown' || name === 'unknown' || /^speaker\s*\d+$/i.test(speaker.name);
 }
 
 // ─────────────────────────────────────────────
@@ -138,6 +150,7 @@ export function extractAnchors(
   const enableIntroOverride = options.enableIntroOverride === true;
   const introOverrideEvents = options.introOverrideEvents;
   const introSelfIdCounts = options.introSelfIdCounts || {};
+  const lastTargetForCluster = new Map<string, string>();
 
   for (let i = 0; i < segments.length; i++) {
     const seg = segments[i];
@@ -162,8 +175,11 @@ export function extractAnchors(
     // Medium: Handoff
     const handoffMatch = matchName(text, MEDIUM_HANDOFF, roster);
     if (handoffMatch) {
+      const previousTargetId = lastTargetForCluster.get(clusterId);
+      const conflictingRepeatedTarget = previousTargetId && previousTargetId !== handoffMatch.id;
+
       // Source: current speaker is acting as host/moderator
-      if (hostEntry) {
+      if (hostEntry && !conflictingRepeatedTarget) {
         anchors.push({
           segmentIndex: i,
           strength: 'medium',
@@ -234,15 +250,20 @@ export function extractAnchors(
           }
         }
 
-        anchors.push({
-          segmentIndex: i + 1,
-          strength: 'medium',
-          clusterId: nextSeg.speakerId,
-          targetIdentityId: handoffMatch.id,
-          targetIdentityName: handoffMatch.name!,
-          direction: 'handoff_target',
-          evidence: `Handoff from seg ${i}: "${text.substring(0, 40)}"`,
-        });
+        if (!conflictingRepeatedTarget || nextSeg.speakerId !== clusterId) {
+          anchors.push({
+            segmentIndex: i + 1,
+            strength: 'medium',
+            clusterId: nextSeg.speakerId,
+            targetIdentityId: handoffMatch.id,
+            targetIdentityName: handoffMatch.name!,
+            direction: 'handoff_target',
+            evidence: `Handoff from seg ${i}: "${text.substring(0, 40)}"`,
+          });
+          lastTargetForCluster.set(nextSeg.speakerId, handoffMatch.id);
+        } else {
+          console.log(`[CSP] Skipping conflicting repeat handoff on cluster ${clusterId}: "${handoffMatch.name}"`);
+        }
       }
     }
 
@@ -318,7 +339,11 @@ export function extractAnchors(
 
   // ── Validation: Check for orphaned self-IDs (self-IDs not in roster) ──
   const orphanedSelfIds = new Set<string>();
-  const rosterNames = new Set(roster.map(r => r.name?.toLowerCase()).filter(Boolean));
+  const rosterNames = new Set(
+    roster
+      .map((r) => r.name?.toLowerCase())
+      .filter((name): name is string => Boolean(name))
+  );
 
   for (let i = 0; i < segments.length; i++) {
     const text = segments[i].text;
@@ -609,6 +634,26 @@ export function solveConstraints(
     }
   }
 
+  const namedIdentityCount = roster.filter((speaker) => Boolean(speaker.name)).length;
+  if (N === 2 && M === 2 && namedIdentityCount === 2 && hardBinds.size === 2) {
+    const hardTargets = new Set(Array.from(hardBinds.values()));
+    if (hardTargets.size === 1) {
+      const protectedCluster = Array.from(hardBinds.keys())[0];
+      const protectedIdentity = hardBinds.get(protectedCluster);
+      for (const [ci] of hardBinds.entries()) {
+        if (ci === protectedCluster || protectedIdentity === undefined) continue;
+        hardBinds.delete(ci);
+        constraints.push({
+          type: 'must_not_bind',
+          clusterIdx: ci,
+          identityIdx: protectedIdentity,
+          source: 'two-speaker collapse prevention',
+        });
+        console.log(`[CSP] Collapse prevention: released ${clusters[ci]} from duplicate hard-bind to ${roster.find(r => r.id === identities[protectedIdentity])?.name}`);
+      }
+    }
+  }
+
   // ── Step 3: Apply constraints to create adjusted score matrix ──
   const adjusted = scores.map(row => [...row]);
   for (const c of constraints) {
@@ -664,6 +709,14 @@ export function solveConstraints(
       }
     }
     const contested = second > 0 && best < second * 2;
+    const hasUnnamedFallback = remainingIdentityIndices(assignedIdentities, identities).some(idx =>
+      isUnnamedIdentity(identities[idx], roster)
+    );
+    const namedCandidate = !isUnnamedIdentity(identities[ii], roster);
+    const preserveClusterInstead = namedCandidate && hasUnnamedFallback && (score < AFFINITY_WEIGHTS.medium_handoff_target || contested);
+    if (preserveClusterInstead) {
+      continue;
+    }
 
     assignments.push({
       clusterId: clusters[ci],
@@ -693,11 +746,14 @@ export function solveConstraints(
       );
     }
 
-    const pairCount = Math.min(remainingClusters.length, remainingIdentities.length);
+    const unnamedIdentities = remainingIdentities.filter(ii => isUnnamedIdentity(identities[ii], roster));
+    const namedIdentities = remainingIdentities.filter(ii => !isUnnamedIdentity(identities[ii], roster));
+    const fallbackOrder = [...unnamedIdentities, ...namedIdentities];
+    const pairCount = Math.min(remainingClusters.length, fallbackOrder.length);
     console.log(`[CSP] Fallback distribution: pairing ${pairCount} remaining clusters with identities`);
     for (let i = 0; i < pairCount; i++) {
       const ci = remainingClusters[i];
-      const ii = remainingIdentities[i];
+      const ii = fallbackOrder[i];
       assignments.push({
         clusterId: clusters[ci],
         identityId: identities[ii],
@@ -729,6 +785,19 @@ export function solveConstraints(
   return assignments;
 }
 
+function remainingIdentityIndices(
+  assignedIdentities: Set<number>,
+  identities: string[]
+): number[] {
+  const remaining: number[] = [];
+  for (let ii = 0; ii < identities.length; ii++) {
+    if (!assignedIdentities.has(ii)) {
+      remaining.push(ii);
+    }
+  }
+  return remaining;
+}
+
 // ─────────────────────────────────────────────
 // Name Matching Utilities (shared)
 // ─────────────────────────────────────────────
@@ -741,7 +810,10 @@ export function matchName(
   for (const pattern of patterns) {
     const match = text.match(pattern);
     if (match && match[1]) {
-      const name = match[1];
+      const name = match[1].trim();
+      if (!isValidProperNameCandidate(name) || !isPlausibleHumanName(name)) {
+        continue;
+      }
       let bestMatch: GPTSpeaker | null = null;
       let bestScore = 0;
 
@@ -780,50 +852,8 @@ export function calculateMatchScore(extracted: string, rosterName: string): numb
   return 0.0;
 }
 
-// Invalid names that should never be extracted (adjectives, possessives, common words)
-const INVALID_NAME_PATTERNS = [
-  /^(your|my|his|her|their|our)\b/i,  // Possessives
-  /^(the|a|an)\b/i,  // Articles
-  /^(nigerian|american|canadian|british|indian|chinese|african|european|asian)/i,  // Nationalities
-  /^(student|candidate|host|moderator|speaker|person|guy|man|woman)/i,  // Descriptors
-  /^(first|second|third|last|next|final)/i,  // Ordinals
-  /^(one|two|three|four|five)/i,  // Numbers
-];
-
 function extractSelfIdName(text: string): string | null {
-  for (const pattern of STRONG_SELF_ID) {
-    const match = text.match(pattern);
-    if (match && match[1]) {
-      const extracted = match[1].trim();
-
-      // Validate: reject invalid patterns
-      for (const invalidPattern of INVALID_NAME_PATTERNS) {
-        if (invalidPattern.test(extracted)) {
-          console.log(`[CSP] Rejected invalid self-ID name: "${extracted}" (matched ${invalidPattern})`);
-          return null;
-        }
-      }
-
-      // Validate: must contain at least one letter
-      if (!/[a-zA-Z]/.test(extracted)) {
-        return null;
-      }
-
-      // Allow initials/nicknames: 2-3 characters, all same case (JJ, DJ, jj, etc.)
-      const isInitials = /^[A-Z]{2,3}$/.test(extracted) || /^[a-z]{2,3}$/.test(extracted);
-      if (isInitials) {
-        return extracted; // Initials are valid
-      }
-
-      // Validate: reject if all lowercase (likely a verb or adjective) - but not initials
-      if (extracted === extracted.toLowerCase()) {
-        return null;
-      }
-
-      return extracted;
-    }
-  }
-  return null;
+  return extractValidatedSelfIdName(text, STRONG_SELF_ID);
 }
 
 function consonantSkeleton(str: string): string {

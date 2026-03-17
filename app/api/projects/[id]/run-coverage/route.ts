@@ -98,7 +98,8 @@ export async function POST(
     }
 
     const goals = await getActiveNarrativeGoals(userId);
-    const tier = (project.performance_level as string) || 'basic';
+    const rawLevel = (project.performance_level as string) || 'standard';
+    const tier = rawLevel === 'basic' ? 'standard' : rawLevel === 'premium' ? 'pro' : rawLevel;
 
     const coverageAnalysis = await analyzeNarrativeCoverage(
       project.transcription_text,
@@ -107,7 +108,7 @@ export async function POST(
         summary: project.ai_summary || null,
         goals,
         tier,
-        maxTopics: tier === 'premium' ? 10 : 6,
+        maxTopics: tier === 'pro' ? 10 : 6,
         coverageWindow: 'full_episode'
       }
     );
@@ -121,7 +122,8 @@ export async function POST(
       ctas: coverageAnalysis.ctas,
       opportunities: coverageAnalysis.opportunities,
       aiUsage: coverageAnalysis.aiUsage,
-      notes: coverageAnalysis.notes
+      notes: coverageAnalysis.notes,
+      activeGoals: goals
     });
 
     if (coverageAnalysis.aiUsage.costUsd > 0) {

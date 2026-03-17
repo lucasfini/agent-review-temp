@@ -1,5 +1,6 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { supabaseAdmin } from '@/lib/supabase/server';
+import { RouteAccessError, requireProjectOwner } from '@/lib/api/route-auth';
 
 // ============================================================
 // FORCE DYNAMIC: Disable all caching for this route
@@ -23,20 +24,11 @@ export async function GET(
       );
     }
 
-    // Get project status
-    const { data: project, error } = await supabaseAdmin
-      .from('projects')
-      .select('*')
-      .eq('id', projectId)
-      .single() as { data: any; error: any };
-
-    if (error || !project) {
-      console.error('Database error:', error);
-      return NextResponse.json(
-        { error: 'Project not found' },
-        { status: 404 }
-      );
-    }
+    const { project } = await requireProjectOwner<any>(
+      request,
+      projectId,
+      'status, processing_stage, processing_progress, processing_message, stage_started_at, performance_level, transcription_text, processing_time_seconds, created_at, updated_at'
+    );
 
     // Get generated outputs count if completed
     let outputsCount = 0;
@@ -57,7 +49,7 @@ export async function GET(
       processing_progress: project.processing_progress || 0,
       processing_message: project.processing_message,
       stage_started_at: project.stage_started_at,
-      performance_level: project.performance_level || 'basic',
+      performance_level: project.performance_level || 'standard',
       // Existing fields
       transcription_text: project.transcription_text,
       processing_time: project.processing_time_seconds,
@@ -67,6 +59,9 @@ export async function GET(
     });
 
   } catch (error) {
+    if (error instanceof RouteAccessError) {
+      return NextResponse.json({ error: error.message }, { status: error.status });
+    }
     console.error('Status check error:', error);
     return NextResponse.json(
       { error: 'Internal server error' },
@@ -84,6 +79,8 @@ function getProgressFromStatus(status: string): number {
     case 'completed':
       return 100;
     case 'failed':
+      return 0;
+    case 'cancelled':
       return 0;
     default:
       return 0;

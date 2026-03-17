@@ -1,7 +1,7 @@
 // Tier Configuration for Content Generation
 // Defines features and capabilities for each pricing tier
 
-export type TierLevel = 'basic' | 'pro' | 'premium';
+export type TierLevel = 'standard' | 'pro';
 
 export interface TierFeatures {
   // Transcription (all tiers use AssemblyAI)
@@ -16,6 +16,7 @@ export interface TierFeatures {
   chapterDetection: boolean;
   keyTakeaways: boolean;
   quotesExtraction: boolean;
+  insights: boolean;
 
   // Display labels
   speakerLabels: 'generic' | 'named' | 'named-with-roles';
@@ -30,7 +31,7 @@ export interface TierPricing {
 }
 
 export const TIER_CONFIG: Record<TierLevel, TierFeatures> = {
-  basic: {
+  standard: {
     transcription: true,
     speakerDiarization: true,
     wordTimestamps: true,
@@ -40,6 +41,7 @@ export const TIER_CONFIG: Record<TierLevel, TierFeatures> = {
     chapterDetection: false,
     keyTakeaways: false,
     quotesExtraction: false,
+    insights: false,
     speakerLabels: 'generic'
   },
 
@@ -49,50 +51,30 @@ export const TIER_CONFIG: Record<TierLevel, TierFeatures> = {
     wordTimestamps: true,
     nameExtraction: true,
     aiSummary: true,
-    roleClassification: false,
-    chapterDetection: false,
-    keyTakeaways: false,
-    quotesExtraction: false,
-    speakerLabels: 'named'
-  },
-
-  premium: {
-    transcription: true,
-    speakerDiarization: true,
-    wordTimestamps: true,
-    nameExtraction: true,
-    aiSummary: true,
     roleClassification: true,
     chapterDetection: true,
     keyTakeaways: true,
     quotesExtraction: true,
+    insights: true,
     speakerLabels: 'named-with-roles'
   }
 };
 
 export const TIER_PRICING: Record<TierLevel, TierPricing> = {
-  basic: {
+  standard: {
     baseTranscriptionPerHour: 0.27, // AssemblyAI Universal
     estimatedAIProcessingPerHour: 0,
     totalPerHour: 0.27,
-    totalWithMarkup: 0.39,
+    totalWithMarkup: 0.3915,
     markupPercentage: 45
   },
 
   pro: {
     baseTranscriptionPerHour: 0.27,
-    estimatedAIProcessingPerHour: 0.051, // GPT-5-mini: speaker naming + summary
-    totalPerHour: 0.321,
-    totalWithMarkup: 0.47,
-    markupPercentage: 45
-  },
-
-  premium: {
-    baseTranscriptionPerHour: 0.27,
-    estimatedAIProcessingPerHour: 0.11, // GPT-5: roles/chapters/takeaways/quotes/insights
+    estimatedAIProcessingPerHour: 0.11, // GPT-5: names/roles/chapters/takeaways/quotes/insights
     totalPerHour: 0.38,
-    totalWithMarkup: 0.55,
-    markupPercentage: 45
+    totalWithMarkup: 0.665,
+    markupPercentage: 75
   }
 };
 
@@ -142,10 +124,21 @@ export function calculateTierCost(
 }
 
 /**
- * Validate tier level
+ * Normalize legacy tier values to the current two-tier model.
+ * 'basic' → 'standard', 'premium' → 'pro'
+ */
+export function normalizeTier(raw: string): TierLevel {
+  if (raw === 'basic') return 'standard';
+  if (raw === 'premium') return 'pro';
+  if (raw === 'standard' || raw === 'pro') return raw;
+  return 'standard';
+}
+
+/**
+ * Validate tier level (accepts current and legacy values)
  */
 export function isValidTier(tier: string): tier is TierLevel {
-  return ['basic', 'pro', 'premium'].includes(tier);
+  return ['standard', 'pro', 'basic', 'premium'].includes(tier);
 }
 
 /**
@@ -153,5 +146,6 @@ export function isValidTier(tier: string): tier is TierLevel {
  */
 export function getTierFromEnv(): TierLevel {
   const envTier = process.env.PERFORMANCE_LEVEL?.toLowerCase() || '';
-  return isValidTier(envTier) ? envTier : 'basic';
+  if (!envTier) return 'standard';
+  return normalizeTier(envTier);
 }

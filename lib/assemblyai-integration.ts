@@ -111,22 +111,32 @@ export async function transcribeWithAssemblyAI(
     // Initialize client
     const client = getAssemblyAIClient(config.apiKey);
 
-    // Get file stats for logging
-    const stats = await fs.stat(audioFilePath);
-    const fileSizeMB = stats.size / (1024 * 1024);
-    console.log(`[ASSEMBLYAI] 📊 Audio file size: ${fileSizeMB.toFixed(2)}MB`);
+    // Get file stats for logging if it's a local file
+    let fileSizeMB = 0;
+    if (!audioFilePath.startsWith('http://') && !audioFilePath.startsWith('https://')) {
+      const stats = await fs.stat(audioFilePath);
+      fileSizeMB = stats.size / (1024 * 1024);
+      console.log(`[ASSEMBLYAI] 📊 Audio file size: ${fileSizeMB.toFixed(2)}MB`);
+    } else {
+      console.log(`[ASSEMBLYAI] 📊 Using remote URL (size unknown)`);
+    }
 
-    // Upload audio file first, then submit transcription
-    console.log('[ASSEMBLYAI] ⬆️  Uploading audio file...');
-
-    // Step 1: Upload the file explicitly so we can isolate upload vs transcription errors
     let audioUrl: string;
-    try {
-      audioUrl = await client.files.upload(audioFilePath);
-      console.log('[ASSEMBLYAI] ✅ File uploaded successfully');
-    } catch (uploadError: any) {
-      console.error('[ASSEMBLYAI] ❌ File upload failed:', uploadError.message);
-      throw new Error(`AssemblyAI file upload failed: ${uploadError.message}`);
+
+    // Check if the input is already a URL
+    if (audioFilePath.startsWith('http://') || audioFilePath.startsWith('https://')) {
+      audioUrl = audioFilePath;
+      console.log('[ASSEMBLYAI] 🔗 Using provided URL directly');
+    } else {
+      // Upload audio file first
+      console.log('[ASSEMBLYAI] ⬆️  Uploading audio file...');
+      try {
+        audioUrl = await client.files.upload(audioFilePath);
+        console.log('[ASSEMBLYAI] ✅ File uploaded successfully');
+      } catch (uploadError: any) {
+        console.error('[ASSEMBLYAI] ❌ File upload failed:', uploadError.message);
+        throw new Error(`AssemblyAI file upload failed: ${uploadError.message}`);
+      }
     }
 
     // Step 2: Build transcript params with the uploaded URL
@@ -197,7 +207,7 @@ export async function transcribeWithAssemblyAI(
     let actualDuration = durationSeconds;
     if (durationSeconds < 1 && fileSizeMB > 0.5) {
       // Estimate duration from file size (assume ~128kbps bitrate)
-      const estimatedDuration = (stats.size * 8) / (128 * 1000); // bytes * 8 bits/byte / bitrate
+      const estimatedDuration = (fileSizeMB * 1024 * 1024 * 8) / (128 * 1000); // bytes * 8 bits/byte / bitrate
       console.log(`[ASSEMBLYAI] ⚠️ Duration seems incorrect (${durationSeconds}s for ${fileSizeMB.toFixed(2)}MB file)`);
       console.log(`[ASSEMBLYAI] 📊 Estimated duration from file size: ${estimatedDuration.toFixed(1)}s`);
       actualDuration = estimatedDuration;

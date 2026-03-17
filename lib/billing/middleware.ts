@@ -9,6 +9,7 @@
 
 import { NextRequest, NextResponse } from 'next/server';
 import { getBalance, checkSufficientCredit, InsufficientCreditError } from './credit';
+import { formatSiteCreditsFromUsd } from './display';
 
 // ============================================================================
 // Error Response Formatting
@@ -27,7 +28,7 @@ export function billingErrorResponse(error: unknown): NextResponse {
         required: error.required,
         available: error.available,
         shortfall: error.required - error.available,
-        message: `You need $${error.required.toFixed(4)} but only have $${error.available.toFixed(4)}. Please add $${(error.required - error.available).toFixed(4)} in credits.`,
+        message: `You need ${formatSiteCreditsFromUsd(error.required)} but only have ${formatSiteCreditsFromUsd(error.available)}. Please add ${formatSiteCreditsFromUsd(error.required - error.available)}.`,
       },
       { status: 402 }
     );
@@ -87,7 +88,7 @@ export async function getUserBalance(userId: string): Promise<{
 
   return {
     balance: balanceInfo.balance,
-    formatted: `$${balanceInfo.balance.toFixed(2)}`,
+    formatted: formatSiteCreditsFromUsd(balanceInfo.balance),
     lifetimeAdded: balanceInfo.lifetimeCreditsAdded,
     lifetimeSpent: balanceInfo.lifetimeCreditsSpent,
   };
@@ -183,7 +184,7 @@ export async function getBillingStatus(userId: string): Promise<{
   return {
     hasCredits: balance.balance > 0,
     balance: balance.balance,
-    formatted: `$${balance.balance.toFixed(2)}`,
+    formatted: formatSiteCreditsFromUsd(balance.balance),
     canProcess: balance.balance >= minimumRequired,
     minimumRequired,
   };
@@ -215,7 +216,7 @@ export const BILLING_MESSAGES = {
 export function getBillingErrorMessage(error: unknown): string {
   if (error instanceof InsufficientCreditError) {
     const shortfall = error.required - error.available;
-    return `${BILLING_MESSAGES.INSUFFICIENT_CREDITS} You need an additional $${shortfall.toFixed(2)}. ${BILLING_MESSAGES.ADD_CREDITS}`;
+    return `${BILLING_MESSAGES.INSUFFICIENT_CREDITS} You need an additional ${formatSiteCreditsFromUsd(shortfall)}. ${BILLING_MESSAGES.ADD_CREDITS}`;
   }
 
   return BILLING_MESSAGES.BILLING_ERROR;

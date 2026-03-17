@@ -2,13 +2,18 @@
 
 import { useState, useEffect, useRef } from 'react';
 import Link from 'next/link';
+import Image from 'next/image';
 import { usePathname, useRouter, useSearchParams } from 'next/navigation';
+import type { User as SupabaseUser } from '@supabase/supabase-js';
 import { useAuth } from '@/lib/auth/context';
-import { isDemoUser } from '@/lib/demo-mode';
 import { isAdminEmail } from '@/lib/admin-access';
-import { isPipelineDocAllowed } from '@/lib/pipeline-doc-access';
+import { usdToSiteCredits } from '@/lib/billing/display';
+import { isDemoUser } from '@/lib/demo-mode';
+import { PROJECT_MUTATION_EVENT, type ProjectMutationDetail } from '@/lib/project-events';
 import { supabase } from '@/lib/supabase/client';
+import BrandLogo from '@/components/site/BrandLogo';
 import { createPortal } from 'react-dom';
+import { useTheme } from 'next-themes';
 import {
   LayoutGrid,
   Upload,
@@ -16,15 +21,12 @@ import {
   BarChart3,
   Settings,
   CreditCard,
-  User,
-  LogOut,
+  Mail,
   Menu,
   X,
-  Mic,
-  Clock,
-  Shield,
-  ChevronUp,
-  ChevronDown,
+  Plus,
+  Sun,
+  Moon,
 } from 'lucide-react';
 
 type NavItemDef = {
@@ -35,17 +37,62 @@ type NavItemDef = {
   tourAttr?: string;
 };
 
-type RecentProject = { id: string; title: string };
+type RecentProject = { id: string; title: string; status?: string | null };
 
-const PREMIUM_RATE_PER_HOUR = 0.52;
 const TOOLTIP_OFFSET_PX = 8;
+function getDisplayName(user: SupabaseUser | null): string {
+  if (!user) return 'User';
+  const meta = user.user_metadata as Record<string, unknown> | undefined;
+  const username = typeof meta?.username === 'string' ? meta.username.trim() : '';
+  const fullName = typeof meta?.full_name === 'string' ? meta.full_name.trim() : '';
+  const name = typeof meta?.name === 'string' ? meta.name.trim() : '';
+  return username || fullName || name || user.email || 'User';
+}
 
-function calculatePowerTime(balance: number): string {
-  const totalMinutes = Math.floor((balance / PREMIUM_RATE_PER_HOUR) * 60);
-  const hours = Math.floor(totalMinutes / 60);
-  const minutes = totalMinutes % 60;
-  if (hours === 0) return `${minutes}m`;
-  return `${hours}h ${minutes}m`;
+function getUserAvatarUrl(user: SupabaseUser | null): string | null {
+  if (!user) return null;
+  const meta = user.user_metadata as Record<string, unknown> | undefined;
+  const profile = user.identities?.find((identity) => identity.provider === 'google');
+  const identityData = (profile?.identity_data ?? {}) as Record<string, unknown>;
+
+  const candidates = [
+    meta?.avatar_url,
+    meta?.picture,
+    identityData?.avatar_url,
+    identityData?.picture,
+  ];
+
+  for (const candidate of candidates) {
+    if (typeof candidate === 'string' && candidate.trim().length > 0) {
+      return candidate;
+    }
+  }
+
+  return null;
+}
+
+function ThemeToggle({ isCollapsed }: { isCollapsed?: boolean }) {
+  const { resolvedTheme, setTheme } = useTheme();
+  const [mounted, setMounted] = useState(false);
+
+  useEffect(() => setMounted(true), []);
+
+  if (!mounted) return <div className={isCollapsed ? 'h-9 w-9' : 'h-10 w-10'} />;
+
+  const isDark = resolvedTheme === 'dark';
+
+  return (
+    <button
+      onClick={() => setTheme(isDark ? 'light' : 'dark')}
+      className={`flex items-center justify-center text-slate-500 dark:text-slate-400 hover:text-slate-900 dark:hover:text-white hover:bg-slate-100 dark:hover:bg-slate-800 transition-colors ${
+        isCollapsed ? 'h-9 w-9 rounded-xl' : 'h-10 w-10 rounded-xl'
+      }`}
+      title={isDark ? 'Switch to light mode' : 'Switch to dark mode'}
+      aria-label={isDark ? 'Switch to light mode' : 'Switch to dark mode'}
+    >
+      {isDark ? <Sun className="h-4 w-4" /> : <Moon className="h-4 w-4" />}
+    </button>
+  );
 }
 
 function TooltipOverlay({
@@ -71,7 +118,7 @@ function TooltipOverlay({
   return createPortal(
     <div
       style={style}
-      className="rounded-md bg-slate-900 border border-slate-700 px-2 py-1 text-xs text-slate-100 shadow-lg whitespace-nowrap"
+      className="rounded-md bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-700 px-2 py-1 text-xs text-slate-900 dark:text-slate-100 shadow-lg whitespace-nowrap"
     >
       {label}
     </div>,
@@ -83,9 +130,9 @@ const sections: Array<{ label: string; items: NavItemDef[] }> = [
   {
     label: 'WORKSPACE',
     items: [
-      { name: 'Project Hub', href: '/dashboard/hub', icon: LayoutGrid },
-      { name: 'Content Library', href: '/dashboard/projects', icon: FileText },
       { name: 'Upload', href: '/dashboard/upload', icon: Upload },
+      { name: 'Studio', href: '/dashboard/projects', icon: FileText },
+      { name: 'All Projects', href: '/dashboard/hub', icon: LayoutGrid },
     ],
   },
   {
@@ -97,9 +144,9 @@ const sections: Array<{ label: string; items: NavItemDef[] }> = [
   {
     label: 'ACCOUNT',
     items: [
-      { name: 'General', href: '/dashboard/settings', icon: User, settingsSection: 'general' },
-      { name: 'Billing', href: '/dashboard/settings?section=billing', icon: CreditCard, settingsSection: 'billing' },
-      { name: 'Usage', href: '/dashboard/settings?section=usage', icon: BarChart3, settingsSection: 'usage', tourAttr: 'usage-tab' },
+      { name: 'Billing', href: '/dashboard/billing', icon: CreditCard },
+      { name: 'Usage', href: '/dashboard/usage', icon: BarChart3, tourAttr: 'usage-tab' },
+      { name: 'Contact Us', href: '/dashboard/contact', icon: Mail },
     ],
   },
 ];
@@ -150,16 +197,17 @@ function NavItem({
       }}
       onMouseLeave={() => setShowTooltip(false)}
       {...(item.tourAttr ? { 'data-tour': item.tourAttr } : {})}
-      className={`group flex items-center ${isCollapsed ? 'justify-center' : 'gap-3'} px-3 ${mobile ? 'py-3 text-base' : 'py-2.5 text-sm'} font-medium rounded-xl transition-colors ${
-        isActive
-          ? 'bg-blue-600/10 text-blue-400'
-          : 'text-slate-400 hover:bg-slate-800 hover:text-slate-200'
-      }`}
+      aria-label={item.name}
+      className={`group flex items-center ${isCollapsed ? 'justify-center' : 'gap-3'} px-3 ${mobile ? 'py-3 text-base' : 'py-2.5 text-sm'} font-medium rounded-xl transition-colors ${isActive
+          ? 'bg-blue-600/10 text-blue-600 dark:text-blue-400'
+          : 'text-slate-600 dark:text-slate-200 hover:bg-slate-100 dark:hover:bg-slate-800 hover:text-slate-900 dark:hover:text-white'
+        }`}
     >
       <Icon
-        className={`flex-shrink-0 ${mobile ? 'h-5 w-5' : isCollapsed ? 'h-5 w-5' : 'h-4 w-4'} ${
-          isActive ? 'text-blue-400' : 'text-slate-500 group-hover:text-slate-300'
-        }`}
+        className={`flex-shrink-0 ${mobile ? 'h-5 w-5' : isCollapsed ? 'h-5 w-5' : 'h-4 w-4'} ${isActive
+            ? 'text-blue-600 dark:text-blue-400'
+            : 'text-slate-400 dark:text-slate-300 group-hover:text-slate-700 dark:group-hover:text-slate-100'
+          }`}
       />
       {isCollapsed && (
         <TooltipOverlay
@@ -186,13 +234,15 @@ function TooltipIconButton({
   title?: string;
   icon: React.ReactNode;
 }) {
-  const anchorRef = useRef<HTMLAnchorElement | HTMLButtonElement | null>(null);
+  const anchorRef = useRef<HTMLAnchorElement | null>(null);
+  const buttonRef = useRef<HTMLButtonElement | null>(null);
   const [showTooltip, setShowTooltip] = useState(false);
   const [anchorRect, setAnchorRect] = useState<DOMRect | null>(null);
 
   const updateRect = () => {
-    if (!anchorRef.current) return;
-    setAnchorRect(anchorRef.current.getBoundingClientRect());
+    const element = anchorRef.current ?? buttonRef.current;
+    if (!element) return;
+    setAnchorRect(element.getBoundingClientRect());
   };
 
   useEffect(() => {
@@ -229,7 +279,7 @@ function TooltipIconButton({
           setShowTooltip(true);
         }}
         onMouseLeave={() => setShowTooltip(false)}
-        className="p-2 rounded-lg text-slate-400 hover:text-slate-200 hover:bg-slate-800"
+        className="p-2 rounded-lg text-slate-500 dark:text-slate-200 hover:text-slate-900 dark:hover:text-white hover:bg-slate-100 dark:hover:bg-slate-800"
         title={title}
         aria-label={label}
       >
@@ -240,14 +290,14 @@ function TooltipIconButton({
 
   return (
     <button
-      ref={anchorRef}
+      ref={buttonRef}
       onClick={onClick}
       onMouseEnter={() => {
         updateRect();
         setShowTooltip(true);
       }}
       onMouseLeave={() => setShowTooltip(false)}
-      className="p-2 rounded-lg text-slate-400 hover:text-slate-200 hover:bg-slate-800"
+      className="p-2 rounded-lg text-slate-500 dark:text-slate-200 hover:text-slate-900 dark:hover:text-white hover:bg-slate-100 dark:hover:bg-slate-800"
       title={title}
       aria-label={label}
     >
@@ -264,37 +314,34 @@ function SidebarContent({
   balance,
   isLoadingBalance,
   isLowBalance,
-  balanceDisplay,
   recentProjects,
   onSignOut,
   onNavClick,
   isCollapsed,
   onToggleCollapse,
   isDemo,
-  canSeeAdmin,
-  canSeePipeline,
   navSections,
 }: {
   pathname: string;
   activeSettingsSection: string | null;
   activeProjectId: string | null;
-  user: { email?: string } | null;
+  user: SupabaseUser | null;
   balance: number | null;
   isLoadingBalance: boolean;
   isLowBalance: boolean;
-  balanceDisplay: string;
   recentProjects: RecentProject[];
   onSignOut: () => void;
   onNavClick?: () => void;
   isCollapsed: boolean;
   onToggleCollapse?: () => void;
   isDemo?: boolean;
-  canSeeAdmin: boolean;
-  canSeePipeline: boolean;
   navSections: Array<{ label: string; items: NavItemDef[] }>;
 }) {
-  const isFreePlan = balance === null && !isLoadingBalance;
-  const [isAdminOpen, setIsAdminOpen] = useState(true);
+  const displayName = getDisplayName(user);
+  const avatarUrl = getUserAvatarUrl(user);
+  const { resolvedTheme } = useTheme();
+  const logoTheme = resolvedTheme === 'light' ? 'light' : 'dark';
+  const emailLabel = user?.email ?? '';
 
   const isActive = (item: NavItemDef): boolean => {
     if (item.settingsSection) {
@@ -315,10 +362,7 @@ function SidebarContent({
           className={`flex items-center ${isCollapsed ? '' : 'gap-2'}`}
           title={isCollapsed ? 'AudioRepurpose' : undefined}
         >
-          <Mic className="h-7 w-7 text-blue-600" />
-          {!isCollapsed && (
-            <span className="text-lg font-bold text-slate-50">AudioRepurpose</span>
-          )}
+          <BrandLogo showText={!isCollapsed} theme={logoTheme} />
         </Link>
         {onToggleCollapse && (
           <TooltipIconButton
@@ -335,7 +379,7 @@ function SidebarContent({
         {navSections.map((section) => (
           <div key={section.label}>
             {!isCollapsed && (
-              <p className="px-3 mb-1 text-[10px] font-semibold tracking-widest text-slate-600 uppercase">
+              <p className="px-3 mb-1 text-[10px] font-semibold tracking-widest text-slate-400 uppercase">
                 {section.label}
               </p>
             )}
@@ -353,31 +397,32 @@ function SidebarContent({
             {/* Recent Projects — injected below the WORKSPACE section */}
             {!isCollapsed && section.label === 'WORKSPACE' && recentProjects.length > 0 && (
               <div className="mt-5">
-                <p className="text-slate-500 text-[10px] font-bold uppercase tracking-widest mb-2 px-2">
+                <p className="text-slate-400 dark:text-slate-300 text-[10px] font-bold uppercase tracking-widest mb-2 px-2">
                   Recent Projects
                 </p>
                 <div className="space-y-0.5">
                   {recentProjects.map((project) => {
                     const isActiveProject =
                       pathname === '/dashboard/projects' && activeProjectId === project.id;
+                    const statusDot =
+                      project.status === 'completed'
+                        ? 'bg-green-500'
+                        : project.status === 'processing' || project.status === 'uploading'
+                        ? 'bg-blue-400 animate-pulse'
+                        : project.status === 'failed'
+                        ? 'bg-red-500'
+                        : 'bg-slate-400 dark:bg-slate-600';
                     return (
                       <Link
                         key={project.id}
                         href={`/dashboard/projects?id=${project.id}`}
                         onClick={onNavClick}
-                        className={`group flex items-center gap-2 px-3 py-1.5 text-xs rounded-lg transition-all ${
-                          isActiveProject
-                            ? 'bg-slate-800 text-slate-100'
-                            : 'text-slate-400 hover:bg-slate-800/50 hover:text-slate-200'
-                        }`}
-                      >
-                        <Clock
-                          className={`flex-shrink-0 w-3.5 h-3.5 ${
-                            isActiveProject
-                              ? 'text-slate-400'
-                              : 'text-slate-500 group-hover:text-slate-400'
+                        className={`group flex items-center gap-2 px-3 py-1.5 text-xs rounded-lg transition-all ${isActiveProject
+                            ? 'bg-slate-100 dark:bg-slate-800 text-slate-900 dark:text-slate-100'
+                            : 'text-slate-500 dark:text-slate-200 hover:bg-slate-100/80 dark:hover:bg-slate-800/50 hover:text-slate-900 dark:hover:text-white'
                           }`}
-                        />
+                      >
+                        <span className={`flex-shrink-0 w-1.5 h-1.5 rounded-full ${statusDot}`} />
                         <span className="truncate">{project.title}</span>
                       </Link>
                     );
@@ -388,139 +433,146 @@ function SidebarContent({
           </div>
         ))}
 
-        {canSeeAdmin && (
-          <div>
-            {!isCollapsed && (
-              <p className="px-3 mb-1 text-[10px] font-semibold tracking-widest text-slate-600 uppercase">
-                ADMIN
-              </p>
-            )}
-            <button
-              type="button"
-              onClick={() => setIsAdminOpen((prev) => !prev)}
-              className={`w-full flex items-center ${isCollapsed ? 'justify-center' : 'justify-between'} px-3 py-2.5 text-sm font-medium rounded-xl transition-colors text-slate-400 hover:bg-slate-800 hover:text-slate-200`}
-            >
-              <span className={`flex items-center ${isCollapsed ? '' : 'gap-3'}`}>
-                <Shield className={`flex-shrink-0 ${isCollapsed ? 'h-5 w-5' : 'h-4 w-4'} text-slate-500`} />
-                {!isCollapsed && 'Admin'}
-              </span>
-              {!isCollapsed && (
-                isAdminOpen
-                  ? <ChevronUp className="h-4 w-4 text-slate-500" />
-                  : <ChevronDown className="h-4 w-4 text-slate-500" />
-              )}
-            </button>
-
-            {isAdminOpen && (
-              <div className="mt-1 space-y-0.5">
-                <NavItem
-                  item={{ name: 'Overview', href: '/dashboard/admin', icon: LayoutGrid }}
-                  isActive={isActive({ name: 'Overview', href: '/dashboard/admin', icon: LayoutGrid })}
-                  onClick={onNavClick}
-                  isCollapsed={isCollapsed}
-                />
-                <NavItem
-                  item={{ name: 'Users', href: '/dashboard/admin/users', icon: User }}
-                  isActive={isActive({ name: 'Users', href: '/dashboard/admin/users', icon: User })}
-                  onClick={onNavClick}
-                  isCollapsed={isCollapsed}
-                />
-                <NavItem
-                  item={{ name: 'Data', href: '/dashboard/admin/data', icon: FileText }}
-                  isActive={isActive({ name: 'Data', href: '/dashboard/admin/data', icon: FileText })}
-                  onClick={onNavClick}
-                  isCollapsed={isCollapsed}
-                />
-                <NavItem
-                  item={{ name: 'Monitoring', href: '/dashboard/admin/monitoring', icon: BarChart3 }}
-                  isActive={isActive({ name: 'Monitoring', href: '/dashboard/admin/monitoring', icon: BarChart3 })}
-                  onClick={onNavClick}
-                  isCollapsed={isCollapsed}
-                />
-                {canSeePipeline && (
-                  <NavItem
-                    item={{ name: 'Pipeline', href: '/dashboard/pipeline', icon: FileText }}
-                    isActive={isActive({ name: 'Pipeline', href: '/dashboard/pipeline', icon: FileText })}
-                    onClick={onNavClick}
-                    isCollapsed={isCollapsed}
-                  />
-                )}
-              </div>
-            )}
-          </div>
-        )}
       </nav>
 
       {/* Bottom Area */}
-      <div className="flex-shrink-0 px-3 pb-4 pt-4">
+      <div className="flex-shrink-0 mt-auto px-3 pb-5 flex flex-col gap-3">
+        <div className="h-px bg-gradient-to-r from-transparent via-slate-200/80 dark:via-slate-800/60 to-transparent w-full" />
+
         {isCollapsed ? (
-          <div className="flex flex-col items-center gap-2">
-            <TooltipIconButton
+          <div className="flex flex-col items-center gap-2 py-1">
+            <Link
+              href="/dashboard/settings?section=preferences"
+              onClick={onNavClick}
+              className="group flex h-9 w-9 items-center justify-center overflow-hidden rounded-xl border border-slate-200 bg-slate-50 text-xs font-semibold text-slate-700 shadow-sm transition-colors hover:bg-slate-100 dark:border-slate-800 dark:bg-slate-900 dark:text-slate-200 dark:hover:bg-slate-800"
+              title={displayName}
+              aria-label="Open settings"
+            >
+              {avatarUrl ? (
+                <Image
+                  src={avatarUrl}
+                  alt={displayName}
+                  fill
+                  sizes="36px"
+                  className="object-cover"
+                  referrerPolicy="no-referrer"
+                />
+              ) : (
+                displayName.charAt(0).toUpperCase()
+              )}
+            </Link>
+            <ThemeToggle isCollapsed />
+            <button
               onClick={onSignOut}
-              label="Sign Out"
-              title="Sign Out"
-              icon={<LogOut className="h-5 w-5" />}
-            />
+              title="Sign out"
+              aria-label="Sign out"
+              className="w-9 h-9 rounded-xl border border-slate-200 dark:border-slate-800 bg-slate-50 dark:bg-slate-900 flex items-center justify-center text-slate-500 dark:text-slate-300 shadow-sm transition-colors hover:bg-slate-100 dark:hover:bg-slate-800 hover:text-red-600 dark:hover:text-red-400"
+            >
+              <X className="h-4 w-4" />
+            </button>
           </div>
         ) : (
-          <>
-            {/* Production Power Wallet Card */}
-            <div data-tour="credit-balance" className="bg-slate-800/40 border border-slate-700/50 rounded-2xl p-4 mb-3">
-              <p className="text-slate-500 text-[10px] font-bold uppercase tracking-widest">
-                Production Power
-              </p>
-              <p className="text-slate-50 font-bold text-xl mt-1">
-                {isLoadingBalance
-                  ? <span className="text-slate-600">—</span>
-                  : balance !== null
-                  ? `$${balance.toFixed(2)}`
-                  : 'Free Plan'}
-              </p>
-              {balance !== null && !isLoadingBalance && (
-                <div className="flex items-center gap-1.5 text-blue-400 text-xs font-medium mt-1">
-                  <span className="relative flex h-2 w-2">
-                    <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-green-400 opacity-75"></span>
-                    <span className="relative inline-flex rounded-full h-2 w-2 bg-green-500"></span>
-                  </span>
-                  ≈ {calculatePowerTime(balance)} power
-                </div>
-              )}
-              {!isDemo && (
+          <div className="rounded-2xl border border-slate-200 dark:border-slate-800 bg-white/90 dark:bg-slate-950/90 shadow-[0_10px_30px_-20px_rgba(15,23,42,0.45)] backdrop-blur-sm overflow-hidden">
+            <div className="p-4 space-y-4">
+              <div className="flex items-center gap-2.5">
                 <Link
-                  href="/dashboard/settings?section=billing"
+                  href="/dashboard/settings?section=preferences"
                   onClick={onNavClick}
-                  className={`flex items-center justify-center w-full py-2.5 rounded-xl text-xs font-semibold transition-all shadow-sm mt-3 ${
-                    isLowBalance
-                      ? 'bg-amber-500/10 text-amber-500 border border-amber-500/20 hover:bg-amber-500/20'
-                      : 'bg-blue-600 text-white hover:bg-blue-700'
-                  }`}
+                  className="flex min-w-0 flex-1 items-center gap-3 rounded-xl transition-colors hover:bg-slate-50 dark:hover:bg-slate-900/80 -m-1 p-1 group"
                 >
-                  {isLowBalance ? '+ Top Up' : '+ Add Credits'}
+                  {avatarUrl ? (
+                    <Image
+                      src={avatarUrl}
+                      alt={displayName}
+                      width={36}
+                      height={36}
+                      className="h-9 w-9 flex-shrink-0 rounded-xl border border-slate-300/70 object-cover shadow-sm dark:border-slate-600/60"
+                      referrerPolicy="no-referrer"
+                    />
+                  ) : (
+                    <div className="flex h-9 w-9 flex-shrink-0 items-center justify-center rounded-xl border border-slate-300/70 bg-gradient-to-br from-slate-100 to-slate-200 text-sm font-semibold text-slate-700 shadow-sm select-none dark:border-slate-600/60 dark:from-slate-800 dark:to-slate-700 dark:text-slate-100">
+                      {displayName.charAt(0).toUpperCase()}
+                    </div>
+                  )}
+                  <div className="min-w-0 flex-1">
+                    <p className="truncate text-sm font-semibold text-slate-900 dark:text-slate-100 group-hover:text-slate-950 dark:group-hover:text-white">
+                      {displayName}
+                    </p>
+                    {emailLabel && (
+                      <p className="truncate text-xs text-slate-500 dark:text-slate-400">
+                        {emailLabel}
+                      </p>
+                    )}
+                  </div>
                 </Link>
-              )}
-            </div>
 
-            {/* Profile with Sign Out */}
-            <div className="flex items-center gap-3 p-3 bg-slate-900 border border-slate-700 rounded-xl hover:border-slate-600 transition-colors">
-              <Link
-                href="/dashboard/settings"
-                onClick={onNavClick}
-                className="flex items-center gap-3 flex-1 min-w-0"
-              >
-                <div className="flex-shrink-0 h-9 w-9 rounded-full bg-violet-500 flex items-center justify-center text-white text-sm font-semibold">
-                  {user?.email?.[0]?.toUpperCase() || 'U'}
+                <div className="flex items-center gap-1">
+                  <Link
+                    href="/dashboard/settings?section=preferences"
+                    onClick={onNavClick}
+                    className="p-2 rounded-lg text-slate-500 dark:text-slate-400 hover:text-slate-900 dark:hover:text-white hover:bg-slate-100 dark:hover:bg-slate-800 transition-colors"
+                    aria-label="Open settings"
+                    title="Open settings"
+                  >
+                    <Settings className="h-4 w-4" />
+                  </Link>
                 </div>
-                <p className="text-sm font-medium text-slate-200 truncate">{user?.email}</p>
-              </Link>
-              <button
-                onClick={onSignOut}
-                className="flex-shrink-0 p-1.5 text-slate-500 hover:text-slate-200 hover:bg-slate-800 rounded-lg transition-colors"
-                title="Sign Out"
+              </div>
+
+              <div
+                data-tour="credit-balance"
+                className={`rounded-xl border px-3.5 py-2.5 ${
+                  isLowBalance
+                    ? 'border-amber-300/80 dark:border-amber-500/30 bg-amber-50/80 dark:bg-amber-500/10'
+                    : 'border-slate-200 dark:border-slate-800 bg-slate-50 dark:bg-slate-900/80'
+                }`}
               >
-                <LogOut className="h-4 w-4" />
-              </button>
+                <div className="min-w-0">
+                  <p className="text-[11px] font-semibold uppercase tracking-[0.16em] text-slate-500 dark:text-slate-400">
+                    Credits
+                  </p>
+                  <p className={`mt-1 text-sm font-semibold tabular-nums ${
+                    balance === null && !isLoadingBalance
+                      ? 'text-slate-500 dark:text-slate-400'
+                      : 'text-slate-900 dark:text-slate-100'
+                  }`}>
+                    {isLoadingBalance
+                      ? <span className="text-slate-400 dark:text-slate-500">—</span>
+                      : balance !== null
+                        ? `${usdToSiteCredits(balance).toLocaleString('en-US')}`
+                        : 'No credits'}
+                  </p>
+                </div>
+
+                {!isDemo && (
+                  <Link
+                    href="/dashboard/billing"
+                    onClick={onNavClick}
+                    className={`mt-2.5 inline-flex w-full items-center justify-center gap-1 rounded-lg border px-2.5 py-1.5 text-[11px] font-semibold transition-colors ${
+                      isLowBalance
+                        ? 'border-amber-400/70 dark:border-amber-500/30 text-amber-700 dark:text-amber-300 hover:bg-amber-100 dark:hover:bg-amber-500/15'
+                        : 'border-slate-300 dark:border-slate-700 text-slate-700 dark:text-slate-200 hover:bg-white dark:hover:bg-slate-800'
+                    }`}
+                  >
+                    <Plus className="h-3 w-3" />
+                    Add credits
+                  </Link>
+                )}
+              </div>
+
+              <div className="grid grid-cols-[40px_minmax(0,1fr)] items-center gap-2.5">
+                <div className="flex-shrink-0 rounded-xl border border-slate-200 dark:border-slate-800 bg-slate-50 dark:bg-slate-900/80">
+                  <ThemeToggle />
+                </div>
+                <button
+                  onClick={onSignOut}
+                  className="inline-flex min-w-0 items-center justify-center rounded-xl border border-slate-200 dark:border-slate-800 bg-slate-50 dark:bg-slate-900/80 px-3 py-2.5 text-sm font-medium text-slate-600 transition-colors hover:bg-slate-100 hover:text-red-600 dark:text-slate-300 dark:hover:bg-slate-800 dark:hover:text-red-400"
+                >
+                  Sign out
+                </button>
+              </div>
             </div>
-          </>
+          </div>
         )}
       </div>
     </div>
@@ -543,12 +595,12 @@ export default function DashboardNav({
   const searchParams = useSearchParams();
   const router = useRouter();
   const { user, session, signOut } = useAuth();
+  const { resolvedTheme } = useTheme();
   const isDemo = isDemoUser(user as { email?: string } | null);
-  const canSeePipeline = isPipelineDocAllowed(user?.email);
-  const canSeeAdmin = isAdminEmail(user?.email);
 
+  const rawSettingsSection = searchParams.get('section') || 'preferences';
   const activeSettingsSection = pathname.startsWith('/dashboard/settings')
-    ? (searchParams.get('section') || 'general')
+    ? (rawSettingsSection === 'general' ? 'preferences' : rawSettingsSection)
     : null;
 
   const activeProjectId = searchParams.get('id');
@@ -582,8 +634,9 @@ export default function DashboardNav({
     const fetchRecentProjects = async () => {
       const { data } = await supabase
         .from('projects')
-        .select('id, title')
+        .select('id, title, status')
         .eq('user_id', user.id)
+        .neq('status', 'cancelled')
         .order('created_at', { ascending: false })
         .limit(8);
       if (isActive && data) setRecentProjects(data as RecentProject[]);
@@ -603,8 +656,9 @@ export default function DashboardNav({
         (payload) => {
           const created = payload.new as RecentProject & { user_id?: string } | undefined;
           if (!created || created.user_id !== user.id) return;
+          if (created.status === 'cancelled') return;
           setRecentProjects((prev) => {
-            const next = [ { id: created.id, title: created.title }, ...prev.filter(p => p.id !== created.id) ];
+            const next = [{ id: created.id, title: created.title, status: created.status }, ...prev.filter(p => p.id !== created.id)];
             return next.slice(0, 8);
           });
         }
@@ -620,16 +674,20 @@ export default function DashboardNav({
           const updated = payload.new as Partial<RecentProject> | undefined;
           const updatedId = updated?.id;
           const updatedTitle = updated?.title;
+          const updatedStatus = updated?.status;
           if (!updatedId) return;
           setRecentProjects((prev) => {
             const isInList = prev.some((project) => project.id === updatedId);
+            if (updatedStatus === 'cancelled') {
+              return prev.filter((project) => project.id !== updatedId);
+            }
             if (!isInList) return prev;
             if (!updatedTitle) {
               fetchRecentProjects();
               return prev;
             }
             return prev.map((project) =>
-              project.id === updatedId ? { ...project, title: updatedTitle } : project
+              project.id === updatedId ? { ...project, title: updatedTitle, status: updatedStatus ?? project.status } : project
             );
           });
         }
@@ -649,8 +707,23 @@ export default function DashboardNav({
       )
       .subscribe();
 
+    const handleProjectMutation = (event: Event) => {
+      const detail = (event as CustomEvent<ProjectMutationDetail>).detail;
+      if (!detail?.projectId) return;
+
+      if (detail.action === 'deleted' || detail.action === 'cancelled') {
+        setRecentProjects((prev) => prev.filter((project) => project.id !== detail.projectId));
+        return;
+      }
+
+      fetchRecentProjects();
+    };
+
+    window.addEventListener(PROJECT_MUTATION_EVENT, handleProjectMutation);
+
     return () => {
       isActive = false;
+      window.removeEventListener(PROJECT_MUTATION_EVENT, handleProjectMutation);
       supabase.removeChannel(channel);
     };
   }, [user]);
@@ -660,43 +733,37 @@ export default function DashboardNav({
     router.push('/auth/login');
   };
 
+  const isAdmin = isAdminEmail(user?.email);
+
   const navSections = sections.map((section) => ({
     ...section,
     items: [...section.items],
   }));
 
-  if (canSeePipeline) {
-    const accountSection = navSections.find((section) => section.label === 'ACCOUNT');
-    accountSection?.items.push({
-      name: 'Pipeline',
-      href: '/dashboard/pipeline',
-      icon: FileText,
+  if (isAdmin) {
+    navSections.push({
+      label: 'ADMIN',
+      items: [
+        { name: 'Admin Dashboard', href: '/dashboard/admin', icon: Settings },
+      ],
     });
   }
 
   const isLowBalance = balance !== null && balance < 5;
-  const balanceDisplay = isLoadingBalance
-    ? 'Loading...'
-    : balance !== null
-    ? `$${balance.toFixed(2)} credits`
-    : 'Free Plan';
-
+  const logoTheme = resolvedTheme === 'light' ? 'light' : 'dark';
   const sharedProps = {
     pathname,
     activeSettingsSection,
     activeProjectId,
-    user: user as { email?: string } | null,
+    user,
     balance,
     isLoadingBalance,
     isLowBalance,
-    balanceDisplay,
     recentProjects,
     onSignOut: handleSignOut,
     isCollapsed: collapsed,
     onToggleCollapse: () => setCollapsed(!collapsed),
     isDemo,
-    canSeeAdmin,
-    canSeePipeline,
     navSections,
   };
 
@@ -704,24 +771,27 @@ export default function DashboardNav({
     <>
       {/* Desktop Sidebar */}
       <div className={`hidden md:flex md:flex-col md:fixed md:inset-y-0 transition-all duration-200 ${collapsed ? 'md:w-20' : 'md:w-64'}`}>
-        <div className="flex flex-col flex-grow bg-slate-950 border-r border-slate-800 overflow-visible">
+        <div className="flex flex-col flex-grow bg-white dark:bg-slate-950 border-r border-slate-200 dark:border-slate-800 shadow-[1px_0_0_0_#f1f5f9] dark:shadow-none overflow-visible">
           <SidebarContent {...sharedProps} />
         </div>
       </div>
 
       {/* Mobile top bar */}
       <div className="md:hidden">
-        <div className="flex items-center justify-between bg-slate-950 border-b border-slate-800 px-4 py-3">
-          <Link href="/" className="flex items-center gap-2">
-            <Mic className="h-6 w-6 text-blue-500" />
-            <span className="text-base font-bold text-slate-50">AudioRepurpose</span>
+        <div className="flex items-center justify-between bg-white dark:bg-slate-950 border-b border-slate-200 dark:border-slate-800 px-4 py-3">
+          <Link href="/dashboard/hub" className="flex items-center gap-2">
+            <BrandLogo theme={logoTheme} />
           </Link>
-          <button
-            onClick={() => setIsMobileMenuOpen(true)}
-            className="p-2 rounded-lg text-slate-400 hover:text-slate-200 hover:bg-slate-800"
-          >
-            <Menu className="h-6 w-6" />
-          </button>
+          <div className="flex items-center gap-1">
+            <ThemeToggle />
+            <button
+              onClick={() => setIsMobileMenuOpen(true)}
+              className="p-2 rounded-lg text-slate-500 dark:text-slate-200 hover:text-slate-900 dark:hover:text-white hover:bg-slate-100 dark:hover:bg-slate-800"
+              aria-label="Open navigation menu"
+            >
+              <Menu className="h-6 w-6" />
+            </button>
+          </div>
         </div>
       </div>
 
@@ -729,20 +799,21 @@ export default function DashboardNav({
       {isMobileMenuOpen && (
         <div className="fixed inset-0 flex z-40 md:hidden">
           <div
-            className="fixed inset-0 bg-black/75"
+            className="fixed inset-0 bg-black/50 dark:bg-black/75"
             onClick={() => setIsMobileMenuOpen(false)}
           />
-          <div className="relative flex-1 flex flex-col max-w-xs w-full bg-slate-950 overflow-y-auto">
-            <div className="absolute top-0 right-0 -mr-12 pt-2">
-              <button
-                onClick={() => setIsMobileMenuOpen(false)}
-                className="ml-1 flex items-center justify-center h-10 w-10 rounded-full focus:outline-none focus:ring-2 focus:ring-inset focus:ring-white"
-              >
-                <X className="h-6 w-6 text-white" />
-              </button>
-            </div>
+          <div className="relative flex flex-col max-w-[85vw] w-80 bg-white dark:bg-slate-950 h-full overflow-y-auto shadow-xl">
+            <button
+              onClick={() => setIsMobileMenuOpen(false)}
+              className="absolute top-3 right-3 z-10 p-2 rounded-lg text-slate-500 dark:text-slate-400 hover:text-slate-900 dark:hover:text-white hover:bg-slate-100 dark:hover:bg-slate-800 transition-colors"
+              aria-label="Close navigation menu"
+            >
+              <X className="h-5 w-5" />
+            </button>
             <SidebarContent
               {...sharedProps}
+              isCollapsed={false}
+              onToggleCollapse={undefined}
               onNavClick={() => setIsMobileMenuOpen(false)}
             />
           </div>

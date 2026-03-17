@@ -11,7 +11,7 @@
         "targetInsightCountRange": [8, 15]
       },
       "system": "You are an expert Educational Data Analyst. Output strict JSON only.",
-      "prompt": "CONTEXT:\n${titleContext}\n${speakerContext}\n\nTASK:\nExtract 8–15 key educational insights from the transcript below. Return a JSON object with a key 'insights' containing an array of objects.\n\nSTRICT FILTERS:\n- IGNORE: Hosts, sponsors, generic chitchat, or vague themes.\n- KEEP: Specific methodologies, frameworks, distinct concepts, notable people, tools, software, or products.\n\nCATEGORY DEFINITIONS:\n- \"person\": Notable individuals, experts, historical figures, thought leaders\n- \"concept\": Ideas, methodologies, frameworks, theories, abstract concepts\n- \"tool\": Software, products, platforms, technologies, companies, organizations\n\nJSON SCHEMA PER INSIGHT:\n{\n  \"entity_id\": \"kebab-case-id\",\n  \"label\": \"Title Case Name\",\n  \"category\": \"person\" | \"concept\" | \"tool\",\n  \"match_text\": \"Exact text from transcript\",\n  \"match_variants\": [\"optional\", \"alternative\", \"spellings\"],\n  \"simple_definition\": \"ELI5 definition (1 sentence)\",\n  \"full_explanation\": \"Academic definition (2-3 sentences)\",\n  \"why_it_matters\": \"Relevance to this specific episode\",\n  \"confidence\": 0.95\n}\n\nTRANSCRIPT:\n${transcript}"
+      "prompt": "CONTEXT:\n${titleContext}\n${speakerContext}\n\nTASK:\nExtract 8–15 key educational insights from the transcript below. Return a JSON object with a key 'insights' containing an array of objects.\n\nSTRICT FILTERS:\n- IGNORE: sponsors, advertiser reads, generic chitchat, filler banter, or vague themes.\n- KEEP: Specific methodologies, frameworks, distinct concepts, notable people, tools, software, products, and substantive episode speakers.\n- For PEOPLE: Prefer people who materially shape the conversation, including hosts or guests with clear relevance to the topic.\n\nCATEGORY DEFINITIONS:\n- \"person\": Notable individuals, experts, historical figures, thought leaders, or substantive named speakers in this episode\n- \"concept\": Ideas, methodologies, frameworks, theories, abstract concepts\n- \"tool\": Software, products, platforms, technologies, companies, organizations\n\nJSON SCHEMA PER INSIGHT:\n{\n  \"entity_id\": \"kebab-case-id\",\n  \"label\": \"Title Case Name\",\n  \"category\": \"person\" | \"concept\" | \"tool\",\n  \"match_text\": \"Exact text from transcript\",\n  \"match_variants\": [\"optional\", \"alternative\", \"spellings\"],\n  \"simple_definition\": \"Plain-English explanation in 1 sentence\",\n  \"full_explanation\": \"For people: explain who they are and their connection to this discussion in 2-3 sentences. For concepts/tools: give a concise but informative explanation.\",\n  \"why_it_matters\": \"Relevance to this specific episode and why the listener should care\",\n  \"confidence\": 0.95\n}\n\nTRANSCRIPT:\n${transcript}"
     },
     "researchLinks": {
       "person": {
@@ -24,7 +24,7 @@
           "return_citations": true
         },
         "system": "You are a research librarian. Validate potential resources. Return strictly valid JSON.",
-        "prompt": "Search for the official online presence of '${label}' (Person), mentioned here: \"${context}\".\n\nReturn a JSON array of 2-3 VALID, LIVE URLs (Official Website, LinkedIn, or Wikipedia).\n\nOutput Format:\n[ { \"title\": \"...\", \"url\": \"...\", \"type\": \"official\" } ]"
+        "prompt": "Research '${label}' as a PERSON, mentioned here: \"${context}\".\n\nReturn a strict JSON object with this format:\n{\n  \"profile\": {\n    \"summary\": \"1-2 sentence overview of who this person is\",\n    \"current_work\": \"What they currently do or are best known for now\",\n    \"notable_background\": \"A concise note about notable prior work, expertise, or context relevant to understanding them\"\n  },\n  \"sources\": [\n    { \"title\": \"...\", \"url\": \"...\", \"description\": \"...\", \"type\": \"wikipedia|official|profile\" }\n  ]\n}\n\nSOURCE PRIORITY:\n1. Wikipedia page if one exists\n2. Official website, institutional profile, or company bio page\n3. LinkedIn or another high-quality profile only if the first two are unavailable\n\nKeep the profile factual, concise, and useful to a listener trying to understand why this person matters in the episode."
       },
       "concept": {
         "id": "research_links_concept",
@@ -74,6 +74,22 @@
       "quoteGraphics": {
         "id": "content_quote_graphics",
         "instructions": "CREATE ${count} PULL QUOTE${count > 1 ? 'S' : ''} FOR GRAPHICS\n\nInstructions:\n- Each quote should be 20-40 words maximum\n- Must be actual quotes from the transcript\n- Powerful, memorable, and shareable\n- Include speaker attribution\n- Stand alone without context\n- Avoid jargon or complex terms\n- Format for visual design (square graphic)\n\nFormat:\n---\nQUOTE 1:\n\"[The actual quote from transcript]\"\n- [Speaker Name]\n\nQUOTE 2:\n\"[The actual quote from transcript]\"\n- [Speaker Name]\n---\n\nGenerate ${count} distinct quote${count > 1 ? 's' : ''} now:"
+      },
+      "facebookPost": {
+        "id": "content_facebook_post",
+        "instructions": "CREATE 1 FACEBOOK POST\n\nInstructions:\n- 150-300 words total\n- Conversational and warm — NOT corporate or jargon-heavy\n- Distinct from LinkedIn: more personal, storytelling-focused\n- Share a key insight or moment from the episode\n- End with ONE engaging question to drive comments\n- 2-3 relevant hashtags only\n- No clickbait\n\nFormat:\n---\n[Opening hook — personal or story-driven]\n\n[Core insight or story from the episode]\n\n[Engagement question]\n\n#hashtag1 #hashtag2\n---\n\nGenerate the Facebook post now:"
+      },
+      "youtubeDescription": {
+        "id": "content_youtube_description",
+        "instructions": "CREATE 1 YOUTUBE VIDEO DESCRIPTION\n\nInstructions:\n- 150-300 words total\n- First 2-3 lines visible before 'Show More' must be compelling\n- Include 3-5 timestamp sections (create logical ones if chapters unavailable)\n- 3-5 relevant hashtags (mix broad + niche)\n- SEO-friendly language — not keyword-stuffed\n- End with soft CTA (subscribe, like, share)\n\nFormat:\n---\n[Compelling opening 2-3 lines]\n\n[Episode overview]\n\nTimestamps:\n0:00 Introduction\n[X:XX] [Topic]\n...\n\n[CTA]\n\n#hashtag1 #hashtag2 #hashtag3\n---\n\nGenerate the YouTube description now:"
+      },
+      "podcastEpisodeDescription": {
+        "id": "content_podcast_episode_description",
+        "instructions": "CREATE 1 PODCAST EPISODE DESCRIPTION\n\nInstructions:\n- 100-200 words total\n- Mention guest name(s) if available; use 'guest' generically if not\n- Summarize the 3 key topics discussed\n- End with a specific CTA (subscribe, leave a review, share)\n- Written for podcast app description fields (Spotify, Apple Podcasts, etc.)\n- No hashtags\n- Conversational but informative\n\nFormat:\n---\n[Episode hook — who is on and why this matters]\n\nIn this episode we cover:\n• [Topic 1]\n• [Topic 2]\n• [Topic 3]\n\n[CTA]\n---\n\nGenerate the podcast description now:"
+      },
+      "shortFormVideoScript": {
+        "id": "content_short_form_video_script",
+        "instructions": "CREATE 1 SHORT-FORM VIDEO SCRIPT (45-60 seconds)\n\nInstructions:\n- 120-150 spoken words TOTAL (approximately 45-60 seconds at 2.5 words/sec)\n- Hook: 3-second opening that creates a loop the viewer must close (max 20 words)\n- Body: One clear insight with supporting context, include a pattern interrupt\n- CTA: Direct specific action (follow, comment with a specific thing, share)\n- Written for spoken delivery — contractions, short sentences, natural rhythm\n- Auto-select the strongest moment from the transcript as the source\n\nFormat:\n---\nHOOK (3 seconds):\n[Opening hook]\n\nBODY:\n[Pattern interrupt + core insight]\n\nCTA:\n[Specific call-to-action]\n\nSOURCE MOMENT: [Brief description of which transcript moment this is from]\n---\n\nGenerate the video script now:"
       }
     },
     "narrativeCoverage": {
