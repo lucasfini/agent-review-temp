@@ -6,6 +6,10 @@ import {
   saveNarrativeCoverageSnapshot,
   appendCoverageCostToProject
 } from '@/lib/narrative-coverage';
+import { estimateCoverageAnalysisCost } from '@/lib/billing/cost-map';
+import { billingErrorResponse, requireCredits } from '@/lib/billing/middleware';
+import { createReservation, failReservation, settleReservation } from '@/lib/billing/credit';
+import { normalizeTier } from '@/lib/tier-config';
 
 export const maxDuration = 300;
 
@@ -43,7 +47,7 @@ export async function POST(
     const { data: project, error: projectError } = await supabaseAdmin
       .from('projects')
       .select(
-        'id, user_id, title, transcription_text, ai_summary, performance_level'
+        'id, user_id, title, transcription_text, ai_summary, performance_level, project_type'
       )
       .eq('id', projectId)
       .single() as {
@@ -53,7 +57,8 @@ export async function POST(
           title: string;
           transcription_text: string;
           ai_summary: string;
-          performance_level: string
+          performance_level: string;
+          project_type?: string | null;
         } | null;
         error: any
       };
@@ -98,20 +103,55 @@ export async function POST(
     }
 
     const goals = await getActiveNarrativeGoals(userId);
-    const rawLevel = (project.performance_level as string) || 'standard';
-    const tier = rawLevel === 'basic' ? 'standard' : rawLevel === 'premium' ? 'pro' : rawLevel;
+    const tier = normalizeTier((project.performance_level as string) || 'content_kit');
+    const estimatedCost = estimateCoverageAnalysisCost({
+      estimatedTranscriptLength: project.transcription_text.length,
+    });
+    const estimatedHold = Number((estimatedCost * 1.15).toFixed(4));
 
-    const coverageAnalysis = await analyzeNarrativeCoverage(
-      project.transcription_text,
-      {
-        projectTitle: project.title,
-        summary: project.ai_summary || null,
-        goals,
-        tier,
-        maxTopics: tier === 'pro' ? 10 : 6,
-        coverageWindow: 'full_episode'
+    if (estimatedHold > 0) {
+      await requireCredits(userId, estimatedHold);
+    }
+
+    const reservation = estimatedHold > 0
+      ? await createReservation({
+          userId,
+          projectId,
+          workflowType: 'coverage_analysis',
+          amount: estimatedHold,
+          metadata: {
+            estimatedCost,
+            force,
+          },
+          expiresAt: new Date(Date.now() + (60 * 60 * 1000)).toISOString(),
+        })
+      : null;
+
+    let coverageAnalysis;
+    try {
+      coverageAnalysis = await analyzeNarrativeCoverage(
+        project.transcription_text,
+        {
+          projectTitle: project.title,
+          summary: project.ai_summary || null,
+          goals,
+          tier,
+          projectFormat: project.project_type || 'OTHER',
+          maxTopics: tier === 'transcript' ? 6 : 10,
+          coverageWindow: 'full_episode',
+          userId,
+          projectId,
+          reservationId: reservation?.id,
+        }
+      );
+    } catch (error) {
+      if (reservation?.id) {
+        await failReservation(reservation.id, error instanceof Error ? error.message : 'Coverage analysis failed').catch((billingError) => {
+          console.error('[RUN COVERAGE] Failed to fail reservation:', billingError);
+        });
       }
-    );
+      throw error;
+    }
 
     const snapshot = await saveNarrativeCoverageSnapshot({
       projectId,
@@ -130,6 +170,10 @@ export async function POST(
       await appendCoverageCostToProject(projectId, coverageAnalysis.aiUsage);
     }
 
+    if (reservation?.id) {
+      await settleReservation(reservation.id);
+    }
+
     return NextResponse.json({
       success: true,
       snapshotId: snapshot?.id,
@@ -142,6 +186,10 @@ export async function POST(
     });
   } catch (error: any) {
     console.error('[RUN COVERAGE] Error:', error);
+    const billingResponse = billingErrorResponse(error);
+    if (billingResponse.status === 402) {
+      return billingResponse;
+    }
     return NextResponse.json(
       { error: error.message || 'Failed to run narrative coverage' },
       { status: 500 }

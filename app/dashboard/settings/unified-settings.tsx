@@ -51,7 +51,7 @@ interface Balance {
 
 interface GroupedTransaction {
   id: string;
-  type: 'single' | 'grouped';
+  type: 'single' | 'workflow';
   createdAt: string;
   transactionType: string;
   amount: number;
@@ -59,8 +59,13 @@ interface GroupedTransaction {
   projectTitle?: string;
   balanceAfter: number;
   invoiceNumber?: string | null;
+  workflowType?: string;
+  holdAmount?: number;
+  finalCharge?: number;
+  releasedAmount?: number;
+  reservationStatus?: string;
   childCount?: number;
-  children?: { reason: string; amount: number; createdAt: string }[];
+  children?: { reason: string; amount: number; createdAt: string; kind?: 'hold' | 'charge' | 'release' | 'usage' }[];
 }
 
 interface UsageEvent {
@@ -104,7 +109,11 @@ function TransactionTypeBadge({ type }: { type: string }) {
   const config: Record<string, { variant: 'success' | 'secondary' | 'info' | 'warning'; label: string }> = {
     purchase: { variant: 'success', label: 'Purchase' },
     debit: { variant: 'secondary', label: 'Usage' },
+    workflow: { variant: 'secondary', label: 'Workflow' },
     refund: { variant: 'info', label: 'Refund' },
+    reserve: { variant: 'warning', label: 'Hold' },
+    release: { variant: 'info', label: 'Release' },
+    settle: { variant: 'secondary', label: 'Charge' },
     adjustment: { variant: 'warning', label: 'Adjustment' },
     bonus: { variant: 'info', label: 'Bonus' },
     admin_adjustment: { variant: 'warning', label: 'Adjustment' },
@@ -1264,7 +1273,7 @@ export default function UnifiedSettings({ userEmail, forcedSection }: UnifiedSet
                         </thead>
                         <tbody className="divide-y divide-slate-200 dark:divide-slate-800">
                           {filteredTransactions.map((transaction) => {
-                            const isGrouped = transaction.type === 'grouped';
+                            const isGrouped = transaction.type === 'workflow';
                             const isExpanded = expandedGroups.has(transaction.id);
 
                             return (
@@ -1296,9 +1305,12 @@ export default function UnifiedSettings({ userEmail, forcedSection }: UnifiedSet
                                   </td>
                                   <td className="px-3 sm:px-6 py-3 text-slate-700 dark:text-slate-300 max-w-[140px] sm:max-w-xs truncate">
                                     {transaction.reason || '-'}
-                                    {isGrouped && transaction.childCount && (
+                                    {isGrouped && typeof transaction.holdAmount === 'number' && (
                                       <span className="ml-2 text-xs text-slate-400 dark:text-slate-500">
-                                        ({transaction.childCount} items)
+                                        Hold {formatAmount(-Math.abs(transaction.holdAmount))}
+                                        {typeof transaction.releasedAmount === 'number' && transaction.releasedAmount > 0
+                                          ? ` • Released ${formatAmount(transaction.releasedAmount)}`
+                                          : ''}
                                       </span>
                                     )}
                                   </td>
@@ -1327,8 +1339,11 @@ export default function UnifiedSettings({ userEmail, forcedSection }: UnifiedSet
                                       {child.reason}
                                     </td>
                                     <td className="hidden md:table-cell px-3 sm:px-6 py-2"></td>
-                                    <td className="px-3 sm:px-6 py-2 text-right text-xs text-slate-500 dark:text-slate-400">
-                                      {formatAmount(child.amount)}
+                                    <td className={cn(
+                                      "px-3 sm:px-6 py-2 text-right text-xs",
+                                      child.amount > 0 ? "text-green-600" : "text-slate-500 dark:text-slate-400"
+                                    )}>
+                                      {child.amount > 0 ? '+' : ''}{formatAmount(child.amount)}
                                     </td>
                                   </tr>
                                 ))}

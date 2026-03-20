@@ -10,6 +10,10 @@
  * Margin: 45% standard markup on all services
  */
 
+import { CONTENT_TYPES } from '@/lib/content-types';
+import { getFeaturesFromAnalysisOptions, normalizeAnalysisOptions, type AnalysisOptions } from '@/lib/analysis-options';
+import { normalizeTier } from '@/lib/tier-config';
+
 export type UnitType =
   | 'seconds'
   | 'minutes'
@@ -429,6 +433,7 @@ export function formatCost(cost: number): string {
 export function estimateTranscriptionCost(params: {
   durationSeconds: number;
   tier: string;
+  analysisOptions?: AnalysisOptions | Record<string, unknown> | null;
   estimatedTranscriptLength?: number; // characters
 }): {
   transcription: number;
@@ -436,7 +441,10 @@ export function estimateTranscriptionCost(params: {
   total: number;
   breakdown: Array<{ service: string; cost: number }>;
 } {
-  const { durationSeconds, tier, estimatedTranscriptLength } = params;
+  const { durationSeconds, tier, analysisOptions, estimatedTranscriptLength } = params;
+  const normalizedTier = normalizeTier(tier);
+  const normalizedOptions = normalizeAnalysisOptions(analysisOptions);
+  const features = getFeaturesFromAnalysisOptions(normalizedOptions);
 
   // Transcription cost (same for all tiers)
   const transcriptionCost = calculateServiceCost(
@@ -455,8 +463,7 @@ export function estimateTranscriptionCost(params: {
     ? Math.ceil(estimatedTranscriptLength / 4)
     : Math.ceil(durationSeconds * 3); // Fallback: ~3 tokens per second of audio
 
-  // Pro tier includes all enrichment (legacy 'premium' also maps to pro)
-  if (tier === 'pro' || tier === 'premium') {
+  if (features.nameExtraction) {
     // Speaker Intelligence (gpt-5): full transcript input, ~500 output
     const speakerIntel = calculateTokenCost(
       'openai_gpt5_input',
@@ -466,7 +473,9 @@ export function estimateTranscriptionCost(params: {
     );
     aiProcessingCost += speakerIntel.billedCost;
     breakdown.push({ service: 'Speaker Intelligence', cost: speakerIntel.billedCost });
+  }
 
+  if (features.aiSummary) {
     // Summary (gpt-5-mini): full transcript input, ~500 output
     const summary = calculateTokenCost(
       'openai_gpt5_mini_input',
@@ -478,7 +487,7 @@ export function estimateTranscriptionCost(params: {
     breakdown.push({ service: 'AI Summary', cost: summary.billedCost });
   }
 
-  if (tier === 'pro' || tier === 'premium') {
+  if (features.roleClassification) {
     // Role classification (gpt-5-nano): ~500 input, ~50 output
     const roleClassification = calculateTokenCost(
       'openai_gpt5_nano_input',
@@ -488,7 +497,9 @@ export function estimateTranscriptionCost(params: {
     );
     aiProcessingCost += roleClassification.billedCost;
     breakdown.push({ service: 'Role Classification', cost: roleClassification.billedCost });
+  }
 
+  if (features.chapterDetection) {
     // Chapters (gpt-5-nano): full transcript input, ~400 output
     const chapters = calculateTokenCost(
       'openai_gpt5_nano_input',
@@ -498,7 +509,9 @@ export function estimateTranscriptionCost(params: {
     );
     aiProcessingCost += chapters.billedCost;
     breakdown.push({ service: 'Chapter Detection', cost: chapters.billedCost });
+  }
 
+  if (features.keyTakeaways) {
     // Takeaways (gpt-5-nano): full transcript input, ~300 output
     const takeaways = calculateTokenCost(
       'openai_gpt5_nano_input',
@@ -508,7 +521,9 @@ export function estimateTranscriptionCost(params: {
     );
     aiProcessingCost += takeaways.billedCost;
     breakdown.push({ service: 'Key Takeaways', cost: takeaways.billedCost });
+  }
 
+  if (features.quotesExtraction) {
     // Quotes (gpt-5-mini): full transcript input, ~400 output
     const quotes = calculateTokenCost(
       'openai_gpt5_mini_input',
@@ -520,6 +535,12 @@ export function estimateTranscriptionCost(params: {
     breakdown.push({ service: 'Social Quotes', cost: quotes.billedCost });
   }
 
+  if (features.contentGeneration && normalizedTier === 'repurpose_pack') {
+    const generationCost = CONTENT_TYPES.reduce((sum, type) => sum + (type.estimatedCostUSD || 0), 0);
+    aiProcessingCost += generationCost;
+    breakdown.push({ service: 'Repurpose Pack Content Generation', cost: generationCost });
+  }
+
   const total = transcriptionCost + aiProcessingCost;
 
   return {
@@ -528,6 +549,119 @@ export function estimateTranscriptionCost(params: {
     total: Number(total.toFixed(6)),
     breakdown,
   };
+}
+
+export function estimateAnalysisJobCost(params: {
+  targetKey: string;
+  estimatedTranscriptLength?: number;
+  durationSeconds?: number;
+}): number {
+  const { targetKey, estimatedTranscriptLength, durationSeconds = 0 } = params;
+  const estimatedTokens = estimatedTranscriptLength
+    ? Math.ceil(estimatedTranscriptLength / 4)
+    : Math.ceil(durationSeconds * 3);
+
+  switch (targetKey) {
+    case 'namedSpeakers': {
+      const speakerIntel = calculateTokenCost(
+        'openai_gpt5_input',
+        'openai_gpt5_output',
+        estimatedTokens + 500,
+        500
+      );
+      const roleClassification = calculateTokenCost(
+        'openai_gpt5_nano_input',
+        'openai_gpt5_nano_output',
+        500,
+        50
+      );
+      return Number((speakerIntel.billedCost + roleClassification.billedCost).toFixed(6));
+    }
+    case 'summary': {
+      return Number(calculateTokenCost(
+        'openai_gpt5_mini_input',
+        'openai_gpt5_mini_output',
+        estimatedTokens,
+        500
+      ).billedCost.toFixed(6));
+    }
+    case 'chapters': {
+      return Number(calculateTokenCost(
+        'openai_gpt5_nano_input',
+        'openai_gpt5_nano_output',
+        estimatedTokens,
+        400
+      ).billedCost.toFixed(6));
+    }
+    case 'takeaways': {
+      return Number(calculateTokenCost(
+        'openai_gpt5_nano_input',
+        'openai_gpt5_nano_output',
+        estimatedTokens,
+        300
+      ).billedCost.toFixed(6));
+    }
+    case 'quotes': {
+      return Number(calculateTokenCost(
+        'openai_gpt5_mini_input',
+        'openai_gpt5_mini_output',
+        estimatedTokens,
+        400
+      ).billedCost.toFixed(6));
+    }
+    case 'insights': {
+      return Number(calculateTokenCost(
+        'openai_gpt4o_mini_input',
+        'openai_gpt4o_mini_output',
+        estimatedTokens,
+        1200
+      ).billedCost.toFixed(6));
+    }
+    default:
+      return 0;
+  }
+}
+
+export function estimateContentGenerationCost(contentTypeIds: string[]): number {
+  const total = contentTypeIds.reduce((sum, contentTypeId) => {
+    const contentType = CONTENT_TYPES.find((item) => item.id === contentTypeId);
+    return sum + Number(contentType?.estimatedCostUSD || 0);
+  }, 0);
+
+  return Number(total.toFixed(6));
+}
+
+export function estimateCoverageAnalysisCost(params: {
+  estimatedTranscriptLength?: number;
+}): number {
+  const estimatedTokens = params.estimatedTranscriptLength
+    ? Math.ceil(params.estimatedTranscriptLength / 4)
+    : 8000;
+
+  return Number(calculateTokenCost(
+    'openai_gpt4o_input',
+    'openai_gpt4o_output',
+    estimatedTokens,
+    1200
+  ).billedCost.toFixed(6));
+}
+
+export function estimateSegmentTouchupCost(params: {
+  selectedSegmentCount: number;
+  averageSegmentChars?: number;
+}): number {
+  const inputTokens = Math.max(
+    1200,
+    Math.ceil((params.averageSegmentChars || 180) * Math.max(1, params.selectedSegmentCount) * 1.8 / 4)
+  );
+  const outputTokens = Math.max(300, params.selectedSegmentCount * 80);
+
+  return Number(calculateTokenCost(
+    'openai_gpt4o_input',
+    'openai_gpt4o_output',
+    inputTokens,
+    outputTokens
+  ).billedCost.toFixed(6));
 }
 
 /**

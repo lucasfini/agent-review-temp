@@ -1,6 +1,22 @@
 import { supabaseAdmin } from '@/lib/supabase/server';
 
-export type CoverageStatus = 'underrepresented' | 'balanced' | 'overindexed' | 'debt' | 'cta-gap' | 'new';
+export type CoverageStatus =
+  | 'strength'
+  | 'hook'
+  | 'clarity'
+  | 'structure'
+  | 'pacing'
+  | 'depth'
+  | 'follow_up'
+  | 'audience_fit'
+  | 'cta'
+  | 'speaker_balance'
+  | 'underrepresented'
+  | 'balanced'
+  | 'overindexed'
+  | 'debt'
+  | 'cta-gap'
+  | 'new';
 
 export interface TopicSignal {
   id: string;
@@ -31,6 +47,8 @@ export interface CoverageOpportunity {
   summary: string;
   recommendedAction: string;
   supportingTopics?: string[];
+  appliesTo?: 'this_episode' | 'next_episode' | 'both';
+  evidenceQuote?: string;
 }
 
 export interface AiUsageDetail {

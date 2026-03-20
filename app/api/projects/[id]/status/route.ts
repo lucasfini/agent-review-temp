@@ -1,6 +1,6 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { supabaseAdmin } from '@/lib/supabase/server';
-import { RouteAccessError, requireProjectOwner } from '@/lib/api/route-auth';
+import { RouteAccessError, requireAuthenticatedUser } from '@/lib/api/route-auth';
 
 // ============================================================
 // FORCE DYNAMIC: Disable all caching for this route
@@ -24,11 +24,42 @@ export async function GET(
       );
     }
 
-    const { project } = await requireProjectOwner<any>(
-      request,
-      projectId,
-      'status, processing_stage, processing_progress, processing_message, stage_started_at, performance_level, transcription_text, processing_time_seconds, created_at, updated_at'
-    );
+    const user = await requireAuthenticatedUser(request);
+
+    const fullSelect = 'id, user_id, status, processing_stage, processing_progress, processing_message, stage_started_at, performance_level, transcription_text, processing_time_seconds, created_at, updated_at';
+    const legacySelect = 'id, user_id, status, performance_level, transcription_text, processing_time_seconds, created_at, updated_at';
+
+    let { data: project, error } = await supabaseAdmin
+      .from('projects')
+      .select(fullSelect)
+      .eq('id', projectId)
+      .single() as { data: any; error: any };
+
+    if (error?.message?.includes('Could not find')) {
+      const retry = await supabaseAdmin
+        .from('projects')
+        .select(legacySelect)
+        .eq('id', projectId)
+        .single() as { data: any; error: any };
+      project = retry.data
+        ? {
+            ...retry.data,
+            processing_stage: null,
+            processing_progress: null,
+            processing_message: null,
+            stage_started_at: null,
+          }
+        : null;
+      error = retry.error;
+    }
+
+    if (error || !project) {
+      throw new RouteAccessError(404, 'Project not found');
+    }
+
+    if (project.user_id !== user.id) {
+      throw new RouteAccessError(403, 'Forbidden');
+    }
 
     // Get generated outputs count if completed
     let outputsCount = 0;
@@ -49,7 +80,7 @@ export async function GET(
       processing_progress: project.processing_progress || 0,
       processing_message: project.processing_message,
       stage_started_at: project.stage_started_at,
-      performance_level: project.performance_level || 'standard',
+      performance_level: project.performance_level || 'content_kit',
       // Existing fields
       transcription_text: project.transcription_text,
       processing_time: project.processing_time_seconds,

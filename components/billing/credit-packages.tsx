@@ -24,12 +24,6 @@ interface Package {
 
 const packages: Package[] = [
   {
-    id: 'starter',
-    amount: 10,
-    price: 10,
-    episodes: '~17-28 episodes',
-  },
-  {
     id: 'basic',
     amount: 25,
     price: 25,
@@ -129,7 +123,7 @@ export default function CreditPackages({ onSuccess }: CreditPackagesProps) {
 
   return (
     <div>
-      <div className="grid gap-3 md:grid-cols-2 lg:grid-cols-5 mb-4">
+      <div className="grid gap-3 md:grid-cols-2 lg:grid-cols-4 mb-4">
         {packages.map((pkg) => (
           <button
             key={pkg.id}

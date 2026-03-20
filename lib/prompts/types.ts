@@ -101,6 +101,7 @@ export interface NarrativeCoverageVars {
   maxTopics: number;
   projectTitle: string;
   tier: string;
+  projectFormat: string;
   goalsText: string;
   transcriptSlice: string;
   summarySection: string;

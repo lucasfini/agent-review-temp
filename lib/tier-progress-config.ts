@@ -15,6 +15,14 @@ export type ProcessingStage =
   | 'chapters'
   | 'takeaways'
   | 'quotes'
+  | 'story_angles'
+  | 'twitter_thread'
+  | 'linkedin_post'
+  | 'youtube_description'
+  | 'tiktok_script'
+  | 'show_notes'
+  | 'newsletter'
+  | 'blog_post'
   | 'finalizing'
   | 'completed'
   | 'failed';
@@ -29,7 +37,7 @@ export interface ProgressStageDefinition {
 }
 
 // Standard Tier: Core transcription and diarization only
-const STANDARD_STAGES: ProgressStageDefinition[] = [
+const TRANSCRIPT_STAGES: ProgressStageDefinition[] = [
   {
     id: 'uploading',
     displayName: 'Uploading Audio',
@@ -65,7 +73,7 @@ const STANDARD_STAGES: ProgressStageDefinition[] = [
 ];
 
 // Pro Tier: + Name Extraction + AI Summary + Roles + Chapters + Takeaways + Quotes
-const PRO_STAGES: ProgressStageDefinition[] = [
+const CONTENT_KIT_STAGES: ProgressStageDefinition[] = [
   {
     id: 'uploading',
     displayName: 'Uploading Audio',
@@ -148,17 +156,166 @@ const PRO_STAGES: ProgressStageDefinition[] = [
   }
 ];
 
+const REPURPOSE_PACK_STAGES: ProgressStageDefinition[] = [
+  {
+    id: 'uploading',
+    displayName: 'Uploading Audio',
+    icon: 'Upload',
+    description: 'Uploading your audio file to secure storage...',
+    progressStart: 0,
+    progressEnd: 4
+  },
+  {
+    id: 'transcribing',
+    displayName: 'Transcribing',
+    icon: 'FileText',
+    description: 'Turning your audio into a transcript...',
+    progressStart: 4,
+    progressEnd: 24
+  },
+  {
+    id: 'diarization',
+    displayName: 'Speaker Detection',
+    icon: 'Users',
+    description: 'Identifying different speakers in the conversation...',
+    progressStart: 24,
+    progressEnd: 34
+  },
+  {
+    id: 'name_extraction',
+    displayName: 'Finding Speaker Names',
+    icon: 'UserCheck',
+    description: 'Matching speakers to names from the episode...',
+    progressStart: 34,
+    progressEnd: 40
+  },
+  {
+    id: 'summary',
+    displayName: 'Creating Summary',
+    icon: 'FileText',
+    description: 'Writing a concise summary of the episode...',
+    progressStart: 40,
+    progressEnd: 46
+  },
+  {
+    id: 'role_classification',
+    displayName: 'Understanding Roles',
+    icon: 'Award',
+    description: 'Working out who is hosting, co-hosting, or guesting...',
+    progressStart: 46,
+    progressEnd: 52
+  },
+  {
+    id: 'chapters',
+    displayName: 'Building Chapters',
+    icon: 'BookOpen',
+    description: 'Breaking the episode into clear chapter sections...',
+    progressStart: 52,
+    progressEnd: 58
+  },
+  {
+    id: 'takeaways',
+    displayName: 'Pulling Out Key Takeaways',
+    icon: 'Lightbulb',
+    description: 'Pulling out the main ideas worth remembering...',
+    progressStart: 58,
+    progressEnd: 64
+  },
+  {
+    id: 'quotes',
+    displayName: 'Finding Shareable Quotes',
+    icon: 'Quote',
+    description: 'Pulling out strong quotes that are worth sharing...',
+    progressStart: 64,
+    progressEnd: 70
+  },
+  {
+    id: 'story_angles',
+    displayName: 'Planning Angles',
+    icon: 'Sparkles',
+    description: 'Identifying strong hooks for downstream content...',
+    progressStart: 70,
+    progressEnd: 75
+  },
+  {
+    id: 'twitter_thread',
+    displayName: 'Writing X Thread',
+    icon: 'Zap',
+    description: 'Drafting the thread version of your episode...',
+    progressStart: 75,
+    progressEnd: 79
+  },
+  {
+    id: 'linkedin_post',
+    displayName: 'Writing LinkedIn Post',
+    icon: 'Zap',
+    description: 'Drafting the LinkedIn version of your episode...',
+    progressStart: 79,
+    progressEnd: 83
+  },
+  {
+    id: 'youtube_description',
+    displayName: 'Writing YouTube Description',
+    icon: 'Zap',
+    description: 'Packaging the episode for YouTube discovery...',
+    progressStart: 83,
+    progressEnd: 87
+  },
+  {
+    id: 'tiktok_script',
+    displayName: 'Writing Video Script',
+    icon: 'Zap',
+    description: 'Drafting a short-form script for clips and reels...',
+    progressStart: 87,
+    progressEnd: 91
+  },
+  {
+    id: 'show_notes',
+    displayName: 'Writing Show Notes',
+    icon: 'Zap',
+    description: 'Turning the episode into polished show notes...',
+    progressStart: 91,
+    progressEnd: 94
+  },
+  {
+    id: 'newsletter',
+    displayName: 'Writing Newsletter',
+    icon: 'Zap',
+    description: 'Drafting the email newsletter version...',
+    progressStart: 94,
+    progressEnd: 97
+  },
+  {
+    id: 'blog_post',
+    displayName: 'Writing Blog Post',
+    icon: 'Zap',
+    description: 'Turning the episode into a long-form article...',
+    progressStart: 97,
+    progressEnd: 99
+  },
+  {
+    id: 'finalizing',
+    displayName: 'Finalizing',
+    icon: 'CheckCircle',
+    description: 'Saving your repurpose pack...',
+    progressStart: 99,
+    progressEnd: 100
+  }
+];
+
 /**
  * Get the processing stages for a specific tier
  */
 export function getTierStages(tier: TierLevel): ProgressStageDefinition[] {
   switch (tier) {
-    case 'standard':
-      return STANDARD_STAGES;
-    case 'pro':
-      return PRO_STAGES;
+    case 'transcript':
+      return TRANSCRIPT_STAGES;
+    case 'content_kit':
+      return CONTENT_KIT_STAGES;
+    case 'repurpose_pack':
+      return REPURPOSE_PACK_STAGES;
     default:
-      return STANDARD_STAGES;
+      return CONTENT_KIT_STAGES;
   }
 }
 

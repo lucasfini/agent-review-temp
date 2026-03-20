@@ -97,11 +97,11 @@ export default function ContentGenerationProgress({
     : 0;
 
   return (
-    <div className="fixed inset-0 z-[70] bg-black/40 flex items-center justify-center px-4">
-      <div className="relative w-full max-w-md bg-slate-900 rounded-lg border border-slate-700 shadow-xl p-6">
+    <div className="fixed inset-0 z-[70] flex items-center justify-center bg-slate-950/45 px-4 dark:bg-black/40">
+      <div className="relative w-full max-w-md rounded-lg border border-slate-200 bg-white p-6 shadow-xl dark:border-slate-700 dark:bg-slate-900">
         {/* Header */}
         <div className="flex items-center justify-between mb-6">
-          <h3 className="text-lg font-semibold text-slate-50">
+          <h3 className="text-lg font-semibold text-slate-900 dark:text-slate-50">
             Generating Content
           </h3>
           {progress.status === 'completed' ? (
@@ -114,14 +114,14 @@ export default function ContentGenerationProgress({
         {/* Progress Bar */}
         <div className="mb-6">
           <div className="flex items-center justify-between mb-2">
-            <span className="text-sm font-medium text-slate-300">
+            <span className="text-sm font-medium text-slate-700 dark:text-slate-300">
               {progress.completedBlocks} of {progress.totalBlocks} blocks
             </span>
             <span className="text-sm font-medium text-blue-600">
               {percentComplete}%
             </span>
           </div>
-          <div className="w-full h-2 bg-slate-700 rounded-full overflow-hidden">
+          <div className="w-full h-2 overflow-hidden rounded-full bg-slate-200 dark:bg-slate-700">
             <div
               className="h-full bg-blue-600 transition-all duration-500 ease-out"
               style={{ width: `${percentComplete}%` }}
@@ -131,16 +131,16 @@ export default function ContentGenerationProgress({
 
         {/* Current Block Status */}
         {progress.currentBlock && (
-          <div className="mb-4 p-3 bg-blue-900/20 border border-blue-800/30 rounded-lg">
+          <div className="mb-4 rounded-lg border border-blue-200 bg-blue-50 p-3 dark:border-blue-800/30 dark:bg-blue-900/20">
             <div className="flex items-start gap-3">
               <div className="mt-0.5">
                 <Loader2 className="w-4 h-4 text-blue-600 animate-spin" />
               </div>
               <div className="flex-1">
-                <p className="text-sm font-medium text-blue-200">
+                <p className="text-sm font-medium text-blue-700 dark:text-blue-200">
                   Currently generating:
                 </p>
-                <p className="text-sm text-blue-400 mt-0.5">
+                <p className="mt-0.5 text-sm text-blue-600 dark:text-blue-400">
                   {progress.currentBlock.name}
                 </p>
               </div>
@@ -151,7 +151,7 @@ export default function ContentGenerationProgress({
         {/* Status Message */}
         {progress.message && (
           <div className="mb-4">
-            <p className="text-sm text-slate-400">
+            <p className="text-sm text-slate-500 dark:text-slate-400">
               {progress.message}
             </p>
           </div>
@@ -169,9 +169,9 @@ export default function ContentGenerationProgress({
               <div
                 key={`${block.contentTypeId}-${block.blockNumber}`}
                 className={`flex items-center gap-3 p-2 rounded ${
-                  isCompleted ? 'bg-green-900/20' :
-                  isCurrent ? 'bg-blue-900/20 border border-blue-800/30' :
-                  'bg-slate-800/50'
+                  isCompleted ? 'bg-green-50 dark:bg-green-900/20' :
+                  isCurrent ? 'border border-blue-200 bg-blue-50 dark:border-blue-800/30 dark:bg-blue-900/20' :
+                  'bg-slate-100 dark:bg-slate-800/50'
                 }`}
               >
                 <div className="flex-shrink-0">
@@ -185,9 +185,9 @@ export default function ContentGenerationProgress({
                 </div>
                 <div className="flex-1 min-w-0">
                   <p className={`text-sm font-medium truncate ${
-                    isCompleted ? 'text-green-900' :
-                    isCurrent ? 'text-blue-200' :
-                    'text-slate-400'
+                    isCompleted ? 'text-green-700 dark:text-green-300' :
+                    isCurrent ? 'text-blue-700 dark:text-blue-200' :
+                    'text-slate-600 dark:text-slate-400'
                   }`}>
                     {block.name}
                   </p>
@@ -199,10 +199,10 @@ export default function ContentGenerationProgress({
 
         {/* Completion Message */}
         {progress.status === 'completed' && (
-          <div className="mt-6 p-3 bg-green-900/20 border border-green-800/30 rounded-lg">
+          <div className="mt-6 rounded-lg border border-green-200 bg-green-50 p-3 dark:border-green-800/30 dark:bg-green-900/20">
             <div className="flex items-center gap-2">
               <CheckCircle className="w-5 h-5 text-green-600" />
-              <p className="text-sm font-medium text-green-900">
+              <p className="text-sm font-medium text-green-700 dark:text-green-200">
                 All content generated successfully!
               </p>
             </div>
@@ -211,8 +211,8 @@ export default function ContentGenerationProgress({
 
         {/* Error Message */}
         {progress.status === 'failed' && (
-          <div className="mt-6 p-3 bg-red-900/20 border border-red-800/30 rounded-lg">
-            <p className="text-sm font-medium text-red-900">
+          <div className="mt-6 rounded-lg border border-red-200 bg-red-50 p-3 dark:border-red-800/30 dark:bg-red-900/20">
+            <p className="text-sm font-medium text-red-700 dark:text-red-200">
               Generation failed. Please try again.
             </p>
           </div>

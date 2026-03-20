@@ -31,6 +31,7 @@ export async function detectPodcastChapters(
     speakerContext?: Record<string, { name: string; role?: string }>;
     userId?: string;
     projectId?: string;
+    reservationId?: string;
     apiKey?: string;
   } = {}
 ): Promise<ChaptersResult> {
@@ -118,10 +119,11 @@ ${transcriptionText.slice(0, 80000)}`;
       await trackOpenAIUsage({
         userId: options.userId,
         projectId: options.projectId,
+        reservationId: options.reservationId,
         response,
         modelName: 'gpt-5-nano',
         purpose: 'Chapter Detection',
-        shouldDebit: true
+        shouldDebit: options.reservationId ? false : true
       });
     }
 

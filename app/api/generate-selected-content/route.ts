@@ -36,9 +36,9 @@ export async function POST(request: NextRequest) {
     // Get the project with transcription
     const { data: project, error: projectError } = await supabaseAdmin
       .from('projects')
-      .select('transcription_text, status, user_id, performance_level')
+      .select('transcription_text, status, user_id')
       .eq('id', projectId)
-      .single() as { data: { transcription_text: string; status: string; user_id: string; performance_level: string | null } | null; error: any };
+      .single() as { data: { transcription_text: string; status: string; user_id: string } | null; error: any };
 
     if (projectError || !project) {
       return NextResponse.json(

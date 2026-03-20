@@ -12,6 +12,10 @@ import {
 } from '@/lib/upload-constants';
 import { createUploadToken } from '@/lib/upload-token';
 import { getAudioExpiryDate } from '@/lib/audio-retention';
+import { billingErrorResponse, requireCredits } from '@/lib/billing/middleware';
+import { estimateTranscriptionCost } from '@/lib/billing/cost-map';
+import { getProcessingTierForAnalysis, normalizeAnalysisOptions } from '@/lib/analysis-options';
+import { createReservation, releaseReservation } from '@/lib/billing/credit';
 
 export const runtime = 'nodejs';
 
@@ -24,13 +28,6 @@ const sanitizeFileName = (name: string) => {
         .replace(/_{2,}/g, '_')
         .replace(/^_+|_+$/g, '');
     return sanitized || 'audio_upload';
-};
-
-const normalizePerformanceLevel = (value: any): string => {
-    if (value === 'standard' || value === 'pro') return value;
-    if (value === 'basic' || value === 'low') return 'standard';
-    if (value === 'premium' || value === 'high' || value === 'medium') return 'pro';
-    return 'pro';
 };
 
 export async function POST(request: NextRequest) {
@@ -54,7 +51,7 @@ export async function POST(request: NextRequest) {
         }
 
         const body = await request.json();
-        const { fileName, contentType, size, title, performanceLevel, rosterSpeakers, speakerCount } = body;
+        const { fileName, contentType, size, title, rosterSpeakers, speakerCount } = body;
 
         if (!fileName || !contentType || !size || !title) {
             return NextResponse.json({ error: 'Missing required fields' }, { status: 400 });
@@ -82,7 +79,28 @@ export async function POST(request: NextRequest) {
 
         const sanitizedBaseName = sanitizeFileName(fileName);
         const estimatedDuration = Math.round(size / (ESTIMATED_BITRATE_BPS / 8));
-        const normalizedLevel = normalizePerformanceLevel(performanceLevel);
+        const analysisOptions = normalizeAnalysisOptions(body.analysisOptions);
+        const processingTier = getProcessingTierForAnalysis(analysisOptions);
+        const estimatedCost = estimateTranscriptionCost({
+            durationSeconds: estimatedDuration,
+            tier: processingTier,
+            analysisOptions,
+        });
+
+        const estimatedHold = Number((estimatedCost.total * 1.15).toFixed(4));
+        await requireCredits(user.id, estimatedHold);
+
+        const reservation = await createReservation({
+            userId: user.id,
+            workflowType: 'upload_processing',
+            amount: estimatedHold,
+            metadata: {
+                estimatedCost: estimatedCost.total,
+                analysisOptions,
+                estimatedDuration,
+            },
+            expiresAt: new Date(Date.now() + (2 * 60 * 60 * 1000)).toISOString(),
+        });
 
         // We cannot compute actual file hash on client easily without reading the whole file into memory.
         // Instead, we use a pseudo fingerprint for the cache key.
@@ -102,7 +120,15 @@ export async function POST(request: NextRequest) {
             processing_progress: 0,
             processing_message: 'Uploading audio file...',
             stage_started_at: new Date().toISOString(),
-            performance_level: normalizedLevel
+            performance_level: processingTier,
+            metadata: {
+                analysis_options: analysisOptions,
+                billing: {
+                    uploadReservationId: reservation.id,
+                    uploadEstimatedHold: estimatedHold,
+                    uploadEstimatedCost: estimatedCost.total,
+                },
+            }
         };
 
         let { data: project, error: projectError } = await supabaseAdmin
@@ -124,7 +150,15 @@ export async function POST(request: NextRequest) {
                 audio_duration: estimatedDuration,
                 audio_fingerprint: pseudoFingerprint,
                 status: 'uploading',
-                performance_level: normalizedLevel
+                performance_level: processingTier,
+                metadata: {
+                    analysis_options: analysisOptions,
+                    billing: {
+                        uploadReservationId: reservation.id,
+                        uploadEstimatedHold: estimatedHold,
+                        uploadEstimatedCost: estimatedCost.total,
+                    },
+                }
             };
 
             const retry = await supabaseAdmin
@@ -139,6 +173,9 @@ export async function POST(request: NextRequest) {
 
         if (projectError || !project) {
             console.error('Project creation error:', projectError);
+            await releaseReservation(reservation.id, 'Released upload hold after project creation failed').catch((releaseError) => {
+                console.error('Failed to release upload reservation after project creation error:', releaseError);
+            });
             return NextResponse.json({ error: 'Failed to create project' }, { status: 500 });
         }
 
@@ -190,6 +227,10 @@ export async function POST(request: NextRequest) {
         });
     } catch (error) {
         console.error('Init upload error:', error);
+        const billingResponse = billingErrorResponse(error);
+        if (billingResponse.status === 402) {
+            return billingResponse;
+        }
         return NextResponse.json(
             { error: 'Failed to initialize upload' },
             { status: 500 }

@@ -1,17 +1,11 @@
 /**
  * Insights API - GET endpoint
- * Purpose: Fetch insights for a project with tier-based filtering
- * Tiers:
- *   - Basic: Only external_sources (research links)
- *   - Pro: simple_definition + external_sources
- *   - Premium: Full insight data (all fields)
+ * Purpose: Fetch insights for a project
  */
 
 import { NextRequest, NextResponse } from 'next/server';
 import { createClient } from '@supabase/supabase-js';
 import { RouteAccessError, requireProjectOwner } from '@/lib/api/route-auth';
-
-type Tier = 'standard' | 'pro';
 
 function getRelationshipDescription(relationships: any[], types: string[]) {
   for (const type of types) {
@@ -138,13 +132,7 @@ export async function GET(request: NextRequest, context: RouteContext) {
       return NextResponse.json({ error: 'Project ID required' }, { status: 400 });
     }
 
-    const { project } = await requireProjectOwner<{ performance_level: Tier | null }>(
-      request,
-      projectId,
-      'performance_level'
-    );
-    const rawTier: string = project.performance_level || 'standard';
-    const tier = (rawTier === 'basic' ? 'standard' : rawTier === 'premium' ? 'pro' : rawTier) as Tier;
+    await requireProjectOwner(request, projectId, 'id');
 
     // Initialize Supabase
     const supabase = createClient(
@@ -168,18 +156,15 @@ export async function GET(request: NextRequest, context: RouteContext) {
       return NextResponse.json({
         insights: [],
         count: 0,
-        tier,
         message: 'No insights available yet',
       });
     }
 
-    // Filter insights based on tier
-    const filteredInsights = filterInsightsByTier(insights, tier);
+    const transformedInsights = transformInsights(insights);
 
     return NextResponse.json({
-      insights: filteredInsights,
-      count: filteredInsights.length,
-      tier,
+      insights: transformedInsights,
+      count: transformedInsights.length,
     });
   } catch (error) {
     if (error instanceof RouteAccessError) {
@@ -194,12 +179,11 @@ export async function GET(request: NextRequest, context: RouteContext) {
 }
 
 /**
- * Filter insight data based on user tier
+ * Normalize insight data for the current product model.
  */
-function filterInsightsByTier(insights: any[], tier: Tier): any[] {
+function transformInsights(insights: any[]): any[] {
   return insights.map((insight) => {
-    // Base fields available to all tiers
-    const base = {
+    return {
       id: insight.id,
       entity_id: insight.entity_id,
       label: insight.label,
@@ -211,31 +195,6 @@ function filterInsightsByTier(insights: any[], tier: Tier): any[] {
       status: insight.status,
       created_at: insight.created_at,
       updated_at: insight.updated_at,
-    };
-
-    // Standard tier: Only external sources (research links)
-    if (tier === 'standard') {
-      return {
-        ...base,
-        external_sources: insight.external_sources || [],
-      };
-    }
-
-    // Pro tier: Add simple definition
-    if (tier === 'pro') {
-      return {
-        ...base,
-        simple_definition: insight.simple_definition,
-        external_sources: insight.external_sources || [],
-        person_profile: buildPersonProfile(insight),
-        concept_profile: buildConceptProfile(insight),
-        tool_profile: buildToolProfile(insight),
-      };
-    }
-
-    // Premium tier: All fields
-    return {
-      ...base,
       simple_definition: insight.simple_definition,
       full_explanation: insight.full_explanation,
       related_concepts: insight.related_concepts || [],

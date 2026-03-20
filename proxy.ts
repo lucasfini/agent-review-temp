@@ -67,48 +67,38 @@ export async function proxy(request: NextRequest) {
     {
       cookies: {
         get(name: string) {
-          return request.cookies.get(name)?.value
+          try {
+            return request.cookies.get(name)?.value
+          } catch {
+            return undefined
+          }
         },
         set(name: string, value: string, options: CookieOptions) {
-          request.cookies.set({
-            name,
-            value,
-            ...options,
-          })
-          response = NextResponse.next({
-            request: {
-              headers: request.headers,
-            },
-          })
-          response.cookies.set({
-            name,
-            value,
-            ...options,
-          })
+          try {
+            request.cookies.set({ name, value, ...options })
+            response = NextResponse.next({ request: { headers: request.headers } })
+            response.cookies.set({ name, value, ...options })
+          } catch {}
         },
         remove(name: string, options: CookieOptions) {
-          request.cookies.set({
-            name,
-            value: '',
-            ...options,
-          })
-          response = NextResponse.next({
-            request: {
-              headers: request.headers,
-            },
-          })
-          response.cookies.set({
-            name,
-            value: '',
-            ...options,
-          })
+          try {
+            request.cookies.set({ name, value: '', ...options })
+            response = NextResponse.next({ request: { headers: request.headers } })
+            response.cookies.set({ name, value: '', ...options })
+          } catch {}
         },
       },
     }
   )
 
-  await supabase.auth.getSession()
-  const { data: { user } } = await supabase.auth.getUser()
+  let user: { id: string; email?: string | null } | null = null
+  try {
+    await supabase.auth.getSession()
+    const { data } = await supabase.auth.getUser()
+    user = data.user
+  } catch {
+    // Corrupted or invalid UTF-8 cookie — treat as unauthenticated
+  }
 
   const isProtectedRoute =
     pathname.startsWith('/dashboard') ||

@@ -1,7 +1,8 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { supabaseAdmin } from '@/lib/supabase/server';
 import { trackOpenAIUsage } from '@/lib/billing/track-usage';
-import type { ContentBlock, OutputType } from '@/lib/content-types';
+import { billingErrorResponse, requireCredits } from '@/lib/billing/middleware';
+import { calculateBlocksCost, type ContentBlock, type OutputType } from '@/lib/content-types';
 import { getThemeById, type ContentTheme } from '@/lib/content-themes';
 import { enforceContentLimit, PLATFORM_PSYCHOLOGY } from '@/lib/content-psychology';
 import { preProcessTranscript, type NarrativeMetadata } from '@/lib/content-generators/pre-processor';
@@ -14,6 +15,7 @@ import {
 } from '@/lib/generation-progress';
 import { getAICompletion, type AIMessage } from '@/lib/ai-providers/multi-provider';
 import { getOpenAIApiKeyForUser } from '@/lib/openai/consent';
+import { createReservation, failReservation, settleReservationAmount } from '@/lib/billing/credit';
 
 /**
  * Parse JSON response from AI, stripping markdown code fences and conversational filler
@@ -507,6 +509,8 @@ export async function POST(request: NextRequest) {
   const errors: string[] = [];
   const warnings: string[] = [];
   let projectId: string | undefined;
+  let contentReservationId: string | undefined;
+  let savedOutputIds: string[] = [];
 
   try {
     const payload = await request.json();
@@ -546,6 +550,25 @@ export async function POST(request: NextRequest) {
       if (projectUser?.email === process.env.DEMO_EMAIL) {
         return NextResponse.json({ error: 'Demo account is read-only' }, { status: 403 });
       }
+    }
+
+    const estimatedGenerationCost = Number(calculateBlocksCost(blocks).toFixed(6));
+    if (userId && estimatedGenerationCost > 0) {
+      const estimatedHold = Number((estimatedGenerationCost * 1.15).toFixed(4));
+      await requireCredits(userId, estimatedHold);
+      const reservation = await createReservation({
+        userId,
+        projectId,
+        workflowType: 'content_generation',
+        amount: estimatedHold,
+        metadata: {
+          estimatedCost: estimatedGenerationCost,
+          blockIds: blocks.map((block: ContentBlock) => block.contentTypeId),
+          blockCount: blocks.length,
+        },
+        expiresAt: new Date(Date.now() + (60 * 60 * 1000)).toISOString(),
+      });
+      contentReservationId = reservation.id;
     }
 
     // Use selected model or default to GPT-4o
@@ -624,8 +647,9 @@ export async function POST(request: NextRequest) {
 
         // Persist each completed block immediately so realtime output updates
         // can populate the content tab before the full run finishes.
-        const savedCount = await saveGeneratedContent(projectId, blockResult.content);
-        savedContentCount += savedCount;
+        const savedIds = await saveGeneratedContent(projectId, blockResult.content);
+        savedOutputIds.push(...savedIds);
+        savedContentCount += savedIds.length;
 
         // Track usage and cost
         if (blockResult.usageEventId) {
@@ -654,21 +678,22 @@ export async function POST(request: NextRequest) {
     }
 
     // Step 5: Debit credits now that we are sure block outputs were saved successfully
-    if (totalBilledCost > 0 && userId) {
+    if (contentReservationId) {
       try {
-        const { debitCredit } = await import('@/lib/billing/credit');
-        await debitCredit(userId, totalBilledCost, usageEventIds[0], {
-          reason: `Content Generation (${generatedContent.length} pieces)`,
-          metadata: {
-            projectId,
-            eventCount: usageEventIds.length,
-            usageEventIds,
-          },
-        });
-        console.log(`[BILLING] ✅ Debited $${totalBilledCost.toFixed(4)} for ${generatedContent.length} pieces of content`);
+        await settleReservationAmount(contentReservationId, totalBilledCost, usageEventIds);
+        console.log(`[BILLING] ✅ Settled reservation for $${totalBilledCost.toFixed(4)} across ${generatedContent.length} pieces of content`);
       } catch (billingError) {
-        console.error('[BILLING ERROR] ❌ Failed to debit after successful generation:', billingError);
-        // We still consider the generation successful even if billing fails here
+        console.error('[BILLING ERROR] ❌ Failed to settle content reservation:', billingError);
+        if (savedOutputIds.length > 0) {
+          await supabaseAdmin
+            .from('outputs')
+            .delete()
+            .in('id', savedOutputIds);
+        }
+        await failReservation(contentReservationId, 'Content generation settlement failed').catch((failError) => {
+          console.error('[BILLING ERROR] ❌ Failed to fail content reservation after settlement error:', failError);
+        });
+        throw billingError;
       }
     }
 
@@ -688,6 +713,15 @@ export async function POST(request: NextRequest) {
     });
 
   } catch (error) {
+    if (contentReservationId) {
+      await failReservation(contentReservationId, error instanceof Error ? error.message : 'Content generation failed').catch((failError) => {
+        console.error('[BILLING ERROR] ❌ Failed to fail content reservation after route error:', failError);
+      });
+    }
+    const billingResponse = billingErrorResponse(error);
+    if (billingResponse.status === 402) {
+      return billingResponse;
+    }
     console.error('[GENERATION ERROR]:', error);
     errors.push(error instanceof Error ? error.message : 'Unknown error');
 
@@ -2407,7 +2441,7 @@ function buildMetadataForInsert(metadata: any, originalType?: string, normalized
   return result;
 }
 
-async function saveGeneratedContent(projectId: string, generatedContent: any[]): Promise<number> {
+async function saveGeneratedContent(projectId: string, generatedContent: any[]): Promise<string[]> {
   const { data: project } = await supabaseAdmin
     .from('projects')
     .select('user_id')
@@ -2441,9 +2475,10 @@ async function saveGeneratedContent(projectId: string, generatedContent: any[]):
     validateOutput(output);
   });
 
-  const { error } = await supabaseAdmin
+  const { data, error } = await supabaseAdmin
     .from('outputs')
-    .insert(outputs as any);
+    .insert(outputs as any)
+    .select('id');
 
   if (error) {
     console.error('[SAVE ERROR]:', error);
@@ -2451,5 +2486,5 @@ async function saveGeneratedContent(projectId: string, generatedContent: any[]):
   }
 
   console.log(`[SAVE] 💾 Saved ${outputs.length} outputs to database`);
-  return outputs.length;
+  return ((data || []) as Array<{ id: string }>).map((row) => row.id);
 }

@@ -3,6 +3,7 @@
 import type { ReactNode } from "react"
 import { cn } from "@/lib/utils"
 import { AreaChart, Area, ResponsiveContainer } from "recharts"
+import { FeatureHelp } from "@/components/ui/feature-help"
 import { TrendingUp, TrendingDown, Minus } from "lucide-react"
 
 interface SparklinePoint {
@@ -13,6 +14,8 @@ export interface AnalyticsKpiCard {
   title: string
   value: string | number
   note: string
+  helpDescription?: string
+  helpBestFor?: string
   trend: {
     value: number
     direction: "up" | "down" | "neutral"
@@ -84,9 +87,18 @@ export function KPIGrid({ cards }: { cards: AnalyticsKpiCard[] }) {
             </div>
 
             <div className="space-y-1">
-              <p className="text-xs font-medium uppercase tracking-wide text-slate-500 dark:text-slate-400">
-                {card.title}
-              </p>
+              <div className="flex items-center gap-1.5">
+                <p className="text-xs font-medium uppercase tracking-wide text-slate-500 dark:text-slate-400">
+                  {card.title}
+                </p>
+                {card.helpDescription ? (
+                  <FeatureHelp
+                    title={card.title}
+                    description={card.helpDescription}
+                    bestFor={card.helpBestFor}
+                  />
+                ) : null}
+              </div>
               <p className="text-2xl font-semibold tracking-tight text-slate-900 dark:text-slate-50">
                 {card.value}
               </p>

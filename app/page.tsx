@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useRef, useState } from 'react';
+import { useEffect, useRef, useState, type SVGProps } from 'react';
 import Link from 'next/link';
 import { useTheme } from 'next-themes';
 import {
@@ -15,9 +15,44 @@ import {
 } from 'framer-motion';
 import {
   Mic, Sparkles, Zap, Users, ArrowRight, Check, BarChart3, Target, Lightbulb,
-  Menu, X as CloseIcon, Clock, Play, Upload, Sun, Moon,
+  Menu, X as CloseIcon, Clock, Play, Upload, Sun, Moon, Facebook, Instagram,
+  Youtube, Mail, FileText, Quote, Newspaper,
 } from 'lucide-react';
 import BrandLogo from '@/components/site/BrandLogo';
+
+const XIcon = ({ className, ...props }: SVGProps<SVGSVGElement>) => (
+  <svg viewBox="0 0 24 24" fill="currentColor" className={className} {...props}>
+    <path d="M4 4h4l4 5 4-5h4l-6 7 6 9h-4l-4-5-4 5H4l6-9z" />
+  </svg>
+);
+
+const LinkedinIcon = ({ className, ...props }: SVGProps<SVGSVGElement>) => (
+  <svg viewBox="0 0 24 24" fill="currentColor" className={className} {...props}>
+    <path d="M20.447 20.452h-3.554v-5.569c0-1.328-.027-3.037-1.852-3.037-1.853 0-2.136 1.445-2.136 2.939v5.667H9.351V9h3.414v1.561h.046c.477-.9 1.637-1.85 3.37-1.85 3.601 0 4.267 2.37 4.267 5.455v6.286zM5.337 7.433a2.062 2.062 0 01-2.063-2.065 2.064 2.064 0 112.063 2.065zm1.782 13.019H3.555V9h3.564v11.452zM22.225 0H1.771C.792 0 0 .774 0 1.729v20.542C0 23.227.792 24 1.771 24h20.451C23.2 24 24 23.227 24 22.271V1.729C24 .774 23.2 0 22.222 0h.003z" />
+  </svg>
+);
+
+const TikTokIcon = ({ className, ...props }: SVGProps<SVGSVGElement>) => (
+  <svg viewBox="0 0 24 24" fill="currentColor" className={className} {...props}>
+    <path d="M19.59 6.69a4.83 4.83 0 0 1-3.77-4.35h-3.2v12.4a2.89 2.89 0 1 1-2-2.75V8.72a6.13 6.13 0 1 0 5.2 6.02V8.45a8.06 8.06 0 0 0 4.77 1.57V6.69Z" />
+  </svg>
+);
+
+const OUTPUT_ICONS = {
+  x: XIcon,
+  linkedin: LinkedinIcon,
+  facebook: Facebook,
+  instagram: Instagram,
+  youtube: Youtube,
+  tiktok: TikTokIcon,
+  podcast: Mic,
+  showNotes: FileText,
+  blog: Newspaper,
+  newsletter: Mail,
+  quote: Quote,
+} as const;
+
+type OutputIconKey = keyof typeof OUTPUT_ICONS;
 
 // ─── Constants ────────────────────────────────────────────────────────────────
 const SOCIAL_TAGS = [
@@ -49,6 +84,23 @@ const sectionItem = {
   show: { opacity: 1, y: 0, transition: { duration: 0.45, ease: 'easeOut' as const } },
 };
 
+type OutputGroupItem = {
+  icon: OutputIconKey;
+  badgeBg: string;
+  name: string;
+  desc: string;
+};
+
+type FeaturedOutputCard = {
+  eyebrow: string;
+  platform: string;
+  accent: string;
+  surface: string;
+  icon: OutputIconKey;
+  badgeBg: string;
+  preview: Array<{ label: string; text: string }>;
+};
+
 // ─── How It Works steps ───────────────────────────────────────────────────────
 const STEPS = [
   {
@@ -61,8 +113,8 @@ const STEPS = [
   },
   {
     n: '02',
-    title: 'Choose Your Analysis Level',
-    description: 'Standard gives you a clean transcript with numbered speakers. Pro adds names, roles, summaries, chapters, takeaways, and quotes.',
+    title: 'Choose Processing Options',
+    description: 'Start with transcription, then check named speakers, summary, insights, chapters, takeaways, or quotes only if you want them.',
     accent: 'bg-violet-500',
     ring: 'ring-violet-500/20',
     Icon: Sparkles,
@@ -70,7 +122,7 @@ const STEPS = [
   {
     n: '03',
     title: 'Generate 11 Content Types',
-    description: 'Create X threads, LinkedIn posts, YouTube descriptions, TikTok scripts, show notes, newsletters, and more without plan-based locks.',
+    description: 'Create X threads, LinkedIn posts, YouTube descriptions, TikTok scripts, show notes, newsletters, blog posts, and more from one upload.',
     accent: 'bg-indigo-500',
     ring: 'ring-indigo-500/20',
     Icon: Zap,
@@ -78,16 +130,16 @@ const STEPS = [
 ];
 
 // ─── Output formats ───────────────────────────────────────────────────────────
-const OUTPUT_GROUPS = [
+const OUTPUT_GROUPS: Array<{ title: string; description: string; accent: string; items: OutputGroupItem[] }> = [
   {
     title: 'Social Distribution',
     description: 'Posts built to grab attention quickly and drive replies, saves, and shares.',
     accent: 'from-slate-900 via-slate-800 to-slate-900',
     items: [
-      { badge: '𝕏', badgeBg: 'bg-slate-900', name: 'X Threads', desc: '6–8 posts per thread' },
-      { badge: 'in', badgeBg: 'bg-blue-700', name: 'LinkedIn Posts', desc: 'Professional posts with discussion prompts' },
-      { badge: 'f', badgeBg: 'bg-blue-600', name: 'Facebook Post', desc: 'Conversational post with question-led engagement' },
-      { badge: '◉', badgeBg: 'bg-gradient-to-br from-fuchsia-500 to-rose-500', name: 'Instagram Carousel', desc: 'Multi-slide carousel with hashtags' },
+      { icon: 'x', badgeBg: 'bg-slate-900', name: 'X Threads', desc: '6\u20138 posts per thread' },
+      { icon: 'linkedin', badgeBg: 'bg-blue-700', name: 'LinkedIn Posts', desc: 'Professional posts with discussion prompts' },
+      { icon: 'facebook', badgeBg: 'bg-blue-600', name: 'Facebook Post', desc: 'Conversational post with question-led engagement' },
+      { icon: 'instagram', badgeBg: 'bg-gradient-to-br from-fuchsia-500 to-rose-500', name: 'Instagram Carousel', desc: 'Multi-slide carousel with hashtags' },
     ],
   },
   {
@@ -95,10 +147,10 @@ const OUTPUT_GROUPS = [
     description: 'Assets that help an episode travel across video feeds and listening platforms.',
     accent: 'from-blue-950 via-indigo-950 to-slate-900',
     items: [
-      { badge: 'YT', badgeBg: 'bg-red-600', name: 'YouTube Description', desc: 'SEO-friendly summary with timestamps and hashtags' },
-      { badge: 'TT', badgeBg: 'bg-cyan-600', name: 'TikTok / Reels Script', desc: '45–60 second short-form hook and CTA' },
-      { badge: 'PD', badgeBg: 'bg-amber-600', name: 'Podcast Episode Description', desc: 'Store-ready episode summary for podcast apps' },
-      { badge: 'SN', badgeBg: 'bg-violet-600', name: 'Show Notes', desc: 'Episode summary with timestamps' },
+      { icon: 'youtube', badgeBg: 'bg-red-600', name: 'YouTube Description', desc: 'SEO-friendly summary with timestamps and hashtags' },
+      { icon: 'tiktok', badgeBg: 'bg-cyan-600', name: 'TikTok / Reels Script', desc: '45–60 second short-form hook and CTA' },
+      { icon: 'podcast', badgeBg: 'bg-amber-600', name: 'Podcast Episode Description', desc: 'Store-ready episode summary for podcast apps' },
+      { icon: 'showNotes', badgeBg: 'bg-violet-600', name: 'Show Notes', desc: 'Episode summary with timestamps' },
     ],
   },
   {
@@ -106,24 +158,24 @@ const OUTPUT_GROUPS = [
     description: 'Deeper assets for search, email, and republishing once an episode has landed.',
     accent: 'from-emerald-950 via-slate-900 to-slate-900',
     items: [
-      { badge: 'B', badgeBg: 'bg-emerald-600', name: 'Blog Post', desc: 'SEO-optimized, 1,200–1,800 words' },
-      { badge: 'NL', badgeBg: 'bg-orange-500', name: 'Email Newsletter', desc: '800–1,200 words with CTA' },
-      { badge: '"', badgeBg: 'bg-rose-500', name: 'Quote Graphics', desc: 'Speaker-attributed quotable excerpts' },
+      { icon: 'blog', badgeBg: 'bg-emerald-600', name: 'Blog Post', desc: 'SEO-optimized, 1,200–1,800 words' },
+      { icon: 'newsletter', badgeBg: 'bg-orange-500', name: 'Email Newsletter', desc: '800–1,200 words with CTA' },
+      { icon: 'quote', badgeBg: 'bg-rose-500', name: 'Quote Graphics', desc: 'Speaker-attributed quotable excerpts' },
     ],
   },
 ];
 
-const FEATURED_OUTPUT_STACK = [
+const FEATURED_OUTPUT_STACK: FeaturedOutputCard[] = [
   {
     eyebrow: 'Short-form video',
     platform: 'TikTok / Reels Script',
     accent: 'from-cyan-400 to-blue-500',
     surface: 'bg-slate-950/80 border-cyan-500/25',
-    badge: 'TT', badgeBg: 'bg-cyan-600',
+    icon: 'tiktok', badgeBg: 'bg-cyan-600',
     preview: [
       { label: 'Hook', text: '"This moment from our podcast is about to reframe how you think about customer retention…"' },
       { label: 'Build', text: 'Guest breaks down the exact framework their team used to cut churn by 40% in 6 months.' },
-      { label: 'CTA',  text: '"Drop a 🔥 if you want the full episode link."' },
+      { label: 'CTA',  text: '"Drop a comment if you want the full episode link."' },
     ],
   },
   {
@@ -131,7 +183,7 @@ const FEATURED_OUTPUT_STACK = [
     platform: 'YouTube Description',
     accent: 'from-rose-400 to-red-500',
     surface: 'bg-slate-950/80 border-rose-500/25',
-    badge: 'YT', badgeBg: 'bg-red-600',
+    icon: 'youtube', badgeBg: 'bg-red-600',
     preview: [
       { label: 'Summary',  text: 'Sarah Chen explains what separates high-retention SaaS from the rest — and the metrics teams get wrong.' },
       { label: 'Chapters', text: '00:00 Intro  ·  04:22 Retention paradox  ·  18:45 Framework  ·  32:10 Q&A' },
@@ -143,7 +195,7 @@ const FEATURED_OUTPUT_STACK = [
     platform: 'Email Newsletter',
     accent: 'from-amber-300 to-orange-500',
     surface: 'bg-slate-950/80 border-amber-500/25',
-    badge: 'NL', badgeBg: 'bg-orange-500',
+    icon: 'newsletter', badgeBg: 'bg-orange-500',
     preview: [
       { label: 'Opening', text: 'Most teams measure retention wrong. This week Sarah Chen joined us to explain why stickiness is a vanity metric.' },
       { label: 'Insight', text: "The teams that win aren't reducing churn — they're engineering indispensability at 30, 60, and 90 days." },
@@ -151,6 +203,13 @@ const FEATURED_OUTPUT_STACK = [
     ],
   },
 ];
+
+const HERO_ROTATING_PHRASES = [
+  'content.',
+  'show notes.',
+  'social posts.',
+  'publish-ready assets.',
+] as const;
 
 const SIGNAL_LEVELS = [
   { base: 24, low: 10, high: 42 },
@@ -167,29 +226,29 @@ const SIGNAL_LEVELS = [
 ];
 
 const ANALYSIS_METRICS = [
-  { label: 'Topic coverage', value: '84%', note: 'Share of voice mapped across recurring themes' },
-  { label: 'CTA cadence', value: '2 gaps', note: 'Missed asks detected before publishing' },
-  { label: 'Editorial debt', value: '3', note: 'Under-covered ideas surfaced for the next episode' },
+  { label: 'Coaching gaps', value: '2 gaps', note: 'High-priority issues to fix in this or the next episode' },
+  { label: 'Missed opportunities', value: '3', note: 'Moments where the episode could have been clearer, deeper, or stronger' },
+  { label: 'Strengths', value: '4', note: 'Choices worth repeating because they clearly worked for listeners' },
 ];
 
 const ANALYSIS_OPPORTUNITIES = [
   {
-    title: 'AI safety is rising, but underrepresented',
-    type: 'Topic gap',
+    title: 'The opening takes too long to reveal the real tension',
+    type: 'Hook',
     severity: 'High',
-    action: 'Add one dedicated segment in the next two episodes.',
+    action: 'Lead with the strongest question or disagreement in the first 30 seconds.',
   },
   {
-    title: 'Newsletter CTA dropped below target cadence',
-    type: 'CTA gap',
+    title: 'The guest hints at a stronger example that never gets explored',
+    type: 'Follow-up',
     severity: 'Medium',
-    action: 'Reintroduce the ask in the opening and closing beats.',
+    action: 'Ask one more concrete follow-up so the audience gets the full story.',
   },
   {
-    title: 'Founder story moments outperform tactical sections',
-    type: 'Opportunity',
+    title: 'The personal story sections are the most memorable moments',
+    type: 'Strength',
     severity: 'Low',
-    action: 'Package more personal examples into clips and posts.',
+    action: 'Use more specific examples like this in future episodes and clips.',
   },
 ];
 
@@ -291,19 +350,19 @@ const SHOOTING_STARS = [
 ];
 
 const PRICING_DARK_STARS = [
-  { x: '8%', y: '14%', size: 5, opacity: 0.48, duration: 7.2, delay: 0.2 },
-  { x: '16%', y: '28%', size: 4, opacity: 0.5, duration: 6.1, delay: 0.9 },
-  { x: '24%', y: '70%', size: 5, opacity: 0.44, duration: 7.8, delay: 0.5 },
-  { x: '32%', y: '21%', size: 4, opacity: 0.48, duration: 6.8, delay: 1.1 },
-  { x: '40%', y: '49%', size: 5, opacity: 0.42, duration: 7.5, delay: 0.7 },
-  { x: '48%', y: '35%', size: 4, opacity: 0.5, duration: 6.4, delay: 0.3 },
-  { x: '56%', y: '77%', size: 5, opacity: 0.48, duration: 7.1, delay: 1.2 },
-  { x: '64%', y: '14%', size: 4, opacity: 0.48, duration: 6.9, delay: 0.4 },
-  { x: '72%', y: '42%', size: 5, opacity: 0.44, duration: 7.3, delay: 0.8 },
-  { x: '80%', y: '28%', size: 4, opacity: 0.5, duration: 6.2, delay: 1.3 },
-  { x: '88%', y: '56%', size: 5, opacity: 0.48, duration: 7.7, delay: 0.6 },
-  { x: '96%', y: '35%', size: 4, opacity: 0.48, duration: 6.7, delay: 0.2 },
-  { x: '96%', y: '77%', size: 5, opacity: 0.44, duration: 7.4, delay: 1.0 },
+  { x: '8%', y: '14%', size: 7, opacity: 0.48, duration: 7.2, delay: 0.2 },
+  { x: '16%', y: '28%', size: 6, opacity: 0.5, duration: 6.1, delay: 0.9 },
+  { x: '24%', y: '70%', size: 7, opacity: 0.44, duration: 7.8, delay: 0.5 },
+  { x: '32%', y: '21%', size: 6, opacity: 0.48, duration: 6.8, delay: 1.1 },
+  { x: '40%', y: '49%', size: 7, opacity: 0.42, duration: 7.5, delay: 0.7 },
+  { x: '48%', y: '35%', size: 6, opacity: 0.5, duration: 6.4, delay: 0.3 },
+  { x: '56%', y: '77%', size: 7, opacity: 0.48, duration: 7.1, delay: 1.2 },
+  { x: '64%', y: '14%', size: 6, opacity: 0.48, duration: 6.9, delay: 0.4 },
+  { x: '72%', y: '42%', size: 7, opacity: 0.44, duration: 7.3, delay: 0.8 },
+  { x: '80%', y: '28%', size: 6, opacity: 0.5, duration: 6.2, delay: 1.3 },
+  { x: '88%', y: '56%', size: 7, opacity: 0.48, duration: 7.7, delay: 0.6 },
+  { x: '96%', y: '35%', size: 6, opacity: 0.48, duration: 6.7, delay: 0.2 },
+  { x: '96%', y: '77%', size: 7, opacity: 0.44, duration: 7.4, delay: 1.0 },
 ];
 
 const SYNC_SIGNAL_PATTERNS = [
@@ -368,45 +427,47 @@ function generateRandomSignal(prev: number[]): number[] {
   });
 }
 
-// ─── Pricing tiers — matches lib/tier-config.ts exactly ──────────────────────
-const TIERS = [
+// ─── Pricing — single pay-as-you-go model ────────────────────────────────────
+const PAYG_SECTIONS = [
   {
-    name: 'Standard',
-    price: '$0.39',
-    unit: '/hr of audio',
-    badge: null,
-    description: 'Accurate transcription with speaker separation for every recording.',
-    highlight: false,
-    borderClass: 'border-gray-200',
-    ctaClass: 'bg-gray-900 hover:bg-gray-800 text-white',
+    name: 'Base transcription',
+    price: '$0.49/hr',
+    description: 'Always-on transcript with numbered speaker labels and timestamps.',
     features: [
-      'AssemblyAI transcription',
-      'Speaker diarization',
+      'Clean transcript',
+      'Speaker labels (numbered)',
       'Word-level timestamps',
-      'Generic speaker labels (Speaker 1, 2)',
-      'All 11 content types available',
+      'Export to Markdown / Notion',
     ],
   },
   {
-    name: 'Pro',
-    price: '$0.67',
-    unit: '/hr of audio',
-    badge: 'Most Popular',
-    description: 'Full AI enrichment for teams that want cleaner transcripts and stronger downstream content.',
-    highlight: true,
-    borderClass: 'border-blue-500',
-    ctaClass: 'bg-blue-600 hover:bg-blue-700 text-white shadow-md shadow-blue-200',
+    name: 'Optional analysis add-ons',
+    price: 'Per selection',
+    description: 'Choose only the structure you want during processing.',
     features: [
-      'Everything in Standard',
-      'AI speaker name extraction',
-      'AI episode summary',
-      'Named speaker labels with roles (Host / Guest)',
-      'Chapter detection',
-      'Key takeaways and social quote extraction',
-      'Better source data for every content type',
+      'Named speakers with roles',
+      'Episode summary',
+      'Insights',
+      'Chapter breakdown',
+      'Key takeaways',
+      'Notable quotes',
     ],
   },
-];
+  {
+    name: 'Content generation',
+    price: 'Per output',
+    description: 'Generate content later from the project page, one content type at a time.',
+    features: [
+      'X / Twitter thread',
+      'LinkedIn post',
+      'YouTube description',
+      'TikTok / Reels script',
+      'Podcast show notes',
+      'Email newsletter',
+      'Blog post',
+    ],
+  },
+] as const;
 
 // ─── Utilities ────────────────────────────────────────────────────────────────
 function ScrollProgressBar() {
@@ -608,14 +669,14 @@ function PricingSubtleStars() {
 
   return (
     <div className="absolute inset-0 overflow-hidden pointer-events-none">
-      <div className="absolute inset-0 bg-[linear-gradient(to_right,rgba(15,23,42,0.05)_1px,transparent_1px),linear-gradient(to_bottom,rgba(15,23,42,0.05)_1px,transparent_1px)] bg-[size:28px_28px,28px_28px]" />
-      <div className="absolute inset-0 bg-[linear-gradient(to_right,rgba(15,23,42,0.08)_1px,transparent_1px),linear-gradient(to_bottom,rgba(15,23,42,0.08)_1px,transparent_1px)] bg-[size:140px_140px,140px_140px]" />
-      <div className="absolute inset-0 bg-[radial-gradient(circle_at_top,rgba(15,23,42,0.04),transparent_38%),radial-gradient(circle_at_bottom,rgba(15,23,42,0.03),transparent_32%)]" />
+      <div className="absolute inset-0 bg-[linear-gradient(to_right,rgba(59,130,246,0.06)_1px,transparent_1px),linear-gradient(to_bottom,rgba(59,130,246,0.06)_1px,transparent_1px)] bg-[size:28px_28px,28px_28px] dark:bg-[linear-gradient(to_right,rgba(148,163,184,0.08)_1px,transparent_1px),linear-gradient(to_bottom,rgba(148,163,184,0.08)_1px,transparent_1px)]" />
+      <div className="absolute inset-0 bg-[linear-gradient(to_right,rgba(15,23,42,0.06)_1px,transparent_1px),linear-gradient(to_bottom,rgba(15,23,42,0.06)_1px,transparent_1px)] bg-[size:140px_140px,140px_140px] dark:bg-[linear-gradient(to_right,rgba(148,163,184,0.12)_1px,transparent_1px),linear-gradient(to_bottom,rgba(148,163,184,0.12)_1px,transparent_1px)]" />
+      <div className="absolute inset-0 bg-[radial-gradient(circle_at_top,rgba(59,130,246,0.14),transparent_38%),radial-gradient(circle_at_bottom,rgba(14,165,233,0.08),transparent_32%)] dark:bg-[radial-gradient(circle_at_top,rgba(59,130,246,0.16),transparent_38%),radial-gradient(circle_at_bottom,rgba(15,23,42,0.22),transparent_32%)]" />
 
       {PRICING_DARK_STARS.map((star) => (
         <motion.div
           key={`${star.x}-${star.y}`}
-          className="absolute rounded-full"
+          className="absolute rounded-full bg-sky-500/85 shadow-[0_0_0_1px_rgba(37,99,235,0.28),0_0_20px_rgba(59,130,246,0.16)] dark:bg-slate-200/85 dark:shadow-[0_0_0_1px_rgba(148,163,184,0.16),0_0_22px_rgba(96,165,250,0.12)]"
           animate={reduceMotion ? { opacity: star.opacity } : { opacity: [star.opacity * 0.5, star.opacity, star.opacity * 0.82] }}
           transition={{ duration: star.duration, delay: star.delay, repeat: Infinity, ease: 'easeInOut' }}
           style={{
@@ -623,8 +684,6 @@ function PricingSubtleStars() {
             top: star.y,
             width: star.size,
             height: star.size,
-            background: 'radial-gradient(circle at 32% 28%, rgba(71,85,105,0.72) 0%, rgba(30,41,59,0.92) 26%, rgba(15,23,42,0.98) 62%, rgba(2,6,23,1) 100%)',
-            boxShadow: '0 0 0 0.75px rgba(2,6,23,0.56), inset 0 0.5px 0 rgba(148,163,184,0.18)',
           }}
         />
       ))}
@@ -820,9 +879,9 @@ function Navbar({ open, setOpen }: { open: boolean; setOpen: (v: boolean) => voi
     <header className="sticky top-0 z-50 border-b border-gray-100 bg-white/90 backdrop-blur-xl dark:border-white/10 dark:bg-slate-950/85">
       <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8">
         <div className="flex items-center justify-between h-16">
-          <Link href="/" className="flex items-center gap-2.5">
+          <a href="#top" className="flex items-center gap-2.5">
             <BrandLogo theme={logoTheme} />
-          </Link>
+          </a>
 
           <nav className="hidden md:flex items-center gap-8">
             {links.map(({ label, href }) => (
@@ -874,6 +933,16 @@ function Navbar({ open, setOpen }: { open: boolean; setOpen: (v: boolean) => voi
 
 // ─── Hero ─────────────────────────────────────────────────────────────────────
 function Hero() {
+  const [activePhrase, setActivePhrase] = useState(0);
+
+  useEffect(() => {
+    const interval = window.setInterval(() => {
+      setActivePhrase((current) => (current + 1) % HERO_ROTATING_PHRASES.length);
+    }, 2200);
+
+    return () => window.clearInterval(interval);
+  }, []);
+
   return (
     <section className="relative overflow-hidden bg-gradient-to-br from-slate-100 via-blue-50 to-indigo-100 pt-20 pb-12 dark:from-slate-900 dark:via-blue-950 dark:to-indigo-950 md:pb-20">
       <div className="absolute top-0 left-1/4 w-96 h-96 bg-blue-600/15 rounded-full blur-3xl pointer-events-none" />
@@ -887,7 +956,7 @@ function Hero() {
           transition={{ duration: 0.5, ease: 'easeOut' }}
         >
           <Sparkles className="h-3.5 w-3.5 flex-shrink-0" />
-          AI-Powered Speaker Intelligence
+          Turn One Recording Into Everything
         </motion.div>
 
         <motion.h1
@@ -896,11 +965,24 @@ function Hero() {
           animate={{ opacity: 1, y: 0 }}
           transition={{ duration: 0.55, delay: 0.08, ease: 'easeOut' }}
         >
-          One Recording.{' '}
-          <span className="bg-gradient-to-r from-blue-400 to-violet-400 bg-clip-text text-transparent">
-            Speaker Intelligence.
+          <span className="whitespace-nowrap">
+            Upload your episode.{' '}
+          <span className="relative inline-flex min-w-[16ch] justify-start align-baseline whitespace-nowrap sm:min-w-[18ch] md:min-w-[20ch]">
+            <AnimatePresence mode="wait">
+              <motion.span
+                key={HERO_ROTATING_PHRASES[activePhrase]}
+                initial={{ opacity: 0, y: 14, filter: 'blur(6px)' }}
+                animate={{ opacity: 1, y: 0, filter: 'blur(0px)' }}
+                exit={{ opacity: 0, y: -14, filter: 'blur(6px)' }}
+                transition={{ duration: 0.35, ease: 'easeOut' }}
+                className="whitespace-nowrap bg-gradient-to-r from-blue-400 to-violet-400 bg-clip-text text-transparent"
+              >
+                Leave with {HERO_ROTATING_PHRASES[activePhrase]}
+              </motion.span>
+            </AnimatePresence>
           </span>
-          <br />Instantly.
+          </span>
+          <br />For every platform.
         </motion.h1>
 
         <motion.p
@@ -909,7 +991,7 @@ function Hero() {
           animate={{ opacity: 1, y: 0 }}
           transition={{ duration: 0.55, delay: 0.16, ease: 'easeOut' }}
         >
-          AudioRepurpose turns one recording into 11 platform-ready content types with speaker-aware transcripts, clean summaries, and no content gates between plans.
+          AudioRepurpose turns a single recording into a clean transcript, speaker-attributed show notes, chapters, a summary, and ready-to-publish posts for every platform.
         </motion.p>
 
         <motion.div
@@ -963,7 +1045,7 @@ function SpeakerIntelligenceSection() {
   ];
 
   return (
-    <section id="speaker-intelligence" className="py-24 bg-white overflow-hidden">
+    <section id="speaker-intelligence" className="py-24 bg-white overflow-hidden dark:bg-slate-950">
       <div className="max-w-[90rem] mx-auto px-4 sm:px-6 lg:px-8">
         <motion.div
           className="text-center mb-16"
@@ -973,10 +1055,10 @@ function SpeakerIntelligenceSection() {
           variants={sectionContainer}
         >
           <span className="text-sm font-semibold text-blue-600 uppercase tracking-widest">Speaker Intelligence</span>
-          <h2 className="text-3xl md:text-4xl font-bold text-gray-900 mt-2">
+          <h2 className="text-3xl md:text-4xl font-bold text-gray-900 mt-2 dark:text-white">
             The feature no other tool ships
           </h2>
-          <p className="text-gray-500 mt-4 max-w-2xl mx-auto text-base">
+          <p className="text-gray-500 mt-4 max-w-2xl mx-auto text-base dark:text-slate-300">
             Most tools give you Speaker 1, Speaker 2, and a prayer. AudioRepurpose auto-detects names and roles from the audio itself — then gives you a clean review workflow to confirm or correct every segment.
           </p>
         </motion.div>
@@ -1013,23 +1095,23 @@ function SpeakerIntelligenceSection() {
             <ul className="space-y-6">
               {bullets.map(({ Icon, text }, i) => (
                 <li key={i} className="flex items-start gap-4">
-                  <div className="flex-shrink-0 h-10 w-10 rounded-xl bg-blue-50 flex items-center justify-center">
-                    <Icon className="h-5 w-5 text-blue-600" />
+                  <div className="flex-shrink-0 h-10 w-10 rounded-xl bg-blue-50 flex items-center justify-center dark:bg-blue-500/15">
+                    <Icon className="h-5 w-5 text-blue-600 dark:text-blue-300" />
                   </div>
-                  <p className="text-gray-700 leading-relaxed pt-1.5">{text}</p>
+                  <p className="text-gray-700 leading-relaxed pt-1.5 dark:text-slate-300">{text}</p>
                 </li>
               ))}
             </ul>
 
-            <div className="rounded-2xl border border-gray-100 bg-gray-50 p-5">
-              <p className="text-sm text-gray-500 leading-relaxed">
-                <span className="font-semibold text-gray-800">Merge duplicate speakers</span> — real-world audio often fragments one voice into multiple clusters. AudioRepurpose lets you merge them in one click and propagate the correction across the entire transcript.
+            <div className="rounded-2xl border border-gray-100 bg-gray-50 p-5 dark:border-white/10 dark:bg-white/[0.03]">
+              <p className="text-sm text-gray-500 leading-relaxed dark:text-slate-300">
+                <span className="font-semibold text-gray-800 dark:text-white">Merge duplicate speakers</span> — real-world audio often fragments one voice into multiple clusters. AudioRepurpose lets you merge them in one click and propagate the correction across the entire transcript.
               </p>
             </div>
 
             <Link
               href="/auth/demo"
-              className="inline-flex items-center gap-2 text-blue-600 font-semibold hover:text-blue-700 transition-colors text-sm"
+              className="inline-flex items-center gap-2 text-blue-600 font-semibold hover:text-blue-700 transition-colors text-sm dark:text-blue-300 dark:hover:text-blue-200"
             >
               See it live in the demo <ArrowRight className="h-4 w-4" />
             </Link>
@@ -1043,10 +1125,10 @@ function SpeakerIntelligenceSection() {
 // ─── How It Works ─────────────────────────────────────────────────────────────
 function HowItWorks() {
   return (
-    <section id="how-it-works" className="relative overflow-hidden bg-gray-50 py-24">
-      <div className="pointer-events-none absolute inset-0 bg-[linear-gradient(to_right,rgba(15,23,42,0.05)_1px,transparent_1px),linear-gradient(to_bottom,rgba(15,23,42,0.05)_1px,transparent_1px)] bg-[size:28px_28px,28px_28px]" />
-      <div className="pointer-events-none absolute inset-0 bg-[linear-gradient(to_right,rgba(15,23,42,0.08)_1px,transparent_1px),linear-gradient(to_bottom,rgba(15,23,42,0.08)_1px,transparent_1px)] bg-[size:140px_140px,140px_140px]" />
-      <div className="pointer-events-none absolute inset-0 bg-[radial-gradient(circle_at_top,rgba(15,23,42,0.04),transparent_38%),radial-gradient(circle_at_bottom,rgba(15,23,42,0.03),transparent_32%)]" />
+    <section id="how-it-works" className="relative overflow-hidden bg-gray-50 py-24 dark:bg-slate-950">
+      <div className="pointer-events-none absolute inset-0 bg-[linear-gradient(to_right,rgba(15,23,42,0.05)_1px,transparent_1px),linear-gradient(to_bottom,rgba(15,23,42,0.05)_1px,transparent_1px)] bg-[size:28px_28px,28px_28px] dark:bg-[linear-gradient(to_right,rgba(148,163,184,0.08)_1px,transparent_1px),linear-gradient(to_bottom,rgba(148,163,184,0.08)_1px,transparent_1px)]" />
+      <div className="pointer-events-none absolute inset-0 bg-[linear-gradient(to_right,rgba(15,23,42,0.08)_1px,transparent_1px),linear-gradient(to_bottom,rgba(15,23,42,0.08)_1px,transparent_1px)] bg-[size:140px_140px,140px_140px] dark:bg-[linear-gradient(to_right,rgba(148,163,184,0.12)_1px,transparent_1px),linear-gradient(to_bottom,rgba(148,163,184,0.12)_1px,transparent_1px)]" />
+      <div className="pointer-events-none absolute inset-0 bg-[radial-gradient(circle_at_top,rgba(15,23,42,0.04),transparent_38%),radial-gradient(circle_at_bottom,rgba(15,23,42,0.03),transparent_32%)] dark:bg-[radial-gradient(circle_at_top,rgba(59,130,246,0.16),transparent_38%),radial-gradient(circle_at_bottom,rgba(15,23,42,0.22),transparent_32%)]" />
       <div className="relative max-w-7xl mx-auto px-4 sm:px-6 lg:px-8">
         <motion.div
           className="text-center mb-16"
@@ -1056,8 +1138,8 @@ function HowItWorks() {
           variants={sectionContainer}
         >
           <span className="text-sm font-semibold text-blue-600 uppercase tracking-widest">How it Works</span>
-          <h2 className="text-3xl md:text-4xl font-bold text-gray-900 mt-2">From recording to content in minutes</h2>
-          <p className="text-gray-500 mt-4 max-w-xl mx-auto text-base">
+          <h2 className="text-3xl md:text-4xl font-bold text-gray-900 mt-2 dark:text-white">From recording to content in minutes</h2>
+          <p className="text-gray-500 mt-4 max-w-xl mx-auto text-base dark:text-slate-300">
             Pick your processing level once, then generate whichever content types you need.
           </p>
         </motion.div>
@@ -1069,7 +1151,7 @@ function HowItWorks() {
           viewport={SECTION_VIEWPORT}
           variants={sectionContainer}
         >
-          <div className="hidden md:block absolute top-12 left-1/3 right-1/3 h-px bg-gradient-to-r from-blue-200 via-violet-200 to-indigo-200" />
+          <div className="hidden md:block absolute top-12 left-1/3 right-1/3 h-px bg-gradient-to-r from-blue-200 via-violet-200 to-indigo-200 dark:from-blue-400/30 dark:via-violet-400/30 dark:to-indigo-400/30" />
           {STEPS.map(({ n, title, description, Icon, accent, ring }, idx) => (
             <motion.div
               key={n}
@@ -1079,12 +1161,12 @@ function HowItWorks() {
             >
               <div className={`relative z-10 h-16 w-16 ${accent} rounded-2xl flex items-center justify-center mb-6 shadow-lg ring-4 ${ring} transition-transform duration-300 group-hover:-translate-y-1`}>
                 <Icon className="h-7 w-7 text-white" />
-                <span className="absolute -top-2 -right-2 h-5 w-5 bg-white rounded-full text-[10px] font-bold text-gray-700 flex items-center justify-center shadow-sm border border-gray-100">
+                <span className="absolute -top-2 -right-2 h-5 w-5 bg-white rounded-full text-[10px] font-bold text-gray-700 flex items-center justify-center shadow-sm border border-gray-100 dark:border-white/10 dark:bg-slate-900 dark:text-slate-200">
                   {n[1]}
                 </span>
               </div>
-              <h3 className="text-lg font-bold text-gray-900 mb-2">{title}</h3>
-              <p className="text-gray-500 text-sm leading-relaxed max-w-xs">{description}</p>
+              <h3 className="text-lg font-bold text-gray-900 mb-2 dark:text-white">{title}</h3>
+              <p className="text-gray-500 text-sm leading-relaxed max-w-xs dark:text-slate-300">{description}</p>
             </motion.div>
           ))}
         </motion.div>
@@ -1155,10 +1237,11 @@ function ContentOutputsSection() {
   }, []);
 
   const card = FEATURED_OUTPUT_STACK[activeCard];
+  const ActiveCardIcon = OUTPUT_ICONS[card.icon];
   const activePattern = activeSignalPattern !== null ? SYNC_SIGNAL_PATTERNS[activeSignalPattern] : null;
 
   return (
-    <section id="outputs" className="py-24 bg-white overflow-hidden">
+    <section id="outputs" className="py-24 bg-white overflow-hidden dark:bg-slate-950">
       <div className="max-w-[90rem] mx-auto px-4 sm:px-6 lg:px-8">
         <motion.div
           className="text-center mb-16"
@@ -1168,7 +1251,7 @@ function ContentOutputsSection() {
           variants={sectionContainer}
         >
           <span className="text-sm font-semibold text-blue-600 uppercase tracking-widest">Content Generation</span>
-          <h2 className="text-3xl md:text-4xl font-bold text-gray-900 mt-2">
+          <h2 className="text-3xl md:text-4xl font-bold text-gray-900 mt-2 dark:text-white">
             One recording, shaped for every channel.
           </h2>
         </motion.div>
@@ -1186,10 +1269,10 @@ function ContentOutputsSection() {
             <div className="mb-8 flex items-center justify-center gap-2">
               {[
                 ['11', 'content types'],
-                ['2', 'tiers'],
+                ['Pay', 'as you go'],
               ].map(([value, label]) => (
-                <span key={label} className="inline-flex items-center gap-1.5 rounded-md border border-slate-200 bg-white px-3 py-1.5 text-[11px] font-semibold uppercase tracking-[0.14em] text-slate-500">
-                  <span className="font-bold text-slate-950">{value}</span>
+                <span key={label} className="inline-flex items-center gap-1.5 rounded-md border border-slate-200 bg-white px-3 py-1.5 text-[11px] font-semibold uppercase tracking-[0.14em] text-slate-500 dark:border-white/10 dark:bg-white/[0.03] dark:text-slate-400">
+                  <span className="font-bold text-slate-950 dark:text-white">{value}</span>
                   <span>{label}</span>
                 </span>
               ))}
@@ -1199,25 +1282,28 @@ function ContentOutputsSection() {
             <div className="space-y-0">
               {OUTPUT_GROUPS.map(({ title, description, items }, index) => (
                 <div key={title}>
-                  {index > 0 && <div className="border-t border-slate-200 my-7" />}
+                  {index > 0 && <div className="border-t border-slate-200 my-7 dark:border-white/10" />}
                   <div className="flex items-baseline justify-between gap-4 mb-4">
                     <div>
-                      <p className="text-[10px] font-semibold uppercase tracking-[0.18em] text-slate-500">Editorial Group</p>
-                      <h3 className="mt-1 text-lg font-semibold tracking-tight text-slate-950">{title}</h3>
+                      <p className="text-[10px] font-semibold uppercase tracking-[0.18em] text-slate-500 dark:text-slate-400">Editorial Group</p>
+                      <h3 className="mt-1 text-lg font-semibold tracking-tight text-slate-950 dark:text-white">{title}</h3>
+                      <p className="mt-2 max-w-2xl text-sm text-slate-500 dark:text-slate-300">{description}</p>
                     </div>
                   </div>
                   <div className="grid gap-2.5 sm:grid-cols-2">
-                    {items.map(({ badge, badgeBg, name, desc }) => (
-                      <div key={name} className="flex items-center gap-3 rounded-2xl border border-slate-200 bg-white px-4 py-3 transition-colors hover:border-slate-300 hover:shadow-sm">
-                        <div className={`h-9 w-9 ${badgeBg} rounded-xl flex items-center justify-center text-[10px] font-bold text-white flex-shrink-0`}>
-                          {badge}
+                    {items.map(({ icon, badgeBg, name, desc }) => {
+                      const Icon = OUTPUT_ICONS[icon];
+                      return (
+                      <div key={name} className="flex items-center gap-3 rounded-2xl border border-slate-200 bg-white px-4 py-3 transition-colors hover:border-slate-300 hover:shadow-sm dark:border-white/10 dark:bg-white/[0.03] dark:hover:border-white/20 dark:hover:bg-white/[0.05]">
+                        <div className={`h-9 w-9 ${badgeBg} rounded-xl flex items-center justify-center text-white flex-shrink-0`}>
+                          <Icon className="h-4 w-4" />
                         </div>
                         <div className="min-w-0">
-                          <div className="text-sm font-semibold text-slate-950">{name}</div>
-                          <div className="mt-0.5 text-xs leading-4 text-slate-500">{desc}</div>
+                          <div className="text-sm font-semibold text-slate-950 dark:text-white">{name}</div>
+                          <div className="mt-0.5 text-xs leading-4 text-slate-500 dark:text-slate-400">{desc}</div>
                         </div>
                       </div>
-                    ))}
+                    )})}
                   </div>
                 </div>
               ))}
@@ -1243,17 +1329,17 @@ function ContentOutputsSection() {
             className="xl:col-span-2 xl:sticky xl:top-24"
           >
             <div className="relative pt-4">
-              <div className="absolute left-0 right-0 top-0 h-px bg-gradient-to-r from-transparent via-slate-300 to-transparent" />
+              <div className="absolute left-0 right-0 top-0 h-px bg-gradient-to-r from-transparent via-slate-300 to-transparent dark:via-white/15" />
               <div className="mb-6 flex items-start justify-between gap-4">
                 <div>
-                  <p className="text-[11px] font-semibold uppercase tracking-[0.2em] text-slate-500">Editorial Rotation</p>
-                  <h3 className="mt-2 text-2xl font-bold tracking-tight text-slate-950">
+                  <p className="text-[11px] font-semibold uppercase tracking-[0.2em] text-slate-500 dark:text-slate-400">Editorial Rotation</p>
+                  <h3 className="mt-2 text-2xl font-bold tracking-tight text-slate-950 dark:text-white">
                     Three live examples, all eleven outputs available.
                   </h3>
                 </div>
               </div>
 
-              <div className="relative min-h-[19rem] border-y border-slate-200 py-6">
+              <div className="relative min-h-[19rem] border-y border-slate-200 py-6 dark:border-white/10">
                 <AnimatePresence mode="wait">
                   <motion.div
                     key={activeCard}
@@ -1264,23 +1350,23 @@ function ContentOutputsSection() {
                     className="grid gap-4"
                   >
                     <div className="flex items-start gap-4">
-                      <div className={`h-11 w-11 rounded-2xl ${card.badgeBg} flex items-center justify-center text-sm font-bold text-white flex-shrink-0 shadow-sm`}>
-                        {card.badge}
+                      <div className={`h-11 w-11 rounded-2xl ${card.badgeBg} flex items-center justify-center text-white flex-shrink-0 shadow-sm`}>
+                        <ActiveCardIcon className="h-5 w-5" />
                       </div>
                       <div>
-                        <p className="text-[11px] font-semibold uppercase tracking-[0.18em] text-slate-500">{card.eyebrow}</p>
-                        <h4 className="mt-1 text-xl font-bold tracking-tight text-slate-950">{card.platform}</h4>
+                        <p className="text-[11px] font-semibold uppercase tracking-[0.18em] text-slate-500 dark:text-slate-400">{card.eyebrow}</p>
+                        <h4 className="mt-1 text-xl font-bold tracking-tight text-slate-950 dark:text-white">{card.platform}</h4>
                       </div>
                       <div className={`ml-auto h-8 w-8 rounded-xl bg-gradient-to-br ${card.accent} shadow-md flex-shrink-0`} />
                     </div>
 
                     <div className="space-y-3">
                       {card.preview.map(({ label, text }, index) => (
-                        <div key={label} className="grid grid-cols-[4.75rem_1fr] gap-3 border-b border-slate-200/80 pb-3 last:border-b-0 last:pb-0">
-                          <span className="pt-1 text-[10px] font-semibold uppercase tracking-[0.14em] text-slate-500">
+                        <div key={label} className="grid grid-cols-[4.75rem_1fr] gap-3 border-b border-slate-200/80 pb-3 last:border-b-0 last:pb-0 dark:border-white/10">
+                          <span className="pt-1 text-[10px] font-semibold uppercase tracking-[0.14em] text-slate-500 dark:text-slate-400">
                             {String(index + 1).padStart(2, '0')} {label}
                           </span>
-                          <span className="text-sm leading-7 text-slate-700">{text}</span>
+                          <span className="text-sm leading-7 text-slate-700 dark:text-slate-300">{text}</span>
                         </div>
                       ))}
                     </div>
@@ -1295,8 +1381,8 @@ function ContentOutputsSection() {
                     onClick={() => setActiveCard(i)}
                     className={`rounded-full px-3 py-1 text-[11px] font-semibold uppercase tracking-[0.14em] transition-all
                       ${i === activeCard
-                        ? 'bg-slate-900 text-white border border-slate-900'
-                        : 'text-slate-500 hover:text-slate-700'}`}
+                        ? 'bg-slate-900 text-white border border-slate-900 dark:border-white/10 dark:bg-white/10'
+                        : 'text-slate-500 hover:text-slate-700 dark:text-slate-400 dark:hover:text-slate-200'}`}
                   >
                     {c.eyebrow}
                   </button>
@@ -1305,18 +1391,19 @@ function ContentOutputsSection() {
 
               <div className="mt-6">
                 <div className="mb-4 flex items-center justify-center gap-1.5 whitespace-nowrap">
-                  {['Available on Standard', 'Available on Pro', 'Generate on demand'].map((pill) => (
-                    <span key={pill} className="rounded-md border border-slate-200 bg-white px-2 py-1.5 text-[10px] font-semibold uppercase tracking-[0.12em] text-slate-500 shadow-sm">
+                  {['Transcript', 'Optional analysis', 'On-demand content'].map((pill) => (
+                    <span key={pill} className="rounded-md border border-slate-200 bg-white px-2 py-1.5 text-[10px] font-semibold uppercase tracking-[0.12em] text-slate-500 shadow-sm dark:border-white/10 dark:bg-white/[0.03] dark:text-slate-400">
                       {pill}
                     </span>
                   ))}
                 </div>
-                <div className="flex items-center justify-between text-xs font-semibold uppercase tracking-[0.16em] text-slate-500">
+                <div className="flex items-center justify-between text-xs font-semibold uppercase tracking-[0.16em] text-slate-500 dark:text-slate-400">
                   <span>Pipeline signal</span>
                   <span>Source transcript</span>
                 </div>
                 <div className="mt-4 grid grid-cols-11 gap-2 items-end" style={{ height: 104 }}>
-                  {OUTPUT_GROUPS.flatMap((group) => group.items).map(({ badge, badgeBg, name }, index) => {
+                  {OUTPUT_GROUPS.flatMap((group) => group.items).map(({ icon, badgeBg, name }, index) => {
+                    const Icon = OUTPUT_ICONS[icon];
                     const liveHeight = signalHeights[index];
                     const iconTravel = Math.max(3, Math.round(liveHeight / 10));
                     const patternFrames = activePattern?.frames.map((frame) => frame[index]);
@@ -1336,7 +1423,7 @@ function ContentOutputsSection() {
                     return (
                       <div key={name} className="flex h-full flex-col items-center justify-end">
                         <motion.div
-                          className={`mb-1 flex h-8 w-8 items-center justify-center rounded-lg ${badgeBg} text-[10px] font-bold text-white shadow-sm`}
+                          className={`mb-1 flex h-8 w-8 items-center justify-center rounded-lg ${badgeBg} text-white shadow-sm`}
                           animate={{ y: iconFrames }}
                           style={{ willChange: 'transform' }}
                           transition={activePattern
@@ -1345,7 +1432,7 @@ function ContentOutputsSection() {
                               ? { duration: 1, ease: 'easeInOut' }
                               : { duration: 0.42, ease: 'easeOut' }}
                         >
-                          {badge}
+                          <Icon className="h-4 w-4" />
                         </motion.div>
                         <motion.div
                           className="w-full rounded-[5px] bg-gradient-to-t from-blue-500 via-sky-400 to-cyan-200"
@@ -1386,10 +1473,10 @@ function AnalysisSection() {
         >
           <span className="text-sm font-semibold uppercase tracking-widest text-blue-300">Analysis</span>
           <h2 className="mt-2 text-3xl font-bold text-white md:text-4xl">
-            See the patterns behind the episode.
+            See what to improve before the next recording.
           </h2>
           <p className="mx-auto mt-4 max-w-2xl text-base text-blue-100/65">
-            Topic mix, CTA cadence, and editorial gaps become visible before you decide what to make next.
+            AudioRepurpose turns each transcript into creator coaching: what worked, what felt weak, what was missing, and what to do better next time.
           </p>
         </motion.div>
 
@@ -1407,29 +1494,14 @@ function AnalysisSection() {
             <div className="flex h-full flex-col">
               <motion.div variants={sectionItem} className="flex items-center gap-2 text-[11px] font-semibold uppercase tracking-[0.18em] text-blue-200/55">
                 <BarChart3 className="h-4 w-4 text-blue-300" />
-                Editorial intelligence
+                Creator coaching
               </motion.div>
               <motion.h3 variants={sectionItem} className="mt-4 text-4xl font-bold tracking-tight text-white">
-                Analytics that tell you what your content keeps saying, skipping, and overdoing.
+                Analytics that show what made the episode strong, weak, or worth fixing.
               </motion.h3>
               <motion.p variants={sectionItem} className="mt-5 max-w-xl text-sm leading-7 text-blue-100/70">
-                Instead of just counting outputs, AudioRepurpose reads the conversation itself: what topics dominate, where CTAs fall off, and which editorial angles deserve another pass.
+                Instead of just counting outputs, AudioRepurpose reviews the conversation itself: the weak hook, the missed follow-up, the rushed transition, the strong moment worth repeating.
               </motion.p>
-
-              <motion.div variants={sectionItem} className="mt-6 space-y-4">
-                {[
-                  { Icon: Target, text: 'Track CTA frequency and see when promotion cadence slips.' },
-                  { Icon: Lightbulb, text: 'Surface underrepresented topics before they turn into blind spots.' },
-                  { Icon: BarChart3, text: 'Turn transcripts into coverage snapshots you can act on.' },
-                ].map(({ Icon, text }) => (
-                  <motion.div key={text} variants={sectionItem} className="flex items-start gap-3 border-l border-slate-200 pl-4 dark:border-white/10">
-                    <div className="mt-0.5 flex h-9 w-9 items-center justify-center rounded-xl bg-white text-blue-600 shadow-sm dark:bg-white/8 dark:text-blue-200">
-                      <Icon className="h-4 w-4" />
-                    </div>
-                    <p className="text-sm leading-6 text-blue-100/72">{text}</p>
-                  </motion.div>
-                ))}
-              </motion.div>
 
               <motion.div variants={sectionItem} className="mt-8 xl:mt-8">
                 <div className="relative overflow-hidden rounded-[1.5rem] border border-white/10 bg-transparent p-5">
@@ -1443,6 +1515,22 @@ function AnalysisSection() {
                   </div>
                 </div>
               </motion.div>
+
+              <motion.div variants={sectionItem} className="mt-6 space-y-4">
+                {[
+                  { Icon: Target, text: 'Catch weak openings, soft CTAs, and missed audience payoff before you publish.' },
+                  { Icon: Lightbulb, text: 'Spot where the host should have gone deeper, clarified, or followed up.' },
+                  { Icon: BarChart3, text: 'See which moments actually landed so you can repeat what works next episode.' },
+                ].map(({ Icon, text }) => (
+                  <motion.div key={text} variants={sectionItem} className="flex items-start gap-3 border-l border-slate-200 pl-4 dark:border-white/10">
+                    <div className="mt-0.5 flex h-9 w-9 items-center justify-center rounded-xl bg-white text-blue-600 shadow-sm dark:bg-white/8 dark:text-blue-200">
+                      <Icon className="h-4 w-4" />
+                    </div>
+                    <p className="text-sm leading-6 text-blue-100/72">{text}</p>
+                  </motion.div>
+                ))}
+              </motion.div>
+
             </div>
           </motion.div>
 
@@ -1455,13 +1543,13 @@ function AnalysisSection() {
               <div className="relative">
                 <div className="flex flex-col gap-4 border-b border-white/10 pb-5 sm:flex-row sm:items-end sm:justify-between">
                   <div>
-                    <p className="text-[11px] font-semibold uppercase tracking-[0.18em] text-blue-100/50">Coverage snapshot</p>
+                    <p className="text-[11px] font-semibold uppercase tracking-[0.18em] text-blue-100/50">Coaching snapshot</p>
                     <h3 className="mt-2 text-2xl font-bold tracking-tight text-white">
-                      Narrative coverage at a glance
+                      What to fix, keep, or improve next
                     </h3>
                   </div>
                   <div className="flex flex-wrap gap-2">
-                    {['Topics', 'CTAs', 'Opportunities'].map((pill) => (
+                    {['Gaps', 'Strengths', 'Next actions'].map((pill) => (
                       <span key={pill} className="rounded-md border border-white/10 bg-white/8 px-2.5 py-1.5 text-[11px] font-semibold uppercase tracking-[0.14em] text-blue-50/75">
                         {pill}
                       </span>
@@ -1530,7 +1618,7 @@ function AnalysisSection() {
                 <div className="mt-5 rounded-[1.5rem] border border-white/10 bg-white/8 p-5">
                   <div className="flex items-center justify-between">
                     <div>
-                      <p className="text-[11px] font-semibold uppercase tracking-[0.16em] text-blue-100/50">AI opportunities</p>
+                      <p className="text-[11px] font-semibold uppercase tracking-[0.16em] text-blue-100/50">Creator coaching</p>
                       <h4 className="mt-1 text-lg font-semibold tracking-tight text-white">What to fix or lean into next</h4>
                     </div>
                   </div>
@@ -1574,60 +1662,60 @@ function AnalysisSection() {
 // ─── Pricing ──────────────────────────────────────────────────────────────────
 function Pricing() {
   return (
-    <section id="pricing" className="relative overflow-hidden py-24 bg-gray-50">
+    <section id="pricing" className="relative overflow-hidden py-24 bg-gray-50 dark:bg-slate-950">
       <PricingSubtleStars />
       <div className="relative max-w-7xl mx-auto px-4 sm:px-6 lg:px-8">
         <div className="text-center mb-16">
           <span className="text-sm font-semibold text-blue-600 uppercase tracking-widest">Pricing</span>
-          <h2 className="text-3xl md:text-4xl font-bold text-slate-900 mt-2">Pay only for what you process</h2>
-          <p className="text-slate-600 mt-4 max-w-xl mx-auto text-base">
-            Credit-based pricing. Pick the transcript quality you want, then generate whichever content types you need.
+          <h2 className="text-3xl md:text-4xl font-bold text-slate-900 mt-2 dark:text-white">Pay only for what you process</h2>
+          <p className="text-slate-600 mt-4 max-w-xl mx-auto text-base dark:text-slate-300">
+            One pay-as-you-go workflow. Upload audio, choose analysis options, and generate content later only when you need it.
           </p>
         </div>
 
-        <div className="max-w-5xl mx-auto mb-10 rounded-xl border border-slate-200 bg-transparent px-5 py-3.5 flex items-start gap-3">
-          <Clock className="h-4 w-4 text-slate-500 flex-shrink-0 mt-0.5" />
-          <p className="text-sm text-slate-700">
-            <span className="font-semibold">100% Manual Triggers</span> — You decide what runs and when, so you never waste credits. A built-in cost dashboard shows your usage in real time.
+        <div className="max-w-5xl mx-auto mb-10 rounded-xl border border-slate-200 bg-transparent px-5 py-3.5 flex items-start gap-3 dark:border-white/10 dark:bg-white/[0.03]">
+          <Clock className="h-4 w-4 text-slate-500 flex-shrink-0 mt-0.5 dark:text-slate-400" />
+          <p className="text-sm text-slate-700 dark:text-slate-300">
+            <span className="font-semibold">Manual by default</span> — You choose which analysis runs during upload, then generate content later from the project page so credits only go toward outputs you actually want.
           </p>
         </div>
 
-        <div className="grid md:grid-cols-2 gap-8 max-w-4xl mx-auto">
-          {TIERS.map(({ name, price, unit, badge, description, highlight, borderClass, ctaClass, features }, idx) => (
-            <div
-              key={name}
-              className={`relative rounded-2xl border-2 ${borderClass} p-8 flex flex-col ${highlight ? 'shadow-xl shadow-blue-100' : ''} motion-safe:animate-fade-up${idx === 1 ? '-200' : idx === 2 ? '-400' : ''}`}
-            >
-              {badge && (
-                <div className={`absolute -top-3.5 left-1/2 -translate-x-1/2 px-3 py-1 rounded-full text-xs font-bold motion-safe:animate-breathe ${highlight ? 'bg-blue-600 text-white' : 'bg-violet-600 text-white'}`}>
-                  {badge}
+        <div className="max-w-6xl mx-auto rounded-[2rem] border-2 border-slate-200 bg-white/90 p-6 shadow-sm dark:border-white/10 dark:bg-slate-900/80">
+          <div className="grid gap-6 lg:grid-cols-3">
+            {PAYG_SECTIONS.map(({ name, price, description, features }, idx) => (
+              <div
+                key={name}
+                className={`rounded-2xl border border-slate-200/80 bg-slate-50/80 p-5 dark:border-white/10 dark:bg-slate-950/50 motion-safe:animate-fade-up${idx === 1 ? '-200' : idx === 2 ? '-400' : ''}`}
+              >
+                <div className="mb-4">
+                  <h3 className="text-lg font-bold text-gray-900 dark:text-white">{name}</h3>
+                  <div className="mt-1 text-3xl font-bold text-gray-900 dark:text-white">{price}</div>
+                  <p className="mt-2 text-sm leading-relaxed text-gray-500 dark:text-slate-400">{description}</p>
                 </div>
-              )}
-              <div className="mb-6">
-                <h3 className="text-lg font-bold text-gray-900 mb-1">{name}</h3>
-                <div className="flex items-baseline gap-1">
-                  <span className="text-4xl font-bold text-gray-900">{price}</span>
-                  <span className="text-sm text-gray-500">{unit}</span>
-                </div>
-                <p className="text-sm text-gray-500 mt-3 leading-relaxed">{description}</p>
+                <ul className="space-y-2.5">
+                  {features.map((feature) => (
+                    <li key={feature} className="flex items-start gap-2.5">
+                      <Check className="mt-0.5 h-4 w-4 flex-shrink-0 text-emerald-500" />
+                      <span className="text-sm text-gray-700 dark:text-slate-300">{feature}</span>
+                    </li>
+                  ))}
+                </ul>
               </div>
-              <ul className="space-y-3 flex-1 mb-8">
-                {features.map((f) => (
-                  <li key={f} className="flex items-start gap-2.5">
-                    <Check className="h-4 w-4 text-emerald-500 flex-shrink-0 mt-0.5" />
-                    <span className="text-sm text-gray-700">{f}</span>
-                  </li>
-                ))}
-              </ul>
-              <Link href="/auth/signup" className={`block text-center py-3 rounded-xl text-sm font-semibold transition-colors ${ctaClass}`}>
-                Get started with {name}
-              </Link>
-            </div>
-          ))}
+            ))}
+          </div>
+
+          <div className="mt-6 flex justify-center">
+            <Link
+              href="/auth/signup"
+              className="inline-flex min-w-[220px] items-center justify-center rounded-xl bg-blue-600 px-6 py-3 text-sm font-semibold text-white transition-colors hover:bg-blue-700"
+            >
+              Start pay as you go
+            </Link>
+          </div>
         </div>
 
-        <p className="mt-8 text-center text-sm text-slate-500">
-          Prices reflect AI processing, transcription, speaker intelligence, and platform costs. No subscriptions — buy credits and process on demand.
+        <p className="mt-8 text-center text-sm text-slate-500 dark:text-slate-400">
+          No subscriptions. Buy credits, upload when you need to, and trigger analysis or content generation only when it adds value.
         </p>
       </div>
     </section>
@@ -1639,7 +1727,7 @@ function FinalCTA() {
   const stats = [
     { value: 11, suffix: '', label: 'Content types' },
     { value: 5, suffix: ' min', label: 'Per episode' },
-    { value: 2, suffix: '', label: 'Processing tiers' },
+    { value: 0, suffix: '', label: 'Subscriptions required' },
   ] as const;
 
   return (
@@ -1693,12 +1781,20 @@ function FinalCTA() {
 
 // ─── Footer ───────────────────────────────────────────────────────────────────
 function Footer() {
+  const { resolvedTheme } = useTheme();
+  const [mounted, setMounted] = useState(false);
+
+  useEffect(() => setMounted(true), []);
+  const logoTheme = mounted && resolvedTheme === 'dark' ? 'dark' : 'light';
+
   return (
     <footer className="border-t border-slate-200 bg-slate-100 py-14 text-slate-500 motion-safe:animate-fade-in dark:border-gray-900 dark:bg-gray-950 dark:text-gray-400">
       <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8">
         <div className="grid gap-10 md:grid-cols-4">
           <div className="md:col-span-2">
-            <BrandLogo theme="dark" />
+            <a href="#top" className="inline-flex">
+              <BrandLogo theme={logoTheme} />
+            </a>
             <p className="mt-4 max-w-md text-sm text-slate-500 dark:text-gray-500">
               Turn one recording into a full content suite with accurate speakers, clean summaries, and platform-ready outputs.
             </p>
@@ -1709,6 +1805,7 @@ function Footer() {
               <a href="#speaker-intelligence" className="block transition-colors hover:text-slate-900 dark:hover:text-gray-200">Speaker Intelligence</a>
               <a href="#how-it-works" className="block transition-colors hover:text-slate-900 dark:hover:text-gray-200">How it works</a>
               <a href="#outputs" className="block transition-colors hover:text-slate-900 dark:hover:text-gray-200">Content outputs</a>
+              <a href="#analysis" className="block transition-colors hover:text-slate-900 dark:hover:text-gray-200">Analysis</a>
               <a href="#pricing" className="block transition-colors hover:text-slate-900 dark:hover:text-gray-200">Pricing</a>
             </div>
           </div>
@@ -1741,7 +1838,7 @@ export default function LandingPage() {
   return (
     <MotionConfig reducedMotion="user">
       <ScrollProgressBar />
-      <div className="min-h-screen bg-white">
+      <div id="top" className="min-h-screen bg-white">
         <Navbar open={mobileOpen} setOpen={setMobileOpen} />
         <main>
           <Hero />

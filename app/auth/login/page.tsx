@@ -1,8 +1,9 @@
 "use client";
 
-import { useState } from 'react';
+import { useEffect, useState } from 'react';
 import { useRouter } from 'next/navigation';
 import Link from 'next/link';
+import { useTheme } from 'next-themes';
 import { useAuth } from '@/lib/auth/context';
 import BrandLogo from '@/components/site/BrandLogo';
 import { Eye, EyeOff, Mail, Lock, ArrowRight, FileText, Clock, Layers } from 'lucide-react';
@@ -17,6 +18,12 @@ const OUTPUT_PILLS = [
 ];
 
 function RightPanel() {
+  const { resolvedTheme } = useTheme();
+  const [mounted, setMounted] = useState(false);
+
+  useEffect(() => setMounted(true), []);
+  const logoTheme = mounted && resolvedTheme === 'dark' ? 'dark' : 'light';
+
   return (
     <div className="relative hidden overflow-hidden bg-gradient-to-br from-slate-100 via-blue-50 to-indigo-100 lg:flex lg:w-1/2 lg:flex-col lg:items-center lg:justify-center dark:from-slate-900 dark:via-blue-950 dark:to-indigo-950">
       {/* Ambient blobs */}
@@ -26,7 +33,7 @@ function RightPanel() {
 
       <div className="relative z-10 flex flex-col items-center px-14 text-center max-w-lg w-full">
         {/* Brand mark */}
-        <BrandLogo className="mb-12 motion-safe:animate-fade-up" size="lg" theme="dark" />
+        <BrandLogo className="mb-12 motion-safe:animate-fade-up" size="lg" theme={logoTheme} />
 
         {/* Headline */}
         <h2 className="mb-3 text-3xl font-bold leading-tight text-slate-900 motion-safe:animate-fade-up-200 dark:text-white">
@@ -91,7 +98,7 @@ function RightPanel() {
 
         {/* Stats row */}
         <div className="flex items-center gap-8">
-          {[['15+', 'Content types'], ['5 min', 'Per episode'], ['90%', 'Time saved']].map(([stat, label], i, arr) => (
+          {[['11+', 'Content types'], ['Minutes', 'not hours'], ['90%', 'Time saved']].map(([stat, label], i, arr) => (
             <div key={stat} className="flex items-center gap-8">
               <div className={`text-center motion-safe:animate-fade-in${i === 1 ? '-200' : i === 2 ? '-400' : ''}`}>
                 <div className="text-2xl font-bold text-slate-900 dark:text-white">{stat}</div>

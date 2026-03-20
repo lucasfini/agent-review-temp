@@ -98,7 +98,8 @@ const SUBSTANTIVE_SPEAKER_ROLES = new Set([
  */
 export async function processInsightsForProject(
   projectId: string,
-  userId?: string
+  userId?: string,
+  reservationId?: string
 ): Promise<{ success: boolean; insightCount: number; totalCost: number; error?: string }> {
   const startTime = Date.now();
 
@@ -140,7 +141,8 @@ export async function processInsightsForProject(
       project.speaker_data,
       project.title,
       effectiveUserId,
-      projectId
+      projectId,
+      reservationId
     );
 
     const mergedInsights = mergeSpeakerPeopleInsights(
@@ -217,7 +219,8 @@ export async function extractInsightsWithHaiku(
   speakerData: any,
   projectTitle?: string | null,
   userId?: string,
-  projectId?: string
+  projectId?: string,
+  reservationId?: string
 ): Promise<InsightExtractionResult> {
   const startTime = Date.now();
 
@@ -262,6 +265,7 @@ export async function extractInsightsWithHaiku(
         await trackOpenAIUsage({
           userId,
           projectId,
+          reservationId,
           response: {
             usage: {
               prompt_tokens: response.usage.inputTokens,
@@ -271,7 +275,7 @@ export async function extractInsightsWithHaiku(
           },
           modelName: config.model,
           purpose: 'Insight Extraction',
-          shouldDebit: true
+          shouldDebit: reservationId ? false : true
         });
       } else if (response.provider === 'anthropic') {
         // Map model name to 'sonnet-4.5' or 'haiku-4.5' if possible, or fallback
@@ -279,6 +283,7 @@ export async function extractInsightsWithHaiku(
         await trackAnthropicUsage({
           userId,
           projectId,
+          reservationId,
           response: {
             usage: {
               input_tokens: response.usage.inputTokens,
@@ -287,7 +292,7 @@ export async function extractInsightsWithHaiku(
           },
           modelName,
           purpose: 'Insight Extraction',
-          shouldDebit: true
+          shouldDebit: reservationId ? false : true
         });
       }
     }

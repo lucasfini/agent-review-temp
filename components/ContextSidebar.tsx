@@ -23,19 +23,153 @@ import {
   RefreshCw,
   ListChecks,
   Plus,
-  Copy,
-  Download,
-  Trash2,
-  Zap,
   Layers,
+  Facebook,
+  Instagram,
+  Youtube,
+  Mail,
+  FileText,
+  Quote,
+  Newspaper,
 } from 'lucide-react';
 import type { SpeakerSegment, SpeakerRole } from '@/lib/types';
 import { SPEAKER_ROLE_LABELS, SPEAKER_ROLES } from '@/lib/types';
 import { cn } from '@/lib/utils';
 import { getSpeakerDisplayName, getSpeakerColor } from '@/lib/name-extraction';
 import { InsightsSidebar, type Insight } from '@/components/insights';
+import InlineContentStudio from '@/components/project/InlineContentStudio';
+import { ANALYSIS_OPTION_CONFIG, type AnalysisOptionKey } from '@/lib/analysis-options';
+import { CONTENT_TYPES } from '@/lib/content-types';
 
-type TabId = 'speakers' | 'insights' | 'takeaways' | 'summary' | 'chapters' | 'quotes' | 'review' | 'content';
+type TabId = 'speakers' | 'review' | 'generate' | 'content';
+type ContentSectionId = 'analysis' | 'outputs';
+type AnalysisViewId = 'summary' | 'insights' | 'chapters' | 'takeaways' | 'quotes';
+
+const XIcon = ({ className, ...props }: React.SVGProps<SVGSVGElement>) => (
+  <svg viewBox="0 0 24 24" fill="currentColor" className={className} {...props}>
+    <path d="M4 4h4l4 5 4-5h4l-6 7 6 9h-4l-4-5-4 5H4l6-9z" />
+  </svg>
+);
+
+const LinkedinIcon = ({ className, ...props }: React.SVGProps<SVGSVGElement>) => (
+  <svg viewBox="0 0 24 24" fill="currentColor" className={className} {...props}>
+    <path d="M20.447 20.452h-3.554v-5.569c0-1.328-.027-3.037-1.852-3.037-1.853 0-2.136 1.445-2.136 2.939v5.667H9.351V9h3.414v1.561h.046c.477-.9 1.637-1.85 3.37-1.85 3.601 0 4.267 2.37 4.267 5.455v6.286zM5.337 7.433a2.062 2.062 0 01-2.063-2.065 2.064 2.064 0 112.063 2.065zm1.782 13.019H3.555V9h3.564v11.452zM22.225 0H1.771C.792 0 0 .774 0 1.729v20.542C0 23.227.792 24 1.771 24h20.451C23.2 24 24 23.227 24 22.271V1.729C24 .774 23.2 0 22.222 0h.003z" />
+  </svg>
+);
+
+const TikTokIcon = ({ className, ...props }: React.SVGProps<SVGSVGElement>) => (
+  <svg viewBox="0 0 24 24" fill="currentColor" className={className} {...props}>
+    <path d="M19.59 6.69a4.83 4.83 0 0 1-3.77-4.35h-3.2v12.4a2.89 2.89 0 1 1-2-2.75V8.72a6.13 6.13 0 1 0 5.2 6.02V8.45a8.06 8.06 0 0 0 4.77 1.57V6.69Z" />
+  </svg>
+);
+
+function getOutputContentIcon(contentTypeId: string) {
+  switch (contentTypeId) {
+    case 'twitter_threads':
+      return XIcon;
+    case 'linkedin_posts':
+      return LinkedinIcon;
+    case 'facebook_post':
+      return Facebook;
+    case 'instagram_content':
+      return Instagram;
+    case 'youtube_description':
+      return Youtube;
+    case 'short_form_video_script':
+      return TikTokIcon;
+    case 'podcast_episode_description':
+      return Mic;
+    case 'show_notes':
+      return FileText;
+    case 'blog_post':
+      return Newspaper;
+    case 'newsletter':
+      return Mail;
+    case 'quote_graphics':
+      return Quote;
+    default:
+      return FileText;
+  }
+}
+
+function getAnalysisViewIcon(viewId: AnalysisViewId) {
+  switch (viewId) {
+    case 'summary':
+      return Sparkles;
+    case 'insights':
+      return Lightbulb;
+    case 'chapters':
+      return BookOpen;
+    case 'takeaways':
+      return CheckCircle;
+    case 'quotes':
+      return MessageSquare;
+    default:
+      return Sparkles;
+  }
+}
+
+const OUTPUT_TYPE_TO_CONTENT_TYPE: Record<string, string> = {
+  twitter_thread: 'twitter_threads',
+  linkedin_post: 'linkedin_posts',
+  instagram_caption: 'instagram_content',
+  blog_post: 'blog_post',
+  email_newsletter: 'newsletter',
+  show_notes: 'show_notes',
+  quote_graphic: 'quote_graphics',
+  facebook_post: 'facebook_post',
+  youtube_description: 'youtube_description',
+  podcast_episode_description: 'podcast_episode_description',
+  short_form_video_script: 'short_form_video_script',
+};
+
+function getContentTypeIdForOutput(output: Output): string | null {
+  const original = output.metadata?.originalOutputType;
+  if (typeof original === 'string' && OUTPUT_TYPE_TO_CONTENT_TYPE[original]) {
+    return OUTPUT_TYPE_TO_CONTENT_TYPE[original];
+  }
+  if (OUTPUT_TYPE_TO_CONTENT_TYPE[output.type]) {
+    return OUTPUT_TYPE_TO_CONTENT_TYPE[output.type];
+  }
+  return null;
+}
+
+const ANALYSIS_CARD_STYLES: Record<AnalysisOptionKey, {
+  icon: React.ReactNode;
+  cardClass: string;
+  badgeClass: string;
+}> = {
+  namedSpeakers: {
+    icon: <Users className="h-4 w-4" />,
+    cardClass: 'border-sky-200 bg-sky-50 dark:border-sky-900/40 dark:bg-sky-950/20',
+    badgeClass: 'bg-sky-500 text-white border-sky-400',
+  },
+  summary: {
+    icon: <Sparkles className="h-4 w-4" />,
+    cardClass: 'border-violet-200 bg-violet-50 dark:border-violet-900/40 dark:bg-violet-950/20',
+    badgeClass: 'bg-violet-500 text-white border-violet-400',
+  },
+  insights: {
+    icon: <Lightbulb className="h-4 w-4" />,
+    cardClass: 'border-amber-200 bg-amber-50 dark:border-amber-900/40 dark:bg-amber-950/20',
+    badgeClass: 'bg-amber-500 text-white border-amber-400',
+  },
+  chapters: {
+    icon: <BookOpen className="h-4 w-4" />,
+    cardClass: 'border-indigo-200 bg-indigo-50 dark:border-indigo-900/40 dark:bg-indigo-950/20',
+    badgeClass: 'bg-indigo-500 text-white border-indigo-400',
+  },
+  takeaways: {
+    icon: <CheckCircle className="h-4 w-4" />,
+    cardClass: 'border-emerald-200 bg-emerald-50 dark:border-emerald-900/40 dark:bg-emerald-950/20',
+    badgeClass: 'bg-emerald-500 text-white border-emerald-400',
+  },
+  quotes: {
+    icon: <MessageSquare className="h-4 w-4" />,
+    cardClass: 'border-rose-200 bg-rose-50 dark:border-rose-900/40 dark:bg-rose-950/20',
+    badgeClass: 'bg-rose-500 text-white border-rose-400',
+  },
+};
 
 interface Output {
   id: string;
@@ -108,14 +242,13 @@ interface ContextSidebarProps {
   insightsGenerating?: boolean;
   onGenerateInsights?: () => void;
 
-  // AI-generated content (Premium tier)
+  // AI-generated content
   summary?: string;
   chapters?: Chapter[];
   takeaways?: Takeaway[];
   quotes?: Quote[];
 
   // Configuration
-  tier?: string;
   contentLoading?: boolean; // True when project is still processing (summary/chapters/etc. not ready yet)
   className?: string;
 
@@ -149,8 +282,10 @@ interface ContextSidebarProps {
   onDownloadOutput?: (output: Output) => void;
   onDeleteOutput?: (outputId: string) => void;
   deletingOutput?: string | null;
-  onGenerateContent?: () => void;
-
+  generatingContentTypes?: Set<string>;
+  onGenerateContentBlock?: (block: any) => Promise<void>;
+  analysisStates?: Partial<Record<AnalysisOptionKey, { available: boolean; generating: boolean }>>;
+  onGenerateAnalysisOption?: (key: AnalysisOptionKey) => Promise<void> | void;
   /** When true, hides all write actions (demo mode) */
   readOnly?: boolean;
 }
@@ -160,175 +295,6 @@ function formatDuration(seconds: number): string {
   const mins = Math.floor(seconds / 60);
   const secs = Math.floor(seconds % 60);
   return `${mins}:${secs.toString().padStart(2, '0')}`;
-}
-
-// Output card helpers
-function resolveOutputKind(output: Output): string {
-  return output.metadata?.originalOutputType || output.type || '';
-}
-
-function getOutputPlatformMeta(output: Output): { letter: string; iconStyle: string } {
-  const rawPlatform = (output.metadata?.platform || output.platform || '').toLowerCase();
-  if (rawPlatform.includes('twitter') || rawPlatform.includes('x thread') || rawPlatform === 'x')
-    return { letter: 'X', iconStyle: 'bg-white dark:bg-slate-950 text-slate-900 dark:text-white border-slate-300 dark:border-slate-700' };
-  if (rawPlatform.includes('linkedin'))
-    return { letter: 'in', iconStyle: 'bg-blue-600 text-white border-blue-500' };
-  if (rawPlatform.includes('instagram'))
-    return { letter: 'IG', iconStyle: 'bg-gradient-to-br from-purple-600 to-pink-600 text-white border-purple-500' };
-  if (rawPlatform.includes('blog'))
-    return { letter: 'B', iconStyle: 'bg-orange-600 text-white border-orange-500' };
-  if (rawPlatform.includes('newsletter') || rawPlatform.includes('email'))
-    return { letter: '@', iconStyle: 'bg-green-600 text-white border-green-500' };
-  if (rawPlatform.includes('show notes'))
-    return { letter: '♪', iconStyle: 'bg-indigo-600 text-white border-indigo-500' };
-  if (rawPlatform.includes('facebook'))
-    return { letter: 'f', iconStyle: 'bg-blue-600 text-white border-blue-500' };
-  if (rawPlatform.includes('youtube'))
-    return { letter: 'YT', iconStyle: 'bg-red-600 text-white border-red-500' };
-  if (rawPlatform.includes('podcast'))
-    return { letter: '🎙', iconStyle: 'bg-violet-600 text-white border-violet-500' };
-  if (rawPlatform.includes('video script') || rawPlatform.includes('short'))
-    return { letter: '▶', iconStyle: 'bg-pink-600 text-white border-pink-500' };
-  const kind = resolveOutputKind(output);
-  if (kind === 'blog_post')                   return { letter: 'B',  iconStyle: 'bg-orange-600 text-white border-orange-500' };
-  if (kind === 'email_newsletter')            return { letter: '@',  iconStyle: 'bg-green-600 text-white border-green-500' };
-  if (kind === 'show_notes')                  return { letter: '♪',  iconStyle: 'bg-indigo-600 text-white border-indigo-500' };
-  if (kind === 'quote_graphic')               return { letter: '\u201c', iconStyle: 'bg-violet-600 text-white border-violet-500' };
-  if (kind === 'facebook_post')               return { letter: 'f',  iconStyle: 'bg-blue-600 text-white border-blue-500' };
-  if (kind === 'youtube_description')         return { letter: 'YT', iconStyle: 'bg-red-600 text-white border-red-500' };
-  if (kind === 'podcast_episode_description') return { letter: '🎙', iconStyle: 'bg-violet-600 text-white border-violet-500' };
-  if (kind === 'short_form_video_script')     return { letter: '▶',  iconStyle: 'bg-pink-600 text-white border-pink-500' };
-  const displayName = output.metadata?.platform || output.platform || 'G';
-  return { letter: displayName.charAt(0).toUpperCase(), iconStyle: 'bg-slate-200 dark:bg-slate-700 text-slate-800 dark:text-white border-slate-300 dark:border-slate-600' };
-}
-
-function getOutputSubtitle(output: Output): string {
-  const rawPlatform = (output.metadata?.platform || output.platform || '').toLowerCase();
-  if (rawPlatform.includes('twitter') || rawPlatform.includes('x thread')) {
-    const posts = output.content.split(/\n\n+/).filter(p => p.trim().length > 0);
-    return `${posts.length} posts • 280 chars each`;
-  }
-  return `${output.content.length.toLocaleString()} characters`;
-}
-
-function renderOutputBody(output: Output): string {
-  const metadata = output.metadata || {};
-  const kind = resolveOutputKind(output);
-
-  if (kind === 'instagram_caption' && Array.isArray(metadata.slides) && metadata.slides.length > 0) {
-    const slides = metadata.slides
-      .map((slide: any) => `Slide ${slide.number}: ${slide.headline}\n${slide.text}`)
-      .join('\n\n');
-    const caption = metadata.caption ? `\n\nCaption\n${metadata.caption}` : '';
-    const hashtags = Array.isArray(metadata.hashtags) && metadata.hashtags.length > 0
-      ? `\n\nHashtags\n${metadata.hashtags.join(' ')}`
-      : '';
-    return `${slides}${caption}${hashtags}`;
-  }
-
-  if (kind === 'show_notes') {
-    const sections: string[] = [];
-    if (metadata.summary) sections.push(`Episode Summary\n${metadata.summary}`);
-    if (Array.isArray(metadata.topics) && metadata.topics.length > 0) {
-      const topics = metadata.topics.map((topic: any) => {
-        if (typeof topic === 'string') return `- ${topic}`;
-        const label = topic.topic || topic.title || topic.label || 'Topic';
-        const timestamp = topic.timestamp || topic.time || topic.start || '';
-        return timestamp ? `- ${timestamp} — ${label}` : `- ${label}`;
-      }).join('\n');
-      sections.push(`Timestamps\n${topics}`);
-    }
-    if (Array.isArray(metadata.quotes) && metadata.quotes.length > 0) {
-      sections.push(`Quotable Moments\n${metadata.quotes.map((quote: any) => `- ${String(quote)}`).join('\n')}`);
-    }
-    if (Array.isArray(metadata.resources) && metadata.resources.length > 0) {
-      sections.push(`Resources\n${metadata.resources.map((resource: any) => `- ${String(resource)}`).join('\n')}`);
-    }
-    if (sections.length > 0) return sections.join('\n\n');
-  }
-
-  if (kind === 'youtube_description' && (Array.isArray(metadata.timestamps) || Array.isArray(metadata.hashtags))) {
-    const sections: string[] = [];
-    if (metadata.descriptionBody || output.content) sections.push(`Description\n${metadata.descriptionBody || output.content}`);
-    if (Array.isArray(metadata.timestamps) && metadata.timestamps.length > 0) {
-      sections.push(`Timestamps\n${metadata.timestamps.map((item: any) => `- ${String(item)}`).join('\n')}`);
-    }
-    if (Array.isArray(metadata.hashtags) && metadata.hashtags.length > 0) {
-      sections.push(`Hashtags\n${metadata.hashtags.join(' ')}`);
-    }
-    return sections.join('\n\n');
-  }
-
-  if (kind === 'podcast_episode_description' && Array.isArray(metadata.topics)) {
-    const sections: string[] = [];
-    if (metadata.descriptionBody || output.content) sections.push(`Description\n${metadata.descriptionBody || output.content}`);
-    if (metadata.topics.length > 0) {
-      sections.push(`Key Topics\n${metadata.topics.map((topic: any) => `- ${String(topic)}`).join('\n')}`);
-    }
-    return sections.join('\n\n');
-  }
-
-  if (kind === 'short_form_video_script' && (metadata.hook || metadata.body || metadata.cta)) {
-    const sections: string[] = [];
-    if (metadata.hook) sections.push(`Hook\n${metadata.hook}`);
-    if (metadata.body) sections.push(`Body\n${metadata.body}`);
-    if (metadata.cta) sections.push(`CTA\n${metadata.cta}`);
-    if (metadata.sourceMoment) sections.push(`Source Moment\n${metadata.sourceMoment}`);
-    return sections.join('\n\n');
-  }
-
-  if (kind === 'email_newsletter' && (metadata.previewText || metadata.cta || metadata.ps)) {
-    const sections: string[] = [];
-    if (metadata.previewText) sections.push(`Preview Text\n${metadata.previewText}`);
-    sections.push(`Newsletter\n${metadata.newsletterBody || output.content}`);
-    if (metadata.cta) sections.push(`CTA\n${metadata.cta}`);
-    if (metadata.ps) sections.push(`P.S.\n${metadata.ps}`);
-    return sections.join('\n\n');
-  }
-
-  if (kind === 'facebook_post' && Array.isArray(metadata.hashtags) && metadata.hashtags.length > 0) {
-    return `${metadata.postBody || output.content}\n\nHashtags\n${metadata.hashtags.join(' ')}`;
-  }
-
-  if (kind === 'linkedin_post' && Array.isArray(metadata.hashtags) && metadata.hashtags.length > 0) {
-    return `${output.content}\n\n`;
-  }
-
-  return output.content;
-}
-
-const KIND_LABELS: Record<string, string> = {
-  twitter_thread:             'X Thread',
-  linkedin_post:              'LinkedIn Post',
-  instagram_caption:          'Instagram Post',
-  blog_post:                  'Blog Post',
-  email_newsletter:           'Email Newsletter',
-  show_notes:                 'Show Notes',
-  quote_graphic:              'Quote Graphic',
-  facebook_post:              'Facebook Post',
-  youtube_description:        'YouTube Description',
-  podcast_episode_description: 'Podcast Description',
-  short_form_video_script:    'Video Script',
-};
-
-function getPlatformDisplayName(output: Output): string {
-  if (output.metadata?.platform && output.metadata.platform !== 'General') {
-    return output.metadata.platform;
-  }
-  if (output.metadata?.platform_label) {
-    return output.metadata.platform_label;
-  }
-  const kind = resolveOutputKind(output);
-  if (KIND_LABELS[kind]) return KIND_LABELS[kind];
-  switch (output.platform) {
-    case 'twitter': return 'X';
-    case 'linkedin': return 'LinkedIn';
-    case 'instagram': return 'Instagram';
-    case 'email': return 'Email';
-    case 'blog': return 'Blog';
-    case 'general': return 'General';
-    default: return output.platform;
-  }
 }
 
 // Role icon mapping
@@ -373,7 +339,6 @@ export function ContextSidebar({
   chapters = [],
   takeaways = [],
   quotes = [],
-  tier = 'standard',
   contentLoading = false,
   className,
   isOpen = true,
@@ -400,12 +365,23 @@ export function ContextSidebar({
   onDownloadOutput,
   onDeleteOutput,
   deletingOutput,
-  onGenerateContent,
+  generatingContentTypes = new Set(),
+  onGenerateContentBlock,
+  analysisStates = {},
+  onGenerateAnalysisOption,
   readOnly = false,
 }: ContextSidebarProps) {
-  const [activeTab, setActiveTab] = useState<TabId>('speakers');
+  const [activeTab, setActiveTab] = useState<TabId>('review');
   const [expandedSections, setExpandedSections] = useState<Set<string>>(new Set(['speakers']));
-  const [expandedOutputs, setExpandedOutputs] = useState<Set<string>>(new Set());
+  const [expandedContentSections, setExpandedContentSections] = useState<Set<string>>(
+    new Set(['addons', 'contentTypes'])
+  );
+  const [expandedContentPanels, setExpandedContentPanels] = useState<Set<ContentSectionId>>(
+    new Set(['analysis', 'outputs'])
+  );
+  const [activeContentSection, setActiveContentSection] = useState<ContentSectionId>('analysis');
+  const [activeAnalysisView, setActiveAnalysisView] = useState<AnalysisViewId>('summary');
+  const [activeOutputType, setActiveOutputType] = useState<string | null>(null);
 
   // Speaker editing state
   const [editingSpeakerId, setEditingSpeakerId] = useState<string | null>(null);
@@ -433,6 +409,30 @@ export function ContextSidebar({
   const [addSpeakerName, setAddSpeakerName] = useState('');
   const [addSpeakerRole, setAddSpeakerRole] = useState<SpeakerRole>('guest');
   const [addSpeakerSaving, setAddSpeakerSaving] = useState(false);
+
+  const toggleContentSection = (sectionId: string) => {
+    setExpandedContentSections((prev) => {
+      const next = new Set(prev);
+      if (next.has(sectionId)) {
+        next.delete(sectionId);
+      } else {
+        next.add(sectionId);
+      }
+      return next;
+    });
+  };
+
+  const toggleContentPanel = (sectionId: ContentSectionId) => {
+    setExpandedContentPanels((prev) => {
+      const next = new Set(prev);
+      if (next.has(sectionId)) {
+        next.delete(sectionId);
+      } else {
+        next.add(sectionId);
+      }
+      return next;
+    });
+  };
 
   const handleAddSpeakerSubmit = async () => {
     if (!addSpeakerName.trim() || !onSpeakerAdd) return;
@@ -532,86 +532,113 @@ export function ContextSidebar({
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [activeTab]);
 
-  // Available tabs — priority order: Review → Speakers → Content → Insights → Summary → Chapters → Takeaways → Quotes
-  const availableTabs = useMemo(() => {
-    const tabs: Array<{ id: TabId; label: string; icon: React.ReactNode; count?: number }> = [
-      // 1. Review (always)
+  useEffect(() => {
+    if (!activeInsightId) return;
+    if (!insights.length) return;
+    setActiveTab('content');
+    setActiveContentSection('analysis');
+    setExpandedContentPanels((prev) => new Set(prev).add('analysis'));
+    setActiveAnalysisView('insights');
+  }, [activeInsightId, insights.length]);
+
+  const availableTabs = useMemo(
+    () => [
       {
-        id: 'review',
+        id: 'speakers' as const,
+        label: 'Speakers',
+        icon: <Users className="w-4 h-4" />,
+        count: speakerList.length > 0 ? speakerList.length : undefined,
+      },
+      {
+        id: 'review' as const,
         label: 'Review',
         icon: <ListChecks className="w-4 h-4" />,
         count: selectedCount > 0 ? selectedCount : undefined,
       },
-      // 2. Speakers (always)
-      { id: 'speakers', label: 'Speakers', icon: <Users className="w-4 h-4" />, count: speakerList.length },
-      // 3. Content (always)
       {
-        id: 'content',
+        id: 'generate' as const,
+        label: 'Generate',
+        icon: <Sparkles className="w-4 h-4" />,
+        count:
+          Object.values(analysisStates).filter((state) => state?.generating).length +
+          generatingContentTypes.size || undefined,
+      },
+      {
+        id: 'content' as const,
         label: 'Content',
         icon: <Layers className="w-4 h-4" />,
-        count: outputs.length || undefined,
+        count: outputs.length + (summary ? 1 : 0) + (insights.length ? 1 : 0) + (chapters.length ? 1 : 0) + (takeaways.length ? 1 : 0) + (quotes.length ? 1 : 0) || undefined,
       },
-    ];
+    ],
+    [speakerList.length, selectedCount, analysisStates, generatingContentTypes.size, outputs.length, summary, insights.length, chapters.length, takeaways.length, quotes.length]
+  );
 
-    if (tier !== 'standard' && tier !== 'basic') {
-      // 4. Insights
-      tabs.push({
-        id: 'insights',
-        label: 'Insights',
-        icon: insightsLoading || insightsGenerating
-          ? <RefreshCw className="w-4 h-4 animate-spin" />
-          : <Lightbulb className="w-4 h-4" />,
-        count: insights.length || undefined,
-      });
+  const availableAnalysisViews = useMemo(() => {
+    const views: Array<{ id: AnalysisViewId; label: string; count?: number; icon: React.ComponentType<{ className?: string }> }> = [];
+    if (summary) views.push({ id: 'summary', label: 'Summary', icon: getAnalysisViewIcon('summary') });
+    if (insights.length > 0) views.push({ id: 'insights', label: 'Insights', count: insights.length, icon: getAnalysisViewIcon('insights') });
+    if (chapters.length > 0) views.push({ id: 'chapters', label: 'Chapters', count: chapters.length, icon: getAnalysisViewIcon('chapters') });
+    if (takeaways.length > 0) views.push({ id: 'takeaways', label: 'Takeaways', count: takeaways.length, icon: getAnalysisViewIcon('takeaways') });
+    if (quotes.length > 0) views.push({ id: 'quotes', label: 'Quotes', count: quotes.length, icon: getAnalysisViewIcon('quotes') });
+    return views;
+  }, [chapters.length, insights.length, quotes.length, summary, takeaways.length]);
 
-      // 5. Summary
-      const summaryLoading = !summary && contentLoading;
-      tabs.push({
-        id: 'summary',
-        label: 'Summary',
-        icon: summaryLoading
-          ? <RefreshCw className="w-4 h-4 animate-spin" />
-          : <Sparkles className="w-4 h-4" />,
-      });
+  const availableOutputViews = useMemo(() => {
+    const contentTypeCounts = new Map<string, number>();
+    outputs.forEach((output) => {
+      const contentTypeId = getContentTypeIdForOutput(output);
+      if (!contentTypeId) return;
+      contentTypeCounts.set(contentTypeId, (contentTypeCounts.get(contentTypeId) || 0) + 1);
+    });
+
+    return CONTENT_TYPES.flatMap((contentType) => {
+      const count = contentTypeCounts.get(contentType.id);
+      return count ? [{ id: contentType.id, label: contentType.name, count, icon: getOutputContentIcon(contentType.id) }] : [];
+    });
+  }, [outputs]);
+
+  useEffect(() => {
+    if (availableAnalysisViews.length > 0) {
+      if (!availableAnalysisViews.some((view) => view.id === activeAnalysisView)) {
+        setActiveAnalysisView(availableAnalysisViews[0].id);
+      }
+      if (activeContentSection === 'outputs' && availableOutputViews.length === 0) {
+        setActiveContentSection('analysis');
+      }
+      return;
     }
 
-    if (tier === 'pro' || tier === 'premium') {
-      // 6. Chapters
-      const chaptersLoading = chapters.length === 0 && contentLoading;
-      tabs.push({
-        id: 'chapters',
-        label: 'Chapters',
-        icon: chaptersLoading
-          ? <RefreshCw className="w-4 h-4 animate-spin" />
-          : <BookOpen className="w-4 h-4" />,
-        count: chapters.length || undefined,
-      });
+    if (availableOutputViews.length > 0) {
+      setActiveContentSection('outputs');
+      return;
+    }
+  }, [activeAnalysisView, activeContentSection, availableAnalysisViews, availableOutputViews]);
 
-      // 7. Takeaways
-      const takeawaysLoading = takeaways.length === 0 && contentLoading;
-      tabs.push({
-        id: 'takeaways',
-        label: 'Takeaways',
-        icon: takeawaysLoading
-          ? <RefreshCw className="w-4 h-4 animate-spin" />
-          : <CheckCircle className="w-4 h-4" />,
-        count: takeaways.length || undefined,
-      });
+  useEffect(() => {
+    if (availableAnalysisViews.length > 0 && availableOutputViews.length === 0) {
+      setExpandedContentPanels(new Set(['analysis']));
+      return;
+    }
+    if (availableOutputViews.length > 0 && availableAnalysisViews.length === 0) {
+      setExpandedContentPanels(new Set(['outputs']));
+      return;
+    }
+    setExpandedContentPanels(new Set(['analysis', 'outputs']));
+  }, [availableAnalysisViews.length, availableOutputViews.length]);
 
-      // 8. Quotes
-      const quotesLoading = quotes.length === 0 && contentLoading;
-      tabs.push({
-        id: 'quotes',
-        label: 'Quotes',
-        icon: quotesLoading
-          ? <RefreshCw className="w-4 h-4 animate-spin" />
-          : <MessageSquare className="w-4 h-4" />,
-        count: quotes.length || undefined,
-      });
+  useEffect(() => {
+    if (availableOutputViews.length === 0) {
+      setActiveOutputType(null);
+      if (availableAnalysisViews.length > 0) {
+        setActiveContentSection('analysis');
+      }
+      return;
     }
 
-    return tabs;
-  }, [speakerList.length, outputs.length, insights.length, summary, chapters.length, takeaways.length, quotes.length, tier, insightsLoading, insightsGenerating, contentLoading, selectedCount, hasUncertainSegments]);
+    if (!activeOutputType || !availableOutputViews.some((view) => view.id === activeOutputType)) {
+      setActiveOutputType(availableOutputViews[0].id);
+    }
+  }, [activeOutputType, availableAnalysisViews.length, availableOutputViews]);
 
   const toggleSection = (section: string) => {
     setExpandedSections(prev => {
@@ -637,54 +664,72 @@ export function ContextSidebar({
       data-tour="sidebar-panel"
       aria-hidden={!isOpen}
     >
-      {/* Tab Navigation - Wrapping and centered */}
+      {/* Tab Navigation */}
       <div className="flex-shrink-0 border-b border-slate-200 dark:border-slate-800 bg-slate-100/60 dark:bg-slate-800/30">
-        <div className="flex flex-wrap justify-center p-2 gap-1">
-          {availableTabs.map((tab) => (
+        {(() => {
+          const reviewTabs = availableTabs.filter((tab) => tab.id === 'speakers' || tab.id === 'review');
+          const contentTabs = availableTabs.filter((tab) => tab.id === 'generate' || tab.id === 'content');
+
+          const renderTabButton = (tab: typeof availableTabs[number]) => (
             <button
               key={tab.id}
               onClick={() => setActiveTab(tab.id)}
+              aria-label={tab.label}
+              title={tab.label}
               data-tour={
-                tab.id === 'review'
-                  ? 'sidebar-tab-review'
-                  : tab.id === 'speakers'
+                tab.id === 'speakers'
                   ? 'sidebar-tab-speakers'
+                  : tab.id === 'review'
+                  ? 'sidebar-tab-review'
+                  : tab.id === 'generate'
+                  ? 'sidebar-tab-generate'
                   : tab.id === 'content'
                   ? 'sidebar-tab-content'
-                  : tab.id === 'insights'
-                  ? 'sidebar-tab-insights'
-                  : tab.id === 'summary'
-                  ? 'sidebar-tab-summary'
-                  : tab.id === 'chapters'
-                  ? 'sidebar-tab-chapters'
-                  : tab.id === 'takeaways'
-                  ? 'sidebar-tab-takeaways'
-                  : tab.id === 'quotes'
-                  ? 'sidebar-tab-quotes'
                   : undefined
               }
               className={cn(
-                'flex items-center gap-1.5 px-2.5 py-1.5 text-xs font-medium rounded-lg transition-all whitespace-nowrap',
+                'flex min-w-0 flex-1 items-center justify-center gap-1 rounded-lg px-1 py-2 text-[11px] font-medium transition-all',
                 activeTab === tab.id
-                  ? 'bg-blue-600 text-white shadow-sm'
-                  : 'text-slate-700 dark:text-slate-200 hover:text-slate-900 dark:hover:text-white hover:bg-slate-50 dark:hover:bg-slate-800/50'
+                  ? 'text-blue-600 dark:text-blue-400'
+                  : 'text-slate-500 dark:text-slate-400 hover:text-slate-900 dark:hover:text-white'
               )}
             >
-              {tab.icon}
-              <span>{tab.label}</span>
+              <span className="flex items-center justify-center [&_svg]:h-4.5 [&_svg]:w-4.5">
+                {tab.icon}
+              </span>
               {tab.count !== undefined && tab.count > 0 && (
                 <span className={cn(
-                  'ml-1 px-1.5 py-0.5 rounded-full text-[10px] font-semibold',
+                  'ml-0.5 rounded-full px-1 py-0.5 text-[9px] font-semibold',
                   activeTab === tab.id
-                    ? 'bg-blue-500 text-white'
+                    ? 'bg-blue-50 text-blue-600 dark:bg-blue-950/40 dark:text-blue-300'
                     : 'bg-slate-200 dark:bg-slate-700 text-slate-700 dark:text-slate-200'
                 )}>
                   {tab.count}
                 </span>
               )}
             </button>
-          ))}
-        </div>
+          );
+
+          return (
+            <div className="grid grid-cols-[1fr_auto_1fr] items-stretch gap-0 border border-slate-200/80 bg-white/70 px-1 py-1 shadow-sm dark:border-slate-700/70 dark:bg-slate-900/60">
+              <div className="min-w-0 self-stretch">
+                <div className="flex h-full items-stretch gap-1">
+                  {reviewTabs.map(renderTabButton)}
+                </div>
+              </div>
+
+              <div className="flex items-stretch justify-center py-0">
+                <div className="h-full w-px bg-slate-300/80 dark:bg-slate-700/80" />
+              </div>
+
+              <div className="min-w-0 self-stretch">
+                <div className="flex h-full items-stretch gap-1">
+                  {contentTabs.map(renderTabButton)}
+                </div>
+              </div>
+            </div>
+          );
+        })()}
       </div>
 
       {/* Tab Content */}
@@ -1028,137 +1073,260 @@ export function ContextSidebar({
           </div>
         )}
 
-        {/* Content Tab */}
-        {activeTab === 'content' && (
+        {/* Generate Tab */}
+        {activeTab === 'generate' && (
           <div className="p-3">
-            {outputs.length === 0 ? (
-              <div className="flex flex-col items-center justify-center py-16 px-6 text-center">
-                <div className="w-14 h-14 rounded-full bg-blue-50 dark:bg-blue-900/20 flex items-center justify-center mb-4">
-                  <Layers className="w-7 h-7 text-blue-600 dark:text-blue-400" />
-                </div>
-                <h3 className="text-sm font-medium text-slate-900 dark:text-slate-50 mb-1">No content yet</h3>
-                <p className="text-xs text-slate-500 dark:text-slate-400 max-w-[220px] mb-4">
-                  Generate content from your transcript to see it here.
-                </p>
-                {!readOnly && onGenerateContent && (
-                  <button
-                    onClick={onGenerateContent}
-                    className="inline-flex items-center gap-1.5 px-4 py-2 rounded-lg text-white text-xs font-semibold bg-blue-600 hover:bg-blue-700 transition-colors"
-                  >
-                    <Zap className="w-3.5 h-3.5" />
-                    Generate Content
-                  </button>
-                )}
-              </div>
-            ) : (
-              <div className="space-y-3">
-                {outputs.map((output, index) => {
-                  const platformMeta = getOutputPlatformMeta(output);
-                  const toneLabel = output.metadata?.ui_metadata?.theme_label
-                    || output.metadata?.theme_label
-                    || output.metadata?.theme
-                    || output.metadata?.tone;
-                  const isExpanded = expandedOutputs.has(output.id);
-                  const outputBody = renderOutputBody(output);
-                  return (
-                    <div
-                      key={output.id}
-                      {...(index === 0 ? { 'data-tour': 'content-output' } : {})}
-                      data-expanded={isExpanded ? 'true' : 'false'}
-                      onClick={() => {
-                        setExpandedOutputs((prev) => {
-                          const next = new Set(prev);
-                          if (next.has(output.id)) {
-                            next.delete(output.id);
-                          } else {
-                            next.add(output.id);
-                          }
-                          return next;
-                        });
-                      }}
-                      className="bg-slate-100/70 dark:bg-slate-800/40 border border-slate-200 dark:border-slate-700/50 hover:border-slate-300 dark:hover:border-slate-600 rounded-2xl p-4 flex flex-col gap-3 transition-colors group cursor-pointer"
-                    >
-                      {/* Top Row */}
-                      <div className="flex items-center gap-3">
-                        <div className={`w-8 h-8 rounded-full flex items-center justify-center text-xs font-bold border flex-shrink-0 ${platformMeta.iconStyle}`}>
-                          {platformMeta.letter}
-                        </div>
-                        <div className="flex-1 min-w-0">
-                          <p className="text-slate-700 dark:text-slate-200 font-medium text-sm leading-snug truncate">{getPlatformDisplayName(output)}</p>
-                          <p className="text-slate-500 text-xs">{getOutputSubtitle(output)}</p>
-                        </div>
-                        <span className="flex-shrink-0 border border-emerald-500/30 text-emerald-500 text-[10px] px-2 py-0.5 rounded-full">
-                          Ready
-                        </span>
-                      </div>
-
-                      {/* Content Snippet */}
-                      <p className={`text-slate-700 dark:text-slate-200 text-sm leading-relaxed whitespace-pre-wrap ${isExpanded ? 'line-clamp-none' : 'line-clamp-4'}`}>
-                        {outputBody}
-                      </p>
-
-                      {/* Tone / style */}
-                      {toneLabel && (
-                        <div className="flex justify-end">
-                          <span className="text-[10px] uppercase tracking-wide text-slate-600 dark:text-slate-300 border border-slate-300 dark:border-slate-700/70 bg-slate-100 dark:bg-slate-800/60 px-2 py-0.5 rounded-full">
-                            {toneLabel}
-                          </span>
-                        </div>
-                      )}
-
-                      {/* Action Row (hover) */}
-                      <div className="flex items-center gap-1 opacity-40 group-hover:opacity-100 transition-opacity border-t border-slate-200 dark:border-slate-700/50 pt-2">
+            <div className="space-y-4">
+              <div className="rounded-2xl border border-slate-200 dark:border-slate-800 bg-slate-100/60 dark:bg-slate-900/50 p-3">
+                <button
+                  type="button"
+                  onClick={() => toggleContentSection('addons')}
+                  className="flex w-full items-center justify-between gap-3 text-left"
+                >
+                  <div className="flex items-center gap-2">
+                    <Layers className="h-4 w-4 text-blue-600 dark:text-blue-400" />
+                    <p className="text-sm font-semibold text-slate-900 dark:text-slate-50">Add-ons</p>
+                  </div>
+                  {expandedContentSections.has('addons') ? (
+                    <ChevronUp className="h-4 w-4 text-slate-500" />
+                  ) : (
+                    <ChevronDown className="h-4 w-4 text-slate-500" />
+                  )}
+                </button>
+                {expandedContentSections.has('addons') ? (
+                  <div className="mt-3 grid grid-cols-3 gap-2">
+                    {ANALYSIS_OPTION_CONFIG.map((option) => {
+                      const state = analysisStates[option.key] || { available: false, generating: false };
+                      const style = ANALYSIS_CARD_STYLES[option.key];
+                      return (
                         <button
-                          onClick={(e) => {
-                            e.stopPropagation();
-                            onCopyOutput?.(output);
-                          }}
-                          className="p-1.5 text-slate-500 hover:text-violet-600 dark:hover:text-violet-400 hover:bg-violet-50 dark:hover:bg-violet-900/20 rounded transition-colors"
-                          title="Copy to clipboard"
-                          aria-label={`Copy output ${output.title}`}
+                          key={option.key}
+                          type="button"
+                          onClick={() => onGenerateAnalysisOption?.(option.key)}
+                          disabled={readOnly || state.available || state.generating}
+                          className={`rounded-xl border px-2.5 py-3 text-left transition-colors hover:shadow-sm disabled:cursor-not-allowed disabled:opacity-70 ${style.cardClass}`}
                         >
-                          <Copy className="h-3.5 w-3.5" />
+                          <div className="flex min-h-[84px] flex-col justify-between gap-2">
+                            <span className={`inline-flex h-8 w-8 items-center justify-center rounded-xl border ${style.badgeClass}`}>
+                              {style.icon}
+                            </span>
+                            <p className="text-xs font-semibold leading-4 text-slate-900 dark:text-slate-50">{option.label}</p>
+                            <span className={`inline-flex h-6 w-6 items-center justify-center rounded-full ${
+                              state.available
+                                ? 'bg-emerald-50 text-emerald-700 dark:bg-emerald-900/20 dark:text-emerald-300'
+                                : state.generating
+                                  ? 'bg-blue-50 text-blue-700 dark:bg-blue-900/20 dark:text-blue-300'
+                                  : 'bg-slate-100 text-slate-600 dark:bg-slate-800 dark:text-slate-300'
+                            }`}>
+                              {state.generating ? <Loader2 className="h-3 w-3 animate-spin" /> : state.available ? <CheckCircle className="h-3 w-3" /> : <Sparkles className="h-3 w-3" />}
+                            </span>
+                          </div>
                         </button>
-                        <button
-                          onClick={(e) => {
-                            e.stopPropagation();
-                            onDownloadOutput?.(output);
-                          }}
-                          className="p-1.5 text-slate-500 hover:text-green-600 dark:hover:text-green-400 hover:bg-green-50 dark:hover:bg-green-900/20 rounded transition-colors"
-                          title="Download"
-                          aria-label={`Download output ${output.title}`}
-                        >
-                          <Download className="h-3.5 w-3.5" />
-                        </button>
-                        {!readOnly && (
-                          <button
-                            onClick={(e) => {
-                              e.stopPropagation();
-                              onDeleteOutput?.(output.id);
-                            }}
-                            disabled={deletingOutput === output.id}
-                            className="p-1.5 text-slate-500 hover:text-red-600 dark:hover:text-red-400 hover:bg-red-50 dark:hover:bg-red-900/20 rounded transition-colors disabled:opacity-50"
-                            title="Delete"
-                            aria-label={`Delete output ${output.title}`}
-                          >
-                            {deletingOutput === output.id ? (
-                              <Loader2 className="h-3.5 w-3.5 animate-spin" />
-                            ) : (
-                              <Trash2 className="h-3.5 w-3.5" />
-                            )}
-                          </button>
-                        )}
-                      </div>
-                    </div>
-                  );
-                })}
+                      );
+                    })}
+                  </div>
+                ) : null}
               </div>
-            )}
+
+              <div className="rounded-2xl border border-slate-200 dark:border-slate-800 bg-slate-100/60 dark:bg-slate-900/50 p-3" data-tour="content-output">
+                <button
+                  type="button"
+                  onClick={() => toggleContentSection('contentTypes')}
+                  className="flex w-full items-center justify-between gap-3 text-left"
+                >
+                  <p className="text-sm font-semibold text-slate-900 dark:text-slate-50">Content Types</p>
+                  {expandedContentSections.has('contentTypes') ? (
+                    <ChevronUp className="h-4 w-4 text-slate-500" />
+                  ) : (
+                    <ChevronDown className="h-4 w-4 text-slate-500" />
+                  )}
+                </button>
+                {expandedContentSections.has('contentTypes') ? (
+                  <div className="mt-3">
+                    <InlineContentStudio
+                      outputs={outputs}
+                      generatingIds={generatingContentTypes}
+                      deletingOutput={deletingOutput ?? null}
+                      onGenerate={async (block) => { await onGenerateContentBlock?.(block); }}
+                      onCopyOutput={async (output) => { onCopyOutput?.(output); }}
+                      onDownloadOutput={(output) => { onDownloadOutput?.(output); }}
+                      onDeleteOutput={async (outputId) => { await onDeleteOutput?.(outputId); }}
+                      compact
+                      title=""
+                      description=""
+                      showOutputs={false}
+                    />
+                  </div>
+                ) : null}
+              </div>
+            </div>
           </div>
         )}
 
-        {/* Insights Tab */}
-        {activeTab === 'insights' && (
+        {/* Review Tab */}
+        {activeTab === 'review' && (
+          <div className="border-t border-slate-200 dark:border-slate-800 p-3 space-y-3" data-tour="review-panel">
+            <p className="text-xs font-medium uppercase tracking-wide text-slate-500 dark:text-slate-400">Segment Review</p>
+          </div>
+        )}
+
+        {/* Content Tab */}
+        {activeTab === 'content' && (
+          <div className="p-3 space-y-3">
+            <>
+              <div className="space-y-3">
+                <section className="space-y-2">
+                  <button
+                    type="button"
+                    onClick={() => toggleContentPanel('analysis')}
+                    className="flex w-full items-center justify-between gap-3 border-b border-slate-200 pb-2 text-left dark:border-slate-800"
+                  >
+                    <div className="flex items-center gap-2">
+                      <span className={cn(
+                        'text-sm font-semibold transition-colors',
+                        activeContentSection === 'analysis'
+                          ? 'text-blue-600 dark:text-blue-400'
+                          : 'text-slate-900 dark:text-slate-50'
+                      )}>
+                        Analysis
+                      </span>
+                      <span className="rounded-full bg-slate-200 px-1.5 py-0.5 text-[10px] font-semibold text-slate-700 dark:bg-slate-700 dark:text-slate-200">
+                        {availableAnalysisViews.length}
+                      </span>
+                    </div>
+                    {expandedContentPanels.has('analysis') ? (
+                      <ChevronUp className="h-4 w-4 text-slate-500" />
+                    ) : (
+                      <ChevronDown className="h-4 w-4 text-slate-500" />
+                    )}
+                  </button>
+                  {expandedContentPanels.has('analysis') ? (
+                    availableAnalysisViews.length > 0 ? (
+                      <div className="grid grid-cols-5 gap-1">
+                        {availableAnalysisViews.map((view) => {
+                          const Icon = view.icon;
+                          return (
+                            <button
+                              key={view.id}
+                              type="button"
+                              onClick={() => {
+                                setActiveContentSection('analysis');
+                                setExpandedContentPanels((prev) => new Set(prev).add('analysis'));
+                                setActiveAnalysisView(view.id);
+                              }}
+                              aria-label={view.label}
+                              title={view.label}
+                              className={cn(
+                                'flex h-11 w-full items-center justify-center gap-1 border text-slate-700 transition-all dark:text-slate-200',
+                                activeContentSection === 'analysis' && activeAnalysisView === view.id
+                                  ? 'border-transparent text-blue-600 dark:text-blue-400'
+                                  : 'border-transparent bg-transparent text-slate-500 hover:text-slate-900 dark:text-slate-400 dark:hover:text-slate-100'
+                              )}
+                            >
+                              <span className="flex items-center justify-center">
+                                <Icon className="h-4 w-4" />
+                              </span>
+                              {view.count ? (
+                                <span className={cn(
+                                  'rounded-full px-1 py-0.5 text-[9px] font-semibold leading-none',
+                                  activeContentSection === 'analysis' && activeAnalysisView === view.id
+                                    ? 'bg-blue-50 text-blue-600 dark:bg-blue-950/40 dark:text-blue-300'
+                                    : 'bg-slate-200 text-slate-700 dark:bg-slate-700 dark:text-slate-200'
+                                )}>
+                                  {view.count}
+                                </span>
+                              ) : null}
+                            </button>
+                          );
+                        })}
+                      </div>
+                    ) : (
+                      <p className="px-1 text-xs text-slate-500 dark:text-slate-400">
+                        Generate summaries, insights, chapters, takeaways, or quotes to populate this section.
+                      </p>
+                    )
+                  ) : null}
+                </section>
+
+                <section className="space-y-2">
+                  <button
+                    type="button"
+                    onClick={() => toggleContentPanel('outputs')}
+                    className="flex w-full items-center justify-between gap-3 border-b border-slate-200 pb-2 text-left dark:border-slate-800"
+                  >
+                    <div className="flex items-center gap-2">
+                      <span className={cn(
+                        'text-sm font-semibold transition-colors',
+                        activeContentSection === 'outputs'
+                          ? 'text-blue-600 dark:text-blue-400'
+                          : 'text-slate-900 dark:text-slate-50'
+                      )}>
+                        Outputs
+                      </span>
+                      <span className="rounded-full bg-slate-200 px-1.5 py-0.5 text-[10px] font-semibold text-slate-700 dark:bg-slate-700 dark:text-slate-200">
+                        {availableOutputViews.length}
+                      </span>
+                    </div>
+                    {expandedContentPanels.has('outputs') ? (
+                      <ChevronUp className="h-4 w-4 text-slate-500" />
+                    ) : (
+                      <ChevronDown className="h-4 w-4 text-slate-500" />
+                    )}
+                  </button>
+                  {expandedContentPanels.has('outputs') ? (
+                    availableOutputViews.length > 0 ? (
+                      <div className="grid grid-cols-5 gap-1">
+                        {availableOutputViews.map((view) => {
+                          const Icon = view.icon;
+                          return (
+                            <button
+                              key={view.id}
+                              type="button"
+                              onClick={() => {
+                                setActiveContentSection('outputs');
+                                setExpandedContentPanels((prev) => new Set(prev).add('outputs'));
+                                setActiveOutputType(view.id);
+                              }}
+                              aria-label={view.label}
+                              title={view.label}
+                              className={cn(
+                                'flex h-11 w-full items-center justify-center gap-1 border text-slate-700 transition-all dark:text-slate-200',
+                                activeContentSection === 'outputs' && activeOutputType === view.id
+                                  ? 'border-transparent text-blue-600 dark:text-blue-400'
+                                  : 'border-transparent bg-transparent text-slate-500 hover:text-slate-900 dark:text-slate-400 dark:hover:text-slate-100'
+                              )}
+                            >
+                              <span className="flex items-center justify-center">
+                                <Icon className="h-4 w-4" />
+                              </span>
+                              {view.count ? (
+                                <span className={cn(
+                                  'rounded-full px-1 py-0.5 text-[9px] font-semibold leading-none',
+                                  activeContentSection === 'outputs' && activeOutputType === view.id
+                                    ? 'bg-blue-50 text-blue-600 dark:bg-blue-950/40 dark:text-blue-300'
+                                    : 'bg-slate-200 text-slate-700 dark:bg-slate-700 dark:text-slate-200'
+                                )}>
+                                  {view.count}
+                                </span>
+                              ) : null}
+                            </button>
+                          );
+                        })}
+                      </div>
+                    ) : (
+                      <p className="px-1 text-xs text-slate-500 dark:text-slate-400">
+                        Generate a content type from the Generate tab to populate this section.
+                      </p>
+                    )
+                  ) : null}
+                </section>
+              </div>
+            </>
+          </div>
+        )}
+
+        {/* Insights Content View */}
+        {activeTab === 'content' && activeContentSection === 'analysis' && activeAnalysisView === 'insights' && (
           <div className="p-3 h-full" data-tour="insights-panel">
             {hasInsights ? (
               /* Display insights if they exist */
@@ -1212,7 +1380,7 @@ export function ContextSidebar({
           </div>
         )}
 
-        {/* Review Tab */}
+        {/* Review Detail Tab */}
         {activeTab === 'review' && (
           <div className="p-3 space-y-3" data-tour="review-panel">
 
@@ -1407,8 +1575,8 @@ export function ContextSidebar({
           </div>
         )}
 
-        {/* Summary Tab */}
-        {activeTab === 'summary' && (
+        {/* Summary Content View */}
+        {activeTab === 'content' && activeContentSection === 'analysis' && activeAnalysisView === 'summary' && (
           <div className="p-4" data-tour="summary-panel">
             {summary ? (
               <div className="prose prose-sm max-w-none">
@@ -1436,8 +1604,8 @@ export function ContextSidebar({
           </div>
         )}
 
-        {/* Chapters Tab */}
-        {activeTab === 'chapters' && (
+        {/* Chapters Content View */}
+        {activeTab === 'content' && activeContentSection === 'analysis' && activeAnalysisView === 'chapters' && (
           <div className="p-3" data-tour="chapters-panel">
             {chapters.length > 0 ? (
               <div className="space-y-2">
@@ -1488,8 +1656,8 @@ export function ContextSidebar({
           </div>
         )}
 
-        {/* Takeaways Tab */}
-        {activeTab === 'takeaways' && (
+        {/* Takeaways Content View */}
+        {activeTab === 'content' && activeContentSection === 'analysis' && activeAnalysisView === 'takeaways' && (
           <div className="p-3" data-tour="takeaways-panel">
             {takeaways.length > 0 ? (
               <div className="space-y-2">
@@ -1531,8 +1699,8 @@ export function ContextSidebar({
           </div>
         )}
 
-        {/* Quotes Tab */}
-        {activeTab === 'quotes' && (
+        {/* Quotes Content View */}
+        {activeTab === 'content' && activeContentSection === 'analysis' && activeAnalysisView === 'quotes' && (
           <div className="p-3" data-tour="quotes-panel">
             {quotes.length > 0 ? (
               <div className="space-y-2">
@@ -1573,6 +1741,26 @@ export function ContextSidebar({
             )}
           </div>
         )}
+
+        {/* Generated Output Content View */}
+        {activeTab === 'content' && activeContentSection === 'outputs' && activeOutputType ? (
+          <div className="p-3">
+            <InlineContentStudio
+              outputs={outputs}
+              generatingIds={generatingContentTypes}
+              deletingOutput={deletingOutput ?? null}
+              onGenerate={async (block) => { await onGenerateContentBlock?.(block); }}
+              onCopyOutput={async (output) => { onCopyOutput?.(output); }}
+              onDownloadOutput={(output) => { onDownloadOutput?.(output); }}
+              onDeleteOutput={async (outputId) => { await onDeleteOutput?.(outputId); }}
+              compact
+              title=""
+              description=""
+              showGrid={false}
+              contentTypeFilter={activeOutputType}
+            />
+          </div>
+        ) : null}
       </div>
     </aside>
   );

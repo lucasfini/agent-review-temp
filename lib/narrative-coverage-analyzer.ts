@@ -33,10 +33,12 @@ export interface NarrativeCoverageAnalyzerOptions {
   summary?: string | null;
   goals?: NarrativeGoal[];
   tier?: string;
+  projectFormat?: string | null;
   maxTopics?: number;
   coverageWindow?: string;
   userId?: string;
   projectId?: string;
+  reservationId?: string;
 }
 
 // Get configuration from centralized config
@@ -51,7 +53,7 @@ const STRICT_JSON_INSTRUCTION = `You are a JSON generator. Respond with ONLY one
   "coverage_window": "full_episode",
   "topics": [{"id": "string", "label": "string", "keywords": ["string"], "mentionCount": 0, "shareOfVoice": 0.0, "relatedCtas": ["string"], "assetsCovered": ["string"]}],
   "ctas": [{"id": "string", "label": "string", "mentionCount": 0, "cadenceDays": 7}],
-  "opportunities": [{"type": "balanced|underrepresented|overindexed|cta-gap|new|debt", "label": "string", "severity": "low|medium|high", "summary": "string", "recommendedAction": "string"}],
+  "opportunities": [{"type": "strength|hook|clarity|structure|pacing|depth|follow_up|audience_fit|cta|speaker_balance", "label": "string", "severity": "low|medium|high", "summary": "string", "recommendedAction": "string", "appliesTo": "this_episode|next_episode|both", "evidenceQuote": "optional string"}],
   "notes": "optional string"
 }`;
 
@@ -99,6 +101,7 @@ export async function analyzeNarrativeCoverage(
     maxTopics,
     projectTitle: options.projectTitle || 'Untitled Project',
     tier: options.tier || 'unknown',
+    projectFormat: options.projectFormat || 'OTHER',
     goalsText: goalsText || 'None provided',
     transcriptSlice,
     summarySection: summarySnippet ? `\n\nExisting summary:\n${summarySnippet}\n` : '',
@@ -132,10 +135,11 @@ export async function analyzeNarrativeCoverage(
     await trackOpenAIUsage({
       userId: options.userId,
       projectId: options.projectId,
+      reservationId: options.reservationId,
       response,
       modelName: config.model,
       purpose: 'Narrative Coverage Analysis',
-      shouldDebit: true
+      shouldDebit: options.reservationId ? false : true
     });
   }
 
@@ -279,6 +283,8 @@ function normalizeOpportunities(items: any[]): CoverageOpportunity[] {
       severity: normalizeSeverity(item.severity),
       summary: String(item.summary || ''),
       recommendedAction: String(item.recommendedAction || ''),
+      appliesTo: normalizeApplicability(item.appliesTo),
+      evidenceQuote: typeof item.evidenceQuote === 'string' ? item.evidenceQuote : undefined,
       supportingTopics: Array.isArray(item.supportingTopics)
         ? item.supportingTopics.map(String)
         : undefined
@@ -287,6 +293,16 @@ function normalizeOpportunities(items: any[]): CoverageOpportunity[] {
 
 function normalizeOpportunityType(type: any): CoverageOpportunity['type'] {
   const validTypes: CoverageOpportunity['type'][] = [
+    'strength',
+    'hook',
+    'clarity',
+    'structure',
+    'pacing',
+    'depth',
+    'follow_up',
+    'audience_fit',
+    'cta',
+    'speaker_balance',
     'underrepresented',
     'balanced',
     'overindexed',
@@ -299,6 +315,15 @@ function normalizeOpportunityType(type: any): CoverageOpportunity['type'] {
     if (validTypes.includes(normalized)) return normalized;
   }
   return 'balanced';
+}
+
+function normalizeApplicability(value: any): CoverageOpportunity['appliesTo'] | undefined {
+  if (typeof value !== 'string') return undefined;
+  const normalized = value.toLowerCase();
+  if (normalized === 'this_episode' || normalized === 'next_episode' || normalized === 'both') {
+    return normalized;
+  }
+  return undefined;
 }
 
 function normalizeSeverity(value: any): CoverageOpportunity['severity'] {

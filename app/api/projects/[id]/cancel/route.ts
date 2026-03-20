@@ -46,18 +46,38 @@ export async function POST(
     }
 
     if (project.status !== 'cancelled') {
-      const { error: updateError } = await (supabaseAdmin.from('projects') as any)
-        .update({
+      const updateCandidates = [
+        {
           status: 'cancelled',
           processing_stage: 'cancelled',
           processing_progress: 0,
           processing_message: 'Upload cancelled by user.',
           updated_at: new Date().toISOString(),
-        })
-        .eq('id', projectId)
-        .eq('user_id', user.id);
+        },
+        {
+          status: 'cancelled',
+          processing_stage: 'cancelled',
+          processing_progress: 0,
+          processing_message: 'Upload cancelled by user.',
+        },
+        {
+          status: 'cancelled',
+        },
+      ];
+
+      let updateError: any = null;
+      for (const updatePayload of updateCandidates) {
+        const attempt = await (supabaseAdmin.from('projects') as any)
+          .update(updatePayload)
+          .eq('id', projectId)
+          .eq('user_id', user.id);
+
+        updateError = attempt.error;
+        if (!updateError) break;
+      }
 
       if (updateError) {
+        console.error('[CANCEL] Failed to update project status:', updateError);
         return NextResponse.json({ error: 'Failed to cancel project' }, { status: 500 });
       }
     }

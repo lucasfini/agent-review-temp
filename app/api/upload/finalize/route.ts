@@ -24,7 +24,7 @@ export async function POST(request: NextRequest) {
     }
 
     const body = await request.json();
-    const { projectId, objectKey, audioFingerprint, uploadToken, performanceLevel, speakerCount } = body;
+    const { projectId, objectKey, audioFingerprint, uploadToken, analysisOptions, speakerCount } = body;
 
     if (!uploadToken || typeof uploadToken !== 'string') {
       return NextResponse.json({ error: 'Missing upload token' }, { status: 400 });
@@ -135,7 +135,7 @@ export async function POST(request: NextRequest) {
             projectId,
             fileName: objectKey,
             fingerprint: audioFingerprint,
-            performanceLevel,
+            analysisOptions,
             diarizationProvider,
             ...(speakerCount && { speakerCount })
           })

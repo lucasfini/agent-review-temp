@@ -1,7 +1,6 @@
 export type CreditPackage = { amount: number; price: number; bonus: number };
 
 export const CREDIT_PACKAGES = {
-  starter: { amount: 10, price: 10, bonus: 0 },
   basic: { amount: 25, price: 25, bonus: 2 },
   pro: { amount: 50, price: 50, bonus: 5 },
   enterprise: { amount: 100, price: 100, bonus: 15 },

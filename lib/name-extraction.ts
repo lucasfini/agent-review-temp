@@ -580,7 +580,7 @@ function assignNamesToSpeakers(
 async function runStructuredLLMExtraction(
   segments: SpeakerSegment[],
   existingResults: Map<string, import('@/lib/prompts/types').HeuristicResult>,
-  options?: { userId?: string; projectId?: string }
+  options?: { userId?: string; projectId?: string; reservationId?: string }
 ): Promise<Map<string, import('@/lib/prompts/types').LLMAssignment>> {
   // Select segments (2000-3000 tokens)
   const selection = selectSegmentsForLLM(segments);
@@ -640,6 +640,7 @@ async function runStructuredLLMExtraction(
       await logUsageEvent({
         userId: options.userId,
         projectId: options.projectId,
+        reservationId: options.reservationId,
         serviceKey: 'openai_gpt4_input',
         serviceName: 'GPT-4o Input (Speaker Extraction)',
         provider: 'openai',
@@ -651,13 +652,16 @@ async function runStructuredLLMExtraction(
         metadata: {
           model: config.model,
           feature: 'speaker_name_extraction_gpt'
-        }
+        },
+        status: options.reservationId ? 'pending' : 'completed',
+        workflowStep: 'Speaker Name Extraction'
       });
 
       // Log output tokens
       await logUsageEvent({
         userId: options.userId,
         projectId: options.projectId,
+        reservationId: options.reservationId,
         serviceKey: 'openai_gpt4_output',
         serviceName: 'GPT-4o Output (Speaker Extraction)',
         provider: 'openai',
@@ -669,26 +673,30 @@ async function runStructuredLLMExtraction(
         metadata: {
           model: config.model,
           feature: 'speaker_name_extraction_gpt'
-        }
+        },
+        status: options.reservationId ? 'pending' : 'completed',
+        workflowStep: 'Speaker Name Extraction'
       });
 
       // Debit user credits (don't throw on billing errors)
-      try {
-        await debitCredit(
-          options.userId,
-          costResult.billedCost,
-          undefined,
-          {
-            reason: `Speaker name extraction (GPT) - ${unnamedSpeakers.length} speakers`,
-            metadata: {
-              projectId: options.projectId,
-              feature: 'speaker_name_extraction',
-              speakers: unnamedSpeakers.length
+      if (!options.reservationId) {
+        try {
+          await debitCredit(
+            options.userId,
+            costResult.billedCost,
+            undefined,
+            {
+              reason: `Speaker name extraction (GPT) - ${unnamedSpeakers.length} speakers`,
+              metadata: {
+                projectId: options.projectId,
+                feature: 'speaker_name_extraction',
+                speakers: unnamedSpeakers.length
+              }
             }
-          }
-        );
-      } catch (billingError) {
-        console.error('[NAME EXTRACTION] Billing debit failed:', billingError);
+          );
+        } catch (billingError) {
+          console.error('[NAME EXTRACTION] Billing debit failed:', billingError);
+        }
       }
     }
 
@@ -846,6 +854,7 @@ async function extractSpeakerNamesHybrid(
   options?: {
     userId?: string;
     projectId?: string;
+    reservationId?: string;
   }
 ): Promise<Record<string, NamedSpeaker>> {
   console.log(`[NAME EXTRACTION HYBRID] Starting for ${Object.keys(speakers).length} speakers`);
@@ -946,6 +955,7 @@ export async function extractSpeakerNames(
   options?: {
     userId?: string;
     projectId?: string;
+    reservationId?: string;
     rosterSpeakers?: PresetSpeaker[];
     excludedSpeakers?: Set<string>;
   }

@@ -264,6 +264,7 @@ export async function runRefactoredSpeakerPipeline(
     gptModel?: string;
     userId?: string;
     projectId?: string;
+    reservationId?: string;
     filename?: string;
     title?: string;
     speakerCount?: number;
@@ -303,6 +304,7 @@ export async function runRefactoredSpeakerPipeline(
       model: options.gptModel,
       userId: options.userId,
       projectId: options.projectId,
+      reservationId: options.reservationId,
       filename: options.filename,
       speakerCount: options.speakerCount,
       presetRoster: options.presetRoster,

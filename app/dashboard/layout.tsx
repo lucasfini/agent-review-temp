@@ -12,6 +12,7 @@ import { DemoBanner } from '@/components/demo/DemoBanner';
 import { WelcomeModal } from '@/components/demo/WelcomeModal';
 import { FirstLoginWelcomeModal } from '@/components/dashboard/first-login-welcome-modal';
 import { calculateOverallProgress, getUserFacingProcessingMessage, type ProcessingStage } from '@/lib/tier-progress-config';
+import { normalizeTier } from '@/lib/tier-config';
 
 interface ActiveUpload {
   id: string;
@@ -55,10 +56,10 @@ export default function DashboardLayout({
   useEffect(() => {
     if (!isDemoMode) return;
     const seen = localStorage.getItem('demoWelcomeSeen');
-    if (!seen) {
+    if (forceWelcomePreview || !seen) {
       setShowWelcomeModal(true);
     }
-  }, [isDemoMode]);
+  }, [isDemoMode, forceWelcomePreview]);
 
   useEffect(() => {
     if (loading || !user || isDemoMode) return;
@@ -142,7 +143,9 @@ export default function DashboardLayout({
           </Suspense>
 
           {/* Main content */}
-          <div className={`flex flex-col min-w-0 w-full md:w-0 flex-1 ${usesDocumentFlow ? 'overflow-visible' : 'overflow-hidden'} ${isSidebarCollapsed ? 'md:ml-20' : 'md:ml-64'}`}>
+          <div
+            className={`flex flex-col min-w-0 w-full md:w-0 flex-1 transition-[margin] duration-200 ease-out ${usesDocumentFlow ? 'overflow-visible' : 'overflow-hidden'} ${isSidebarCollapsed ? 'md:ml-20' : 'md:ml-64'}`}
+          >
             <main className={`${usesDocumentFlow ? 'overflow-visible' : 'flex-1 overflow-y-auto'} relative focus:outline-none${activeUploads.length > 0 ? ' pb-16' : ''}`}>
               {children}
             </main>
@@ -150,15 +153,16 @@ export default function DashboardLayout({
 
           {/* Global upload/transcription progress banner */}
           {activeUploads.length > 0 && (
-            <div className={`fixed bottom-0 left-0 right-0 ${isSidebarCollapsed ? 'md:left-20' : 'md:left-64'} z-50 bg-white dark:bg-gray-900 border-t border-slate-200 dark:border-transparent text-slate-900 dark:text-white px-3 sm:px-6 py-2 sm:py-3 flex items-center gap-3 shadow-lg`}>
+            <div
+              className={`fixed bottom-0 left-0 right-0 z-50 flex items-center gap-3 border-t border-slate-200 bg-white px-3 py-2 text-slate-900 shadow-lg transition-[left] duration-200 ease-out dark:border-transparent dark:bg-gray-900 dark:text-white sm:px-6 sm:py-3 ${isSidebarCollapsed ? 'md:left-20' : 'md:left-64'}`}
+            >
               <Loader2 className="h-4 w-4 animate-spin flex-shrink-0 text-blue-400" />
               <div className="flex-1 min-w-0">
                 {(() => {
                   const activeUpload = activeUploads[0];
                   const stage = activeUpload.processing_stage ||
                     (activeUpload.status === 'uploading' ? 'uploading' : 'transcribing');
-                  const rawTier: string = activeUpload.performance_level || 'pro';
-                  const tier = (rawTier === 'basic' ? 'standard' : rawTier === 'premium' ? 'pro' : rawTier) as import('@/lib/tier-config').TierLevel;
+                  const tier = normalizeTier(activeUpload.performance_level || 'content_kit');
                   const overallProgress = calculateOverallProgress(
                     tier,
                     stage,

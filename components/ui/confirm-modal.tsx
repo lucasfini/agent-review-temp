@@ -53,8 +53,8 @@ export default function ConfirmModal({
         <DialogHeader>
           <div className="flex items-center gap-3">
             {isDestructive && (
-              <div className="flex-shrink-0 flex items-center justify-center h-9 w-9 rounded-full bg-red-900/30 border border-red-800/40">
-                <AlertTriangle className="h-4 w-4 text-red-400" />
+              <div className="flex h-9 w-9 flex-shrink-0 items-center justify-center rounded-full border border-red-200 bg-red-50 dark:border-red-800/40 dark:bg-red-900/30">
+                <AlertTriangle className="h-4 w-4 text-red-600 dark:text-red-400" />
               </div>
             )}
             <DialogTitle>{title}</DialogTitle>
@@ -68,7 +68,7 @@ export default function ConfirmModal({
             type="button"
             onClick={onClose}
             disabled={loading}
-            className="px-4 py-2 text-sm font-medium text-slate-300 bg-slate-800 border border-slate-700 rounded-lg hover:bg-slate-700 disabled:opacity-50 transition-colors"
+            className="rounded-lg border border-slate-300 bg-white px-4 py-2 text-sm font-medium text-slate-700 transition-colors hover:bg-slate-50 disabled:opacity-50 dark:border-slate-700 dark:bg-slate-800 dark:text-slate-300 dark:hover:bg-slate-700"
           >
             {cancelText}
           </button>

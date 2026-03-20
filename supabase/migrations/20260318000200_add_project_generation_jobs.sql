@@ -1,0 +1,3 @@
+-- Replaced by 20260319013000_add_data_lifecycle_and_generation_jobs.sql.
+-- This file previously contained invalid contents and is now a no-op so
+-- fresh migration runs do not fail before the corrective migration executes.

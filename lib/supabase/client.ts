@@ -101,11 +101,35 @@ const supabaseUrl = process.env.NEXT_PUBLIC_SUPABASE_URL || ''
 const supabaseAnonKey = process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY || ''
 const isTestEnv = process.env.NODE_ENV === 'test'
 
+// Safe localStorage adapter — catches corrupted session tokens (Invalid UTF-8 sequence)
+// instead of crashing the app. On read failure the bad key is cleared and null returned,
+// forcing a fresh sign-in rather than an unhandled error.
+const safeStorage =
+  typeof window !== 'undefined'
+    ? {
+        getItem: (key: string): string | null => {
+          try {
+            return window.localStorage.getItem(key)
+          } catch {
+            try { window.localStorage.removeItem(key) } catch {}
+            return null
+          }
+        },
+        setItem: (key: string, value: string): void => {
+          try { window.localStorage.setItem(key, value) } catch {}
+        },
+        removeItem: (key: string): void => {
+          try { window.localStorage.removeItem(key) } catch {}
+        },
+      }
+    : undefined
+
 export const supabase: SupabaseClient<any> = isTestEnv
   ? createMockSupabaseClient()
   : createBrowserClient<any>(supabaseUrl, supabaseAnonKey, {
       auth: {
         flowType: 'pkce',
+        ...(safeStorage ? { storage: safeStorage } : {}),
       },
     })
 
@@ -194,9 +218,15 @@ export type Database = {
           audio_expires_at: string | null
           audio_deleted_at: string | null
           status: 'uploading' | 'processing' | 'completed' | 'failed' | 'cancelled'
+          performance_level: string | null
+          metadata: any | null
           transcription_text: string | null
           preset_speakers: any[] | null
           speaker_keywords: any[] | null
+          processing_stage: string | null
+          processing_progress: number | null
+          processing_message: string | null
+          stage_started_at: string | null
           processing_started_at: string | null
           processing_completed_at: string | null
           processing_time_seconds: number | null
@@ -214,9 +244,15 @@ export type Database = {
           audio_expires_at?: string | null
           audio_deleted_at?: string | null
           status?: 'uploading' | 'processing' | 'completed' | 'failed' | 'cancelled'
+          performance_level?: string | null
+          metadata?: any | null
           transcription_text?: string | null
           preset_speakers?: any[] | null
           speaker_keywords?: any[] | null
+          processing_stage?: string | null
+          processing_progress?: number | null
+          processing_message?: string | null
+          stage_started_at?: string | null
           processing_started_at?: string | null
           processing_completed_at?: string | null
           processing_time_seconds?: number | null
@@ -234,9 +270,15 @@ export type Database = {
           audio_expires_at?: string | null
           audio_deleted_at?: string | null
           status?: 'uploading' | 'processing' | 'completed' | 'failed' | 'cancelled'
+          performance_level?: string | null
+          metadata?: any | null
           transcription_text?: string | null
           preset_speakers?: any[] | null
           speaker_keywords?: any[] | null
+          processing_stage?: string | null
+          processing_progress?: number | null
+          processing_message?: string | null
+          stage_started_at?: string | null
           processing_started_at?: string | null
           processing_completed_at?: string | null
           processing_time_seconds?: number | null

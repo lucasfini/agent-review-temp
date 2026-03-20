@@ -1,7 +1,8 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { supabaseAdmin } from '@/lib/supabase/server';
-import { deleteProjectAudioObject, expireProjectAudio, isAudioExpired } from '@/lib/audio-retention';
+import { expireProjectAudio, isAudioExpired } from '@/lib/audio-retention';
 import { RouteAccessError, requireProjectOwner } from '@/lib/api/route-auth';
+import { deleteProjectStoragePrefix } from '@/lib/storage-lifecycle';
 
 // ============================================================
 // FORCE DYNAMIC: Disable all caching for this route
@@ -268,15 +269,11 @@ export async function DELETE(
       );
     }
 
-    // Clean up R2 file (non-fatal)
-    if (projectForDelete?.audio_file_name && !projectForDelete.audio_deleted_at) {
+    // Clean up project storage (non-fatal)
+    if (projectForDelete) {
       try {
-        await deleteProjectAudioObject({
-          id: projectId,
-          audio_file_name: projectForDelete.audio_file_name,
-          audio_deleted_at: projectForDelete.audio_deleted_at,
-        });
-        console.log(`[API] Deleted R2 file for project ${projectId}`);
+        const result = await deleteProjectStoragePrefix(projectId);
+        console.log(`[API] Deleted ${result.deletedCount} storage objects for project ${projectId}`);
       } catch (r2Error) {
         console.error(`[API] R2 cleanup failed for project ${projectId}:`, r2Error);
       }

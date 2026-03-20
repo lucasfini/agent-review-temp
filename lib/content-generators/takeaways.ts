@@ -29,6 +29,7 @@ export async function extractKeyTakeaways(
     speakerContext?: Record<string, { name: string; role?: string }>;
     userId?: string;
     projectId?: string;
+    reservationId?: string;
     apiKey?: string;
   } = {}
 ): Promise<TakeawaysResult> {
@@ -40,7 +41,7 @@ export async function extractKeyTakeaways(
   // Adaptive takeaway count: reduce for shorter transcripts to avoid fluff
   const transcriptLength = transcriptionText.length;
   const defaultTakeawayCount = transcriptLength < 5000 ? 4 : 8;
-  const { maxTakeaways = defaultTakeawayCount, speakerContext, userId, projectId } = options;
+  const { maxTakeaways = defaultTakeawayCount, speakerContext, userId, projectId, reservationId } = options;
 
   console.log('[TAKEAWAYS] 💎 Extracting action-first takeaways with GPT-4o-mini...');
   console.log(`[TAKEAWAYS] 📏 Transcript length: ${transcriptLength} chars, requesting ${maxTakeaways} takeaways`);
@@ -112,10 +113,11 @@ ${transcriptionText.slice(0, 80000)}`;
       await trackOpenAIUsage({
         userId,
         projectId,
+        reservationId,
         response,
         modelName: 'gpt-5-nano',
         purpose: 'Key Takeaways',
-        shouldDebit: true
+        shouldDebit: reservationId ? false : true
       });
     }
 

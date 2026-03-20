@@ -2,6 +2,9 @@ import { NextRequest, NextResponse } from 'next/server';
 import { supabaseAdmin } from '@/lib/supabase/server';
 import OpenAI from 'openai';
 import { trackOpenAIUsage } from '@/lib/billing/track-usage';
+import { estimateSegmentTouchupCost } from '@/lib/billing/cost-map';
+import { billingErrorResponse, requireCredits } from '@/lib/billing/middleware';
+import { createReservation, failReservation, settleReservation } from '@/lib/billing/credit';
 import { getOpenAIApiKeyForUser } from '@/lib/openai/consent';
 import { RouteAccessError, requireProjectOwner } from '@/lib/api/route-auth';
 
@@ -151,6 +154,7 @@ export async function POST(
   request: NextRequest,
   { params }: { params: Promise<{ id: string }> }
 ) {
+  let reservationId: string | undefined;
   try {
     const { id: projectId } = await params;
     const { segmentIndices, dryRun = false, approvedReassignments } = await request.json();
@@ -374,6 +378,33 @@ export async function POST(
     }
     const openai = new OpenAI({ apiKey });
     const allSelectedIndices = (segmentIndices as number[]).filter(idx => idx >= 0 && idx < totalSegments);
+    const avgSelectedChars = allSelectedIndices.length > 0
+      ? Math.round(
+          allSelectedIndices.reduce((sum, idx) => sum + String(segments[idx]?.text || '').length, 0) /
+            allSelectedIndices.length
+        )
+      : 180;
+    const estimatedCost = estimateSegmentTouchupCost({
+      selectedSegmentCount: allSelectedIndices.length,
+      averageSegmentChars: avgSelectedChars,
+    });
+    const estimatedHold = Number((estimatedCost * 1.15).toFixed(4));
+    if (estimatedHold > 0) {
+      await requireCredits(userId, estimatedHold);
+      const reservation = await createReservation({
+        userId,
+        projectId,
+        workflowType: 'segment_touchup',
+        amount: estimatedHold,
+        metadata: {
+          segmentCount: allSelectedIndices.length,
+          estimatedCost,
+        },
+        expiresAt: new Date(Date.now() + (60 * 60 * 1000)).toISOString(),
+      });
+      reservationId = reservation.id;
+    }
+
     let chunkSize = Math.min(12, Math.max(1, allSelectedIndices.length));
     let batches = chunkArray(allSelectedIndices, chunkSize);
     let batchedSuggestions: Array<{ index: number; speakerId: string; reason: string; confidence?: number }> = [];
@@ -405,9 +436,11 @@ export async function POST(
             trackOpenAIUsage({
               userId,
               projectId,
+              reservationId,
               response: completion,
               modelName: TOUCHUP_MODEL,
               purpose: 'segment touchup',
+              shouldDebit: reservationId ? false : true,
             }).catch(err => console.error('[touchup] Failed to track usage:', err));
           }
 
@@ -508,6 +541,10 @@ export async function POST(
       return NextResponse.json({ error: 'Failed to save touch-up results' }, { status: 500 });
     }
 
+    if (reservationId) {
+      await settleReservation(reservationId);
+    }
+
     return NextResponse.json({
       success: true,
       reassignments,
@@ -515,10 +552,19 @@ export async function POST(
     });
 
   } catch (error) {
+    if (reservationId) {
+      await failReservation(reservationId, error instanceof Error ? error.message : 'Segment touchup failed').catch((billingError) => {
+        console.error('[touchup] Failed to fail reservation:', billingError);
+      });
+    }
     if (error instanceof RouteAccessError) {
       return NextResponse.json({ error: error.message }, { status: error.status });
     }
     console.error('[touchup] Unexpected error:', error);
+    const billingResponse = billingErrorResponse(error);
+    if (billingResponse.status === 402) {
+      return billingResponse;
+    }
     return NextResponse.json({ error: 'Internal server error' }, { status: 500 });
   }
 }

@@ -32,6 +32,7 @@ export async function extractSocialQuotes(
     speakerContext?: Record<string, { name: string; role?: string }>;
     userId?: string;
     projectId?: string;
+    reservationId?: string;
     apiKey?: string;
   } = {}
 ): Promise<QuotesResult> {
@@ -40,7 +41,7 @@ export async function extractSocialQuotes(
     throw new Error('OpenAI API key not configured');
   }
 
-  const { maxQuotes = 8, speakerContext, userId, projectId } = options;
+  const { maxQuotes = 8, speakerContext, userId, projectId, reservationId } = options;
 
   console.log('[QUOTES] 💬 Extracting high-impact social quotes with GPT-4o...');
 
@@ -116,10 +117,11 @@ ${transcriptionText.slice(0, 80000)}`;
       await trackOpenAIUsage({
         userId,
         projectId,
+        reservationId,
         response,
         modelName: 'gpt-5-mini',
         purpose: 'Social Quotes',
-        shouldDebit: true
+        shouldDebit: reservationId ? false : true
       });
     }
 

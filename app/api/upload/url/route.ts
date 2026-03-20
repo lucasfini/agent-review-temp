@@ -8,18 +8,13 @@ import {
   downloadDirectMedia,
   extractAudioFromVideoBuffer
 } from '@/lib/url-importer';
+import { billingErrorResponse, requireCredits } from '@/lib/billing/middleware';
+import { estimateTranscriptionCost } from '@/lib/billing/cost-map';
+import { getProcessingTierForAnalysis, normalizeAnalysisOptions } from '@/lib/analysis-options';
+import { createReservation, releaseReservation } from '@/lib/billing/credit';
 
 export const runtime = 'nodejs';
 export const dynamic = 'force-dynamic';
-
-type PerformanceLevel = 'standard' | 'pro';
-
-const normalizePerformanceLevel = (value?: string | null): PerformanceLevel => {
-  if (value === 'standard' || value === 'pro') return value;
-  if (value === 'basic' || value === 'low') return 'standard';
-  if (value === 'premium' || value === 'high' || value === 'medium') return 'pro';
-  return 'pro';
-};
 
 const sanitizeTitle = (title: string) => {
   const trimmed = title.trim();
@@ -60,13 +55,26 @@ export async function POST(request: NextRequest) {
     const body = await request.json();
     const url = typeof body?.url === 'string' ? body.url.trim() : '';
     const titleInput = typeof body?.title === 'string' ? body.title : '';
-    const performanceLevel = normalizePerformanceLevel(body?.performanceLevel);
+    const analysisOptions = normalizeAnalysisOptions(body?.analysisOptions);
+    const processingTier = getProcessingTierForAnalysis(analysisOptions);
     const speakerCount = typeof body?.speakerCount === 'number' ? body.speakerCount : undefined;
     const rosterSpeakers = Array.isArray(body?.rosterSpeakers) ? body.rosterSpeakers : undefined;
 
     if (!url) {
       return NextResponse.json({ error: 'URL is required' }, { status: 400 });
     }
+
+    const estimatedDurationSeconds = typeof body?.estimatedDurationSeconds === 'number'
+      ? Math.max(1, Math.round(body.estimatedDurationSeconds))
+      : 60 * 60;
+    const estimatedCost = estimateTranscriptionCost({
+      durationSeconds: estimatedDurationSeconds,
+      tier: processingTier,
+      analysisOptions,
+    });
+
+    const estimatedHold = Number((estimatedCost.total * 1.15).toFixed(4));
+    await requireCredits(user.id, estimatedHold);
 
     await validatePublicUrl(url);
 
@@ -96,20 +104,45 @@ export async function POST(request: NextRequest) {
     }
 
     const finalTitle = sanitizeTitle(title || getTitleFromFileName(fileName));
-
-    const importResult = await importRecording({
+    const reservation = await createReservation({
       userId: user.id,
-      title: finalTitle,
-      fileName,
-      contentType,
-      buffer,
-      performanceLevel,
-      speakerCount,
-      externalSource: {
-        provider: isYouTubeUrl(url) ? 'youtube' : 'direct',
-        recordingId: url
-      }
+      workflowType: 'upload_processing',
+      amount: estimatedHold,
+      metadata: {
+        source: 'url_import',
+        url,
+        estimatedCost: estimatedCost.total,
+        analysisOptions,
+        estimatedDurationSeconds,
+      },
+      expiresAt: new Date(Date.now() + (2 * 60 * 60 * 1000)).toISOString(),
     });
+
+    let importResult;
+    try {
+      importResult = await importRecording({
+        userId: user.id,
+        title: finalTitle,
+        fileName,
+        contentType,
+        buffer,
+        performanceLevel: processingTier,
+        analysisOptions,
+        reservationId: reservation.id,
+        reservationHoldAmount: estimatedHold,
+        reservationEstimatedCost: estimatedCost.total,
+        speakerCount,
+        externalSource: {
+          provider: isYouTubeUrl(url) ? 'youtube' : 'direct',
+          recordingId: url
+        }
+      });
+    } catch (importError) {
+      await releaseReservation(reservation.id, 'Released URL import hold after import failed').catch((releaseError) => {
+        console.error('[URL IMPORT] Failed to release reservation after import failure:', releaseError);
+      });
+      throw importError;
+    }
 
     if (rosterSpeakers?.length) {
       try {
@@ -138,6 +171,10 @@ export async function POST(request: NextRequest) {
     });
   } catch (error) {
     console.error('[URL IMPORT] Failed:', error);
+    const billingResponse = billingErrorResponse(error);
+    if (billingResponse.status === 402) {
+      return billingResponse;
+    }
     return NextResponse.json(
       { error: error instanceof Error ? error.message : 'URL import failed' },
       { status: 500 }

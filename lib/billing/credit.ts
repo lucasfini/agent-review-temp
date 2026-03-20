@@ -30,6 +30,7 @@ export interface UsageEvent {
   id: string;
   userId: string;
   projectId?: string;
+  reservationId?: string;
   serviceKey: string;
   serviceName: string;
   provider: string;
@@ -43,19 +44,66 @@ export interface UsageEvent {
   createdAt: string;
 }
 
+export interface BillingReservation {
+  id: string;
+  userId: string;
+  projectId?: string;
+  workflowType: string;
+  status: 'pending' | 'active' | 'settling' | 'settled' | 'released' | 'expired' | 'failed';
+  reservedAmount: number;
+  settledAmount: number;
+  releasedAmount: number;
+  currency: string;
+  metadata: Record<string, unknown>;
+  expiresAt?: string | null;
+  createdAt: string;
+  updatedAt: string;
+  completedAt?: string | null;
+}
+
 export interface CreditTransaction {
   id: string;
   userId: string;
   amount: number;
   balanceBefore: number;
   balanceAfter: number;
-  transactionType: 'purchase' | 'bonus' | 'refund' | 'debit' | 'admin_adjustment';
+  transactionType: 'purchase' | 'bonus' | 'refund' | 'debit' | 'admin_adjustment' | 'reserve' | 'release' | 'settle';
   usageEventId?: string;
+  reservationId?: string;
   paymentId?: string;
   invoiceNumber?: string; // Stripe invoice ID — only present on purchases/refunds, never on debits
   reason?: string;
   metadata: Record<string, unknown>;
   createdAt: string;
+}
+
+export class ReservationNotFoundError extends Error {
+  constructor(public readonly reservationId: string) {
+    super(`Billing reservation not found: ${reservationId}`);
+    this.name = 'ReservationNotFoundError';
+  }
+}
+
+export class ReservationStateError extends Error {
+  constructor(
+    public readonly reservationId: string,
+    public readonly status: string,
+    message?: string
+  ) {
+    super(message || `Billing reservation ${reservationId} is in invalid state: ${status}`);
+    this.name = 'ReservationStateError';
+  }
+}
+
+export class ReservationOverrunError extends Error {
+  constructor(
+    public readonly reservationId: string,
+    public readonly reserved: number,
+    public readonly actual: number
+  ) {
+    super(`Reservation ${reservationId} actual cost $${actual.toFixed(4)} exceeds reserved $${reserved.toFixed(4)}`);
+    this.name = 'ReservationOverrunError';
+  }
 }
 
 export class InsufficientCreditError extends Error {
@@ -241,6 +289,7 @@ export async function debitCredit(
       balance_after: result.new_balance,
       transaction_type: options?.transactionType || 'debit',
       usage_event_id: usageEventId,
+      reservation_id: options?.metadata?.reservationId,
       invoice_number: options?.invoiceNumber,
       reason: options?.reason,
       metadata: options?.metadata || {},
@@ -348,6 +397,7 @@ export async function logUsageEvent(params: {
   userId: string;
   projectId?: string;
   projectTitle?: string;
+  reservationId?: string;
   serviceKey: string;
   serviceName: string;
   provider: string;
@@ -358,6 +408,7 @@ export async function logUsageEvent(params: {
   billedCost: number;
   metadata?: Record<string, unknown>;
   status?: 'completed' | 'pending' | 'failed';
+  workflowStep?: string;
 }): Promise<UsageEvent> {
 
   // Snapshot the project title so it survives project deletion (FK ON DELETE SET NULL)
@@ -376,6 +427,7 @@ export async function logUsageEvent(params: {
     .insert({
       user_id: params.userId,
       project_id: params.projectId,
+      reservation_id: params.reservationId,
       project_title: resolvedProjectTitle ?? null,
       service_key: params.serviceKey,
       service_name: params.serviceName,
@@ -387,6 +439,7 @@ export async function logUsageEvent(params: {
       billed_cost: params.billedCost,
       metadata: params.metadata || {},
       status: params.status || 'completed',
+      workflow_step: params.workflowStep || null,
       processed_at: new Date().toISOString(),
     } as any)
     .select()
@@ -400,6 +453,7 @@ export async function logUsageEvent(params: {
     id: data.id,
     userId: data.user_id,
     projectId: data.project_id,
+    reservationId: data.reservation_id,
     serviceKey: data.service_key,
     serviceName: data.service_name,
     provider: data.provider,
@@ -498,7 +552,7 @@ export async function getUsageHistory(
 export async function getTransactionHistory(
   userId: string,
   filters?: {
-    transactionType?: 'purchase' | 'bonus' | 'refund' | 'debit' | 'admin_adjustment';
+    transactionType?: 'purchase' | 'bonus' | 'refund' | 'debit' | 'admin_adjustment' | 'reserve' | 'release' | 'settle';
     startDate?: Date;
     endDate?: Date;
     limit?: number;
@@ -542,6 +596,7 @@ export async function getTransactionHistory(
     balanceAfter: row.balance_after,
     transactionType: row.transaction_type,
     usageEventId: row.usage_event_id,
+    reservationId: row.reservation_id,
     paymentId: row.payment_id,
     invoiceNumber: row.invoice_number || undefined,
     reason: row.reason,
@@ -553,6 +608,531 @@ export async function getTransactionHistory(
     transactions,
     total: count || 0,
   };
+}
+
+function mapReservationRow(row: any): BillingReservation {
+  return {
+    id: row.id,
+    userId: row.user_id,
+    projectId: row.project_id,
+    workflowType: row.workflow_type,
+    status: row.status,
+    reservedAmount: Number(row.reserved_amount || 0),
+    settledAmount: Number(row.settled_amount || 0),
+    releasedAmount: Number(row.released_amount || 0),
+    currency: row.currency || 'USD',
+    metadata: row.metadata || {},
+    expiresAt: row.expires_at,
+    createdAt: row.created_at,
+    updatedAt: row.updated_at,
+    completedAt: row.completed_at,
+  };
+}
+
+async function runBalanceRpc(
+  rpcName: 'reserve_user_credits' | 'release_reserved_credits' | 'settle_reserved_credits',
+  userId: string,
+  amount: number
+) {
+  let balance = 0;
+  let version = 0;
+  let result: any = null;
+  let lastVersionError: ConcurrentUpdateError | null = null;
+
+  for (let attempt = 0; attempt < 3; attempt++) {
+    ({ balance, version } = await getBalance(userId));
+
+    const { data, error } = await supabase.rpc(rpcName, {
+      p_user_id: userId,
+      p_amount: amount,
+      p_current_version: version,
+    } as any) as { data: any; error: any };
+
+    if (error) {
+      throw new Error(`Failed to ${rpcName}: ${error.message}`);
+    }
+
+    result = data[0];
+    if (result.success) {
+      return { balanceBefore: balance, result };
+    }
+
+    if (result.error_message?.includes('not found')) {
+      throw new CreditAccountNotFoundError(userId);
+    }
+    if (result.error_message?.includes('Insufficient credits')) {
+      throw new InsufficientCreditError(userId, amount, result.new_balance);
+    }
+    if (result.error_message?.includes('Version mismatch')) {
+      lastVersionError = new ConcurrentUpdateError(userId, version, result.new_version);
+      continue;
+    }
+    throw new Error(result.error_message || `Unknown ${rpcName} error`);
+  }
+
+  throw lastVersionError || new Error(`Unknown ${rpcName} error`);
+}
+
+export async function getReservation(reservationId: string): Promise<BillingReservation> {
+  const { data, error } = await supabase
+    .from('billing_reservations')
+    .select('*')
+    .eq('id', reservationId)
+    .single() as { data: any; error: any };
+
+  if (error || !data) {
+    throw new ReservationNotFoundError(reservationId);
+  }
+
+  return mapReservationRow(data);
+}
+
+export async function createReservation(params: {
+  userId: string;
+  projectId?: string;
+  workflowType: string;
+  amount: number;
+  metadata?: Record<string, unknown>;
+  expiresAt?: string;
+}): Promise<BillingReservation> {
+  const amount = Number(params.amount.toFixed(4));
+  const { balanceBefore, result } = await runBalanceRpc('reserve_user_credits', params.userId, amount);
+
+  try {
+    const { data, error } = await supabase
+      .from('billing_reservations')
+      .insert({
+        user_id: params.userId,
+        project_id: params.projectId || null,
+        workflow_type: params.workflowType,
+        status: 'active',
+        reserved_amount: amount,
+        settled_amount: 0,
+        released_amount: 0,
+        metadata: params.metadata || {},
+        expires_at: params.expiresAt || null,
+      } as any)
+      .select('*')
+      .single() as { data: any; error: any };
+
+    if (error || !data) {
+      throw new Error(error?.message || 'Failed to create billing reservation');
+    }
+
+    await supabase.from('credit_transactions').insert({
+      user_id: params.userId,
+      amount: -amount,
+      balance_before: balanceBefore,
+      balance_after: result.new_balance,
+      transaction_type: 'reserve',
+      reservation_id: data.id,
+      reason: `Reserved funds for ${params.workflowType}`,
+      metadata: params.metadata || {},
+    } as any);
+
+    return mapReservationRow(data);
+  } catch (error) {
+    try {
+      await runBalanceRpc('release_reserved_credits', params.userId, amount);
+    } catch (rollbackError) {
+      console.error('[BILLING] Failed to rollback reservation hold after insert error:', rollbackError);
+    }
+    throw error;
+  }
+}
+
+async function releaseHeldAmount(
+  reservation: BillingReservation,
+  amount: number,
+  reason: string,
+  nextStatus: BillingReservation['status']
+): Promise<BillingReservation> {
+  const releaseAmount = Number(Math.max(0, amount).toFixed(4));
+  if (releaseAmount <= 0) {
+    const { data } = await supabase
+      .from('billing_reservations')
+      .update({
+        status: nextStatus,
+        updated_at: new Date().toISOString(),
+        completed_at: new Date().toISOString(),
+      } as any)
+      .eq('id', reservation.id)
+      .select('*')
+      .single() as { data: any };
+    return mapReservationRow(data);
+  }
+
+  const { balanceBefore, result } = await runBalanceRpc('release_reserved_credits', reservation.userId, releaseAmount);
+  const updatedReleased = Number((reservation.releasedAmount + releaseAmount).toFixed(4));
+
+  const { data, error } = await supabase
+    .from('billing_reservations')
+    .update({
+      status: nextStatus,
+      released_amount: updatedReleased,
+      updated_at: new Date().toISOString(),
+      completed_at: new Date().toISOString(),
+    } as any)
+    .eq('id', reservation.id)
+    .select('*')
+    .single() as { data: any; error: any };
+
+  if (error || !data) {
+    throw new Error(error?.message || 'Failed to update released reservation');
+  }
+
+  await supabase.from('credit_transactions').insert({
+    user_id: reservation.userId,
+    amount: releaseAmount,
+    balance_before: balanceBefore,
+    balance_after: result.new_balance,
+    transaction_type: 'release',
+    reservation_id: reservation.id,
+    reason,
+    metadata: reservation.metadata || {},
+  } as any);
+
+  return mapReservationRow(data);
+}
+
+export async function releaseReservation(
+  reservationId: string,
+  reason: string = 'Released unused reserved funds'
+): Promise<BillingReservation> {
+  const reservation = await getReservation(reservationId);
+  if (!['active', 'pending', 'failed', 'expired'].includes(reservation.status)) {
+    if (['released', 'settled'].includes(reservation.status)) {
+      return reservation;
+    }
+    throw new ReservationStateError(reservationId, reservation.status);
+  }
+
+  const releasable = reservation.reservedAmount - reservation.settledAmount - reservation.releasedAmount;
+  return releaseHeldAmount(reservation, releasable, reason, reservation.status === 'expired' ? 'expired' : 'released');
+}
+
+export async function attachUsageEventsToReservation(
+  reservationId: string,
+  usageEventIds: string[]
+): Promise<void> {
+  const ids = usageEventIds.filter(Boolean);
+  if (!ids.length) return;
+
+  const { error } = await supabase
+    .from('usage_events')
+    .update({
+      reservation_id: reservationId,
+    } as any)
+    .in('id', ids);
+
+  if (error) {
+    throw new Error(`Failed to attach usage events to reservation: ${error.message}`);
+  }
+}
+
+export async function failReservation(
+  reservationId: string,
+  reason: string,
+  options?: { releaseUnused?: boolean }
+): Promise<BillingReservation> {
+  const reservation = await getReservation(reservationId);
+  const releaseUnused = options?.releaseUnused ?? true;
+
+  await supabase
+    .from('usage_events')
+    .update({
+      status: 'failed',
+      processed_at: new Date().toISOString(),
+    } as any)
+    .eq('reservation_id', reservationId)
+    .eq('status', 'pending');
+
+  if (releaseUnused) {
+    const updated = await releaseHeldAmount(reservation, reservation.reservedAmount - reservation.settledAmount - reservation.releasedAmount, reason, 'failed');
+    return updated;
+  }
+
+  const { data, error } = await supabase
+    .from('billing_reservations')
+    .update({
+      status: 'failed',
+      updated_at: new Date().toISOString(),
+      completed_at: new Date().toISOString(),
+      metadata: {
+        ...(reservation.metadata || {}),
+        failureReason: reason,
+      },
+    } as any)
+    .eq('id', reservationId)
+    .select('*')
+    .single() as { data: any; error: any };
+
+  if (error || !data) {
+    throw new Error(error?.message || 'Failed to fail reservation');
+  }
+
+  return mapReservationRow(data);
+}
+
+export async function settleReservation(reservationId: string): Promise<BillingReservation> {
+  const reservation = await getReservation(reservationId);
+  if (reservation.status === 'settled' || reservation.status === 'released') {
+    return reservation;
+  }
+  if (!['active', 'settling'].includes(reservation.status)) {
+    throw new ReservationStateError(reservationId, reservation.status);
+  }
+
+  await supabase
+    .from('billing_reservations')
+    .update({
+      status: 'settling',
+      updated_at: new Date().toISOString(),
+    } as any)
+    .eq('id', reservationId);
+
+  const { data: usageRows, error: usageError } = await supabase
+    .from('usage_events')
+    .select('id, billed_cost, status')
+    .eq('reservation_id', reservationId) as { data: any[] | null; error: any };
+
+  if (usageError) {
+    throw new Error(`Failed to load usage for settlement: ${usageError.message}`);
+  }
+
+  const actualCost = Number(
+    ((usageRows || [])
+      .filter((row) => row.status !== 'failed')
+      .reduce((sum, row) => sum + Number(row.billed_cost || 0), 0))
+      .toFixed(4)
+  );
+
+  if (actualCost > reservation.reservedAmount + 0.0001) {
+    await supabase
+      .from('billing_reservations')
+      .update({
+        status: 'failed',
+        updated_at: new Date().toISOString(),
+        metadata: {
+          ...(reservation.metadata || {}),
+          actualCost,
+          overrun: Number((actualCost - reservation.reservedAmount).toFixed(4)),
+        },
+      } as any)
+      .eq('id', reservationId);
+    throw new ReservationOverrunError(reservationId, reservation.reservedAmount, actualCost);
+  }
+
+  const releaseAmount = Number((reservation.reservedAmount - actualCost).toFixed(4));
+  const updatedReservation = await releaseHeldAmount(reservation, releaseAmount, `Release unused funds for ${reservation.workflowType}`, 'settling');
+
+  if (actualCost > 0) {
+    const { balanceBefore, result } = await runBalanceRpc('settle_reserved_credits', reservation.userId, actualCost);
+    await supabase.from('credit_transactions').insert({
+      user_id: reservation.userId,
+      amount: 0,
+      balance_before: balanceBefore,
+      balance_after: result.new_balance,
+      transaction_type: 'settle',
+      reservation_id: reservationId,
+      reason: `Settled funds for ${reservation.workflowType}`,
+      metadata: {
+        ...(updatedReservation.metadata || {}),
+        settledAmount: actualCost,
+      },
+    } as any);
+  }
+
+  await supabase
+    .from('usage_events')
+    .update({
+      status: 'completed',
+      processed_at: new Date().toISOString(),
+    } as any)
+    .eq('reservation_id', reservationId)
+    .eq('status', 'pending');
+
+  const { data, error } = await supabase
+    .from('billing_reservations')
+    .update({
+      status: actualCost > 0 ? 'settled' : 'released',
+      settled_amount: actualCost,
+      released_amount: updatedReservation.releasedAmount,
+      updated_at: new Date().toISOString(),
+      completed_at: new Date().toISOString(),
+    } as any)
+    .eq('id', reservationId)
+    .select('*')
+    .single() as { data: any; error: any };
+
+  if (error || !data) {
+    throw new Error(error?.message || 'Failed to finalize reservation settlement');
+  }
+
+  return mapReservationRow(data);
+}
+
+export async function settleReservationAmount(
+  reservationId: string,
+  actualCost: number,
+  usageEventIds: string[] = []
+): Promise<BillingReservation> {
+  const reservation = await getReservation(reservationId);
+  if (reservation.status === 'settled' || reservation.status === 'released') {
+    return reservation;
+  }
+  if (!['active', 'settling'].includes(reservation.status)) {
+    throw new ReservationStateError(reservationId, reservation.status);
+  }
+
+  const normalizedCost = Number(Math.max(0, actualCost).toFixed(4));
+  if (normalizedCost > reservation.reservedAmount + 0.0001) {
+    await supabase
+      .from('billing_reservations')
+      .update({
+        status: 'failed',
+        updated_at: new Date().toISOString(),
+        metadata: {
+          ...(reservation.metadata || {}),
+          actualCost: normalizedCost,
+          overrun: Number((normalizedCost - reservation.reservedAmount).toFixed(4)),
+        },
+      } as any)
+      .eq('id', reservationId);
+    throw new ReservationOverrunError(reservationId, reservation.reservedAmount, normalizedCost);
+  }
+
+  if (usageEventIds.length > 0) {
+    await attachUsageEventsToReservation(reservationId, usageEventIds);
+  }
+
+  const releaseAmount = Number((reservation.reservedAmount - normalizedCost).toFixed(4));
+  const updatedReservation = await releaseHeldAmount(reservation, releaseAmount, `Release unused funds for ${reservation.workflowType}`, 'settling');
+
+  if (normalizedCost > 0) {
+    const { balanceBefore, result } = await runBalanceRpc('settle_reserved_credits', reservation.userId, normalizedCost);
+    await supabase.from('credit_transactions').insert({
+      user_id: reservation.userId,
+      amount: 0,
+      balance_before: balanceBefore,
+      balance_after: result.new_balance,
+      transaction_type: 'settle',
+      reservation_id: reservationId,
+      reason: `Settled funds for ${reservation.workflowType}`,
+      metadata: {
+        ...(updatedReservation.metadata || {}),
+        settledAmount: normalizedCost,
+        usageEventIds,
+      },
+    } as any);
+  }
+
+  await supabase
+    .from('usage_events')
+    .update({
+      status: 'completed',
+      processed_at: new Date().toISOString(),
+    } as any)
+    .eq('reservation_id', reservationId)
+    .neq('status', 'failed');
+
+  const { data, error } = await supabase
+    .from('billing_reservations')
+    .update({
+      status: normalizedCost > 0 ? 'settled' : 'released',
+      settled_amount: normalizedCost,
+      released_amount: updatedReservation.releasedAmount,
+      updated_at: new Date().toISOString(),
+      completed_at: new Date().toISOString(),
+    } as any)
+    .eq('id', reservationId)
+    .select('*')
+    .single() as { data: any; error: any };
+
+  if (error || !data) {
+    throw new Error(error?.message || 'Failed to finalize explicit reservation settlement');
+  }
+
+  return mapReservationRow(data);
+}
+
+export async function reconcileBillingReservations(options?: {
+  limit?: number;
+  staleActiveMinutes?: number;
+  staleSettlingMinutes?: number;
+}): Promise<{
+  scanned: number;
+  expired: number;
+  settled: number;
+  failed: number;
+  errors: Array<{ reservationId: string; error: string }>;
+}> {
+  const limit = Math.min(Math.max(options?.limit ?? 100, 1), 500);
+  const staleActiveMinutes = Math.max(options?.staleActiveMinutes ?? 120, 5);
+  const staleSettlingMinutes = Math.max(options?.staleSettlingMinutes ?? 15, 1);
+  const now = Date.now();
+  const activeCutoff = new Date(now - staleActiveMinutes * 60 * 1000).toISOString();
+  const settlingCutoff = new Date(now - staleSettlingMinutes * 60 * 1000).toISOString();
+
+  const { data: rows, error } = await supabase
+    .from('billing_reservations')
+    .select('*')
+    .in('status', ['active', 'settling'])
+    .order('updated_at', { ascending: true })
+    .limit(limit) as { data: any[] | null; error: any };
+
+  if (error) {
+    throw new Error(`Failed to load billing reservations for reconciliation: ${error.message}`);
+  }
+
+  const result = {
+    scanned: rows?.length || 0,
+    expired: 0,
+    settled: 0,
+    failed: 0,
+    errors: [] as Array<{ reservationId: string; error: string }>,
+  };
+
+  for (const row of rows || []) {
+    const reservation = mapReservationRow(row);
+    try {
+      const expiresAt = reservation.expiresAt ? new Date(reservation.expiresAt).getTime() : null;
+      const isExpired = expiresAt !== null && expiresAt <= now;
+      const hasStaleActive = reservation.status === 'active' && reservation.updatedAt <= activeCutoff;
+      const hasStaleSettling = reservation.status === 'settling' && reservation.updatedAt <= settlingCutoff;
+
+      if (reservation.status === 'active' && (isExpired || hasStaleActive)) {
+        const { data: pendingUsage } = await supabase
+          .from('usage_events')
+          .select('id')
+          .eq('reservation_id', reservation.id)
+          .eq('status', 'pending')
+          .limit(1) as { data: any[] | null };
+
+        if ((pendingUsage || []).length > 0) {
+          await settleReservation(reservation.id);
+          result.settled += 1;
+        } else {
+          await failReservation(reservation.id, isExpired ? 'Reservation expired before settlement' : 'Reconciler released stale reservation');
+          result.expired += 1;
+        }
+        continue;
+      }
+
+      if (reservation.status === 'settling' && hasStaleSettling) {
+        await settleReservation(reservation.id);
+        result.settled += 1;
+      }
+    } catch (reconcileError: any) {
+      result.failed += 1;
+      result.errors.push({
+        reservationId: reservation.id,
+        error: reconcileError?.message || String(reconcileError),
+      });
+    }
+  }
+
+  return result;
 }
 
 // ============================================================================

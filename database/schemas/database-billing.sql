@@ -40,8 +40,9 @@ COMMENT ON COLUMN account_credits.lifetime_credits_spent IS 'Total credits spent
 
 CREATE TABLE IF NOT EXISTS usage_events (
   id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
-  user_id UUID NOT NULL REFERENCES auth.users(id) ON DELETE CASCADE,
+  user_id UUID REFERENCES auth.users(id) ON DELETE SET NULL,
   project_id UUID REFERENCES projects(id) ON DELETE SET NULL,
+  reservation_id UUID,
 
   -- Service identification
   service_key TEXT NOT NULL, -- e.g., 'assemblyai_transcription', 'openai_gpt4o_mini_input'
@@ -83,13 +84,47 @@ COMMENT ON COLUMN usage_events.billed_cost IS 'Cost charged to user (raw_cost * 
 COMMENT ON COLUMN usage_events.metadata IS 'Service-specific data: model, duration, token counts, etc.';
 
 -- ============================================================================
+-- Billing Reservations Table
+-- ============================================================================
+-- Reserves estimated funds before billable workflows begin, then settles against actual usage
+
+CREATE TABLE IF NOT EXISTS billing_reservations (
+  id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
+  user_id UUID REFERENCES auth.users(id) ON DELETE SET NULL,
+  project_id UUID REFERENCES projects(id) ON DELETE SET NULL,
+  workflow_type TEXT NOT NULL,
+  status TEXT NOT NULL DEFAULT 'active' CHECK (status IN ('pending', 'active', 'settling', 'settled', 'released', 'expired', 'failed')),
+  reserved_amount DECIMAL(10,4) NOT NULL CHECK (reserved_amount >= 0),
+  settled_amount DECIMAL(10,4) NOT NULL DEFAULT 0 CHECK (settled_amount >= 0),
+  released_amount DECIMAL(10,4) NOT NULL DEFAULT 0 CHECK (released_amount >= 0),
+  currency TEXT NOT NULL DEFAULT 'USD',
+  metadata JSONB DEFAULT '{}',
+  expires_at TIMESTAMPTZ,
+  created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+  updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+  completed_at TIMESTAMPTZ,
+
+  CONSTRAINT billing_reservations_totals_check CHECK (
+    settled_amount + released_amount <= reserved_amount + 0.0001
+  )
+);
+
+CREATE INDEX IF NOT EXISTS idx_billing_reservations_user_date ON billing_reservations(user_id, created_at DESC);
+CREATE INDEX IF NOT EXISTS idx_billing_reservations_project ON billing_reservations(project_id) WHERE project_id IS NOT NULL;
+CREATE INDEX IF NOT EXISTS idx_billing_reservations_status ON billing_reservations(status);
+
+COMMENT ON TABLE billing_reservations IS 'Estimated credit holds for billable workflows that settle against actual usage';
+COMMENT ON COLUMN billing_reservations.workflow_type IS 'upload_processing, content_generation, analysis_job, etc.';
+COMMENT ON COLUMN billing_reservations.metadata IS 'Workflow-specific context such as analysis options or requested content types';
+
+-- ============================================================================
 -- Credit Transactions Table (Optional - for audit trail)
 -- ============================================================================
 -- Tracks all credit additions and deductions for full audit history
 
 CREATE TABLE IF NOT EXISTS credit_transactions (
   id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
-  user_id UUID NOT NULL REFERENCES auth.users(id) ON DELETE CASCADE,
+  user_id UUID REFERENCES auth.users(id) ON DELETE SET NULL,
 
   -- Transaction details
   amount DECIMAL(10,4) NOT NULL, -- Positive for additions, negative for deductions
@@ -97,10 +132,11 @@ CREATE TABLE IF NOT EXISTS credit_transactions (
   balance_after DECIMAL(10,4) NOT NULL,
 
   -- Transaction type
-  transaction_type TEXT NOT NULL CHECK (transaction_type IN ('purchase', 'bonus', 'refund', 'debit', 'admin_adjustment')),
+  transaction_type TEXT NOT NULL CHECK (transaction_type IN ('purchase', 'bonus', 'refund', 'debit', 'admin_adjustment', 'reserve', 'release', 'settle')),
 
   -- References
   usage_event_id UUID REFERENCES usage_events(id) ON DELETE SET NULL,
+  reservation_id UUID REFERENCES billing_reservations(id) ON DELETE SET NULL,
   payment_id TEXT, -- Stripe payment intent ID or similar
   invoice_number TEXT, -- Stripe invoice ID/number for purchases/refunds
   admin_user_id UUID REFERENCES auth.users(id) ON DELETE SET NULL,
@@ -131,6 +167,7 @@ COMMENT ON COLUMN credit_transactions.invoice_number IS 'Stripe invoice number/i
 -- Enable RLS
 ALTER TABLE account_credits ENABLE ROW LEVEL SECURITY;
 ALTER TABLE usage_events ENABLE ROW LEVEL SECURITY;
+ALTER TABLE billing_reservations ENABLE ROW LEVEL SECURITY;
 ALTER TABLE credit_transactions ENABLE ROW LEVEL SECURITY;
 
 -- Account Credits Policies
@@ -146,6 +183,9 @@ CREATE POLICY "Users can view own usage events" ON usage_events
 
 CREATE POLICY "Service role can insert usage events" ON usage_events
   FOR INSERT WITH CHECK (true); -- Requires service role key
+
+CREATE POLICY "Users can view own reservations" ON billing_reservations
+  FOR SELECT USING (auth.uid() = user_id);
 
 -- Credit Transactions Policies
 CREATE POLICY "Users can view own transactions" ON credit_transactions
@@ -217,6 +257,154 @@ END;
 $$ LANGUAGE plpgsql
 SET search_path = '';
 
+-- Function to safely reserve credits
+CREATE OR REPLACE FUNCTION public.reserve_user_credits(
+  p_user_id UUID,
+  p_amount DECIMAL(10,4),
+  p_current_version INTEGER
+)
+RETURNS TABLE(
+  success BOOLEAN,
+  new_balance DECIMAL(10,4),
+  new_version INTEGER,
+  error_message TEXT
+) AS $$
+DECLARE
+  v_current_balance DECIMAL(10,4);
+  v_current_version INTEGER;
+  v_new_balance DECIMAL(10,4);
+  v_new_version INTEGER;
+BEGIN
+  SELECT balance, version INTO v_current_balance, v_current_version
+  FROM public.account_credits
+  WHERE user_id = p_user_id
+  FOR UPDATE;
+
+  IF NOT FOUND THEN
+    RETURN QUERY SELECT false, 0::DECIMAL(10,4), 0, 'User credit account not found';
+    RETURN;
+  END IF;
+
+  IF v_current_version != p_current_version THEN
+    RETURN QUERY SELECT false, v_current_balance, v_current_version, 'Version mismatch - concurrent update detected';
+    RETURN;
+  END IF;
+
+  IF v_current_balance < p_amount THEN
+    RETURN QUERY SELECT false, v_current_balance, v_current_version,
+      format('Insufficient credits: have $%s, need $%s', v_current_balance, p_amount);
+    RETURN;
+  END IF;
+
+  v_new_balance := v_current_balance - p_amount;
+  v_new_version := v_current_version + 1;
+
+  UPDATE public.account_credits
+  SET
+    balance = v_new_balance,
+    version = v_new_version,
+    updated_at = NOW()
+  WHERE user_id = p_user_id;
+
+  RETURN QUERY SELECT true, v_new_balance, v_new_version, NULL::TEXT;
+END;
+$$ LANGUAGE plpgsql
+SET search_path = '';
+
+-- Function to safely release reserved credits back to spendable balance
+CREATE OR REPLACE FUNCTION public.release_reserved_credits(
+  p_user_id UUID,
+  p_amount DECIMAL(10,4),
+  p_current_version INTEGER
+)
+RETURNS TABLE(
+  success BOOLEAN,
+  new_balance DECIMAL(10,4),
+  new_version INTEGER,
+  error_message TEXT
+) AS $$
+DECLARE
+  v_current_balance DECIMAL(10,4);
+  v_current_version INTEGER;
+  v_new_balance DECIMAL(10,4);
+  v_new_version INTEGER;
+BEGIN
+  SELECT balance, version INTO v_current_balance, v_current_version
+  FROM public.account_credits
+  WHERE user_id = p_user_id
+  FOR UPDATE;
+
+  IF NOT FOUND THEN
+    RETURN QUERY SELECT false, 0::DECIMAL(10,4), 0, 'User credit account not found';
+    RETURN;
+  END IF;
+
+  IF v_current_version != p_current_version THEN
+    RETURN QUERY SELECT false, v_current_balance, v_current_version, 'Version mismatch - concurrent update detected';
+    RETURN;
+  END IF;
+
+  v_new_balance := v_current_balance + p_amount;
+  v_new_version := v_current_version + 1;
+
+  UPDATE public.account_credits
+  SET
+    balance = v_new_balance,
+    version = v_new_version,
+    updated_at = NOW()
+  WHERE user_id = p_user_id;
+
+  RETURN QUERY SELECT true, v_new_balance, v_new_version, NULL::TEXT;
+END;
+$$ LANGUAGE plpgsql
+SET search_path = '';
+
+-- Function to convert a held amount into finalized spend
+CREATE OR REPLACE FUNCTION public.settle_reserved_credits(
+  p_user_id UUID,
+  p_amount DECIMAL(10,4),
+  p_current_version INTEGER
+)
+RETURNS TABLE(
+  success BOOLEAN,
+  new_balance DECIMAL(10,4),
+  new_version INTEGER,
+  error_message TEXT
+) AS $$
+DECLARE
+  v_current_balance DECIMAL(10,4);
+  v_current_version INTEGER;
+  v_new_version INTEGER;
+BEGIN
+  SELECT balance, version INTO v_current_balance, v_current_version
+  FROM public.account_credits
+  WHERE user_id = p_user_id
+  FOR UPDATE;
+
+  IF NOT FOUND THEN
+    RETURN QUERY SELECT false, 0::DECIMAL(10,4), 0, 'User credit account not found';
+    RETURN;
+  END IF;
+
+  IF v_current_version != p_current_version THEN
+    RETURN QUERY SELECT false, v_current_balance, v_current_version, 'Version mismatch - concurrent update detected';
+    RETURN;
+  END IF;
+
+  v_new_version := v_current_version + 1;
+
+  UPDATE public.account_credits
+  SET
+    version = v_new_version,
+    lifetime_credits_spent = lifetime_credits_spent + p_amount,
+    updated_at = NOW()
+  WHERE user_id = p_user_id;
+
+  RETURN QUERY SELECT true, v_current_balance, v_new_version, NULL::TEXT;
+END;
+$$ LANGUAGE plpgsql
+SET search_path = '';
+
 -- Function to add credits
 CREATE OR REPLACE FUNCTION public.add_user_credits(
   p_user_id UUID,
@@ -255,11 +443,13 @@ SET search_path = '';
 GRANT SELECT ON account_credits TO authenticated;
 GRANT UPDATE ON account_credits TO authenticated;
 GRANT SELECT ON usage_events TO authenticated;
+GRANT SELECT ON billing_reservations TO authenticated;
 GRANT SELECT ON credit_transactions TO authenticated;
 
 -- Grant service role full access
 GRANT ALL ON account_credits TO service_role;
 GRANT ALL ON usage_events TO service_role;
+GRANT ALL ON billing_reservations TO service_role;
 GRANT ALL ON credit_transactions TO service_role;
 
 -- Create view for user balance summary

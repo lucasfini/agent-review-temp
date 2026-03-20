@@ -3,6 +3,7 @@
 import { useState } from 'react';
 import { ChevronDown, RefreshCw, History, Clock } from 'lucide-react';
 import { cn } from '@/lib/utils';
+import { FeatureHelp } from '@/components/ui/feature-help';
 
 interface InsightsHeaderProps {
   snapshots: Array<{
@@ -36,7 +37,12 @@ export function InsightsHeader({
       <div className="flex flex-col sm:flex-row sm:items-start justify-between gap-4">
         <div>
           <h3 className="flex items-center gap-2 text-lg font-semibold text-slate-900 dark:text-slate-50">
-            Insights & Gaps
+            Creator Coaching
+            <FeatureHelp
+              title="Creator Coaching"
+              description="Shows what worked, what felt weak, and what to improve next time based on the transcript."
+              bestFor="improving the quality of future recordings, not just measuring coverage"
+            />
             {!isLatest && (
               <span className="inline-flex items-center rounded border border-slate-200 bg-slate-100 px-2 py-0.5 text-xs font-medium text-slate-500 dark:border-slate-700 dark:bg-slate-800 dark:text-slate-400">
                 <History className="w-3 h-3 mr-1" />
@@ -45,7 +51,7 @@ export function InsightsHeader({
             )}
           </h3>
           <p className="mt-1 text-sm text-slate-500 dark:text-slate-400">
-            AI-driven visibility into topic mix, CTA cadence, and editorial gaps.
+            What worked, what needs work, and what to improve next time.
           </p>
         </div>
 

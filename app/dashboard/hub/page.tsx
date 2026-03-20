@@ -21,8 +21,6 @@ import {
   FolderOpen,
   TrendingUp,
   Calendar,
-  Crown,
-  Star,
   Sparkles,
   Users,
   Mic,
@@ -132,27 +130,6 @@ function StatusBadge({ status }: { status: Project['status'] }) {
   );
 }
 
-function TierBadge({ tier }: { tier?: string }) {
-  if (!tier) return null;
-
-  // Normalize legacy values
-  const normalized = tier === 'basic' ? 'standard' : tier === 'premium' ? 'pro' : tier;
-
-  const config: Record<string, { variant: 'secondary' | 'pro'; icon: any; label: string }> = {
-    standard: { variant: 'secondary', icon: null, label: 'Standard' },
-    pro: { variant: 'pro', icon: Crown, label: 'Pro' }
-  };
-
-  const { variant, icon: Icon, label } = config[normalized] || config.standard;
-
-  return (
-    <Badge variant={variant} className="gap-1">
-      {Icon && <Icon className="h-3 w-3" />}
-      {label}
-    </Badge>
-  );
-}
-
 function ProjectTypeBadge({ type }: { type?: ProjectType }) {
   if (!type) return null;
 
@@ -238,7 +215,7 @@ export default function ProjectHubPage() {
   const [loading, setLoading] = useState(true);
   const [searchTerm, setSearchTerm] = useState('');
   const [statusFilter, setStatusFilter] = useState<'all' | Project['status']>('all');
-  const [tierFilter, setTierFilter] = useState<'all' | 'standard' | 'pro'>('all');
+  const [typeFilter, setTypeFilter] = useState<'all' | ProjectType>('all');
   const [sortBy, setSortBy] = useState<'recent' | 'oldest' | 'name'>('recent');
   const [showFilters, setShowFilters] = useState(false);
   const [deletingId, setDeletingId] = useState<string | null>(null);
@@ -330,13 +307,9 @@ export default function ProjectHubPage() {
       result = result.filter(p => p.status === statusFilter);
     }
 
-    // Tier filter (normalize legacy values for comparison)
-    if (tierFilter !== 'all') {
-      result = result.filter(p => {
-        const level = p.performance_level;
-        const norm = level === 'basic' ? 'standard' : level === 'premium' ? 'pro' : level;
-        return norm === tierFilter;
-      });
+    // Audio type filter
+    if (typeFilter !== 'all') {
+      result = result.filter((project) => project.project_type === typeFilter);
     }
 
     // Sort
@@ -354,7 +327,7 @@ export default function ProjectHubPage() {
     });
 
     return result;
-  }, [projects, searchTerm, statusFilter, tierFilter, sortBy]);
+  }, [projects, searchTerm, statusFilter, typeFilter, sortBy]);
 
   const totalPages = useMemo(
     () => Math.max(1, Math.ceil(filteredProjects.length / HUB_PAGE_SIZE)),
@@ -368,7 +341,7 @@ export default function ProjectHubPage() {
 
   useEffect(() => {
     setHubPage(1);
-  }, [searchTerm, statusFilter, tierFilter, sortBy]);
+  }, [searchTerm, statusFilter, typeFilter, sortBy]);
 
   useEffect(() => {
     if (hubPage > totalPages) {
@@ -557,23 +530,26 @@ export default function ProjectHubPage() {
                   </select>
                 </div>
                 <div className="flex items-center gap-2">
-                  <span className="text-xs font-medium text-slate-500 dark:text-slate-400">Tier:</span>
+                  <span className="text-xs font-medium text-slate-500 dark:text-slate-400">Type:</span>
                   <select
-                    value={tierFilter}
-                    onChange={(e) => setTierFilter(e.target.value as any)}
+                    value={typeFilter}
+                    onChange={(e) => setTypeFilter(e.target.value as any)}
                     className="px-2 py-1 text-sm border border-slate-300 dark:border-slate-700 rounded bg-white dark:bg-slate-800 text-slate-900 dark:text-slate-200"
                   >
                     <option value="all">All</option>
-                    <option value="standard">Standard</option>
-                    <option value="pro">Pro</option>
+                    <option value="DEBATE">Debate</option>
+                    <option value="INTERVIEW">Interview</option>
+                    <option value="PODCAST">Podcast</option>
+                    <option value="MONOLOGUE">Monologue</option>
+                    <option value="OTHER">Other</option>
                   </select>
                 </div>
-                {(statusFilter !== 'all' || tierFilter !== 'all') && (
+                {(statusFilter !== 'all' || typeFilter !== 'all') && (
                   <button
                     type="button"
                     onClick={() => {
                       setStatusFilter('all');
-                      setTierFilter('all');
+                      setTypeFilter('all');
                     }}
                     className="text-xs text-blue-600 hover:text-blue-500 dark:hover:text-blue-300"
                   >
@@ -596,7 +572,7 @@ export default function ProjectHubPage() {
                   onClick={() => {
                     setSearchTerm('');
                     setStatusFilter('all');
-                    setTierFilter('all');
+                    setTypeFilter('all');
                   }}
                   className="text-sm text-blue-600 dark:text-blue-400 hover:text-blue-500 dark:hover:text-blue-300 transition-colors"
                 >
@@ -632,7 +608,6 @@ export default function ProjectHubPage() {
                     </div>
                     {/* Metadata row */}
                     <div className="flex items-center gap-2 flex-wrap text-xs text-slate-500 dark:text-slate-500">
-                      <TierBadge tier={project.performance_level} />
                       <ProjectTypeBadge type={project.project_type} />
                       <span>{prefs.formatRelativeDate(project.created_at)}</span>
                       {project.audio_duration && (
@@ -688,7 +663,7 @@ export default function ProjectHubPage() {
                     <tr className="border-b border-slate-200 dark:border-slate-800 bg-slate-50 dark:bg-slate-800/40">
                       <th className="text-left font-medium text-slate-500 dark:text-slate-400 px-4 py-3">Project</th>
                       <th className="text-left font-medium text-slate-500 dark:text-slate-400 px-4 py-3">Status</th>
-                      <th className="hidden sm:table-cell text-left font-medium text-slate-500 dark:text-slate-400 px-4 py-3">Tier</th>
+                      <th className="hidden sm:table-cell text-left font-medium text-slate-500 dark:text-slate-400 px-4 py-3">Type</th>
                       <th className="hidden md:table-cell text-left font-medium text-slate-500 dark:text-slate-400 px-4 py-3">Duration</th>
                       <th className="hidden md:table-cell text-left font-medium text-slate-500 dark:text-slate-400 px-4 py-3">Content</th>
                       <th className="hidden sm:table-cell text-left font-medium text-slate-500 dark:text-slate-400 px-4 py-3">Created</th>
@@ -726,7 +701,6 @@ export default function ProjectHubPage() {
                         </td>
                         <td className="hidden sm:table-cell px-4 py-3">
                           <div className="flex items-center gap-1.5">
-                            <TierBadge tier={project.performance_level} />
                             <ProjectTypeBadge type={project.project_type} />
                           </div>
                         </td>

@@ -50,7 +50,7 @@ function getHubSteps(onNavigateToProjects: () => void) {
       popover: {
         title: 'Filter & Search',
         description:
-          'Filter by processing tier or status. Search by name. Useful when you have dozens of episodes.',
+          'Filter by audio type or status. Search by name. Useful when you have dozens of episodes.',
         side: 'bottom' as const,
         align: 'start' as const,
       },
@@ -105,7 +105,7 @@ function getProjectsSteps(
       popover: {
         title: 'Your Project Library',
         description:
-          'All your projects live here. We will open a premium project to show the full experience.',
+          'All your projects live here. We will open a featured project to show the full experience.',
         side: 'right' as const,
         align: 'start' as const,
       },
@@ -113,9 +113,9 @@ function getProjectsSteps(
     {
       element: '[data-tour="premium-project"]',
       popover: {
-        title: 'Premium Project',
+        title: 'Featured Project',
         description:
-          'Open the premium AI Roundtable project to see the complete workflow.',
+          'Open the featured AI Roundtable project to see the complete workflow.',
         side: 'right' as const,
         align: 'start' as const,
         onNextClick: handlers.selectPremium,
@@ -191,7 +191,7 @@ function getProjectsSteps(
       popover: {
         title: 'Generated Content',
         description:
-          'Premium projects include a full content suite across platforms.',
+          'Generated content lives here across platforms and formats.',
         side: 'bottom' as const,
         align: 'end' as const,
         onNextClick: handlers.expandFirstOutput,
@@ -380,7 +380,7 @@ function getUploadSteps(onNavigateToAnalytics: () => void, onNavigateToProjects:
       popover: {
         title: 'Choose Your Tier',
         description:
-          'Basic gives you a clean transcript with speaker labels. Pro adds AI name extraction and a summary. Premium adds roles, chapters, takeaways, and social quotes — everything you need for full content generation.',
+          'Transcript gives you a clean transcript with speaker labels. Content Kit adds named speakers, summary, chapters, takeaways, and quotes. Repurpose Pack includes all 11 publish-ready content types.',
         side: 'bottom' as const,
         align: 'start' as const,
       },
@@ -545,7 +545,7 @@ function getSettingsSteps(onNavigateToHub: () => void, onNavigateToSignup: () =>
       popover: {
         title: 'Pay-As-You-Go Credits',
         description:
-          'No subscriptions. Buy credits and use them as you process audio. Basic costs ~$0.39/hr. Premium costs ~$0.55/hr.',
+          'No subscriptions. Buy credits and use them as you process audio. Transcript costs $0.49/hr, Content Kit costs $1.49/hr, and Repurpose Pack costs $2.49/hr.',
         side: 'right' as const,
         align: 'start' as const,
       },

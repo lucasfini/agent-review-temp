@@ -1,6 +1,7 @@
 "use client"
 
 import { BarChart3, Loader2 } from "lucide-react"
+import { FeatureHelp } from "@/components/ui/feature-help"
 
 interface ReadyProject {
   id: string
@@ -11,7 +12,7 @@ interface RunAnalysisSectionProps {
   selectedProject: ReadyProject | null
   selectedHasTranscript: boolean
   selectedHasSnapshot: boolean
-  runningCoverageIds: Set<string>
+  runningCoverageIds: Map<string, string>
   onRunAnalysis: (projectId: string) => void
 }
 
@@ -25,7 +26,7 @@ export function RunAnalysisSection({
   const selectedIsRunning = selectedProject ? runningCoverageIds.has(selectedProject.id) : false
 
   return (
-    <div className="flex items-center">
+    <div className="flex items-center gap-2">
       <button
         type="button"
         onClick={() => selectedProject && onRunAnalysis(selectedProject.id)}
@@ -44,6 +45,11 @@ export function RunAnalysisSection({
           </>
         )}
       </button>
+      <FeatureHelp
+        title={selectedHasSnapshot ? "Rerun Analysis" : "Run Analysis"}
+        description="Reviews the transcript to generate creator coaching, topic intensity, and supporting analytics for this project."
+        bestFor="understanding what worked, what felt weak, and what to improve in the next recording"
+      />
     </div>
   )
 }

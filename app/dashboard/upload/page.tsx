@@ -1,6 +1,6 @@
 "use client";
 
-import { useState, useCallback, useEffect, useRef } from 'react';
+import { useState, useCallback, useEffect, useRef, useMemo } from 'react';
 import { Upload, FileAudio, X, AlertCircle, CheckCircle, Clock, History, Trash2, Eye, FileVideo, Loader2, ChevronDown, ChevronUp, Lightbulb, Users, Mic, Pencil, UserCircle, MoreHorizontal } from 'lucide-react';
 import Link from 'next/link';
 import { supabase } from '@/lib/supabase/client';
@@ -10,10 +10,14 @@ import { calculateOverallProgress, getStageDisplayName, getUserFacingProcessingM
 import { SpeakerRosterForm, type RosterSpeaker } from '@/components/SpeakerRosterForm';
 import { useAudioExtractor } from '@/lib/hooks/useAudioExtractor';
 import { emitProjectMutation } from '@/lib/project-events';
+import { normalizeTier, type TierLevel } from '@/lib/tier-config';
+import { ANALYSIS_OPTION_CONFIG, DEFAULT_ANALYSIS_OPTIONS, getProcessingTierForAnalysis, getSelectedAnalysisKeys, normalizeAnalysisOptions, type AnalysisOptions } from '@/lib/analysis-options';
+import { estimateTranscriptionCost } from '@/lib/billing/cost-map';
+import { formatSiteCreditDeltaFromUsd } from '@/lib/billing/display';
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogDescription } from '@/components/ui/dialog';
+import { FeatureHelp } from '@/components/ui/feature-help';
 import { toast } from 'sonner';
 
-type PerformanceLevel = 'standard' | 'pro';
 type IntegrationProvider = 'zoom' | 'microsoft';
 const HISTORY_PAGE_SIZE = 10;
 
@@ -56,7 +60,8 @@ interface UploadedFile {
   processingStage?: ProcessingStage;
   stageProgress?: number;
   processingMessage?: string;
-  performanceLevel: PerformanceLevel;
+  processingTier: TierLevel;
+  analysisOptions: AnalysisOptions;
   displayName: string;
   sourceUrl?: string;
   sourceType?: 'local' | 'url' | 'youtube' | 'direct';
@@ -88,25 +93,9 @@ interface ActiveProject {
   processing_stage?: ProcessingStage;
   processing_progress?: number;
   processing_message?: string | null;
-  performance_level?: PerformanceLevel;
+  performance_level?: TierLevel;
+  metadata?: any;
 }
-
-const TIER_OPTIONS: { id: PerformanceLevel; label: string; outcome: string; cost: string; description: string }[] = [
-  {
-    id: 'standard',
-    label: 'Standard',
-    outcome: 'Transcript + who said what',
-    cost: '$0.39/hr',
-    description: 'Clean transcript with diarization and numbered speakers. All 11 content types stay available after processing.',
-  },
-  {
-    id: 'pro',
-    label: 'Pro',
-    outcome: 'Full analysis + content-ready',
-    cost: '$0.67/hr',
-    description: 'Adds speaker names, roles, summaries, chapters, takeaways, and quotes to improve downstream content quality.',
-  },
-];
 
 async function readErrorMessage(response: Response, fallback: string) {
   try {
@@ -129,12 +118,44 @@ function formatExpiryDate(value?: string | null): string | null {
   });
 }
 
-function formatTierLabel(level?: string | null): string {
-  if (!level) return 'Standard';
-  if (level === 'basic') return 'Standard';
-  if (level === 'premium') return 'Pro';
-  return level.charAt(0).toUpperCase() + level.slice(1);
+function formatAnalysisSummary(options: AnalysisOptions): string {
+  const selected = getSelectedAnalysisKeys(options);
+  if (selected.length === 0) {
+    return 'Transcript only';
+  }
+
+  return selected
+    .map((key) => ANALYSIS_OPTION_CONFIG.find((option) => option.key === key)?.label)
+    .filter(Boolean)
+    .join(' · ');
 }
+
+const ANALYSIS_HELP_COPY: Record<keyof AnalysisOptions, { description: string; bestFor: string }> = {
+  namedSpeakers: {
+    description: 'Attempts to replace numbered speaker labels with real names and roles like host or guest.',
+    bestFor: 'the recording clearly includes introductions or repeated speaker references',
+  },
+  summary: {
+    description: 'Creates a quick overview of the recording so you can understand the main arc without rereading the full transcript.',
+    bestFor: 'you want a fast recap before editing, publishing, or generating content',
+  },
+  insights: {
+    description: 'Pulls out notable ideas, people, concepts, and useful context from the conversation.',
+    bestFor: 'the episode teaches, argues, or references concepts you may want to reuse later',
+  },
+  chapters: {
+    description: 'Breaks the recording into timestamped sections so the episode is easier to scan and navigate.',
+    bestFor: 'long-form audio with clear topic changes or segments',
+  },
+  takeaways: {
+    description: 'Extracts the strongest lessons, conclusions, or action points from the recording.',
+    bestFor: 'you want the fastest way to see the practical value of the episode',
+  },
+  quotes: {
+    description: 'Finds memorable lines worth highlighting, clipping, or turning into social content later.',
+    bestFor: 'the recording includes strong phrasing, punchy opinions, or quotable moments',
+  },
+};
 
 export default function UploadPage() {
   const [uploadedFiles, setUploadedFiles] = useState<UploadedFile[]>([]);
@@ -147,8 +168,8 @@ export default function UploadPage() {
   const [historyTotalPages, setHistoryTotalPages] = useState(1);
   const [activeProjects, setActiveProjects] = useState<ActiveProject[]>([]);
   const [activeProjectsLoading, setActiveProjectsLoading] = useState(false);
-  const [performanceLevel, setPerformanceLevel] = useState<PerformanceLevel>('pro');
-  const performanceLevelRef = useRef<PerformanceLevel>('pro');
+  const [analysisOptions, setAnalysisOptions] = useState<AnalysisOptions>(DEFAULT_ANALYSIS_OPTIONS);
+  const analysisOptionsRef = useRef<AnalysisOptions>(DEFAULT_ANALYSIS_OPTIONS);
   const [rosterSpeakers, setRosterSpeakers] = useState<RosterSpeaker[]>([]);
   const [speakerCount, setSpeakerCount] = useState<number | undefined>(undefined);
   const [recommendedSpeakerCount, setRecommendedSpeakerCount] = useState<number | undefined>(undefined);
@@ -177,6 +198,24 @@ export default function UploadPage() {
 
   const { extractAudio } = useAudioExtractor();
   const { user, session, isDemoMode } = useAuth();
+  const processingTier = useMemo(() => getProcessingTierForAnalysis(analysisOptions), [analysisOptions]);
+  const selectedAnalysisSummary = useMemo(() => formatAnalysisSummary(analysisOptions), [analysisOptions]);
+  const previewFile = useMemo(
+    () => uploadedFiles.find((file) => file.file && ['queued', 'pending', 'extracting', 'uploading'].includes(file.status)),
+    [uploadedFiles]
+  );
+  const previewDurationSeconds = useMemo(() => {
+    if (!previewFile?.file) return null;
+    return Math.max(1, Math.round(previewFile.file.size / (128000 / 8)));
+  }, [previewFile]);
+  const uploadCostEstimate = useMemo(() => {
+    if (!previewDurationSeconds) return null;
+    return estimateTranscriptionCost({
+      durationSeconds: previewDurationSeconds,
+      tier: processingTier,
+      analysisOptions,
+    });
+  }, [previewDurationSeconds, processingTier, analysisOptions]);
 
   useEffect(() => {
     const controllers = uploadControllersRef.current;
@@ -219,9 +258,12 @@ export default function UploadPage() {
     }
   }, [uploadedFiles]);
 
-  const handlePerformanceChange = (level: PerformanceLevel) => {
-    performanceLevelRef.current = level;
-    setPerformanceLevel(level);
+  const handleAnalysisOptionToggle = (key: keyof AnalysisOptions) => {
+    setAnalysisOptions(prev => {
+      const next = { ...prev, [key]: !prev[key] };
+      analysisOptionsRef.current = next;
+      return next;
+    });
   };
 
   useEffect(() => {
@@ -369,7 +411,7 @@ export default function UploadPage() {
       setActiveProjectsLoading(true);
       const { data, error } = await supabase
         .from('projects')
-        .select('id, title, audio_file_name, audio_file_size, audio_duration, audio_expires_at, audio_deleted_at, status, created_at, processing_stage, processing_progress, processing_message, performance_level')
+        .select('id, title, audio_file_name, audio_file_size, audio_duration, audio_expires_at, audio_deleted_at, status, created_at, processing_stage, processing_progress, processing_message, performance_level, metadata')
         .eq('user_id', user.id)
         .in('status', ['uploading', 'processing'])
         .order('created_at', { ascending: false })
@@ -420,6 +462,9 @@ export default function UploadPage() {
       method: 'POST',
       headers,
     });
+
+    // 409 means the project already completed or failed — treat as a no-op
+    if (response.status === 409) return;
 
     if (!response.ok) {
       const data = await response.json().catch(() => ({ error: 'Failed to cancel upload' }));
@@ -612,7 +657,7 @@ export default function UploadPage() {
         body: JSON.stringify({
           url: trimmed,
           title: urlTitle.trim() || undefined,
-          performanceLevel,
+          analysisOptions,
           speakerCount,
           rosterSpeakers
         })
@@ -633,7 +678,8 @@ export default function UploadPage() {
         processingStage: 'transcribing',
         stageProgress: 0,
         processingMessage: 'Import complete. Starting transcription...',
-        performanceLevel,
+        processingTier,
+        analysisOptions: normalizeAnalysisOptions(analysisOptions),
         displayName,
         sourceUrl: trimmed,
         sourceType,
@@ -641,7 +687,7 @@ export default function UploadPage() {
       };
 
       setUploadedFiles(prev => [newEntry, ...prev]);
-      pollForProgress(newEntry.id, result.projectId, performanceLevel);
+      pollForProgress(newEntry.id, result.projectId, processingTier);
       setUrlInput('');
       setUrlTitle('');
       await fetchActiveProjects();
@@ -655,7 +701,8 @@ export default function UploadPage() {
   };
 
   const handleFiles = (files: File[]) => {
-    const selectedLevel = performanceLevelRef.current;
+    const selectedAnalysisOptions = normalizeAnalysisOptions(analysisOptionsRef.current);
+    const selectedProcessingTier = getProcessingTierForAnalysis(selectedAnalysisOptions);
 
     const AUDIO_EXTENSIONS = ['.mp3', '.wav', '.m4a', '.flac', '.ogg', '.webm'];
     const VIDEO_EXTENSIONS = ['.mp4', '.mov', '.mkv', '.avi'];
@@ -691,7 +738,8 @@ export default function UploadPage() {
       stageProgress: 0,
       processingMessage: 'File too large',
       error: `File exceeds the 500 MB limit (${formatFileSize(file.size)}). Please compress or trim the audio first.`,
-      performanceLevel: selectedLevel,
+      processingTier: selectedProcessingTier,
+      analysisOptions: selectedAnalysisOptions,
       displayName: file.name,
       sourceType: 'local',
     }));
@@ -706,7 +754,8 @@ export default function UploadPage() {
         processingStage: 'pending' as ProcessingStage,
         stageProgress: 0,
         processingMessage: 'Waiting in queue...',
-        performanceLevel: selectedLevel,
+        processingTier: selectedProcessingTier,
+        analysisOptions: selectedAnalysisOptions,
         displayName: file.name,
         sourceType: 'local',
       })),
@@ -718,7 +767,8 @@ export default function UploadPage() {
         processingStage: 'pending' as ProcessingStage,
         stageProgress: 0,
         processingMessage: 'Waiting in queue...',
-        performanceLevel: selectedLevel,
+        processingTier: selectedProcessingTier,
+        analysisOptions: selectedAnalysisOptions,
         displayName: file.name,
         sourceType: 'local',
       })),
@@ -784,9 +834,8 @@ export default function UploadPage() {
       if (!uploadedFile.file) {
         throw new Error('No file provided for upload');
       }
-      // Fix: use the performanceLevel stored on the file at drop time, not the live ref.
-      // This prevents a tier mismatch if the user changes tiers after dropping a file.
-      const filePerformanceLevel = uploadedFile.performanceLevel;
+      const fileProcessingTier = uploadedFile.processingTier;
+      const fileAnalysisOptions = normalizeAnalysisOptions(uploadedFile.analysisOptions);
       setUploadedFiles(prev =>
         prev.map(f => f.id === uploadedFile.id ? {
           ...f,
@@ -794,7 +843,7 @@ export default function UploadPage() {
           processingStage: 'uploading',
           stageProgress: 0,
           processingMessage: 'Uploading audio...',
-          progress: calculateOverallProgress(f.performanceLevel, 'uploading', 0),
+          progress: calculateOverallProgress(f.processingTier, 'uploading', 0),
         } : f)
       );
 
@@ -803,7 +852,8 @@ export default function UploadPage() {
         contentType: uploadedFile.file.type || 'application/octet-stream',
         size: uploadedFile.file.size,
         title: uploadedFile.file.name.replace(/\.[^/.]+$/, ""),
-        performanceLevel: filePerformanceLevel,
+        performanceLevel: fileProcessingTier,
+        analysisOptions: fileAnalysisOptions,
       };
 
       if (rosterSpeakers.length > 0) {
@@ -853,7 +903,7 @@ export default function UploadPage() {
                   ...f,
                   processingStage: 'uploading',
                   stageProgress: percentComplete,
-                  progress: calculateOverallProgress(f.performanceLevel, 'uploading', percentComplete),
+                  progress: calculateOverallProgress(f.processingTier, 'uploading', percentComplete),
                 };
               })
             );
@@ -898,7 +948,8 @@ export default function UploadPage() {
           objectKey,
           audioFingerprint,
           uploadToken,
-          performanceLevel: filePerformanceLevel,
+          performanceLevel: fileProcessingTier,
+          analysisOptions: fileAnalysisOptions,
           speakerCount
         }),
         signal: controller.signal,
@@ -917,11 +968,11 @@ export default function UploadPage() {
           processingStage: 'transcribing',
           stageProgress: 0,
           processingMessage: 'Upload complete. Starting transcription...',
-          progress: calculateOverallProgress(f.performanceLevel, 'transcribing', 0),
+          progress: calculateOverallProgress(f.processingTier, 'transcribing', 0),
         } : f)
       );
 
-      pollForProgress(uploadedFile.id, projectId, uploadedFile.performanceLevel);
+      pollForProgress(uploadedFile.id, projectId, uploadedFile.processingTier);
 
     } catch (error) {
       console.error('Upload error:', error);
@@ -983,7 +1034,7 @@ export default function UploadPage() {
     }
   };
 
-  const pollForProgress = (fileId: string, projectId: string, fallbackTier?: PerformanceLevel) => {
+  const pollForProgress = (fileId: string, projectId: string, fallbackTier?: TierLevel) => {
     const poll = async () => {
       if (cancelledUploadsRef.current.has(fileId)) {
         clearTrackedUploadState(fileId);
@@ -1011,9 +1062,9 @@ export default function UploadPage() {
           status.status === 'completed' ? 'completed' :
             status.status === 'failed' ? 'error' : 'processing';
         const tier = (status.performance_level ||
-          uploadedFiles.find(f => f.id === fileId)?.performanceLevel ||
+          uploadedFiles.find(f => f.id === fileId)?.processingTier ||
           fallbackTier ||
-          'standard') as PerformanceLevel;
+          'transcript') as TierLevel;
         const progressValue = status.status === 'completed'
           ? 100
           : calculateOverallProgress(tier, normalizedStage, stageProgress);
@@ -1166,36 +1217,6 @@ export default function UploadPage() {
               </div>
             )}
 
-            {/* Analysis level selector */}
-            <div data-tour="tier-selector" className="mb-5">
-              <p className="text-sm font-semibold text-slate-800 dark:text-slate-100 mb-2">Analysis level</p>
-              <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
-                {TIER_OPTIONS.map((option) => (
-                  <button
-                    key={option.id}
-                    type="button"
-                    onClick={() => handlePerformanceChange(option.id)}
-                    className={`border rounded-lg p-3 text-left transition-all ${performanceLevel === option.id
-                        ? 'border-blue-500 bg-blue-50 dark:bg-blue-900/20 shadow-sm'
-                        : 'border-slate-300 dark:border-slate-700 bg-white dark:bg-slate-900 hover:border-slate-400 dark:hover:border-slate-600 text-slate-900 dark:text-slate-50'
-                      }`}
-                  >
-                    <div className="flex items-center justify-between mb-1">
-                      <p className="text-sm font-semibold text-slate-900 dark:text-slate-50">{option.label}</p>
-                      <p className="text-xs font-medium text-slate-500">{option.cost}</p>
-                    </div>
-                    <p className={`text-xs font-medium mb-0.5 ${performanceLevel === option.id ? 'text-blue-600' : 'text-slate-500 dark:text-slate-400'}`}>
-                      {option.outcome}
-                    </p>
-                    <p className="text-[11px] text-slate-500 dark:text-slate-400 leading-snug">{option.description}</p>
-                  </button>
-                ))}
-              </div>
-              <p className="mt-3 text-xs text-slate-400 dark:text-slate-500">
-                All 11 content types are available on both plans. This setting only changes how much structure gets extracted during transcription.
-              </p>
-            </div>
-
             {/* Upload methods */}
             <div className="mb-6">
               <div className="flex w-full items-center rounded-lg border border-slate-300 dark:border-slate-700 bg-slate-50 dark:bg-slate-900 p-1 shadow-sm">
@@ -1263,7 +1284,14 @@ export default function UploadPage() {
             {activeTab === 'url' && (
               <div className="mb-6 border border-slate-300 dark:border-slate-700 bg-white dark:bg-slate-900 rounded-xl p-5 space-y-4">
                 <div>
-                  <h2 className="text-lg font-semibold text-slate-900 dark:text-slate-50">Import from URL</h2>
+                  <div className="flex items-center gap-2">
+                    <h2 className="text-lg font-semibold text-slate-900 dark:text-slate-50">Import from URL</h2>
+                    <FeatureHelp
+                      title="URL import"
+                      description="Import a hosted recording once, transcribe it, and use the finished project for analysis or content generation later."
+                      bestFor="YouTube links or direct audio or video URLs you do not want to download manually"
+                    />
+                  </div>
                   <p className="text-sm text-slate-500 dark:text-slate-400">
                     Paste a YouTube link or direct media URL, then transcribe once and generate whichever outputs you need later.
                   </p>
@@ -1296,7 +1324,7 @@ export default function UploadPage() {
                     />
                   </div>
                   {urlError && (
-                    <div className="text-sm text-red-600">{urlError}</div>
+                    <div className="text-sm text-amber-700 dark:text-amber-300">{urlError}</div>
                   )}
                   <div className="flex flex-col sm:flex-row sm:items-center gap-2 sm:gap-3">
                     <button
@@ -1319,7 +1347,14 @@ export default function UploadPage() {
               <div data-tour="integrations" className="mb-8">
                 <div className="flex items-center justify-between mb-4">
                   <div>
-                    <h2 className="text-lg font-semibold text-slate-900 dark:text-slate-50">Import from apps</h2>
+                    <div className="flex items-center gap-2">
+                      <h2 className="text-lg font-semibold text-slate-900 dark:text-slate-50">Import from apps</h2>
+                      <FeatureHelp
+                        title="Import from apps"
+                        description="Pull recordings directly from connected tools so you can skip manual exporting and start from the transcript."
+                        bestFor="Zoom or Teams recordings that already live in another app"
+                      />
+                    </div>
                     <p className="text-sm text-slate-500 dark:text-slate-400">Pull recordings directly from connected tools</p>
                   </div>
                 </div>
@@ -1370,6 +1405,89 @@ export default function UploadPage() {
                 </div>
               </div>
             )}
+
+            <div className="mb-6 rounded-2xl border border-slate-200 dark:border-slate-800 bg-white dark:bg-slate-900">
+              <div className="border-b border-slate-200 dark:border-slate-800 px-5 py-4">
+                <div className="flex items-start justify-between gap-4">
+                  <div>
+                    <div className="flex items-center gap-2">
+                      <h2 className="text-base font-semibold text-slate-900 dark:text-slate-50">Options</h2>
+                      <FeatureHelp
+                        title="Processing options"
+                        description="These are optional analysis add-ons. Leave them all off if you only want the transcript now."
+                        bestFor="choosing exactly which structured outputs should be generated during processing"
+                      />
+                    </div>
+                    <p className="mt-1 text-sm text-slate-500 dark:text-slate-400">
+                      Pick exactly what to generate during processing. Leave everything off if you just want the transcript now.
+                    </p>
+                  </div>
+                  <div className="rounded-full border border-slate-200 dark:border-slate-700 bg-slate-50 dark:bg-slate-800 px-3 py-1 text-xs font-medium text-slate-600 dark:text-slate-300">
+                        {selectedAnalysisSummary}
+                      </div>
+                    </div>
+              </div>
+              <div className="grid gap-3 p-5 md:grid-cols-2">
+                {ANALYSIS_OPTION_CONFIG.map((option) => (
+                  <div key={option.key} className="relative">
+                    <div className="absolute right-4 top-4 z-10">
+                      <FeatureHelp
+                        title={option.label}
+                        description={ANALYSIS_HELP_COPY[option.key].description}
+                        bestFor={ANALYSIS_HELP_COPY[option.key].bestFor}
+                      />
+                    </div>
+                    <button
+                      type="button"
+                      onClick={() => handleAnalysisOptionToggle(option.key)}
+                      className={`w-full rounded-xl border p-4 pr-10 text-left transition-colors ${
+                        analysisOptions[option.key]
+                          ? 'border-blue-500 bg-blue-50 dark:bg-blue-900/20'
+                          : 'border-slate-200 dark:border-slate-800 bg-slate-50/70 dark:bg-slate-950 hover:border-slate-300 dark:hover:border-slate-700'
+                      }`}
+                    >
+                      <div className="flex items-start gap-3">
+                        <div className={`mt-0.5 flex h-5 w-5 items-center justify-center rounded border ${
+                          analysisOptions[option.key]
+                            ? 'border-blue-500 bg-blue-600 text-white'
+                            : 'border-slate-300 dark:border-slate-700 bg-white dark:bg-slate-900'
+                        }`}>
+                          {analysisOptions[option.key] ? <CheckCircle className="h-3.5 w-3.5" /> : null}
+                        </div>
+                        <div>
+                          <p className="text-sm font-semibold text-slate-900 dark:text-slate-50">{option.label}</p>
+                          <p className="mt-1 text-xs leading-5 text-slate-500 dark:text-slate-400">{option.description}</p>
+                        </div>
+                      </div>
+                    </button>
+                  </div>
+                ))}
+              </div>
+              <div className="border-t border-slate-200 dark:border-slate-800 px-5 py-3">
+                <div className="flex flex-col gap-2 text-xs text-slate-500 dark:text-slate-400 md:flex-row md:items-center md:justify-between">
+                  <span>
+                    Transcription and numbered speaker labels are always included. You can generate any unselected analysis or content later from the project page.
+                  </span>
+                  {uploadCostEstimate ? (
+                    <div className="flex flex-wrap items-center gap-2 text-[11px]">
+                      <span className="rounded-full border border-slate-200 bg-slate-50 px-2.5 py-1 font-medium text-slate-600 dark:border-slate-700 dark:bg-slate-900 dark:text-slate-300">
+                        Base {formatSiteCreditDeltaFromUsd(uploadCostEstimate.transcription)}
+                      </span>
+                      <span className="rounded-full border border-slate-200 bg-slate-50 px-2.5 py-1 font-medium text-slate-600 dark:border-slate-700 dark:bg-slate-900 dark:text-slate-300">
+                        Add-ons {formatSiteCreditDeltaFromUsd(uploadCostEstimate.aiProcessing)}
+                      </span>
+                      <span className="rounded-full border border-blue-200 bg-blue-50 px-2.5 py-1 font-semibold text-blue-700 dark:border-blue-800/30 dark:bg-blue-900/20 dark:text-blue-300">
+                        Estimate {formatSiteCreditDeltaFromUsd(uploadCostEstimate.total)}
+                      </span>
+                    </div>
+                  ) : (
+                    <span className="text-[11px]">
+                      Estimate appears after you attach a file or choose a recording.
+                    </span>
+                  )}
+                </div>
+              </div>
+            </div>
 
             {/* Retention notice — quiet footnote, not a warning */}
             <p className="mb-4 text-xs text-slate-400 dark:text-slate-600 text-center">
@@ -1494,7 +1612,7 @@ export default function UploadPage() {
                           </div>
 
                           <span className="text-[10px] uppercase tracking-wide text-slate-600 dark:text-slate-300 border border-slate-300 dark:border-slate-700/70 bg-slate-100 dark:bg-slate-800/60 px-2 py-0.5 rounded">
-                            {formatTierLabel(uploadedFile.performanceLevel)}
+                            {formatAnalysisSummary(uploadedFile.analysisOptions)}
                           </span>
 
                           {/* View button — shown when completed */}
@@ -1525,7 +1643,7 @@ export default function UploadPage() {
                               <div className="flex items-center gap-2">
                                 {uploadedFile.processingStage && (
                                   <span className="font-medium text-slate-500 dark:text-slate-400">
-                                    {uploadedFile.status === 'extracting' ? 'Extracting audio' : getStageDisplayName(uploadedFile.performanceLevel, uploadedFile.processingStage)}
+                                    {uploadedFile.status === 'extracting' ? 'Extracting audio' : getStageDisplayName(uploadedFile.processingTier, uploadedFile.processingStage)}
                                   </span>
                                 )}
                                 <span className="font-semibold text-blue-400">
@@ -1539,7 +1657,7 @@ export default function UploadPage() {
                                   {uploadedFile.status === 'extracting'
                                     ? uploadedFile.processingMessage
                                     : getUserFacingProcessingMessage(
-                                        uploadedFile.performanceLevel,
+                                        uploadedFile.processingTier,
                                         uploadedFile.processingStage || 'pending',
                                         uploadedFile.processingMessage
                                       )}
@@ -1564,28 +1682,36 @@ export default function UploadPage() {
 
             {/* Advanced Options — collapsible, out of the critical path */}
             <div className="mb-8 border border-slate-300 dark:border-slate-700 rounded-lg overflow-hidden" data-tour="advanced-options" data-expanded={showAdvancedOptions ? 'true' : 'false'}>
-              <button
-                type="button"
-                onClick={() => setShowAdvancedOptions(!showAdvancedOptions)}
-                className="w-full flex items-center justify-between px-4 py-3 bg-slate-100/80 dark:bg-slate-800/50 hover:bg-slate-100 dark:hover:bg-slate-800 transition-colors text-left"
-                data-tour="advanced-options-toggle"
-              >
-                <div className="flex items-center gap-2">
-                  <span className="text-sm font-semibold text-slate-600 dark:text-slate-300">Advanced Options</span>
-                  {(speakerCount || rosterSpeakers.length > 0) && (
-                      <span className="rounded-full border border-blue-200 bg-blue-50 px-2 py-0.5 text-xs font-medium text-blue-700 dark:border-blue-800/30 dark:bg-blue-900/20 dark:text-blue-300">
-                      {[
-                        speakerCount ? `${speakerCount} speakers` : null,
-                        rosterSpeakers.length > 0 ? `${rosterSpeakers.length} roster` : null,
-                      ].filter(Boolean).join(' · ')}
-                    </span>
-                  )}
-                </div>
-                {showAdvancedOptions
-                  ? <ChevronUp className="h-4 w-4 text-slate-500" />
-                  : <ChevronDown className="h-4 w-4 text-slate-500" />
-                }
-              </button>
+              <div className="flex items-center gap-2 bg-slate-100/80 px-4 py-3 dark:bg-slate-800/50">
+                <button
+                  type="button"
+                  onClick={() => setShowAdvancedOptions(!showAdvancedOptions)}
+                  className="flex min-w-0 flex-1 items-center justify-between transition-colors text-left hover:text-slate-900 dark:hover:text-slate-100"
+                  data-tour="advanced-options-toggle"
+                >
+                  <div className="flex items-center gap-2">
+                    <span className="text-sm font-semibold text-slate-600 dark:text-slate-300">Advanced Options</span>
+                    {(speakerCount || rosterSpeakers.length > 0) && (
+                        <span className="rounded-full border border-blue-200 bg-blue-50 px-2 py-0.5 text-xs font-medium text-blue-700 dark:border-blue-800/30 dark:bg-blue-900/20 dark:text-blue-300">
+                        {[
+                          speakerCount ? `${speakerCount} speakers` : null,
+                          rosterSpeakers.length > 0 ? `${rosterSpeakers.length} roster` : null,
+                        ].filter(Boolean).join(' · ')}
+                      </span>
+                    )}
+                  </div>
+                  {showAdvancedOptions
+                    ? <ChevronUp className="h-4 w-4 text-slate-500" />
+                    : <ChevronDown className="h-4 w-4 text-slate-500" />
+                  }
+                </button>
+                <FeatureHelp
+                  title="Advanced options"
+                  description="Optional controls for edge cases like known speaker counts or custom speaker rosters. Most uploads do not need these."
+                  bestFor="you already know something specific about the recording that should guide processing"
+                  side="top"
+                />
+              </div>
 
               {showAdvancedOptions && (
                 <div className="px-4 py-5 space-y-6 bg-white dark:bg-slate-900">
@@ -1660,8 +1786,7 @@ export default function UploadPage() {
                     const stageProgress = typeof project.processing_progress === 'number'
                       ? project.processing_progress
                       : 0;
-                    const rawTierStr: string = (project.performance_level as string) || 'pro';
-                    const tier = (rawTierStr === 'premium' ? 'pro' : rawTierStr === 'basic' ? 'standard' : rawTierStr) as import('@/lib/tier-config').TierLevel;
+                    const tier = normalizeTier((project.performance_level as string) || 'content_kit');
                     const progress = calculateOverallProgress(
                       tier,
                       stage as ProcessingStage,
@@ -1694,11 +1819,11 @@ export default function UploadPage() {
                           </div>
                           <div className="flex items-center space-x-2 flex-shrink-0">
                             <span className="text-xs px-2 py-1 rounded-full bg-amber-100 dark:bg-amber-900/20 text-amber-700 dark:text-amber-300 font-medium">
-                              {getStageDisplayName((() => { const s: string = (project.performance_level as string) || 'pro'; return s === 'premium' ? 'pro' : s === 'basic' ? 'standard' : s; })() as import('@/lib/tier-config').TierLevel, stage as ProcessingStage)}
+                              {getStageDisplayName(normalizeTier((project.performance_level as string) || 'content_kit'), stage as ProcessingStage)}
                             </span>
                             {project.performance_level && (
                               <span className="text-[10px] uppercase tracking-wide text-slate-600 dark:text-slate-300 border border-slate-300 dark:border-slate-700/70 bg-slate-100 dark:bg-slate-800/60 px-2 py-0.5 rounded">
-                                {formatTierLabel(project.performance_level)}
+                                {formatAnalysisSummary(normalizeAnalysisOptions(project.metadata?.analysis_options))}
                               </span>
                             )}
                             <span className="text-xs font-semibold text-blue-400">
@@ -1955,7 +2080,7 @@ export default function UploadPage() {
                     <div className="text-sm text-slate-500 dark:text-slate-400">Loading recordings...</div>
                   )}
                   {!recordingsLoading && recordingsError && (
-                    <div className="text-sm text-red-600">{recordingsError}</div>
+                    <div className="text-sm text-amber-700 dark:text-amber-300">{recordingsError}</div>
                   )}
                   {!recordingsLoading && !recordingsError && recordings.length === 0 && (
                     <div className="text-sm text-slate-500 dark:text-slate-400">No recordings found.</div>
@@ -1975,7 +2100,7 @@ export default function UploadPage() {
                           <button
                             key={file.fileId}
                             type="button"
-                            onClick={() => importRecording({ meetingId: rec.meetingId, fileId: file.fileId, performanceLevel })}
+                            onClick={() => importRecording({ meetingId: rec.meetingId, fileId: file.fileId, analysisOptions, estimatedDurationSeconds: rec.duration * 60 })}
                             className="px-2.5 py-1.5 text-xs font-medium bg-blue-600 text-white rounded-md hover:bg-blue-700"
                           >
                             Import {file.fileType || file.fileExtension}
@@ -1994,7 +2119,7 @@ export default function UploadPage() {
                       </div>
                       <button
                         type="button"
-                        onClick={() => importRecording({ itemId: rec.id, performanceLevel })}
+                        onClick={() => importRecording({ itemId: rec.id, analysisOptions, estimatedDurationSeconds: Math.max(1, Math.round(rec.size / (128000 / 8))) })}
                         className="px-3 py-1.5 text-xs font-medium bg-blue-600 text-white rounded-md hover:bg-blue-700"
                       >
                         Import
@@ -2039,8 +2164,8 @@ export default function UploadPage() {
                 <div className="flex gap-2.5">
                   <UserCircle className="mt-0.5 h-4 w-4 flex-shrink-0 text-blue-600 dark:text-blue-400" />
                   <div>
-                    <p className="text-xs font-semibold text-slate-700 dark:text-slate-300 mb-0.5">Pro Speaker Naming</p>
-                    <p className="text-xs text-slate-500 dark:text-slate-400 leading-relaxed">Pro can name speakers when they are explicitly introduced or addressed. Standard keeps clean numbered speakers.</p>
+                    <p className="text-xs font-semibold text-slate-700 dark:text-slate-300 mb-0.5">Named Speaker Upgrade</p>
+                    <p className="text-xs text-slate-500 dark:text-slate-400 leading-relaxed">Turn on the Named speakers option when the conversation clearly introduces who is speaking. Otherwise, you still get clean numbered speakers.</p>
                   </div>
                 </div>
                 <div className="flex gap-2.5">

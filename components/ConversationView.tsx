@@ -38,7 +38,6 @@ interface ConversationViewProps {
   className?: string;
   projectId?: string;
   onSpeakerUpdate?: (updatedSpeakerData: any) => void;
-  userTier?: string; // User's subscription tier
   filteredSpeakers?: Array<{
     speakerId: string;
     filterReason?: 'ad_read' | 'intro' | 'outro' | 'promo' | 'venue_announcement';
@@ -100,6 +99,7 @@ interface ConversationViewProps {
   scrollToSegmentIndex?: number | null;
   // Callback after a segment is confirmed
   onConfirmSegment?: (index: number) => void;
+  onTranscriptInsightClick?: (insightId: string) => void;
 }
 
 interface InsightCard {
@@ -150,7 +150,6 @@ export default function ConversationView({
   className = "",
   projectId,
   onSpeakerUpdate,
-  userTier = 'standard',
   filteredSpeakers = [],
   insightsSidebarOpen,
   onInsightsSidebarChange,
@@ -167,6 +166,7 @@ export default function ConversationView({
   onToggleSegmentSelection,
   scrollToSegmentIndex,
   onConfirmSegment,
+  onTranscriptInsightClick,
 }: ConversationViewProps) {
   const showTimestamps = controlledShowTimestamps ?? true;
   const selectedSpeaker = controlledSelectedSpeaker ?? null;
@@ -532,20 +532,15 @@ export default function ConversationView({
           matchText: insight.match_text,
           matchVariants: insight.match_variants || [],
           transcriptExcerpt: insight.transcript_excerpts?.[0]?.text || '',
-          summary: userTier === 'pro' || userTier === 'premium'
-            ? insight.full_explanation
-            : userTier === 'pro'
-            ? insight.simple_definition
-            : '',
+          summary: insight.full_explanation || insight.simple_definition || '',
           confidence: insight.confidence || 0.8,
           sources: insight.external_sources || [],
           updatedAt: insight.updated_at || new Date().toISOString(),
           status: insight.status || 'auto_detected',
           origin: 'entity' as const,
-          // Premium-only fields
-          relatedConcepts: userTier === 'pro' || userTier === 'premium' ? insight.related_concepts : undefined,
-          whyItMatters: userTier === 'pro' || userTier === 'premium' ? insight.why_it_matters : undefined,
-          relationships: userTier === 'pro' || userTier === 'premium' ? insight.relationships : undefined,
+          relatedConcepts: insight.related_concepts || undefined,
+          whyItMatters: insight.why_it_matters || undefined,
+          relationships: insight.relationships || undefined,
           personProfile: insight.person_profile ? {
             whoTheyAre: insight.person_profile.who_they_are,
             currentWork: insight.person_profile.current_work,
@@ -577,7 +572,6 @@ export default function ConversationView({
 
         if (
           transformedInsights.length === 0 &&
-          userTier === 'pro' || userTier === 'premium' &&
           insightsRetryAttemptRef.current < 20
         ) {
           insightsRetryAttemptRef.current += 1;
@@ -598,7 +592,7 @@ export default function ConversationView({
     }
 
     fetchInsights();
-  }, [projectId, userTier, insightsRefreshToken, insightsRetryTick]);
+  }, [projectId, insightsRefreshToken, insightsRetryTick]);
 
   const [activeInsightIds, setActiveInsightIds] = useState<Set<string>>(() => new Set());
 
@@ -669,7 +663,8 @@ export default function ConversationView({
   // Handler for insight clicks - syncs sidebar and transcript
   const handleInsightClick = useCallback((insightId: string) => {
     setActiveInsightId((prev) => (prev === insightId ? null : insightId));
-  }, []);
+    onTranscriptInsightClick?.(insightId);
+  }, [onTranscriptInsightClick]);
 
   const togglePresetInsight = (entityId: string) => {
     setActiveInsightIds((prev) => {
@@ -714,7 +709,7 @@ export default function ConversationView({
 
 
   const handleRefreshInsights = async () => {
-    if (!projectId || (userTier !== 'pro' && userTier !== 'premium') || refreshingInsights) {
+    if (!projectId || refreshingInsights) {
       return;
     }
 
@@ -743,20 +738,15 @@ export default function ConversationView({
           matchText: insight.match_text,
           matchVariants: insight.match_variants || [],
           transcriptExcerpt: insight.transcript_excerpts?.[0]?.text || '',
-          summary: userTier === 'pro' || userTier === 'premium'
-            ? insight.full_explanation
-            : userTier === 'pro'
-            ? insight.simple_definition
-            : '',
+          summary: insight.full_explanation || insight.simple_definition || '',
           confidence: insight.confidence || 0.8,
           sources: insight.external_sources || [],
           updatedAt: insight.updated_at || new Date().toISOString(),
           status: insight.status || 'auto_detected',
           origin: 'entity' as const,
-          // Premium-only fields
-          relatedConcepts: userTier === 'pro' || userTier === 'premium' ? insight.related_concepts : undefined,
-          whyItMatters: userTier === 'pro' || userTier === 'premium' ? insight.why_it_matters : undefined,
-          relationships: userTier === 'pro' || userTier === 'premium' ? insight.relationships : undefined,
+          relatedConcepts: insight.related_concepts || undefined,
+          whyItMatters: insight.why_it_matters || undefined,
+          relationships: insight.relationships || undefined,
           personProfile: insight.person_profile ? {
             whoTheyAre: insight.person_profile.who_they_are,
             currentWork: insight.person_profile.current_work,
@@ -888,19 +878,15 @@ export default function ConversationView({
           matchText: insight.match_text,
           matchVariants: insight.match_variants || [],
           transcriptExcerpt: insight.transcript_excerpts?.[0]?.text || '',
-          summary: userTier === 'pro' || userTier === 'premium'
-            ? insight.full_explanation
-            : userTier === 'pro'
-            ? insight.simple_definition
-            : '',
+          summary: insight.full_explanation || insight.simple_definition || '',
           confidence: insight.confidence || 0.8,
           sources: insight.external_sources || [],
           updatedAt: insight.updated_at || new Date().toISOString(),
           status: insight.status || 'auto_detected',
           origin: 'entity' as const,
-          relatedConcepts: userTier === 'pro' || userTier === 'premium' ? insight.related_concepts : undefined,
-          whyItMatters: userTier === 'pro' || userTier === 'premium' ? insight.why_it_matters : undefined,
-          relationships: userTier === 'pro' || userTier === 'premium' ? insight.relationships : undefined,
+          relatedConcepts: insight.related_concepts || undefined,
+          whyItMatters: insight.why_it_matters || undefined,
+          relationships: insight.relationships || undefined,
           personProfile: insight.person_profile ? {
             whoTheyAre: insight.person_profile.who_they_are,
             currentWork: insight.person_profile.current_work,

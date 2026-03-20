@@ -21,6 +21,7 @@ import { supabase } from '@/lib/supabase/client';
 import { useCoverageProgress } from '@/lib/context/coverage-progress';
 import { toast } from 'sonner';
 import ConfirmModal from '@/components/ui/confirm-modal';
+import { CONTENT_TYPES } from '@/lib/content-types';
 
 // New analytics components
 import { KPIGrid, type AnalyticsKpiCard } from '@/components/analytics/KPIGrid';
@@ -29,6 +30,7 @@ import { InsightsGrid } from '@/components/analytics/InsightsGrid';
 import { InsightsHeader } from '@/components/analytics/InsightsHeader';
 import { ProjectAnalysisSection } from '@/components/analytics/ProjectAnalysisSection';
 import { RunAnalysisSection } from '@/components/analytics/RunAnalysisSection';
+import { FeatureHelp } from '@/components/ui/feature-help';
 
 // ============================================================================
 // TYPES
@@ -89,6 +91,45 @@ interface ProjectSummary {
   transcription_text?: string | null;
 }
 
+const OUTPUT_TYPE_TO_CONTENT_TYPE: Record<string, string> = {
+  twitter_thread: 'twitter_threads',
+  linkedin_post: 'linkedin_posts',
+  instagram_caption: 'instagram_content',
+  blog_post: 'blog_post',
+  email_newsletter: 'newsletter',
+  show_notes: 'show_notes',
+  quote_graphic: 'quote_graphics',
+  facebook_post: 'facebook_post',
+  youtube_description: 'youtube_description',
+  podcast_episode_description: 'podcast_episode_description',
+  short_form_video_script: 'short_form_video_script',
+};
+
+function formatFallbackOutputLabel(type?: string): string {
+  if (!type) return 'Unknown';
+  return type
+    .split(/[_-]/g)
+    .filter(Boolean)
+    .map((part) => part.charAt(0).toUpperCase() + part.slice(1))
+    .join(' ');
+}
+
+function getAnalyticsContentLabel(output: { type?: string | null; metadata?: any }): string {
+  const originalType = typeof output.metadata?.originalOutputType === 'string'
+    ? output.metadata.originalOutputType
+    : null;
+  const mappedType = (originalType && OUTPUT_TYPE_TO_CONTENT_TYPE[originalType])
+    || (output.type && OUTPUT_TYPE_TO_CONTENT_TYPE[output.type])
+    || null;
+
+  if (mappedType) {
+    const contentType = CONTENT_TYPES.find((item) => item.id === mappedType);
+    if (contentType) return contentType.name;
+  }
+
+  return formatFallbackOutputLabel(output.type || undefined);
+}
+
 interface InsightRecord {
   id: string;
   project_id: string;
@@ -140,7 +181,15 @@ interface AnalyticsData {
     records: InsightRecord[];
     summary: InsightsSummary;
   };
-  rawOutputs: Array<{ id: string; project_id: string; ai_cost_usd: number; created_at: string; type: string }>;
+  rawOutputs: Array<{
+    id: string;
+    project_id: string;
+    ai_cost_usd: number;
+    created_at: string;
+    type: string;
+    metadata?: any;
+    content_category: string;
+  }>;
   // Real computed data
   trends: {
     spend: TrendData;
@@ -226,6 +275,45 @@ interface GoalProgressEntry {
 
 function formatCurrency(amount: number) {
   return new Intl.NumberFormat('en-US', { style: 'currency', currency: 'USD' }).format(amount);
+}
+
+const LEGACY_GAP_TYPES = new Set(['underrepresented', 'debt', 'cta-gap', 'overindexed', 'new']);
+const LEGACY_STRENGTH_TYPES = new Set(['balanced']);
+const COACHING_IMPROVEMENT_TYPES = new Set([
+  'hook',
+  'clarity',
+  'structure',
+  'pacing',
+  'depth',
+  'follow_up',
+  'audience_fit',
+  'cta',
+  'speaker_balance'
+]);
+
+function getOpportunityType(value: unknown): string {
+  return typeof value === 'string' ? value.toLowerCase() : '';
+}
+
+function isStrengthOpportunity(opportunity: { type?: unknown; severity?: unknown }) {
+  const type = getOpportunityType(opportunity.type);
+  return type === 'strength' || LEGACY_STRENGTH_TYPES.has(type);
+}
+
+function isImprovementOpportunity(opportunity: { type?: unknown; severity?: unknown }) {
+  const type = getOpportunityType(opportunity.type);
+  if (COACHING_IMPROVEMENT_TYPES.has(type) || LEGACY_GAP_TYPES.has(type)) return true;
+  if (type === 'strength' || LEGACY_STRENGTH_TYPES.has(type)) return false;
+  return String(opportunity.severity || '').toLowerCase() !== 'low';
+}
+
+function isGapOpportunity(opportunity: { type?: unknown; severity?: unknown }) {
+  const type = getOpportunityType(opportunity.type);
+  if (LEGACY_GAP_TYPES.has(type)) return true;
+  if (COACHING_IMPROVEMENT_TYPES.has(type)) {
+    return String(opportunity.severity || '').toLowerCase() === 'high';
+  }
+  return false;
 }
 
 /**
@@ -587,7 +675,15 @@ function ExampleGoalsModal({
                           <p className="text-sm font-medium text-slate-900 dark:text-slate-50">{example.label}</p>
                           <p className="text-xs text-slate-500 dark:text-slate-400 mt-0.5">{example.description}</p>
                           <div className="flex items-center gap-2 mt-2 text-xs text-slate-500 dark:text-slate-400">
-                            <span className="uppercase font-semibold text-indigo-600">{example.type}</span>
+                            <span className="uppercase font-semibold text-indigo-600">
+                              {example.type === 'include'
+                                ? 'Repeat this theme'
+                                : example.type === 'cta'
+                                  ? 'Remember this CTA'
+                                  : example.type === 'avoid'
+                                    ? 'Avoid this pattern'
+                                    : 'Improve this habit'}
+                            </span>
                             <span>•</span>
                             <span>{example.target} mention{example.target !== 1 ? 's' : ''}</span>
                             {example.cadence && (
@@ -653,6 +749,19 @@ export default function AnalyticsPage() {
   const [selectedSnapshotId, setSelectedSnapshotId] = useState<string | null>(null);
   const { runningCoverageIds, startCoverage, stopCoverage } = useCoverageProgress();
 
+  const patchCoverageGoals = useCallback((updater: (goals: NarrativeGoalRecord[]) => NarrativeGoalRecord[]) => {
+    setAnalytics((current) => {
+      if (!current) return current;
+      return {
+        ...current,
+        coverage: {
+          ...current.coverage,
+          goals: updater(current.coverage.goals || [])
+        }
+      };
+    });
+  }, []);
+
   const fetchAnalytics = useCallback(async () => {
     try {
       setLoading(true);
@@ -711,7 +820,6 @@ export default function AnalyticsPage() {
         .from('narrative_goals')
         .select('*')
         .eq('user_id', user.id)
-        .neq('status', 'archived')
         .order('created_at', { ascending: true }) as { data: any[] | null; error: any };
 
       if (goalsError) {
@@ -779,8 +887,8 @@ export default function AnalyticsPage() {
       // Content breakdown
       const contentBreakdown: Record<string, number> = {};
       safeOutputs.forEach((output: any) => {
-        const type = output.type || 'unknown';
-        contentBreakdown[type] = (contentBreakdown[type] || 0) + 1;
+        const label = getAnalyticsContentLabel(output);
+        contentBreakdown[label] = (contentBreakdown[label] || 0) + 1;
       });
 
       // Platform stats
@@ -842,7 +950,9 @@ export default function AnalyticsPage() {
           project_id: o.project_id,
           ai_cost_usd: Number(o.ai_cost_usd || 0),
           created_at: o.created_at,
-          type: o.type || 'unknown'
+          type: o.type || 'unknown',
+          metadata: o.metadata || null,
+          content_category: getAnalyticsContentLabel(o)
         }))
       });
     } catch (error) {
@@ -974,7 +1084,7 @@ export default function AnalyticsPage() {
 
   const selectedProjectContentBreakdown = useMemo(() => {
     return selectedProjectOutputs.reduce((acc, output) => {
-      const key = output.type || 'unknown';
+      const key = output.content_category || getAnalyticsContentLabel(output);
       acc[key] = (acc[key] || 0) + 1;
       return acc;
     }, {} as Record<string, number>);
@@ -1041,16 +1151,18 @@ export default function AnalyticsPage() {
   const analysisMetrics = useMemo(() => {
     const topicCoverageCurrent = deriveSnapshotCoverageScore(latestSnapshot);
     const topicCoveragePrevious = deriveSnapshotCoverageScore(previousSnapshot);
-    const ctaGapCurrent = (latestSnapshot?.opportunities || []).filter((op: any) => op.type === 'cta-gap').length;
-    const ctaGapPrevious = (previousSnapshot?.opportunities || []).filter((op: any) => op.type === 'cta-gap').length;
-    const editorialDebtCurrent = (latestSnapshot?.opportunities || []).filter((op: any) => ['debt', 'underrepresented'].includes(op.type)).length;
-    const editorialDebtPrevious = (previousSnapshot?.opportunities || []).filter((op: any) => ['debt', 'underrepresented'].includes(op.type)).length;
+    const coachingGapCurrent = (latestSnapshot?.opportunities || []).filter((op: any) => isGapOpportunity(op)).length;
+    const coachingGapPrevious = (previousSnapshot?.opportunities || []).filter((op: any) => isGapOpportunity(op)).length;
+    const missedOpportunityCurrent = (latestSnapshot?.opportunities || []).filter((op: any) => isImprovementOpportunity(op)).length;
+    const missedOpportunityPrevious = (previousSnapshot?.opportunities || []).filter((op: any) => isImprovementOpportunity(op)).length;
 
     const cards: AnalyticsKpiCard[] = [
       {
         title: 'Topic Coverage',
         value: selectedProjectHasSnapshot ? `${topicCoverageCurrent}%` : '--',
         note: 'Share of voice mapped across recurring themes.',
+        helpDescription: 'A supporting signal that estimates how evenly the episode covered its main themes.',
+        helpBestFor: 'understanding topic balance, not replacing the creator coaching feedback',
         trend: {
           ...computeMetricTrend(topicCoverageCurrent, topicCoveragePrevious, 'higher'),
           label: 'vs previous run'
@@ -1061,27 +1173,31 @@ export default function AnalyticsPage() {
         sparklineColor: '#38bdf8'
       },
       {
-        title: 'CTA Cadence',
-        value: selectedProjectHasSnapshot ? `${ctaGapCurrent} ${ctaGapCurrent === 1 ? 'gap' : 'gaps'}` : '--',
-        note: 'Missed asks detected before publishing.',
+        title: 'Coaching Gaps',
+        value: selectedProjectHasSnapshot ? `${coachingGapCurrent} ${coachingGapCurrent === 1 ? 'gap' : 'gaps'}` : '--',
+        note: 'High-priority issues to fix in this or the next episode.',
+        helpDescription: 'Counts the highest-priority weaknesses or missing elements the analysis thinks are worth fixing first.',
+        helpBestFor: 'deciding what to improve before publishing or in the next recording',
         trend: {
-          ...computeMetricTrend(ctaGapCurrent, ctaGapPrevious, 'lower'),
+          ...computeMetricTrend(coachingGapCurrent, coachingGapPrevious, 'lower'),
           label: 'vs previous run'
         },
-        sparkline: buildSnapshotSparkline(projectSnapshots, (snapshot) => (snapshot.opportunities || []).filter((op: any) => op.type === 'cta-gap').length),
+        sparkline: buildSnapshotSparkline(projectSnapshots, (snapshot) => (snapshot.opportunities || []).filter((op: any) => isGapOpportunity(op)).length),
         icon: <Target className="h-5 w-5" />,
         iconBg: 'bg-amber-50 text-amber-600 dark:bg-amber-900/20 dark:text-amber-300',
         sparklineColor: '#f59e0b'
       },
       {
-        title: 'Editorial Debt',
-        value: selectedProjectHasSnapshot ? `${editorialDebtCurrent}` : '--',
-        note: 'Under-covered ideas surfaced for follow-up.',
+        title: 'Missed Opportunities',
+        value: selectedProjectHasSnapshot ? `${missedOpportunityCurrent}` : '--',
+        note: 'Moments where the episode could have been clearer, deeper, or stronger.',
+        helpDescription: 'Counts the places where the episode could have gone deeper, clearer, or stronger even if it was not a critical gap.',
+        helpBestFor: 'finding good-but-not-great moments you can improve over time',
         trend: {
-          ...computeMetricTrend(editorialDebtCurrent, editorialDebtPrevious, 'lower'),
+          ...computeMetricTrend(missedOpportunityCurrent, missedOpportunityPrevious, 'lower'),
           label: 'vs previous run'
         },
-        sparkline: buildSnapshotSparkline(projectSnapshots, (snapshot) => (snapshot.opportunities || []).filter((op: any) => ['debt', 'underrepresented'].includes(op.type)).length),
+        sparkline: buildSnapshotSparkline(projectSnapshots, (snapshot) => (snapshot.opportunities || []).filter((op: any) => isImprovementOpportunity(op)).length),
         icon: <Lightbulb className="h-5 w-5" />,
         iconBg: 'bg-fuchsia-50 text-fuchsia-600 dark:bg-fuchsia-900/20 dark:text-fuchsia-300',
         sparklineColor: '#a855f7'
@@ -1102,12 +1218,7 @@ export default function AnalyticsPage() {
       }
     ];
 
-    return {
-      topicCoverageCurrent,
-      ctaGapCurrent,
-      editorialDebtCurrent,
-      cards
-    };
+    return { cards };
   }, [latestSnapshot, previousSnapshot, selectedProjectHasSnapshot, projectSnapshots, filteredAiSpend, previousAiSpend, aiSpendSparkline, timeRange]);
 
   const isStale = useMemo(() => {
@@ -1183,17 +1294,23 @@ export default function AnalyticsPage() {
     try {
       setGoalSaving(true);
       setGoalError('');
-      const { error } = await supabase.from('narrative_goals').insert({
-        user_id: user.id,
-        topic_label: trimmedLabel,
-        goal_type: params.type,
-        target_mentions: Math.max(0, Number(params.target) || 0),
-        cadence_days: params.cadence ? Math.max(1, Number(params.cadence)) : null,
-        status: 'active'
-      } as any);
+      const { data, error } = await supabase
+        .from('narrative_goals')
+        .insert({
+          user_id: user.id,
+          topic_label: trimmedLabel,
+          goal_type: params.type,
+          target_mentions: Math.max(0, Number(params.target) || 0),
+          cadence_days: params.cadence ? Math.max(1, Number(params.cadence)) : null,
+          status: 'active'
+        } as any)
+        .select('*')
+        .single();
 
       if (error) throw new Error(error.message);
-      await fetchAnalytics();
+      if (data) {
+        patchCoverageGoals((goals) => [...goals, data as NarrativeGoalRecord]);
+      }
     } catch (err: any) {
       setGoalError(err.message || 'Failed to create goal.');
     } finally {
@@ -1205,14 +1322,22 @@ export default function AnalyticsPage() {
     if (!goalId) return;
     const nextStatus = currentStatus === 'active' ? 'paused' : 'active';
     try {
-      const { error } = await supabase
+      const { data, error } = await supabase
         .from('narrative_goals')
         // @ts-ignore - Supabase types issue
         .update({ status: nextStatus })
-        .eq('id', goalId);
+        .eq('id', goalId)
+        .select('*')
+        .single();
 
       if (error) throw new Error(error.message);
-      await fetchAnalytics();
+      patchCoverageGoals((goals) =>
+        goals.map((goal) => (
+          goal.id === goalId
+            ? { ...goal, ...(data as NarrativeGoalRecord | null || {}), status: nextStatus }
+            : goal
+        ))
+      );
     } catch (err) {
       console.error('Failed to update goal status:', err);
       toast.error('Failed to update goal status. Please try again.');
@@ -1228,15 +1353,23 @@ export default function AnalyticsPage() {
     if (!pendingArchiveGoal || !user?.id) return;
     const { id: goalId, label: goalLabel } = pendingArchiveGoal;
     try {
-      const { error } = await supabase
+      const { data, error } = await supabase
         .from('narrative_goals')
         // @ts-ignore - Supabase types issue
         .update({ status: 'archived' })
         .eq('id', goalId)
-        .eq('user_id', user.id);
+        .eq('user_id', user.id)
+        .select('*')
+        .single();
 
       if (error) throw new Error(error.message);
-      await fetchAnalytics();
+      patchCoverageGoals((goals) =>
+        goals.map((goal) => (
+          goal.id === goalId
+            ? { ...goal, ...(data as NarrativeGoalRecord | null || {}), status: 'archived' }
+            : goal
+        ))
+      );
       toast.success(`Goal "${goalLabel}" archived`);
     } catch (error: any) {
       toast.error(`Failed to archive goal: ${error.message}`);
@@ -1362,7 +1495,7 @@ export default function AnalyticsPage() {
         onClose={() => setPendingArchiveGoal(null)}
         onConfirm={confirmArchiveGoal}
         title="Archive Goal"
-        description={pendingArchiveGoal ? `Archive "${pendingArchiveGoal.label}"? It will be hidden from your active goals list.` : undefined}
+        description={pendingArchiveGoal ? `Archive "${pendingArchiveGoal.label}"? It will stop affecting active tracking and move into archived goal history.` : undefined}
         confirmText="Archive"
         isDestructive={false}
       />
@@ -1406,9 +1539,16 @@ export default function AnalyticsPage() {
               runningCoverageIds={runningCoverageIds}
               onRunAnalysis={handleRunCoverage}
             />
-            <span className="inline-flex items-center rounded-lg border border-slate-300 bg-transparent px-3 py-2.5 text-[11px] font-semibold uppercase tracking-[0.14em] text-slate-600 dark:border-slate-700 dark:text-slate-300">
-              {selectedProjectHasSnapshot ? 'Analyzed' : selectedProjectHasTranscript ? 'Ready to analyze' : 'Transcript required'}
-            </span>
+            <div className="inline-flex items-center gap-2">
+              <span className="inline-flex items-center rounded-lg border border-slate-300 bg-transparent px-3 py-2.5 text-[11px] font-semibold uppercase tracking-[0.14em] text-slate-600 dark:border-slate-700 dark:text-slate-300">
+                {selectedProjectHasSnapshot ? 'Analyzed' : selectedProjectHasTranscript ? 'Ready to analyze' : 'Transcript required'}
+              </span>
+              <FeatureHelp
+                title="Analysis status"
+                description="Analyzed means this project already has creator coaching. Ready to analyze means the transcript exists but coaching has not been run yet. Transcript required means analysis cannot run until transcription exists."
+                bestFor="understanding why the analysis button is or is not ready"
+              />
+            </div>
           </div>
         </div>
 
@@ -1450,7 +1590,7 @@ export default function AnalyticsPage() {
                 }`}
               >
                 <Lightbulb className="h-4 w-4" />
-                Insights & Gaps
+                Creator Coaching
               </button>
               <button
                 id="tab-goals"

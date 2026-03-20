@@ -4,10 +4,10 @@ import { useEffect, useState } from 'react';
 import {
   Check, Loader2, AlertCircle, Upload, FileText, Users,
   Tag, Cog, CheckCircle2, UserCheck, Award, BookOpen,
-  Lightbulb, Quote
+  Lightbulb, Quote, Sparkles, Zap
 } from 'lucide-react';
 import { getTierStages, calculateOverallProgress, getUserFacingProcessingMessage, type ProcessingStage } from '@/lib/tier-progress-config';
-import { type TierLevel } from '@/lib/tier-config';
+import { normalizeTier, type TierLevel } from '@/lib/tier-config';
 
 interface ProgressData {
   processing_stage: ProcessingStage;
@@ -35,6 +35,8 @@ const ICON_MAP: Record<string, React.ComponentType<{ className?: string }>> = {
   BookOpen: BookOpen,
   Lightbulb: Lightbulb,
   Quote: Quote,
+  Sparkles: Sparkles,
+  Zap: Zap,
   CheckCircle: CheckCircle2,
   Tag: Tag,
   Cog: Cog
@@ -42,7 +44,7 @@ const ICON_MAP: Record<string, React.ComponentType<{ className?: string }>> = {
 
 export default function ProgressTracker({
   projectId,
-  performanceLevel = 'standard',
+  performanceLevel = 'content_kit',
   onComplete,
   pollInterval = 2000,
   className = ''
@@ -79,9 +81,7 @@ export default function ProgressTracker({
 
         // Update tier if backend provides it (normalize legacy values)
         if (newProgressData.performance_level) {
-          const rawT = newProgressData.performance_level;
-          const norm = rawT === 'basic' ? 'standard' : rawT === 'premium' ? 'pro' : rawT;
-          setTier(norm as TierLevel);
+          setTier(normalizeTier(newProgressData.performance_level));
         }
 
         // If completed or failed, stop polling
@@ -117,8 +117,8 @@ export default function ProgressTracker({
 
   if (error) {
     return (
-      <div className={`p-4 bg-red-900/20 border border-red-800/30 rounded-lg ${className}`}>
-        <div className="flex items-center space-x-2 text-red-300">
+      <div className={`rounded-lg border border-red-200 bg-red-50 p-4 dark:border-red-800/30 dark:bg-red-900/20 ${className}`}>
+        <div className="flex items-center space-x-2 text-red-700 dark:text-red-300">
           <AlertCircle className="h-5 w-5" />
           <span className="text-sm font-medium">{error}</span>
         </div>
@@ -154,13 +154,13 @@ export default function ProgressTracker({
 
   if (status === 'failed') {
     return (
-      <div className={`p-4 bg-red-900/20 border border-red-800/30 rounded-lg ${className}`}>
-        <div className="flex items-center space-x-2 text-red-300">
+      <div className={`rounded-lg border border-red-200 bg-red-50 p-4 dark:border-red-800/30 dark:bg-red-900/20 ${className}`}>
+        <div className="flex items-center space-x-2 text-red-700 dark:text-red-300">
           <AlertCircle className="h-5 w-5" />
           <div className="flex-1">
             <p className="text-sm font-medium">Processing Failed</p>
             {progressData.processing_message && (
-              <p className="text-xs text-red-400 mt-1">{progressData.processing_message}</p>
+              <p className="mt-1 text-xs text-red-600 dark:text-red-400">{progressData.processing_message}</p>
             )}
           </div>
         </div>
@@ -170,13 +170,13 @@ export default function ProgressTracker({
 
   if (status === 'completed') {
     return (
-      <div className={`p-4 bg-green-900/20 border border-green-800/30 rounded-lg ${className}`}>
-        <div className="flex items-center space-x-2 text-green-300">
+      <div className={`rounded-lg border border-green-200 bg-green-50 p-4 dark:border-green-800/30 dark:bg-green-900/20 ${className}`}>
+        <div className="flex items-center space-x-2 text-green-700 dark:text-green-300">
           <CheckCircle2 className="h-5 w-5" />
           <div className="flex-1">
             <p className="text-sm font-medium">Processing Complete!</p>
-            <p className="text-xs text-green-400 mt-1">
-              {tier === 'pro' ? 'Full analysis ready' : 'Transcription ready'}
+            <p className="mt-1 text-xs text-green-600 dark:text-green-400">
+              {tier === 'transcript' ? 'Transcript ready' : 'Analysis ready'}
             </p>
           </div>
         </div>
@@ -186,16 +186,13 @@ export default function ProgressTracker({
 
   return (
     <div className={`p-4 bg-slate-50 dark:bg-slate-900 border border-slate-300 dark:border-slate-700 rounded-lg ${className}`}>
-      {/* Header with tier badge and overall progress */}
+      {/* Header and overall progress */}
       <div className="flex items-center justify-between mb-4">
         <div className="flex items-center space-x-2">
           <Loader2 className="h-5 w-5 animate-spin text-blue-600" />
           <span className="text-sm font-medium text-slate-900 dark:text-slate-50">Processing Audio</span>
-          <span className={`text-xs px-2 py-0.5 rounded-full font-medium ${
-            tier === 'pro' ? 'bg-violet-100 text-violet-600 dark:text-violet-400' :
-            'bg-slate-100 dark:bg-slate-800 text-slate-600 dark:text-slate-300'
-          }`}>
-            {tier.toUpperCase()}
+          <span className="text-xs px-2 py-0.5 rounded-full font-medium bg-slate-100 dark:bg-slate-800 text-slate-600 dark:text-slate-300">
+            {tier === 'transcript' ? 'Transcript only' : 'Transcript + analysis'}
           </span>
         </div>
         <span className="text-sm font-semibold text-blue-600">{overallProgress}%</span>

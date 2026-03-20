@@ -8,8 +8,9 @@ import { getInternalJobToken } from '@/lib/internal-job-auth';
 import { getAudioExpiryDate } from '@/lib/audio-retention';
 import { getAppBaseUrl } from '@/lib/app-url';
 import { scheduleBackgroundTask } from '@/lib/background-task';
+import { getProcessingTierForAnalysis, normalizeAnalysisOptions, type AnalysisOptions } from '@/lib/analysis-options';
 
-type PerformanceLevel = 'standard' | 'pro';
+type PerformanceLevel = 'transcript' | 'content_kit';
 
 const MAX_FILE_SIZE = 500 * 1024 * 1024;
 
@@ -26,11 +27,10 @@ const sanitizeFileName = (name: string) => {
 };
 
 const normalizePerformanceLevel = (value?: string | null): PerformanceLevel => {
-  if (value === 'standard' || value === 'pro') return value;
-  if (value === 'basic' || value === 'low') return 'standard';
-  if (value === 'premium' || value === 'high') return 'pro';
-  if (value === 'medium') return 'pro';
-  return 'pro';
+  if (value === 'transcript' || value === 'content_kit') return value;
+  if (value === 'basic' || value === 'standard' || value === 'low') return 'transcript';
+  if (value === 'pro' || value === 'medium' || value === 'premium' || value === 'high') return 'content_kit';
+  return 'content_kit';
 };
 
 export async function importRecording(params: {
@@ -40,11 +40,31 @@ export async function importRecording(params: {
   contentType: string;
   buffer: ArrayBuffer;
   performanceLevel?: string | null;
+  analysisOptions?: AnalysisOptions;
+  reservationId?: string;
+  reservationHoldAmount?: number;
+  reservationEstimatedCost?: number;
   speakerCount?: number;
   externalSource?: { provider: string; recordingId: string };
 }) {
-  const { userId, title, fileName, contentType, buffer, performanceLevel, speakerCount, externalSource } = params;
-  const level = normalizePerformanceLevel(performanceLevel);
+  const {
+    userId,
+    title,
+    fileName,
+    contentType,
+    buffer,
+    performanceLevel,
+    analysisOptions,
+    reservationId,
+    reservationHoldAmount,
+    reservationEstimatedCost,
+    speakerCount,
+    externalSource
+  } = params;
+  const normalizedAnalysisOptions = normalizeAnalysisOptions(analysisOptions);
+  const level = performanceLevel
+    ? normalizePerformanceLevel(performanceLevel)
+    : getProcessingTierForAnalysis(normalizedAnalysisOptions);
   const size = buffer.byteLength;
 
   if (size > MAX_FILE_SIZE) {
@@ -68,7 +88,15 @@ export async function importRecording(params: {
     processing_progress: 0,
     processing_message: 'Importing audio file...',
     stage_started_at: new Date().toISOString(),
-    performance_level: level
+    performance_level: level,
+    metadata: {
+      analysis_options: normalizedAnalysisOptions,
+      billing: reservationId ? {
+        uploadReservationId: reservationId,
+        uploadEstimatedHold: reservationHoldAmount ?? null,
+        uploadEstimatedCost: reservationEstimatedCost ?? null,
+      } : undefined,
+    }
   };
 
   let { data: project, error: projectError } = await supabaseAdmin
@@ -137,6 +165,7 @@ export async function importRecording(params: {
         fileName: storagePath,
         fingerprint,
         performanceLevel: level,
+        analysisOptions: normalizedAnalysisOptions,
         diarizationProvider: (process.env.ASSEMBLYAI_API_KEY || process.env.ASSEMBLYAI_ACCESS_KEY) ? 'assemblyai' : 'deepgram',
         ...(speakerCount ? { speakerCount } : {}),
         ...(externalSource ? { externalSource } : {})

@@ -176,6 +176,7 @@ export async function identifySpeakersWithGPT(
     maxUtterances?: number;
     userId?: string;
     projectId?: string;
+    reservationId?: string;
     filename?: string;
     speakerCount?: number;
     presetRoster?: Array<{ name: string; role?: string | null }>;
@@ -248,10 +249,11 @@ export async function identifySpeakersWithGPT(
       await trackOpenAIUsage({
         userId: options.userId,
         projectId: options.projectId,
+        reservationId: options.reservationId,
         response,
         modelName: model,
         purpose: 'Speaker Intelligence (Pass 1)',
-        shouldDebit: true
+        shouldDebit: options.reservationId ? false : true
       });
     }
 

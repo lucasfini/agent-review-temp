@@ -71,6 +71,7 @@ function getOpenAIServiceKeys(modelName: string): { input: string; output: strin
 export async function trackOpenAIUsage(params: {
   userId: string;
   projectId?: string;
+  reservationId?: string;
   response: any;
   modelName?: string;
   purpose?: string;
@@ -85,11 +86,12 @@ export async function trackOpenAIUsage(params: {
   const {
     userId,
     projectId,
+    reservationId,
     response,
     modelName = 'gpt-4o-mini',
     purpose,
     metadata,
-    shouldDebit = true,
+    shouldDebit = reservationId ? false : true,
     strictBilling = false,
   } = params;
 
@@ -118,6 +120,7 @@ export async function trackOpenAIUsage(params: {
     const usageEvent = await logUsageEvent({
       userId,
       projectId,
+      reservationId,
       serviceKey: inputServiceKey,
       serviceName: `OpenAI ${modelName}`,
       provider: 'openai',
@@ -136,6 +139,8 @@ export async function trackOpenAIUsage(params: {
         totalTokens: usage.totalTokens,
         ...metadata,
       },
+      status: reservationId ? 'pending' : 'completed',
+      workflowStep: purpose,
     });
     usageEventId = usageEvent.id;
   } catch (error) {
@@ -202,6 +207,7 @@ export function extractAnthropicUsage(response: any): AnthropicUsage {
 export async function trackAnthropicUsage(params: {
   userId: string;
   projectId?: string;
+  reservationId?: string;
   response: any;
   modelName: 'sonnet-4.5' | 'haiku-4.5';
   purpose?: string;
@@ -213,7 +219,7 @@ export async function trackAnthropicUsage(params: {
   billedCost: number;
   rawCost: number;
 }> {
-  const { userId, projectId, response, modelName, purpose, metadata, shouldDebit = true, strictBilling = false } = params;
+  const { userId, projectId, reservationId, response, modelName, purpose, metadata, shouldDebit = reservationId ? false : true, strictBilling = false } = params;
 
   // Extract token usage
   const usage = extractAnthropicUsage(response);
@@ -238,6 +244,7 @@ export async function trackAnthropicUsage(params: {
     const usageEvent = await logUsageEvent({
       userId,
       projectId,
+      reservationId,
       serviceKey: inputServiceKey,
       serviceName: `Claude ${modelName} Input`,
       provider: 'anthropic',
@@ -251,12 +258,15 @@ export async function trackAnthropicUsage(params: {
         purpose,
         ...metadata,
       },
+      status: reservationId ? 'pending' : 'completed',
+      workflowStep: purpose,
     });
     usageEventId = usageEvent.id;
 
     await logUsageEvent({
       userId,
       projectId,
+      reservationId,
       serviceKey: outputServiceKey,
       serviceName: `Claude ${modelName} Output`,
       provider: 'anthropic',
@@ -270,6 +280,8 @@ export async function trackAnthropicUsage(params: {
         purpose,
         ...metadata,
       },
+      status: reservationId ? 'pending' : 'completed',
+      workflowStep: purpose,
     });
   } catch (error) {
     if (strictBilling) throw error;
@@ -316,6 +328,7 @@ export async function trackAnthropicUsage(params: {
 export async function trackAssemblyAIUsage(params: {
   userId: string;
   projectId?: string;
+  reservationId?: string;
   durationSeconds: number;
   metadata?: Record<string, unknown>;
   shouldDebit?: boolean;
@@ -325,7 +338,7 @@ export async function trackAssemblyAIUsage(params: {
   billedCost: number;
   rawCost: number;
 }> {
-  const { userId, projectId, durationSeconds, metadata, shouldDebit = true, strictBilling = false } = params;
+  const { userId, projectId, reservationId, durationSeconds, metadata, shouldDebit = reservationId ? false : true, strictBilling = false } = params;
 
   // Calculate costs
   const costResult = calculateServiceCost('assemblyai_transcription', durationSeconds);
@@ -337,6 +350,7 @@ export async function trackAssemblyAIUsage(params: {
     const usageEvent = await logUsageEvent({
       userId,
       projectId,
+      reservationId,
       serviceKey: 'assemblyai_transcription',
       serviceName: 'AssemblyAI Transcription',
       provider: 'assemblyai',
@@ -349,6 +363,8 @@ export async function trackAssemblyAIUsage(params: {
         durationMinutes: durationSeconds / 60,
         ...metadata,
       },
+      status: reservationId ? 'pending' : 'completed',
+      workflowStep: 'Transcription',
     });
     usageEventId = usageEvent.id;
   } catch (error) {
@@ -402,12 +418,13 @@ export async function trackBatchUsage(params: {
   }>;
   shouldDebit?: boolean;
   strictBilling?: boolean;
+  reservationId?: string;
 }): Promise<{
   totalBilledCost: number;
   totalRawCost: number;
   usageEventIds: string[];
 }> {
-  const { userId, projectId, usageEvents, shouldDebit = true, strictBilling = false } = params;
+  const { userId, projectId, usageEvents, shouldDebit = params.reservationId ? false : true, strictBilling = false, reservationId } = params;
 
   const usageEventIds: string[] = [];
   let totalBilledCost = 0;
@@ -419,6 +436,7 @@ export async function trackBatchUsage(params: {
       const usageEvent = await logUsageEvent({
         userId,
         projectId,
+        reservationId,
         serviceKey: event.serviceKey,
         serviceName: event.serviceName,
         provider: event.provider,
@@ -428,6 +446,7 @@ export async function trackBatchUsage(params: {
         marginPercent: 35,
         billedCost: event.billedCost,
         metadata: event.metadata,
+        status: reservationId ? 'pending' : 'completed',
       });
 
       usageEventIds.push(usageEvent.id);

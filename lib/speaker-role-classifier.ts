@@ -51,6 +51,7 @@ export async function classifySpeakerRoles(
     transcriptContext?: string;
     userId?: string;
     projectId?: string;
+    reservationId?: string;
     apiKey?: string;
   } = {}
 ): Promise<Record<string, SpeakerRoleClassification>> {
@@ -133,13 +134,14 @@ export async function classifySpeakerRoles(
         await trackOpenAIUsage({
           userId: options.userId,
           projectId: options.projectId,
+          reservationId: options.reservationId,
           response,
           modelName: config.model,
           purpose: 'Speaker Role Classification',
           metadata: {
             speakerCount: speakerEntries.length,
           },
-          shouldDebit: true, // Debiting enabled
+          shouldDebit: options.reservationId ? false : true,
         });
       } catch (billingError) {
         console.error('[SPEAKER ROLES] Billing tracking failed:', billingError);

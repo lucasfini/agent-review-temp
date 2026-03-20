@@ -26,6 +26,7 @@ export async function generatePodcastSummary(
     narrativeMetadata?: NarrativeMetadata;
     userId?: string;
     projectId?: string;
+    reservationId?: string;
     apiKey?: string;
   } = {}
 ): Promise<PodcastSummary> {
@@ -34,7 +35,7 @@ export async function generatePodcastSummary(
     throw new Error('OpenAI API key not configured');
   }
 
-  const { maxWords = 1000, speakerContext, narrativeMetadata, userId, projectId } = options;
+  const { maxWords = 1000, speakerContext, narrativeMetadata, userId, projectId, reservationId } = options;
 
   console.log('[SUMMARY] 📝 Generating podcast summary with GPT-4o...');
 
@@ -116,10 +117,11 @@ ${sourceText.slice(0, 80000)}`;
       await trackOpenAIUsage({
         userId,
         projectId,
+        reservationId,
         response,
         modelName: 'gpt-5-mini',
         purpose: 'Podcast Summary',
-        shouldDebit: true
+        shouldDebit: reservationId ? false : true
       });
     }
 

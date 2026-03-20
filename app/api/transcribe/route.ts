@@ -1,5 +1,6 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { Buffer } from 'buffer';
+import { GetObjectCommand } from '@aws-sdk/client-s3';
 import { supabaseAdmin } from '@/lib/supabase/server';
 import { transcribeWithAssemblyAI, checkAssemblyAIAvailability } from '@/lib/assemblyai-integration';
 import { transcribeWithDeepgram, checkDeepgramAvailability } from '@/lib/deepgram-integration';
@@ -11,7 +12,9 @@ import { detectPodcastChapters } from '@/lib/content-generators/chapters';
 import { extractKeyTakeaways, type KeyTakeaway } from '@/lib/content-generators/takeaways';
 import { extractSocialQuotes } from '@/lib/content-generators/quotes';
 import { preProcessTranscript } from '@/lib/content-generators/pre-processor';
-import { getTierFeatures, calculateTierCost, type TierLevel } from '@/lib/tier-config';
+import { getFeaturesFromAnalysisOptions, getProcessingTierForAnalysis, getProjectAnalysisOptions, normalizeAnalysisOptions } from '@/lib/analysis-options';
+import { scheduleBackgroundTask } from '@/lib/background-task';
+import type { TierFeatures, TierLevel } from '@/lib/tier-config';
 import { updateProcessingProgress, markProcessingFailed } from '@/lib/progress-tracker';
 import { ProcessingStage } from '@/lib/tier-progress-config';
 import { promises as fs } from 'fs';
@@ -20,11 +23,12 @@ import * as os from 'os';
 import type { SpeakerSegment, TranscriptionSegment } from '@/lib/types';
 import { estimateTranscriptionCost } from '@/lib/billing/cost-map';
 import { trackAssemblyAIUsage, requireSufficientCredit } from '@/lib/billing/track-usage';
-import { InsufficientCreditError } from '@/lib/billing/credit';
+import { InsufficientCreditError, failReservation, settleReservation } from '@/lib/billing/credit';
 import { autoCorrectSpeakers, applySpeakerCorrections } from '@/lib/utils/autoCorrectSpeakers';
 import { classifyProjectTypeWithAI, type ProjectType } from '@/lib/utils/classifyProjectType';
 import { correctDebateSpeakers, applyDebateCorrectionToSpeakerData, summarizeDebateCorrections } from '@/lib/utils/correctDebateSpeakers';
 import { getOpenAIApiKeyForUser } from '@/lib/openai/consent';
+import { r2Client, BUCKET_NAME } from '@/lib/r2';
 
 // Allow this function to run for up to 5 minutes (300 seconds)
 export const maxDuration = 300;
@@ -66,6 +70,58 @@ const buildInMemoryKeys = (fileName: string) => {
   }
   return Array.from(keys).filter(Boolean);
 };
+
+const buildStorageKeys = (projectId: string, fileName: string) => {
+  const keys = new Set<string>();
+  if (!fileName) return [];
+  keys.add(fileName);
+  if (!fileName.includes('/')) {
+    keys.add(`${projectId}/${fileName}`);
+  }
+  return Array.from(keys).filter(Boolean);
+};
+
+async function loadAudioFromStorage(projectId: string, fileName: string) {
+  const candidateKeys = buildStorageKeys(projectId, fileName);
+
+  for (const key of candidateKeys) {
+    try {
+      const response = await r2Client.send(
+        new GetObjectCommand({
+          Bucket: BUCKET_NAME,
+          Key: key,
+        })
+      );
+
+      if (!response.Body) {
+        continue;
+      }
+
+      const byteArray = await response.Body.transformToByteArray();
+      const buffer = Buffer.from(byteArray);
+
+      console.log(`[TRANSCRIPTION] ✅ Loaded file from storage with key: "${key}"`);
+
+      return {
+        buffer,
+        size: buffer.byteLength,
+        contentType: response.ContentType || 'audio/mpeg',
+        originalName: key.split('/').pop() || fileName,
+        storageKey: key,
+      };
+    } catch (error: any) {
+      const isMissing =
+        error?.name === 'NoSuchKey' ||
+        error?.$metadata?.httpStatusCode === 404;
+
+      if (!isMissing) {
+        console.warn(`[TRANSCRIPTION] ⚠️ Failed loading storage key "${key}":`, error);
+      }
+    }
+  }
+
+  return null;
+}
 
 const purgeInMemoryAudio = (fileName: string | undefined) => {
   if (!fileName || !global.uploadedFiles) return;
@@ -116,11 +172,12 @@ async function runBackgroundContentTasks(params: {
   speakerData: any;
   finalTranscription: string;
   transcriptionSegments: any[];
-  features: ReturnType<typeof getTierFeatures>;
+  features: TierFeatures;
   userId?: string;
   openaiApiKey?: string;
+  reservationId?: string;
 }) {
-  const { projectId, speakerData, finalTranscription, transcriptionSegments, features, userId, openaiApiKey } = params;
+  const { projectId, speakerData, finalTranscription, transcriptionSegments, features, userId, openaiApiKey, reservationId } = params;
   let workingSpeakerData = speakerData;
 
   const aiProcessing: AIProcessingFlags = {
@@ -197,6 +254,7 @@ async function runBackgroundContentTasks(params: {
           userId,
           projectId,
           apiKey: openaiApiKey || undefined,
+          reservationId,
         }
       );
 
@@ -228,6 +286,7 @@ async function runBackgroundContentTasks(params: {
         userId,
         projectId,
         apiKey: openaiApiKey || undefined,
+        reservationId,
       });
       await markSuccess('summary', { ai_summary: summary.summary });
     } catch (error: any) {
@@ -244,6 +303,7 @@ async function runBackgroundContentTasks(params: {
         userId,
         projectId,
         apiKey: openaiApiKey || undefined,
+        reservationId,
       });
       await markSuccess('chapters', { chapters: chapters.chapters });
     } catch (error: any) {
@@ -260,6 +320,7 @@ async function runBackgroundContentTasks(params: {
         userId,
         projectId,
         apiKey: openaiApiKey || undefined,
+        reservationId,
       });
       await markSuccess('takeaways', { key_takeaways: takeaways.takeaways });
     } catch (error: any) {
@@ -276,6 +337,7 @@ async function runBackgroundContentTasks(params: {
         userId,
         projectId,
         apiKey: openaiApiKey || undefined,
+        reservationId,
       });
       await markSuccess('quotes', { social_quotes: quotes.quotes });
     } catch (error: any) {
@@ -284,11 +346,11 @@ async function runBackgroundContentTasks(params: {
     }
   }
 
-  if (finalTranscription && workingSpeakerData) {
+  if (features.insights && finalTranscription && workingSpeakerData) {
     try {
       console.log('[BACKGROUND] 🔍 Starting insight extraction...');
       const { processInsightsForProject } = await import('@/lib/insight-extraction');
-      const result = await processInsightsForProject(projectId);
+      const result = await processInsightsForProject(projectId, userId, reservationId);
       if (result.success) {
         console.log(`[BACKGROUND] ✅ Extracted ${result.insightCount} insights.`);
         await markSuccess('insights');
@@ -314,6 +376,10 @@ async function runBackgroundContentTasks(params: {
     }
   };
   await updateProjectWithSpeakerData(projectId, workingSpeakerData);
+
+  if (reservationId) {
+    await settleReservation(reservationId);
+  }
 }
 
 export async function POST(request: NextRequest) {
@@ -331,10 +397,11 @@ export async function POST(request: NextRequest) {
       );
     }
 
-    const { projectId, fileName, performanceLevel, diarizationProvider = 'assemblyai', speakerCount } = payload as {
+    const { projectId, fileName, performanceLevel, analysisOptions: payloadAnalysisOptions, diarizationProvider = 'assemblyai', speakerCount } = payload as {
       projectId?: string;
       fileName?: string;
       performanceLevel?: TierLevel;
+      analysisOptions?: Record<string, unknown>;
       diarizationProvider?: 'assemblyai' | 'deepgram';
       speakerCount?: number;
     };
@@ -347,33 +414,9 @@ export async function POST(request: NextRequest) {
     }
 
     parsedProjectId = projectId;
-    const tier: TierLevel = performanceLevel || 'standard';
-    const features = getTierFeatures(tier);
-
-    // Persist which content blocks are owed for this tier so the reconcile
-    // endpoint can detect gaps even if background processing is interrupted.
-    const selectedContentBlocks: string[] = [];
-    if (features.aiSummary) selectedContentBlocks.push('summary');
-    if (features.chapterDetection) selectedContentBlocks.push('chapters');
-    if (features.keyTakeaways) selectedContentBlocks.push('takeaways');
-    if (features.quotesExtraction) selectedContentBlocks.push('quotes');
-    if (selectedContentBlocks.length > 0) {
-      // Fire and forget — don't block transcription on this write
-      void (async () => {
-        try {
-          await (supabaseAdmin as any)
-            .from('projects')
-            .update({ metadata: { selected_content_blocks: selectedContentBlocks } })
-            .eq('id', projectId);
-          console.log(`[TRANSCRIBE] 📋 Persisted selected_content_blocks: [${selectedContentBlocks}]`);
-        } catch (err: any) {
-          console.warn('[TRANSCRIBE] ⚠️ Failed to persist selected_content_blocks:', err.message);
-        }
-      })();
-    }
 
     console.log(`\n========================================`);
-    console.log(`[TRANSCRIPTION] 🚀 Starting ${tier.toUpperCase()} tier processing`);
+    console.log(`[TRANSCRIPTION] 🚀 Starting upload processing`);
     console.log(`[TRANSCRIPTION] Provider: ${diarizationProvider}`);
     console.log(`[TRANSCRIPTION] Project ID: ${projectId}`);
     console.log(`[TRANSCRIPTION] File: ${fileName}`);
@@ -383,7 +426,7 @@ export async function POST(request: NextRequest) {
     // Check if project already has cached transcription
     const { data: existingProject, error: projectError } = await supabaseAdmin
       .from('projects')
-      .select('transcription_text, transcription_segments, speaker_data, audio_duration, user_id, title, preset_speakers')
+      .select('transcription_text, transcription_segments, speaker_data, audio_duration, user_id, title, preset_speakers, metadata, performance_level')
       .eq('id', projectId)
       .single() as {
         data: {
@@ -394,15 +437,55 @@ export async function POST(request: NextRequest) {
           user_id: string;
           title: string;
           preset_speakers: any[] | null;
+          metadata?: any;
+          performance_level?: string | null;
         } | null;
         error: any
       };
+
+    const analysisOptions = existingProject
+      ? getProjectAnalysisOptions(existingProject)
+      : normalizeAnalysisOptions(payloadAnalysisOptions);
+    const uploadReservationId: string | undefined = existingProject?.metadata?.billing?.uploadReservationId;
+    const tier: TierLevel = getProcessingTierForAnalysis(analysisOptions);
+    const features = getFeaturesFromAnalysisOptions(analysisOptions);
+
+    const selectedContentBlocks: string[] = [];
+    if (features.nameExtraction) selectedContentBlocks.push('named_speakers');
+    if (features.aiSummary) selectedContentBlocks.push('summary');
+    if (features.insights) selectedContentBlocks.push('insights');
+    if (features.chapterDetection) selectedContentBlocks.push('chapters');
+    if (features.keyTakeaways) selectedContentBlocks.push('takeaways');
+    if (features.quotesExtraction) selectedContentBlocks.push('quotes');
+
+    void (async () => {
+      try {
+        const nextMetadata = {
+          ...(existingProject?.metadata || {}),
+          analysis_options: analysisOptions,
+          selected_content_blocks: selectedContentBlocks,
+        };
+        await (supabaseAdmin as any)
+          .from('projects')
+          .update({ metadata: nextMetadata })
+          .eq('id', projectId);
+        console.log(`[TRANSCRIBE] 📋 Persisted analysis options and selected blocks: [${selectedContentBlocks}]`);
+      } catch (err: any) {
+        console.warn('[TRANSCRIBE] ⚠️ Failed to persist analysis options:', err.message);
+      }
+    })();
+
+    console.log(`[TRANSCRIPTION] Analysis options:`, analysisOptions);
+    console.log(`[TRANSCRIPTION] Internal processing tier: ${tier}`);
+    if (performanceLevel) {
+      console.log(`[TRANSCRIPTION] Legacy performanceLevel hint received: ${performanceLevel}`);
+    }
 
     const hasCache = existingProject && existingProject.transcription_text;
     const openaiApiKey = await getOpenAIApiKeyForUser(existingProject?.user_id);
 
     if (hasCache) {
-      console.log('[TRANSCRIPTION] ♻️ Cache detected - skipping transcription, will apply tier features only');
+      console.log('[TRANSCRIPTION] ♻️ Cache detected - skipping transcription, will apply selected analysis only');
     }
 
     // Check Provider availability (skip if cache exists)
@@ -412,19 +495,13 @@ export async function POST(request: NextRequest) {
         providerAvailable = await checkDeepgramAvailability();
         if (!providerAvailable) {
           console.error('[TRANSCRIPTION] ❌ Deepgram not available');
-          return NextResponse.json(
-            { error: 'Deepgram not configured. Please set DEEPGRAM_API_KEY in your .env file.' },
-            { status: 500 }
-          );
+          throw new Error('Deepgram not configured. Please set DEEPGRAM_API_KEY in your .env file.');
         }
       } else {
         providerAvailable = await checkAssemblyAIAvailability();
         if (!providerAvailable) {
           console.error('[TRANSCRIPTION] ❌ AssemblyAI not available');
-          return NextResponse.json(
-            { error: 'AssemblyAI not configured. Please set ASSEMBLYAI_API_KEY in your .env file.' },
-            { status: 500 }
-          );
+          throw new Error('AssemblyAI not configured. Please set ASSEMBLYAI_API_KEY in your .env file.');
         }
       }
     }
@@ -467,39 +544,41 @@ export async function POST(request: NextRequest) {
       const fingerprint = payload.fingerprint as string | undefined;
       await incrementReferenceCount(fingerprint);
     } else {
-      // Retrieve audio file from memory
-      if (!global.uploadedFiles) {
-        return NextResponse.json(
-          { error: 'No file found in memory. Please upload the file first.' },
-          { status: 400 }
-        );
-      }
+      let fileBuffer: Buffer | null = null;
+      let fileSize = 0;
 
-      const fileKeys = buildInMemoryKeys(fileName);
-      let fileData: {
-        buffer: ArrayBuffer;
-        contentType: string;
-        originalName: string;
-        size: number;
-      } | undefined;
+      const storageFile = await loadAudioFromStorage(projectId, fileName);
+      if (storageFile) {
+        fileBuffer = storageFile.buffer;
+        fileSize = storageFile.size;
+      } else if (global.uploadedFiles) {
+        const fileKeys = buildInMemoryKeys(fileName);
+        let fileData: {
+          buffer: ArrayBuffer;
+          contentType: string;
+          originalName: string;
+          size: number;
+        } | undefined;
 
-      for (const key of fileKeys) {
-        fileData = global.uploadedFiles.get(key);
-        if (fileData) {
-          console.log(`[TRANSCRIPTION] ✅ Found file in memory with key: "${key}"`);
-          break;
+        for (const key of fileKeys) {
+          fileData = global.uploadedFiles.get(key);
+          if (fileData) {
+            console.log(`[TRANSCRIPTION] ✅ Found file in memory with key: "${key}"`);
+            break;
+          }
         }
+
+        if (fileData) {
+          fileBuffer = Buffer.from(fileData.buffer);
+          fileSize = fileData.size;
+        } else {
+          throw new Error(`Audio file not found. Tried storage and in-memory keys: ${fileKeys.join(', ')}`);
+        }
+      } else {
+        throw new Error('Audio file not available for transcription.');
       }
 
-      if (!fileData) {
-        return NextResponse.json(
-          { error: `Audio file not found in memory. Tried keys: ${fileKeys.join(', ')}` },
-          { status: 404 }
-        );
-      }
-
-      const fileBuffer = Buffer.from(fileData.buffer);
-      console.log(`[TRANSCRIPTION] 📊 File size: ${Math.round(fileData.size / 1024 / 1024 * 100) / 100}MB`);
+      console.log(`[TRANSCRIPTION] 📊 File size: ${Math.round(fileSize / 1024 / 1024 * 100) / 100}MB`);
 
       // Save audio file to temp location
       const tempDir = os.tmpdir();
@@ -511,13 +590,14 @@ export async function POST(request: NextRequest) {
 
       // Pre-flight credit balance check
       const userId = existingProject?.user_id;
-      if (userId) {
+      if (userId && !uploadReservationId) {
         try {
           // Estimate transcription cost based on file size (rough estimate: 1MB ≈ 60 seconds)
-          const estimatedDurationSeconds = Math.ceil((fileData.size / 1024 / 1024) * 60);
+          const estimatedDurationSeconds = Math.ceil((fileSize / 1024 / 1024) * 60);
           const estimatedCost = estimateTranscriptionCost({
             durationSeconds: estimatedDurationSeconds,
             tier,
+            analysisOptions,
           });
 
           console.log(`[BILLING] 💰 Estimated cost: $${estimatedCost.total.toFixed(4)} for ~${(estimatedDurationSeconds / 60).toFixed(1)} minutes`);
@@ -584,6 +664,7 @@ export async function POST(request: NextRequest) {
           const billingResult = await trackAssemblyAIUsage({
             userId,
             projectId,
+            reservationId: uploadReservationId,
             durationSeconds: totalDuration,
             metadata: {
               processingTime: metadata?.processing_time,
@@ -591,7 +672,7 @@ export async function POST(request: NextRequest) {
               confidence: metadata?.confidence,
               provider: diarizationProvider
             },
-            shouldDebit: true, // Debit credits immediately
+            shouldDebit: uploadReservationId ? false : true,
           });
 
           console.log(`[BILLING] ✅ Tracked usage: $${billingResult.billedCost.toFixed(4)} (${(totalDuration / 60).toFixed(1)} minutes)`);
@@ -661,7 +742,7 @@ export async function POST(request: NextRequest) {
     const detectedSpeakers = groupSegmentsBySpeaker(speakerSegments);
     console.log(`[TRANSCRIPTION] 📊 Grouped into ${Object.keys(detectedSpeakers).length} unique speakers`);
 
-    // Assign numbered speaker names for Basic tier
+    // Default to numbered speakers unless name extraction is requested
     const sortedSpeakerIds = Object.keys(detectedSpeakers).sort();
     for (let i = 0; i < sortedSpeakerIds.length; i++) {
       const speakerId = sortedSpeakerIds[i];
@@ -736,7 +817,7 @@ export async function POST(request: NextRequest) {
       console.log('[TRANSCRIPTION] Preset roster detected; speakerCount left unset so GPT can discover additional speakers');
     }
 
-    // PRO tier and above: Run LLM Pipeline FIRST (before any branching)
+    // Run the LLM speaker pipeline only when named speakers are requested
     if (features.nameExtraction || features.aiSummary) {
       console.log(`\n========================================`);
       console.log(`[LLM] 🤖 STEP 1: Running LLM Pipeline (Always First)`);
@@ -762,6 +843,7 @@ export async function POST(request: NextRequest) {
             openaiApiKey: openaiApiKey ?? undefined,
             userId: existingProject?.user_id,
             projectId,
+            reservationId: uploadReservationId,
             filename: fileName, // Pass filename for priming
             title: existingProject?.title || undefined,
             speakerCount: effectiveSpeakerCount, // Pass expected speaker count (explicit or inferred)
@@ -841,6 +923,7 @@ export async function POST(request: NextRequest) {
           speakerContext,
           userId: existingProject?.user_id,
           projectId,
+          reservationId: uploadReservationId,
           apiKey: openaiApiKey || undefined,
         });
         narrativeMetadata = preProcessResult.metadata;
@@ -1006,7 +1089,6 @@ export async function POST(request: NextRequest) {
 
     // We only track the base transcription cost here as that's handled by this route
     let totalCost = baseCost;
-    const tierPricing = calculateTierCost(tier, totalDuration, false);
 
     console.log(`\n[COST] 💰 Cost Summary:`);
     console.log(`[COST]   Transcription: $${baseCost.toFixed(4)} (${diarizationProvider})`);
@@ -1115,7 +1197,7 @@ export async function POST(request: NextRequest) {
           chapters: features.chapterDetection ? false : true,
           takeaways: features.keyTakeaways ? false : true,
           quotes: features.quotesExtraction ? false : true,
-          insights: features.nameExtraction ? false : true,
+          insights: features.insights ? false : true,
           debateCorrectionApplied: projectType === 'DEBATE' && debateCorrectionResult !== null,
         }
       }
@@ -1190,17 +1272,25 @@ export async function POST(request: NextRequest) {
 
     // Background AI content processing (summary, roles, chapters, takeaways, quotes, insights)
     if (finalTranscription && speakerData) {
-      runBackgroundContentTasks({
-        projectId,
-        speakerData,
-        finalTranscription,
-        transcriptionSegments,
-        features,
-        userId: existingProject?.user_id,
-        openaiApiKey: openaiApiKey ?? undefined
-      }).catch((error) => {
-        console.error('[BACKGROUND] ❌ Failed to run background tasks:', error);
-      });
+      scheduleBackgroundTask(
+        runBackgroundContentTasks({
+          projectId,
+          speakerData,
+          finalTranscription,
+          transcriptionSegments,
+          features,
+          userId: existingProject?.user_id,
+          openaiApiKey: openaiApiKey ?? undefined,
+          reservationId: uploadReservationId,
+        })
+          .catch((error) => {
+            console.error('[BACKGROUND] ❌ Failed to run background tasks:', error);
+          })
+      );
+    }
+
+    if (uploadReservationId && !selectedContentBlocks.length) {
+      await settleReservation(uploadReservationId);
     }
 
     // Cleanup
@@ -1217,6 +1307,7 @@ export async function POST(request: NextRequest) {
     return NextResponse.json({
       success: true,
       tier,
+      analysisOptions,
       transcription: finalTranscription,
       speakers: Object.keys(speakersWithNames).length,
       duration: totalDuration,
@@ -1233,6 +1324,22 @@ export async function POST(request: NextRequest) {
 
   } catch (error: any) {
     console.error('[TRANSCRIPTION] ❌ Error:', error);
+
+    if (parsedProjectId) {
+      try {
+        const { data: failedProject } = await supabaseAdmin
+          .from('projects')
+          .select('metadata')
+          .eq('id', parsedProjectId)
+          .maybeSingle() as { data: any };
+        const reservationId: string | undefined = failedProject?.metadata?.billing?.uploadReservationId;
+        if (reservationId) {
+          await failReservation(reservationId, error.message || 'Transcription failed');
+        }
+      } catch (billingError) {
+        console.error('[TRANSCRIPTION] ❌ Failed to clean up upload reservation:', billingError);
+      }
+    }
 
     // Mark project as failed so the UI stops polling
     if (parsedProjectId) {

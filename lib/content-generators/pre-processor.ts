@@ -31,6 +31,7 @@ export async function preProcessTranscript(
     speakerContext?: Record<string, { name: string; role?: string }>;
     userId?: string;
     projectId?: string;
+    reservationId?: string;
     apiKey?: string;
   } = {}
 ): Promise<PreProcessResult> {
@@ -135,9 +136,11 @@ ${transcriptionText.slice(0, 100000)}`;
       trackOpenAIUsage({
         userId: options.userId,
         projectId: options.projectId,
+        reservationId: options.reservationId,
         response,
         modelName: 'gpt-5-nano',
         purpose: 'transcript pre-processing',
+        shouldDebit: options.reservationId ? false : true,
       }).catch(err => console.error('[PRE-PROCESSOR] Failed to track usage:', err));
     }
 

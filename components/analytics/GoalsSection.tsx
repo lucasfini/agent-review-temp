@@ -1,8 +1,8 @@
 "use client"
 
-import { useState, type FormEvent } from 'react'
+import { useMemo, useState, type FormEvent } from 'react'
 import { cn } from "@/lib/utils"
-import { Settings2, Plus, Target, Check, Pause, Archive, BookOpen, X } from 'lucide-react'
+import { Settings2, Plus, Target, Check, Pause, Archive, BookOpen, Sparkles, ArrowRight, ChevronDown, ChevronUp, PlayCircle, Ban, Megaphone } from 'lucide-react'
 import {
   Sheet,
   SheetContent,
@@ -11,10 +11,7 @@ import {
   SheetDescription,
   SheetTrigger
 } from '@/components/ui/sheet'
-
-// ============================================================================
-// TYPES
-// ============================================================================
+import { FeatureHelp } from '@/components/ui/feature-help'
 
 interface NarrativeGoal {
   id: string
@@ -45,156 +42,222 @@ interface GoalsSectionProps {
   readOnly?: boolean
 }
 
-// ============================================================================
-// GOAL TYPE STYLES
-// ============================================================================
-
-const GOAL_TYPE_STYLES: Record<string, { iconText: string; iconBg: string; progressColor: string }> = {
-  include: { iconText: 'text-blue-500', iconBg: 'bg-blue-500/10 border-blue-500/20', progressColor: 'bg-gradient-to-r from-blue-600 to-blue-400' },
-  cta: { iconText: 'text-emerald-500', iconBg: 'bg-emerald-500/10 border-emerald-500/20', progressColor: 'bg-gradient-to-r from-emerald-600 to-emerald-400' },
-  avoid: { iconText: 'text-red-500', iconBg: 'bg-red-500/10 border-red-500/20', progressColor: 'bg-gradient-to-r from-red-600 to-red-400' },
-  mention: { iconText: 'text-amber-500', iconBg: 'bg-amber-500/10 border-amber-500/20', progressColor: 'bg-gradient-to-r from-amber-600 to-amber-400' }
+const GOAL_TYPE_META: Record<string, {
+  label: string
+  summary: string
+  icon: typeof Target
+  accent: string
+  badge: string
+}> = {
+  include: {
+    label: 'Repeat this theme',
+    summary: 'Use this when you want a topic to keep showing up in future episodes.',
+    icon: PlayCircle,
+    accent: 'text-blue-600 dark:text-blue-300',
+    badge: 'bg-blue-50 text-blue-700 border-blue-200 dark:bg-blue-900/20 dark:text-blue-300 dark:border-blue-800/30',
+  },
+  cta: {
+    label: 'Remember this CTA',
+    summary: 'Use this when you want a reminder to mention an offer, signup, or action consistently.',
+    icon: Megaphone,
+    accent: 'text-emerald-600 dark:text-emerald-300',
+    badge: 'bg-emerald-50 text-emerald-700 border-emerald-200 dark:bg-emerald-900/20 dark:text-emerald-300 dark:border-emerald-800/30',
+  },
+  avoid: {
+    label: 'Avoid this pattern',
+    summary: 'Use this when you want analysis to flag a topic or pattern you are trying to reduce.',
+    icon: Ban,
+    accent: 'text-rose-600 dark:text-rose-300',
+    badge: 'bg-rose-50 text-rose-700 border-rose-200 dark:bg-rose-900/20 dark:text-rose-300 dark:border-rose-800/30',
+  },
+  mention: {
+    label: 'Improve this habit',
+    summary: 'Use this for lighter creator habits or ideas you want to keep top of mind.',
+    icon: Sparkles,
+    accent: 'text-amber-600 dark:text-amber-300',
+    badge: 'bg-amber-50 text-amber-700 border-amber-200 dark:bg-amber-900/20 dark:text-amber-300 dark:border-amber-800/30',
+  }
 }
 
-const STATUS_STYLES: Record<string, { bg: string; text: string; icon: typeof Check }> = {
-  active: { bg: 'bg-white dark:bg-slate-900 border border-emerald-500/20', text: 'text-emerald-600 dark:text-emerald-400', icon: Check },
-  paused: { bg: 'bg-white dark:bg-slate-900 border border-amber-500/20', text: 'text-amber-600 dark:text-amber-400', icon: Pause },
-  archived: { bg: 'bg-white dark:bg-slate-900 border border-slate-300 dark:border-slate-700', text: 'text-slate-500 dark:text-slate-400', icon: Archive }
+const STATUS_META: Record<string, {
+  label: string
+  badge: string
+  icon: typeof Check
+}> = {
+  active: {
+    label: 'Active',
+    badge: 'bg-emerald-50 text-emerald-700 border-emerald-200 dark:bg-emerald-900/20 dark:text-emerald-300 dark:border-emerald-800/30',
+    icon: Check,
+  },
+  paused: {
+    label: 'Paused',
+    badge: 'bg-amber-50 text-amber-700 border-amber-200 dark:bg-amber-900/20 dark:text-amber-300 dark:border-amber-800/30',
+    icon: Pause,
+  },
+  archived: {
+    label: 'Archived',
+    badge: 'bg-slate-100 text-slate-600 border-slate-200 dark:bg-slate-800 dark:text-slate-300 dark:border-slate-700',
+    icon: Archive,
+  },
 }
 
-// ============================================================================
-// PROGRESS BAR COMPONENT
-// ============================================================================
+const GOAL_TYPE_OPTIONS = [
+  { value: 'include', label: 'Repeat this theme', helper: 'Keep this topic showing up regularly in future episodes.' },
+  { value: 'cta', label: 'Remember this CTA', helper: 'Track whether an offer or call to action is being mentioned often enough.' },
+  { value: 'mention', label: 'Improve this habit', helper: 'Use for lighter creator habits or ideas you want analysis to watch for.' },
+  { value: 'avoid', label: 'Avoid this pattern', helper: 'Flag when a topic or pattern appears more than you want.' }
+] as const
 
-interface ProgressBarProps {
-  value: number
-  max?: number
-  size?: 'sm' | 'md'
-  color?: string
-  showLabel?: boolean
+function getGoalMeta(goalType: string) {
+  return GOAL_TYPE_META[goalType] || GOAL_TYPE_META.mention
 }
 
-function ProgressBar({
-  value,
-  max = 100,
-  size = 'md',
-  color = 'bg-blue-500',
-  showLabel = true
-}: ProgressBarProps) {
-  const percent = Math.min(100, Math.max(0, (value / max) * 100))
-
-  return (
-    <div className="flex items-center gap-3">
-      <div className={cn(
-        "flex-1 rounded-full overflow-hidden bg-slate-200 dark:bg-slate-800 shadow-inner",
-        size === 'sm' ? 'h-1.5' : 'h-2.5'
-      )}>
-        <div
-          className={cn(
-            "h-full rounded-full transition-all duration-500 ease-out",
-            percent >= 100 ? 'bg-gradient-to-r from-green-600 to-green-400' : percent >= 75 ? 'bg-gradient-to-r from-emerald-600 to-emerald-400' : color
-          )}
-          style={{ width: `${percent}%` }}
-        />
-      </div>
-      {showLabel && (
-        <span className={cn(
-          "font-medium tabular-nums",
-          size === 'sm' ? 'text-xs' : 'text-sm',
-          percent >= 100 ? 'text-green-600 dark:text-green-400' : 'text-slate-500 dark:text-slate-400'
-        )}>
-          {Math.round(percent)}%
-        </span>
-      )}
-    </div>
-  )
+function getStatusMeta(status: string) {
+  return STATUS_META[status] || STATUS_META.active
 }
 
-// ============================================================================
-// GOAL CARD WITH PROGRESS
-// ============================================================================
-
-interface GoalCardProps {
-  goal: NarrativeGoal
-  progress?: GoalProgress
-  onToggleStatus: () => void
-  onArchive: () => void
-  readOnly?: boolean
-}
-
-function GoalCard({ goal, progress, onToggleStatus, onArchive, readOnly = false }: GoalCardProps) {
-  const typeStyle = GOAL_TYPE_STYLES[goal.goal_type] || GOAL_TYPE_STYLES.mention
-  const statusStyle = STATUS_STYLES[goal.status] || STATUS_STYLES.active
-  const StatusIcon = statusStyle.icon
-
-  const progressPercent = progress?.progressPercent || 0
+function getTargetSummary(goal: NarrativeGoal, progress?: GoalProgress) {
   const currentMentions = progress?.currentMentions || 0
   const targetMentions = progress?.targetMentions || goal.target_mentions || 1
 
+  if (goal.goal_type === 'avoid') {
+    return currentMentions === 0
+      ? 'Not showing up in recent analysis'
+      : `Detected ${currentMentions} time${currentMentions === 1 ? '' : 's'} recently`
+  }
+
+  if (!goal.cadence_days) {
+    return `${currentMentions} of ${targetMentions} signals seen recently`
+  }
+
+  return `${currentMentions} of ${targetMentions} signals in the last ${goal.cadence_days} days`
+}
+
+function getProgressSummary(goal: NarrativeGoal, progress?: GoalProgress) {
+  const percent = progress?.progressPercent || 0
+
+  if (goal.goal_type === 'avoid') {
+    return percent === 0
+      ? 'Good so far — no recent signals detected.'
+      : 'Still showing up in recent analysis.'
+  }
+
+  if (percent >= 100) return 'On track — this is showing up consistently.'
+  if (percent >= 60) return 'Partially showing up, but not yet consistent.'
+  return 'Not showing up enough yet.'
+}
+
+function getNextAction(goal: NarrativeGoal, progress?: GoalProgress) {
+  const percent = progress?.progressPercent || 0
+
+  switch (goal.goal_type) {
+    case 'cta':
+      return percent >= 100
+        ? 'Keep this CTA in your opening or closing pattern.'
+        : 'Add this CTA to a reliable segment like your intro, outro, or show notes.'
+    case 'avoid':
+      return percent === 0
+        ? 'Keep your current framing — analysis is not seeing this pattern.'
+        : 'Rewrite prompts or transitions so this pattern is less likely to appear.'
+    case 'include':
+      return percent >= 100
+        ? 'This theme is landing regularly. Keep reinforcing it with stronger examples.'
+        : 'Plan one explicit segment or talking point around this theme in the next episode.'
+    default:
+      return percent >= 100
+        ? 'This habit is showing up. Keep reinforcing it intentionally.'
+        : 'Make this a deliberate part of your prep so it appears more consistently.'
+  }
+}
+
+function GoalCard({
+  goal,
+  progress,
+  onToggleStatus,
+  onArchive,
+  readOnly = false,
+  archived = false,
+}: {
+  goal: NarrativeGoal
+  progress?: GoalProgress
+  onToggleStatus?: () => void
+  onArchive?: () => void
+  readOnly?: boolean
+  archived?: boolean
+}) {
+  const meta = getGoalMeta(goal.goal_type)
+  const status = getStatusMeta(goal.status)
+  const GoalIcon = meta.icon
+  const StatusIcon = status.icon
+  const percent = progress?.progressPercent || 0
+  const progressValue = goal.goal_type === 'avoid' ? `${progress?.currentMentions || 0}` : `${percent}%`
+
   return (
-    <div className="bg-white dark:bg-slate-950 border border-slate-200 dark:border-slate-800/60 shadow-sm rounded-xl hover:border-slate-300 dark:hover:border-slate-700 transition-colors overflow-hidden">
+    <div className={cn(
+      "overflow-hidden rounded-xl border bg-white shadow-sm transition-colors dark:bg-slate-950",
+      archived
+        ? "border-slate-200/80 opacity-85 dark:border-slate-800/60"
+        : goal.status === 'paused'
+          ? "border-amber-200/70 dark:border-amber-900/30"
+          : "border-slate-200 dark:border-slate-800 hover:border-slate-300 dark:hover:border-slate-700"
+    )}>
       <div className="p-4">
-        {/* Header */}
-        <div className="flex items-start justify-between mb-3">
-          <div className="flex items-start gap-2 min-w-0">
-            <div className={cn("flex-shrink-0 p-1.5 rounded-md border mt-0.5", typeStyle.iconBg)}>
-              <Target className={cn("h-4 w-4", typeStyle.iconText)} />
-            </div>
-            <div className="min-w-0">
-              <h4 className="text-sm font-medium text-slate-900 dark:text-slate-50 truncate">
-                {goal.topic_label}
-              </h4>
-              <div className="flex items-center gap-2 mt-1">
-                <span className="text-[10px] font-medium tracking-wide uppercase border px-2 py-0.5 rounded-full bg-slate-100 dark:bg-slate-800 text-slate-600 dark:text-slate-300 border-slate-200 dark:border-slate-700">
-                  {goal.goal_type}
-                </span>
-                <span className="text-xs text-slate-500 dark:text-slate-400">
-                  Target: {targetMentions} / {goal.cadence_days ? `${goal.cadence_days}d` : 'ongoing'}
-                </span>
+        <div className="flex items-start justify-between gap-4">
+          <div className="min-w-0">
+            <div className="flex items-center gap-2">
+              <div className="rounded-lg border border-slate-200 bg-slate-50 p-2 dark:border-slate-800 dark:bg-slate-900">
+                <GoalIcon className={cn("h-4 w-4", meta.accent)} />
               </div>
+              <span className={cn("inline-flex items-center rounded-full border px-2 py-0.5 text-[10px] font-semibold uppercase tracking-[0.14em]", meta.badge)}>
+                {meta.label}
+              </span>
             </div>
+            <h4 className="mt-2.5 text-sm font-semibold text-slate-900 dark:text-slate-50">
+              {goal.topic_label}
+            </h4>
+            <p className="mt-1 text-sm leading-5 text-slate-500 dark:text-slate-400">
+              {meta.summary}
+            </p>
           </div>
-          <span className={cn(
-            "flex items-center gap-1 text-[10px] font-medium tracking-wide px-2 py-0.5 rounded-full",
-            statusStyle.bg, statusStyle.text
-          )}>
+          <span className={cn("inline-flex items-center gap-1 rounded-full border px-2 py-1 text-[10px] font-semibold uppercase tracking-[0.14em]", status.badge)}>
             <StatusIcon className="h-3 w-3" />
-            {goal.status}
+            {status.label}
           </span>
         </div>
 
-        {/* Progress */}
-        <div className="space-y-1.5">
-          <div className="flex items-center justify-between text-xs text-slate-500 dark:text-slate-400">
-            <span>{currentMentions} of {targetMentions} mentions</span>
-            <span className={progressPercent >= 100 ? 'text-green-600 dark:text-green-400 font-medium' : ''}>
-              {progressPercent >= 100 ? 'Complete!' : `${100 - progressPercent}% to go`}
+        <div className="mt-4 space-y-3">
+          <div className="flex items-center justify-between gap-3">
+            <p className="text-sm font-medium text-slate-900 dark:text-slate-100">
+              {getTargetSummary(goal, progress)}
+            </p>
+            <span className="text-sm font-semibold text-slate-700 dark:text-slate-200">
+              {progressValue}
             </span>
           </div>
-          <ProgressBar
-            value={progressPercent}
-            color={typeStyle.progressColor}
-          />
+          <p className="text-sm text-slate-600 dark:text-slate-300">
+            {getProgressSummary(goal, progress)}
+          </p>
+          <div className="flex items-start gap-2 text-xs text-slate-500 dark:text-slate-400">
+            <ArrowRight className="mt-0.5 h-3.5 w-3.5 flex-shrink-0" />
+            <p>{getNextAction(goal, progress)}</p>
+          </div>
         </div>
       </div>
 
-      {/* Actions */}
-      {!readOnly && goal.status !== 'archived' && (
-        <div className="px-4 pb-4 border-t border-slate-200 dark:border-slate-800/60 pt-3 flex justify-end gap-3">
+      {!readOnly && !archived && (
+        <div className="flex items-center justify-end gap-3 border-t border-slate-200 px-4 py-2.5 text-sm dark:border-slate-800">
           <button
             type="button"
             onClick={onToggleStatus}
-            aria-label={`${goal.status === 'active' ? 'Pause' : 'Activate'} goal: ${goal.topic_label}`}
-            className="text-xs font-medium text-slate-500 dark:text-slate-400 hover:text-slate-800 dark:hover:text-slate-200 transition-colors"
+            className="font-medium text-slate-500 transition-colors hover:text-slate-900 dark:text-slate-400 dark:hover:text-slate-100"
           >
-            {goal.status === 'active' ? 'Pause' : 'Activate'}
+            {goal.status === 'active' ? 'Pause' : 'Resume'}
           </button>
-          <span className="text-slate-300 dark:text-slate-600" aria-hidden="true">|</span>
+          <span className="text-slate-300 dark:text-slate-700" aria-hidden="true">|</span>
           <button
             type="button"
             onClick={onArchive}
-            aria-label={`Archive goal: ${goal.topic_label}`}
-            className="text-xs font-medium text-slate-500 dark:text-slate-400 hover:text-red-500 dark:hover:text-red-400 transition-colors"
+            className="font-medium text-slate-500 transition-colors hover:text-red-600 dark:text-slate-400 dark:hover:text-red-400"
           >
             Archive
           </button>
@@ -204,27 +267,25 @@ function GoalCard({ goal, progress, onToggleStatus, onArchive, readOnly = false 
   )
 }
 
-// ============================================================================
-// CREATE GOAL FORM
-// ============================================================================
-
-const GOAL_TYPE_OPTIONS = [
-  { value: 'include', label: 'Recurring Topic', helper: 'Ensure this theme shows up regularly.' },
-  { value: 'cta', label: 'CTA Reminder', helper: 'Track mentions of offers or CTAs.' },
-  { value: 'avoid', label: 'Avoid / Limit', helper: 'Flag when this theme appears.' },
-  { value: 'mention', label: 'Awareness', helper: 'Lightweight monitoring of new ideas.' }
-] as const
-
-interface CreateGoalFormProps {
+function CreateGoalForm({
+  onSave,
+  suggestedGoals,
+  isSaving,
+  error,
+  onOpenExamples,
+}: {
   onSave: (goal: { label: string; type: string; target: number; cadence: number | null }) => Promise<void>
   suggestedGoals: Array<{ label: string; type: string; target: number; cadence: number | null }>
   isSaving: boolean
   error: string
   onOpenExamples: () => void
-}
-
-function CreateGoalForm({ onSave, suggestedGoals, isSaving, error, onOpenExamples }: CreateGoalFormProps) {
+}) {
   const [form, setForm] = useState({ label: '', type: 'include', target: 1, cadence: 30 })
+
+  const selectedTypeMeta = useMemo(
+    () => GOAL_TYPE_OPTIONS.find((option) => option.value === form.type) || GOAL_TYPE_OPTIONS[0],
+    [form.type]
+  )
 
   const handleSubmit = async (e: FormEvent) => {
     e.preventDefault()
@@ -235,23 +296,24 @@ function CreateGoalForm({ onSave, suggestedGoals, isSaving, error, onOpenExample
       cadence: form.cadence || null
     })
     if (!error) {
-      setForm(f => ({ ...f, label: '' }))
+      setForm((prev) => ({ ...prev, label: '' }))
     }
   }
 
   return (
     <div className="space-y-6">
-      {/* Quick Suggestions */}
       {suggestedGoals.length > 0 && (
         <div>
-          <p className="text-xs text-slate-500 dark:text-slate-400 mb-2">Quick add from analysis:</p>
+          <p className="mb-2 text-xs font-medium uppercase tracking-[0.14em] text-slate-500 dark:text-slate-400">
+            Quick start from recent analysis
+          </p>
           <div className="flex flex-wrap gap-2">
             {suggestedGoals.slice(0, 4).map((suggestion, idx) => (
               <button
-                key={idx}
+                key={`${suggestion.label}-${idx}`}
                 type="button"
                 onClick={() => onSave(suggestion)}
-                className="px-2.5 py-1.5 text-xs rounded-lg border border-slate-300 dark:border-slate-700 bg-white dark:bg-slate-900 text-slate-600 dark:text-slate-300 hover:border-blue-300 hover:bg-blue-50 dark:hover:bg-blue-900/20 hover:text-blue-600 dark:hover:text-blue-400 transition-colors text-left"
+                className="rounded-xl border border-slate-200 bg-white px-3 py-2 text-left text-xs font-medium text-slate-600 transition-colors hover:border-blue-300 hover:bg-blue-50 hover:text-blue-700 dark:border-slate-800 dark:bg-slate-900 dark:text-slate-300 dark:hover:border-blue-800/40 dark:hover:bg-blue-900/20 dark:hover:text-blue-300"
               >
                 + {suggestion.label}
               </button>
@@ -260,79 +322,87 @@ function CreateGoalForm({ onSave, suggestedGoals, isSaving, error, onOpenExample
         </div>
       )}
 
-      {/* Form */}
       <form onSubmit={handleSubmit} className="space-y-4">
         <div>
-          <label htmlFor="goal-label" className="block text-sm font-medium text-slate-700 dark:text-slate-300 mb-1.5">
-            Goal Label
+          <label htmlFor="goal-label" className="mb-1.5 block text-sm font-medium text-slate-700 dark:text-slate-300">
+            What do you want to intentionally include, improve, or avoid?
           </label>
           <input
             id="goal-label"
             type="text"
             value={form.label}
-            onChange={(e) => setForm(f => ({ ...f, label: e.target.value.slice(0, 80) }))}
-            className="w-full px-3 py-2 text-sm border border-slate-300 dark:border-slate-600 bg-white dark:bg-slate-900 text-slate-900 dark:text-slate-200 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500"
-            placeholder="e.g., Mention coaching program"
+            onChange={(e) => setForm((prev) => ({ ...prev, label: e.target.value.slice(0, 80) }))}
+            className="w-full rounded-xl border border-slate-300 bg-white px-3 py-2.5 text-sm text-slate-900 shadow-sm focus:border-blue-500 focus:outline-none focus:ring-2 focus:ring-blue-500 dark:border-slate-600 dark:bg-slate-900 dark:text-slate-200"
+            placeholder="e.g., Mention coaching program, use stronger hooks, reduce long tangents"
           />
         </div>
 
         <div>
-          <label htmlFor="goal-type" className="block text-sm font-medium text-slate-700 dark:text-slate-300 mb-1.5">
-            Goal Type
+          <label htmlFor="goal-type" className="mb-1.5 block text-sm font-medium text-slate-700 dark:text-slate-300">
+            Goal style
           </label>
           <select
             id="goal-type"
             value={form.type}
-            onChange={(e) => setForm(f => ({ ...f, type: e.target.value }))}
-            className="w-full px-3 py-2 text-sm border border-slate-300 dark:border-slate-600 bg-white dark:bg-slate-900 text-slate-900 dark:text-slate-200 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500"
+            onChange={(e) => setForm((prev) => ({ ...prev, type: e.target.value }))}
+            className="w-full rounded-xl border border-slate-300 bg-white px-3 py-2.5 text-sm text-slate-900 shadow-sm focus:border-blue-500 focus:outline-none focus:ring-2 focus:ring-blue-500 dark:border-slate-600 dark:bg-slate-900 dark:text-slate-200"
           >
-            {GOAL_TYPE_OPTIONS.map(option => (
+            {GOAL_TYPE_OPTIONS.map((option) => (
               <option key={option.value} value={option.value}>{option.label}</option>
             ))}
           </select>
-          <p className="text-xs text-slate-500 dark:text-slate-400 mt-1">
-            {GOAL_TYPE_OPTIONS.find(o => o.value === form.type)?.helper}
+          <p className="mt-1 text-xs text-slate-500 dark:text-slate-400">
+            {selectedTypeMeta.helper}
           </p>
         </div>
 
         <div className="grid grid-cols-2 gap-4">
           <div>
-            <label htmlFor="goal-target" className="block text-sm font-medium text-slate-700 dark:text-slate-300 mb-1.5">
-              Target Mentions
+            <label htmlFor="goal-target" className="mb-1.5 block text-sm font-medium text-slate-700 dark:text-slate-300">
+              Target frequency
             </label>
             <input
               id="goal-target"
               type="number"
               min={0}
               value={form.target}
-              onChange={(e) => setForm(f => ({ ...f, target: Number(e.target.value) }))}
-              className="w-full px-3 py-2 text-sm border border-slate-300 dark:border-slate-600 bg-white dark:bg-slate-900 text-slate-900 dark:text-slate-200 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500"
+              onChange={(e) => setForm((prev) => ({ ...prev, target: Number(e.target.value) }))}
+              className="w-full rounded-xl border border-slate-300 bg-white px-3 py-2.5 text-sm text-slate-900 shadow-sm focus:border-blue-500 focus:outline-none focus:ring-2 focus:ring-blue-500 dark:border-slate-600 dark:bg-slate-900 dark:text-slate-200"
             />
           </div>
           <div>
-            <label htmlFor="goal-cadence" className="block text-sm font-medium text-slate-700 dark:text-slate-300 mb-1.5">
-              Cadence (days)
+            <label htmlFor="goal-cadence" className="mb-1.5 block text-sm font-medium text-slate-700 dark:text-slate-300">
+              Cadence window (days)
             </label>
             <input
               id="goal-cadence"
               type="number"
               min={1}
               value={form.cadence}
-              onChange={(e) => setForm(f => ({ ...f, cadence: Number(e.target.value) }))}
-              className="w-full px-3 py-2 text-sm border border-slate-300 dark:border-slate-600 bg-white dark:bg-slate-900 text-slate-900 dark:text-slate-200 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500"
+              onChange={(e) => setForm((prev) => ({ ...prev, cadence: Number(e.target.value) }))}
+              className="w-full rounded-xl border border-slate-300 bg-white px-3 py-2.5 text-sm text-slate-900 shadow-sm focus:border-blue-500 focus:outline-none focus:ring-2 focus:ring-blue-500 dark:border-slate-600 dark:bg-slate-900 dark:text-slate-200"
             />
           </div>
         </div>
 
-        {error && (
-          <p role="alert" className="text-sm text-red-600">{error}</p>
-        )}
+        <div className="rounded-xl border border-slate-200 bg-slate-50 p-4 dark:border-slate-800 dark:bg-slate-900/70">
+          <p className="text-[11px] font-semibold uppercase tracking-[0.14em] text-slate-500 dark:text-slate-400">
+            How this works
+          </p>
+          <p className="mt-2 text-sm leading-6 text-slate-600 dark:text-slate-300">
+            Active goals guide analysis toward things you want to repeat, remember, improve, or avoid. They do not replace creator coaching, but they help prioritize what the app watches for.
+          </p>
+        </div>
+
+        {error ? (
+          <p role="alert" className="text-sm text-red-600 dark:text-red-400">{error}</p>
+        ) : null}
 
         <div className="flex gap-3">
           <button
             type="submit"
             disabled={isSaving}
-            className="flex-1 px-4 py-2.5 text-sm font-medium text-white bg-blue-600 rounded-lg hover:bg-blue-700 disabled:opacity-50 transition-colors"
+            className="flex-1 rounded-xl bg-blue-600 px-4 py-2.5 text-sm font-medium text-white transition-colors hover:bg-blue-700 disabled:opacity-50"
           >
             {isSaving ? 'Saving...' : 'Create Goal'}
           </button>
@@ -340,7 +410,7 @@ function CreateGoalForm({ onSave, suggestedGoals, isSaving, error, onOpenExample
             type="button"
             onClick={onOpenExamples}
             aria-label="Browse example goals"
-            className="px-4 py-2.5 text-sm font-medium text-slate-600 dark:text-slate-300 bg-slate-100 dark:bg-slate-800 rounded-lg hover:bg-slate-200 dark:hover:bg-slate-700 transition-colors"
+            className="rounded-xl bg-slate-100 px-4 py-2.5 text-sm font-medium text-slate-600 transition-colors hover:bg-slate-200 dark:bg-slate-800 dark:text-slate-300 dark:hover:bg-slate-700"
           >
             <BookOpen className="h-4 w-4" />
           </button>
@@ -349,10 +419,6 @@ function CreateGoalForm({ onSave, suggestedGoals, isSaving, error, onOpenExample
     </div>
   )
 }
-
-// ============================================================================
-// MAIN GOALS SECTION
-// ============================================================================
 
 export function GoalsSection({
   goals,
@@ -367,78 +433,101 @@ export function GoalsSection({
   readOnly = false
 }: GoalsSectionProps) {
   const [isSheetOpen, setIsSheetOpen] = useState(false)
+  const [showArchived, setShowArchived] = useState(false)
 
-  const getProgressForGoal = (goalId: string): GoalProgress | undefined => {
-    return goalProgress.find(p => p.goalId === goalId)
-  }
+  const getProgressForGoal = (goalId: string): GoalProgress | undefined =>
+    goalProgress.find((entry) => entry.goalId === goalId)
 
-  const activeGoals = goals.filter(g => g.status !== 'archived')
+  const activeGoals = goals.filter((goal) => goal.status !== 'archived')
+  const archivedGoals = goals.filter((goal) => goal.status === 'archived')
+  const pausedCount = activeGoals.filter((goal) => goal.status === 'paused').length
 
   return (
-    <div className="space-y-4">
-      {/* Header */}
-      <div className="flex items-center justify-between">
-        <div>
-          <h3 className="text-base font-semibold text-slate-900 dark:text-slate-50">Active Goals</h3>
-          <p className="text-sm text-slate-500 dark:text-slate-400">
-            {activeGoals.length} goal{activeGoals.length !== 1 ? 's' : ''} being tracked
-          </p>
-        </div>
-        {!readOnly && (
-          <Sheet open={isSheetOpen} onOpenChange={setIsSheetOpen}>
-            <SheetTrigger asChild>
-              <button
-                type="button"
-                className="inline-flex items-center gap-2 px-4 py-2 text-sm font-medium text-white bg-blue-600 rounded-lg hover:bg-blue-700 transition-colors"
-              >
-                <Settings2 className="h-4 w-4" />
-                Manage Goals
-              </button>
-            </SheetTrigger>
-            <SheetContent side="right" className="w-full sm:max-w-lg overflow-y-auto">
-              <SheetHeader className="mb-6">
-                <SheetTitle>Manage Goals</SheetTitle>
-                <SheetDescription>
-                  Create and configure your narrative goals to track content coverage.
-                </SheetDescription>
-              </SheetHeader>
-              <CreateGoalForm
-                onSave={async (goal) => {
-                  await onSaveGoal(goal)
-                  // Don't close sheet on success so user can add more
-                }}
-                suggestedGoals={suggestedGoals}
-                isSaving={isSaving}
-                error={error}
-                onOpenExamples={onOpenExamples}
+    <div className="space-y-6">
+      <div className="rounded-2xl border border-slate-200 bg-gradient-to-br from-white via-slate-50 to-blue-50/60 p-5 dark:border-slate-800 dark:bg-[linear-gradient(180deg,rgba(15,23,42,0.92),rgba(15,23,42,0.84))]">
+        <div className="flex items-start justify-between gap-4">
+          <div className="max-w-2xl">
+            <div className="flex items-center gap-2">
+              <h3 className="text-lg font-semibold text-slate-900 dark:text-slate-50">Goals</h3>
+              <FeatureHelp
+                title="Goals"
+                description="Goals are creator intentions for future episodes. They help analysis watch for themes, CTAs, habits, or patterns you want to repeat, improve, or avoid."
+                bestFor="keeping your best habits intentional across episodes"
               />
-            </SheetContent>
-          </Sheet>
-        )}
+            </div>
+            <p className="mt-2 text-sm leading-6 text-slate-600 dark:text-slate-300">
+              Use goals to tell the app what you want to intentionally include, remember, improve, or avoid across future recordings. Analysis uses active goals as guidance, but creator coaching can still surface issues even when no goals exist.
+            </p>
+          </div>
+          {!readOnly ? (
+            <Sheet open={isSheetOpen} onOpenChange={setIsSheetOpen}>
+              <SheetTrigger asChild>
+                <button
+                  type="button"
+                  className="inline-flex items-center gap-2 rounded-xl bg-blue-600 px-4 py-2.5 text-sm font-medium text-white transition-colors hover:bg-blue-700"
+                >
+                  <Settings2 className="h-4 w-4" />
+                  Manage Goals
+                </button>
+              </SheetTrigger>
+              <SheetContent side="right" className="w-full overflow-y-auto sm:max-w-xl">
+                <SheetHeader className="mb-6">
+                  <SheetTitle>Manage Goals</SheetTitle>
+                  <SheetDescription>
+                    Create creator intentions that guide future episodes and help analysis prioritize what matters most to you.
+                  </SheetDescription>
+                </SheetHeader>
+                <CreateGoalForm
+                  onSave={onSaveGoal}
+                  suggestedGoals={suggestedGoals}
+                  isSaving={isSaving}
+                  error={error}
+                  onOpenExamples={onOpenExamples}
+                />
+              </SheetContent>
+            </Sheet>
+          ) : null}
+        </div>
+
+        <div className="mt-5 flex flex-wrap items-center gap-x-5 gap-y-3 rounded-xl border border-slate-200/90 bg-white/80 px-4 py-3 dark:border-slate-800 dark:bg-slate-900/80">
+          <div className="min-w-[90px]">
+            <p className="text-[11px] font-semibold uppercase tracking-[0.14em] text-slate-500 dark:text-slate-400">Active</p>
+            <p className="mt-1 text-lg font-semibold text-slate-900 dark:text-slate-50">{activeGoals.length}</p>
+          </div>
+          <div className="hidden h-8 w-px bg-slate-200 dark:bg-slate-800 sm:block" />
+          <div className="min-w-[90px]">
+            <p className="text-[11px] font-semibold uppercase tracking-[0.14em] text-slate-500 dark:text-slate-400">Paused</p>
+            <p className="mt-1 text-lg font-semibold text-slate-900 dark:text-slate-50">{pausedCount}</p>
+          </div>
+          <div className="hidden h-8 w-px bg-slate-200 dark:bg-slate-800 sm:block" />
+          <div className="min-w-[110px]">
+            <p className="text-[11px] font-semibold uppercase tracking-[0.14em] text-slate-500 dark:text-slate-400">Archived</p>
+            <p className="mt-1 text-lg font-semibold text-slate-900 dark:text-slate-50">{archivedGoals.length}</p>
+          </div>
+        </div>
       </div>
 
-      {/* Goals Grid */}
       {activeGoals.length === 0 ? (
-        <div className="bg-slate-100/80 dark:bg-slate-800/50 rounded-lg border border-dashed border-slate-300 dark:border-slate-600 p-8 text-center">
-          <Target className="h-10 w-10 text-slate-500 mx-auto mb-3" />
-          <h4 className="text-sm font-medium text-slate-900 dark:text-slate-50 mb-1">No goals yet</h4>
-          <p className="text-sm text-slate-500 dark:text-slate-400 mb-4">
-            Create goals to track narrative coverage across your content.
+        <div className="rounded-2xl border border-dashed border-slate-300 bg-slate-50/90 p-8 text-center dark:border-slate-700 dark:bg-slate-900/50">
+          <Target className="mx-auto mb-3 h-10 w-10 text-slate-500" />
+          <h4 className="mb-1 text-sm font-medium text-slate-900 dark:text-slate-50">No active goals yet</h4>
+          <p className="mb-4 text-sm text-slate-500 dark:text-slate-400">
+            Add a goal when you want analysis to keep an eye on a topic, CTA, habit, or pattern you care about repeating or improving.
           </p>
-          {!readOnly && (
+          {!readOnly ? (
             <button
               type="button"
               onClick={() => setIsSheetOpen(true)}
-              className="inline-flex items-center gap-1 px-4 py-2 text-sm font-medium text-blue-600 dark:text-blue-400 bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 rounded-lg hover:border-blue-500/50 hover:text-blue-700 dark:hover:text-blue-300 transition-colors"
+              className="inline-flex items-center gap-2 rounded-xl border border-slate-200 bg-white px-4 py-2 text-sm font-medium text-blue-600 transition-colors hover:border-blue-300 hover:bg-blue-50 dark:border-slate-800 dark:bg-slate-900 dark:text-blue-300 dark:hover:border-blue-800/40 dark:hover:bg-blue-900/20"
             >
               <Plus className="h-4 w-4" />
               Create your first goal
             </button>
-          )}
+          ) : null}
         </div>
       ) : (
-        <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-          {activeGoals.map(goal => (
+        <div className="grid grid-cols-1 gap-4 xl:grid-cols-2">
+          {activeGoals.map((goal) => (
             <GoalCard
               key={goal.id}
               goal={goal}
@@ -450,6 +539,37 @@ export function GoalsSection({
           ))}
         </div>
       )}
+
+      {archivedGoals.length > 0 ? (
+        <div className="rounded-2xl border border-slate-200 bg-white dark:border-slate-800 dark:bg-slate-950">
+          <button
+            type="button"
+            onClick={() => setShowArchived((prev) => !prev)}
+            className="flex w-full items-center justify-between px-5 py-4 text-left"
+          >
+            <div>
+              <p className="text-sm font-semibold text-slate-900 dark:text-slate-50">Archived Goals</p>
+              <p className="mt-1 text-sm text-slate-500 dark:text-slate-400">
+                Archived goals stop influencing active tracking, but their history stays visible here.
+              </p>
+            </div>
+            {showArchived ? <ChevronUp className="h-4 w-4 text-slate-500" /> : <ChevronDown className="h-4 w-4 text-slate-500" />}
+          </button>
+          {showArchived ? (
+            <div className="grid grid-cols-1 gap-4 border-t border-slate-200 px-5 py-5 xl:grid-cols-2 dark:border-slate-800">
+              {archivedGoals.map((goal) => (
+                <GoalCard
+                  key={goal.id}
+                  goal={goal}
+                  progress={getProgressForGoal(goal.id)}
+                  archived
+                  readOnly
+                />
+              ))}
+            </div>
+          ) : null}
+        </div>
+      ) : null}
     </div>
   )
 }

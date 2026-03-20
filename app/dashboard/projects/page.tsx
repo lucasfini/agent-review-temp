@@ -3,7 +3,7 @@
 import { useState, useEffect, useMemo, useRef, useCallback } from 'react';
 import Link from 'next/link';
 import { useSearchParams, useRouter } from 'next/navigation';
-import { FileText, Clock, CheckCircle, AlertCircle, Eye, Download, Share2, RefreshCw, Trash2, Zap, Play, MessageCircle, Crown, Star, Sparkles, BookOpen, Lightbulb, MessageSquare, PanelLeftClose, PanelLeftOpen, Search, Filter, Loader2, CheckSquare, Square, ListChecks, X, PanelRightOpen, PanelRightClose, ScanSearch, MoreHorizontal, Users, Mic, Radio, User, HelpCircle, Copy, Pencil, BarChart2 } from 'lucide-react';
+import { FileText, Clock, CheckCircle, AlertCircle, Eye, Download, RefreshCw, Trash2, Zap, MessageCircle, Sparkles, BookOpen, Lightbulb, MessageSquare, PanelLeftClose, PanelLeftOpen, Search, Loader2, CheckSquare, Square, ListChecks, X, PanelRightOpen, PanelRightClose, ScanSearch, MoreHorizontal, Users, Mic, Radio, User, HelpCircle, Copy, Pencil, BarChart2 } from 'lucide-react';
 import { DropdownMenu, DropdownMenuItem, DropdownMenuSeparator } from '@/components/ui/dropdown-menu';
 import ConfirmModal from '@/components/ui/confirm-modal';
 import { useAuth } from '@/lib/auth/context';
@@ -11,7 +11,6 @@ import { useUserPrefs } from '@/lib/hooks/useUserPrefs';
 import { supabase } from '@/lib/supabase/client';
 import { DemoTour } from '@/components/demo/DemoTour';
 import { useCoverageProgress } from '@/lib/context/coverage-progress';
-import ContentSelectionModal from '@/components/ContentSelectionModal';
 import ExportModal, { type ExportPayload } from '@/components/ExportModal';
 import { exportContent } from '@/lib/export-utils';
 import ConversationView from '@/components/ConversationView';
@@ -19,11 +18,13 @@ import { AudioPlayer } from '@/components/AudioPlayer';
 import { getSpeakerColor, getSpeakerDisplayName } from '@/lib/name-extraction';
 import TeamsStyleTranscript from '@/components/TeamsStyleTranscript';
 import ContextSidebar from '@/components/ContextSidebar';
-import type { CostEstimate } from '@/lib/cost-estimation';
 import type { ContentBlock } from '@/lib/content-types';
+import { DEFAULT_THEME_ID } from '@/lib/content-themes';
 import type { AudioPlayerRef } from '@/lib/hooks/useSpeakerSample';
 import { useProjectRefresh, useSpeakerDataRefresh } from '@/lib/hooks/useProjectRefresh';
 import { emitProjectMutation } from '@/lib/project-events';
+import { ANALYSIS_OPTION_CONFIG, getProjectAnalysisOptions, normalizeAnalysisOptions, type AnalysisOptionKey } from '@/lib/analysis-options';
+import type { ProjectGenerationJob } from '@/lib/project-generation-jobs';
 
 type ProjectType = 'DEBATE' | 'INTERVIEW' | 'PODCAST' | 'MONOLOGUE' | 'OTHER';
 
@@ -45,6 +46,7 @@ interface Project {
   transcription_segments?: string;
   speaker_data?: any;
   performance_level?: string;
+  metadata?: any;
   project_type?: ProjectType;
   processing_stage?: string;
   ai_summary?: string;
@@ -148,9 +150,10 @@ export default function ProjectsPage() {
   const [refreshing, setRefreshing] = useState(false);
   const [deletingProject, setDeletingProject] = useState<string | null>(null);
   const [pendingDeleteProjectId, setPendingDeleteProjectId] = useState<string | null>(null);
-  const [showContentSelection, setShowContentSelection] = useState(false);
-  const [selectedProjectForGeneration, setSelectedProjectForGeneration] = useState<Project | null>(null);
   const [generatingProjects, setGeneratingProjects] = useState<Set<string>>(new Set());
+  const [generationJobs, setGenerationJobs] = useState<ProjectGenerationJob[]>([]);
+  const [optimisticGeneratingAnalysisKeys, setOptimisticGeneratingAnalysisKeys] = useState<Set<AnalysisOptionKey>>(new Set());
+  const [pendingContentTypeIds, setPendingContentTypeIds] = useState<Set<string>>(new Set());
   const [showFullTranscription, setShowFullTranscription] = useState(false);
   const [expandedOutputs, setExpandedOutputs] = useState<Set<string>>(new Set());
   const [readerView, setReaderView] = useState(false);
@@ -163,7 +166,6 @@ export default function ProjectsPage() {
   const [selectedSpeaker, setSelectedSpeaker] = useState<string | null>(null);
   const [projectsSidebarOpen, setProjectsSidebarOpen] = useState(false);
   const [searchTerm, setSearchTerm] = useState('');
-  const [tierFilter, setTierFilter] = useState<'all' | 'standard' | 'pro'>('all');
   const [sortBy, setSortBy] = useState<'recent' | 'oldest' | 'name-asc' | 'name-desc'>('recent');
   const [expandedFeatures, setExpandedFeatures] = useState<Set<string>>(new Set());
 
@@ -217,6 +219,137 @@ export default function ProjectsPage() {
 
   // Per-output delete tracking
   const [deletingOutput, setDeletingOutput] = useState<string | null>(null);
+  const previousActiveJobCountRef = useRef(0);
+
+  const activeGenerationJobs = useMemo(
+    () => generationJobs.filter((job) => job.status === 'queued' || job.status === 'running'),
+    [generationJobs]
+  );
+  const generatingContentTypes = useMemo(
+    () => {
+      const next = new Set(
+        activeGenerationJobs
+          .filter((job) => job.kind === 'content')
+          .map((job) => job.target_key)
+      );
+
+      pendingContentTypeIds.forEach((contentTypeId) => next.add(contentTypeId));
+      return next;
+    },
+    [activeGenerationJobs, pendingContentTypeIds]
+  );
+  const generatingAnalysisKeys = useMemo(
+    () =>
+      new Set(
+        activeGenerationJobs
+          .filter((job) => job.kind === 'analysis')
+          .map((job) => job.target_key as AnalysisOptionKey)
+      ),
+    [activeGenerationJobs]
+  );
+
+  useEffect(() => {
+    const currentActiveJobCount = activeGenerationJobs.length;
+    const previousActiveJobCount = previousActiveJobCountRef.current;
+
+    if (!selectedProject?.id) {
+      previousActiveJobCountRef.current = currentActiveJobCount;
+      return;
+    }
+
+    let intervalId: ReturnType<typeof setInterval> | null = null;
+
+    if (currentActiveJobCount > 0) {
+      intervalId = setInterval(() => {
+        fetchGenerationJobs(selectedProject.id);
+      }, 1500);
+    } else if (previousActiveJobCount > 0) {
+      fetchGenerationJobs(selectedProject.id);
+      fetchProjects();
+      fetchProjectOutputs(selectedProject.id);
+      setInsightsRefreshToken((prev) => prev + 1);
+    }
+
+    previousActiveJobCountRef.current = currentActiveJobCount;
+
+    return () => {
+      if (intervalId) {
+        clearInterval(intervalId);
+      }
+    };
+  }, [activeGenerationJobs.length, selectedProject?.id]);
+
+  useEffect(() => {
+    if (!selectedProject) return;
+
+    setPendingContentTypeIds((prev) => {
+      const next = new Set(prev);
+      for (const contentTypeId of prev) {
+        const hasOutput = outputs.some((output) => {
+          const original = output.metadata?.originalOutputType;
+          const mappedType =
+            typeof original === 'string'
+              ? {
+                  twitter_thread: 'twitter_threads',
+                  linkedin_post: 'linkedin_posts',
+                  instagram_caption: 'instagram_content',
+                  blog_post: 'blog_post',
+                  email_newsletter: 'newsletter',
+                  show_notes: 'show_notes',
+                  quote_graphic: 'quote_graphics',
+                  facebook_post: 'facebook_post',
+                  youtube_description: 'youtube_description',
+                  podcast_episode_description: 'podcast_episode_description',
+                  short_form_video_script: 'short_form_video_script',
+                }[original]
+              : undefined;
+          const fallbackType =
+            {
+              twitter_thread: 'twitter_threads',
+              linkedin_post: 'linkedin_posts',
+              instagram_caption: 'instagram_content',
+              blog_post: 'blog_post',
+              email_newsletter: 'newsletter',
+              show_notes: 'show_notes',
+              quote_graphic: 'quote_graphics',
+              facebook_post: 'facebook_post',
+              youtube_description: 'youtube_description',
+              podcast_episode_description: 'podcast_episode_description',
+              short_form_video_script: 'short_form_video_script',
+            }[output.type];
+          return (mappedType || fallbackType) === contentTypeId;
+        });
+
+        const hasFailedJob = generationJobs.some(
+          (job) => job.kind === 'content' && job.target_key === contentTypeId && job.status === 'failed'
+        );
+
+        if (hasOutput || hasFailedJob) {
+          next.delete(contentTypeId);
+        }
+      }
+      return next;
+    });
+  }, [selectedProject, outputs, generationJobs]);
+
+  useEffect(() => {
+    if (!selectedProject) return;
+
+    setOptimisticGeneratingAnalysisKeys((prev) => {
+      const next = new Set(prev);
+      ANALYSIS_OPTION_CONFIG.forEach((option) => {
+        const hasActiveJob = generatingAnalysisKeys.has(option.key);
+        const isAvailable = isAnalysisOptionAvailable(selectedProject, option.key);
+        const hasFailedJob = generationJobs.some(
+          (job) => job.kind === 'analysis' && job.target_key === option.key && job.status === 'failed'
+        );
+        if (hasActiveJob || isAvailable || hasFailedJob) {
+          next.delete(option.key);
+        }
+      });
+      return next;
+    });
+  }, [selectedProject, generatingAnalysisKeys, generationJobs]);
 
   // ─── Segment review / selection state (lifted from ConversationView) ───
   interface TouchupPreviewItem {
@@ -245,6 +378,11 @@ export default function ProjectsPage() {
   // Keep ref in sync with selectedProject for use in realtime callbacks
   useEffect(() => {
     selectedProjectRef.current = selectedProject?.id || null;
+  }, [selectedProject?.id]);
+
+  useEffect(() => {
+    setOptimisticGeneratingAnalysisKeys(new Set());
+    setPendingContentTypeIds(new Set());
   }, [selectedProject?.id]);
 
   // ============================================================
@@ -383,7 +521,6 @@ export default function ProjectsPage() {
   // Auto-select project from URL query parameter
   useEffect(() => {
     const projectId = searchParams.get('id');
-    const shouldGenerate = searchParams.get('generate') === 'true';
 
     if (projectId && projects.length > 0 && !loading) {
       const projectToSelect = projects.find(p => p.id === projectId);
@@ -394,12 +531,6 @@ export default function ProjectsPage() {
         // Reset insights state — ConversationView will fetch and report back
         setInsightsData([]);
         setInsightsStatus({ count: 0, loading: true, generating: false });
-
-        // If generate=true is in URL, open the content generation modal
-        if (shouldGenerate && projectToSelect.transcription_text) {
-          setSelectedProjectForGeneration(projectToSelect);
-          setShowContentSelection(true);
-        }
       }
     }
   }, [searchParams, projects, loading]);
@@ -471,16 +602,6 @@ export default function ProjectsPage() {
     }
   }, [readerView]);
 
-  useEffect(() => {
-    const handler = () => {
-      if (!selectedProject) return;
-      setSelectedProjectForGeneration(selectedProject);
-      setShowContentSelection(true);
-    };
-    window.addEventListener('demoOpenGenerateContent', handler as EventListener);
-    return () => window.removeEventListener('demoOpenGenerateContent', handler as EventListener);
-  }, [selectedProject]);
-
   const resetSelectedProject = useCallback(() => {
     setSelectedProject(null);
     setOutputs([]);
@@ -489,8 +610,6 @@ export default function ProjectsPage() {
     setShowFullTranscription(false);
     setInsightsSidebarOpen(false);
     setTriggerInsightGeneration(0);
-    setSelectedProjectForGeneration(null);
-    setShowContentSelection(false);
     router.push('/dashboard/projects');
   }, [router]);
 
@@ -502,13 +621,14 @@ export default function ProjectsPage() {
     return () => window.removeEventListener('demoCloseProject', handler as EventListener);
   }, [resetSelectedProject]);
 
-  const premiumFeaturedId = useMemo(() => {
-    const target = projects.find(
-      p => (p.performance_level === 'pro' || p.performance_level === 'premium') && p.title?.includes('Future of Work Roundtable')
+  const featuredProjectId = useMemo(() => {
+    const namedTarget = projects.find(
+      (project) => project.status === 'completed' && project.title?.includes('Future of Work Roundtable')
     );
-    if (target) return target.id;
-    const firstPro = projects.find(p => p.performance_level === 'pro' || p.performance_level === 'premium');
-    return firstPro?.id ?? null;
+    if (namedTarget) return namedTarget.id;
+
+    const firstCompleted = projects.find((project) => project.status === 'completed');
+    return firstCompleted?.id ?? projects[0]?.id ?? null;
   }, [projects]);
 
   const accuracyPercent = useMemo(() => {
@@ -570,23 +690,22 @@ export default function ProjectsPage() {
     return () => clearInterval(interval);
   }, [selectedProject?.id, selectedProject?.status, insightsStatus.count, insightsStatus.generating]);
 
-  // ── Pipeline reconciliation: heal missing AI features after completion ──────
-  // Fires once when a completed project is opened. If any tier-owed content
-  // is missing, the reconcile endpoint silently regenerates only the gaps.
+  // ── Pipeline reconciliation: heal missing selected analysis outputs ─────────
+  // Fires once when a completed project is opened. If any expected analysis
+  // output is missing, the reconcile endpoint silently regenerates only the gaps.
   useEffect(() => {
     if (!selectedProject?.id) return;
     if (selectedProject.status !== 'completed') return;
 
     const aiProcessing = (selectedProject as any).speaker_data?.detectionMetadata?.aiProcessing || {};
-    const rawTier = (selectedProject as any).performance_level || 'standard';
-    const tier = rawTier === 'basic' ? 'standard' : rawTier === 'premium' ? 'pro' : rawTier;
-
-    // Quick client-side check: are any expected features missing?
-    const tier2flags: Record<string, string[]> = {
-      pro: ['summary'],
-      premium: ['summary', 'chapters', 'takeaways', 'quotes', 'insights'],
-    };
-    const expected = tier2flags[tier] || [];
+    const options = getProjectAnalysisOptions(selectedProject);
+    const expected = [
+      ...(options.summary ? ['summary'] : []),
+      ...(options.chapters ? ['chapters'] : []),
+      ...(options.takeaways ? ['takeaways'] : []),
+      ...(options.quotes ? ['quotes'] : []),
+      ...(options.insights ? ['insights'] : []),
+    ];
     const hasMissing = expected.some((f) => !aiProcessing[f]);
 
     if (!hasMissing) return;
@@ -802,15 +921,6 @@ export default function ProjectsPage() {
       );
     }
 
-    // Apply tier filter (normalize legacy values for comparison)
-    if (tierFilter !== 'all') {
-      filtered = filtered.filter(project => {
-        const level = project.performance_level;
-        const normalized = level === 'basic' ? 'standard' : level === 'premium' ? 'pro' : level;
-        return normalized === tierFilter;
-      });
-    }
-
     // Apply type filter
     if (typeFilter !== 'all') {
       filtered = filtered.filter(project => project.project_type === typeFilter);
@@ -833,7 +943,7 @@ export default function ProjectsPage() {
     });
 
     return filtered;
-  }, [projects, searchTerm, tierFilter, typeFilter, sortBy]);
+  }, [projects, searchTerm, typeFilter, sortBy]);
 
   const handleRefresh = async () => {
     setRefreshing(true);
@@ -852,51 +962,137 @@ export default function ProjectsPage() {
     setRefreshing(false);
   };
 
-  const handleGenerateContent = (project: Project) => {
-    if (!project.transcription_text) {
-      showToast('Transcription not available for this project.');
-      return;
-    }
-    setSelectedProjectForGeneration(project);
-    setShowContentSelection(true);
-  };
-
-  const handleConfirmGeneration = async (
-    blocks: any[],
-    estimate: CostEstimate,
-    selectedModel?: { id: string; displayName?: string } | null
-  ) => {
-    if (!selectedProjectForGeneration) return;
-
+  const fetchGenerationJobs = async (projectId: string) => {
     try {
-      const response = await fetch('/api/generate-selected-content', {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-          ...(session?.access_token ? { Authorization: `Bearer ${session.access_token}` } : {}),
-        },
-        body: JSON.stringify({
-          projectId: selectedProjectForGeneration.id,
-          blocks,
-          estimatedCost: estimate.totalCost,
-          selectedModelId: selectedModel?.id
-        })
-      });
+      const { data, error } = await (supabase
+        .from('project_generation_jobs') as any)
+        .select('*')
+        .eq('project_id', projectId)
+        .order('created_at', { ascending: false });
 
-      if (!response.ok) {
-        throw new Error('Failed to start content generation');
+      if (error) {
+        console.error('Error fetching generation jobs:', error);
+        return;
       }
 
-      // Add project to generating set immediately
-      setGeneratingProjects((prev) => new Set(prev).add(selectedProjectForGeneration.id));
-
-      // Close content selection modal
-      setShowContentSelection(false);
-      setSelectedProjectForGeneration(null);
-
+      setGenerationJobs((data || []) as ProjectGenerationJob[]);
     } catch (error) {
+      console.error('Failed to fetch generation jobs:', error);
+    }
+  };
+
+  const enqueueGenerationItems = async (
+    items: Array<{ kind: 'analysis' | 'content'; targetKey: string; themeId?: string }>
+  ) => {
+    if (!selectedProject?.id) {
+      throw new Error('No project selected');
+    }
+
+    const response = await fetch(`/api/projects/${selectedProject.id}/generate`, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        ...(session?.access_token ? { Authorization: `Bearer ${session.access_token}` } : {}),
+      },
+      body: JSON.stringify({ items }),
+    });
+
+    const data = await response.json().catch(() => null);
+    if (!response.ok) {
+      throw new Error(data?.error || 'Failed to queue generation');
+    }
+
+    await fetchGenerationJobs(selectedProject.id);
+    return data;
+  };
+
+  const handleGenerateContentBlock = async (block: ContentBlock) => {
+    if (!selectedProject?.id || !selectedProject.transcription_text) return;
+    try {
+      setPendingContentTypeIds((prev) => new Set(prev).add(block.contentTypeId));
+      await enqueueGenerationItems([
+        {
+          kind: 'content',
+          targetKey: block.contentTypeId,
+          themeId: block.theme || DEFAULT_THEME_ID,
+        },
+      ]);
+      showToast(`${block.name} generation started`, 'success');
+    } catch (error) {
+      setPendingContentTypeIds((prev) => {
+        const next = new Set(prev);
+        next.delete(block.contentTypeId);
+        return next;
+      });
       console.error('Error starting content generation:', error);
-      throw error;
+      showToast(error instanceof Error ? error.message : 'Failed to start content generation');
+    }
+  };
+
+  const isAnalysisOptionAvailable = (project: Project | null, key: AnalysisOptionKey) => {
+    if (!project) return false;
+    switch (key) {
+      case 'namedSpeakers':
+        return Object.values((project.speaker_data as any)?.speakers || {}).some(
+          (speaker: any) => speaker?.finalName && !String(speaker.finalName).startsWith('Speaker ')
+        );
+      case 'summary':
+        return Boolean(project.ai_summary);
+      case 'insights':
+        return insightsData.length > 0;
+      case 'chapters':
+        return Boolean(project.chapters && project.chapters.length > 0);
+      case 'takeaways':
+        return Boolean(project.key_takeaways && project.key_takeaways.length > 0);
+      case 'quotes':
+        return Boolean(project.social_quotes && project.social_quotes.length > 0);
+      default:
+        return false;
+    }
+  };
+
+  const handleGenerateAnalysisOption = async (key: AnalysisOptionKey) => {
+    if (!selectedProject?.id || !selectedProject.audio_file_name) {
+      showToast('This project cannot run additional analysis.');
+      return;
+    }
+
+    const nextOptions = {
+      ...getProjectAnalysisOptions(selectedProject),
+      [key]: true,
+    };
+
+    try {
+      setOptimisticGeneratingAnalysisKeys((prev) => new Set(prev).add(key));
+      const nextMetadata = {
+        ...(selectedProject.metadata || {}),
+        analysis_options: nextOptions,
+      };
+
+      const { error: metadataError } = await supabase
+        .from('projects')
+        .update({ metadata: nextMetadata })
+        .eq('id', selectedProject.id);
+
+      if (metadataError) {
+        throw metadataError;
+      }
+
+      setSelectedProject((prev) => (prev ? { ...prev, metadata: nextMetadata } : prev));
+      setProjects((prev) => prev.map((project) => (
+        project.id === selectedProject.id ? { ...project, metadata: nextMetadata } : project
+      )));
+
+      await enqueueGenerationItems([{ kind: 'analysis', targetKey: key }]);
+      showToast(`${ANALYSIS_OPTION_CONFIG.find((option) => option.key === key)?.label || 'Analysis'} generation started`, 'success');
+    } catch (error) {
+      setOptimisticGeneratingAnalysisKeys((prev) => {
+        const next = new Set(prev);
+        next.delete(key);
+        return next;
+      });
+      console.error('Failed to generate analysis option:', error);
+      showToast(error instanceof Error ? error.message : 'Failed to generate analysis');
     }
   };
 
@@ -1227,8 +1423,10 @@ export default function ProjectsPage() {
 
       // Set up real-time updates for outputs if a project is selected
       let outputsSubscription: any = null;
+      let jobSubscription: any = null;
       if (selectedProject) {
         const subscribedProjectId = selectedProject.id;
+        fetchGenerationJobs(subscribedProjectId);
         outputsSubscription = supabase
           .channel('outputs_changes')
           .on(
@@ -1244,6 +1442,31 @@ export default function ProjectsPage() {
               // Only fetch if this project is still selected (use ref for current value)
               if (selectedProjectRef.current === subscribedProjectId) {
                 fetchProjectOutputs(subscribedProjectId);
+              }
+            }
+          )
+          .subscribe();
+
+        jobSubscription = supabase
+          .channel('project_generation_jobs_changes')
+          .on(
+            'postgres_changes',
+            {
+              event: '*',
+              schema: 'public',
+              table: 'project_generation_jobs',
+              filter: `project_id=eq.${subscribedProjectId}`,
+            },
+            (payload) => {
+              console.log('Generation job change detected:', payload);
+              fetchGenerationJobs(subscribedProjectId);
+              if (payload.eventType === 'UPDATE') {
+                const data = payload.new as any;
+                if (data?.status === 'completed' || data?.status === 'failed') {
+                  fetchProjects();
+                  fetchProjectOutputs(subscribedProjectId);
+                  setInsightsRefreshToken((prev) => prev + 1);
+                }
               }
             }
           )
@@ -1327,6 +1550,9 @@ export default function ProjectsPage() {
         generationProgressSubscription.unsubscribe();
         if (outputsSubscription) {
           outputsSubscription.unsubscribe();
+        }
+        if (jobSubscription) {
+          jobSubscription.unsubscribe();
         }
       };
     }
@@ -1419,6 +1645,16 @@ export default function ProjectsPage() {
       clearInterval(pollInterval);
     };
   }, [generatingProjects.size]);
+
+  useEffect(() => {
+    if (!selectedProject?.id || activeGenerationJobs.length === 0) return;
+
+    const interval = setInterval(async () => {
+      await fetchGenerationJobs(selectedProject.id);
+    }, 2500);
+
+    return () => clearInterval(interval);
+  }, [selectedProject?.id, activeGenerationJobs.length]);
 
   const fetchProjects = async () => {
     try {
@@ -1627,36 +1863,15 @@ export default function ProjectsPage() {
     }
   };
 
-  const getTierBadge = (tier: string | undefined) => {
-    // Normalize legacy values
-    const normalized = tier === 'basic' ? 'standard' : tier === 'premium' ? 'pro' : (tier || 'standard');
-    const tierConfig: Record<string, {
-      icon: any;
-      label: string;
-      color: string;
-      iconColor: string;
-    }> = {
-      standard: {
-        icon: FileText,
-        label: 'Standard',
-        color: 'bg-slate-100 dark:bg-slate-800/70 text-slate-600 dark:text-slate-300 border border-slate-300 dark:border-slate-700/60',
-        iconColor: 'text-slate-500 dark:text-slate-400'
-      },
-      pro: {
-        icon: Crown,
-        label: 'Pro',
-        color: 'bg-violet-100 dark:bg-violet-900/30 text-violet-700 dark:text-violet-300 border border-violet-300 dark:border-violet-800/40',
-        iconColor: 'text-violet-600 dark:text-violet-300'
-      }
-    };
-
-    const config = tierConfig[normalized] || tierConfig['standard'];
-    const Icon = config.icon;
+  const getProcessingBadge = (project: Project) => {
+    const options = getProjectAnalysisOptions(project);
+    const selectedCount = Object.values(options).filter(Boolean).length;
+    const label = selectedCount === 0 ? 'Transcript only' : `${selectedCount} add-on${selectedCount === 1 ? '' : 's'}`;
 
     return (
-      <span className={`inline-flex items-center px-2 py-0.5 rounded-full text-xs font-medium ${config.color}`}>
-        <Icon className={`w-3 h-3 mr-1 ${config.iconColor}`} />
-        {config.label}
+      <span className="inline-flex items-center px-2 py-0.5 rounded-full text-xs font-medium bg-slate-100 dark:bg-slate-800/70 text-slate-600 dark:text-slate-300 border border-slate-300 dark:border-slate-700/60">
+        <FileText className="w-3 h-3 mr-1 text-slate-500 dark:text-slate-400" />
+        {label}
       </span>
     );
   };
@@ -1723,8 +1938,7 @@ export default function ProjectsPage() {
   };
 
   const getContentAvailability = (project: Project) => {
-    const rawTier = project.performance_level || 'standard';
-    const tier = rawTier === 'basic' ? 'standard' : rawTier === 'premium' ? 'pro' : rawTier;
+    const options = getProjectAnalysisOptions(project);
     const features = [];
     const aiProcessing = (project.speaker_data as any)?.detectionMetadata?.aiProcessing || {};
 
@@ -1743,11 +1957,10 @@ export default function ProjectsPage() {
       pending: false,
       icon: MessageCircle,
       color: 'text-green-600',
-      label: tier === 'standard' ? 'Generic' : 'Named'
+      label: options.namedSpeakers ? 'Named' : 'Generic'
     });
 
-    // Pro tier: includes all enrichment features
-    if (tier === 'pro') {
+    if (options.summary) {
       features.push({
         name: 'AI Summary',
         available: !!project.ai_summary,
@@ -1757,8 +1970,7 @@ export default function ProjectsPage() {
       });
     }
 
-    // Pro tier only (chapters, takeaways, etc.)
-    if (tier === 'pro') {
+    if (options.chapters) {
       features.push({
         name: 'Chapters',
         available: !!project.chapters && project.chapters.length > 0,
@@ -1767,7 +1979,9 @@ export default function ProjectsPage() {
         color: 'text-purple-600',
         count: project.chapters?.length
       });
+    }
 
+    if (options.takeaways) {
       features.push({
         name: 'Key Takeaways',
         available: !!project.key_takeaways && project.key_takeaways.length > 0,
@@ -1776,7 +1990,9 @@ export default function ProjectsPage() {
         color: 'text-purple-600',
         count: project.key_takeaways?.length
       });
+    }
 
+    if (options.quotes) {
       features.push({
         name: 'Social Quotes',
         available: !!project.social_quotes && project.social_quotes.length > 0,
@@ -1786,6 +2002,15 @@ export default function ProjectsPage() {
         count: project.social_quotes?.length
       });
     }
+
+    features.push({
+      name: 'Content Outputs',
+      available: (project.selected_content_types?.length || 0) > 0,
+      pending: false,
+      icon: Zap,
+      color: 'text-emerald-600',
+      count: project.selected_content_types?.length
+    });
 
     return features;
   };
@@ -1807,6 +2032,111 @@ export default function ProjectsPage() {
     );
   }
 
+  const studioEmptyState = (
+    <div className="h-full flex items-center justify-center bg-white dark:bg-[#0F172A] px-6 py-10">
+      <div className="w-full max-w-2xl rounded-3xl border border-slate-200/80 dark:border-slate-800 bg-gradient-to-br from-slate-50 via-white to-slate-100 dark:from-slate-950 dark:via-slate-900 dark:to-slate-950 shadow-[0_24px_80px_-40px_rgba(15,23,42,0.35)]">
+        <div className="p-8 sm:p-10">
+          <div className="inline-flex items-center gap-2 rounded-full border border-blue-200/80 dark:border-blue-500/20 bg-blue-50/80 dark:bg-blue-500/10 px-3 py-1 text-xs font-medium text-blue-700 dark:text-blue-300">
+            <Sparkles className="h-3.5 w-3.5" />
+            Studio workspace
+          </div>
+
+          <div className="mt-5 max-w-xl">
+            <h3 className="text-2xl font-semibold tracking-tight text-slate-900 dark:text-slate-50">
+              Select a project to open the studio
+            </h3>
+            <p className="mt-3 text-sm leading-6 text-slate-600 dark:text-slate-400">
+              Open a transcript to review speakers, scan insights, and work through generated content without leaving this view.
+            </p>
+          </div>
+
+          <div className="mt-8 grid gap-3 sm:grid-cols-3">
+            <div className="rounded-2xl border border-slate-200 dark:border-slate-800 bg-white/80 dark:bg-slate-900/70 p-4">
+              <BookOpen className="h-5 w-5 text-blue-600 dark:text-blue-400" />
+              <p className="mt-3 text-sm font-medium text-slate-900 dark:text-slate-100">Transcript review</p>
+              <p className="mt-1 text-xs leading-5 text-slate-500 dark:text-slate-400">Read the full transcript and jump between speakers quickly.</p>
+            </div>
+            <div className="rounded-2xl border border-slate-200 dark:border-slate-800 bg-white/80 dark:bg-slate-900/70 p-4">
+              <Lightbulb className="h-5 w-5 text-amber-600 dark:text-amber-400" />
+              <p className="mt-3 text-sm font-medium text-slate-900 dark:text-slate-100">Insights panel</p>
+              <p className="mt-1 text-xs leading-5 text-slate-500 dark:text-slate-400">Surface concepts, people, and useful highlights from the conversation.</p>
+            </div>
+            <div className="rounded-2xl border border-slate-200 dark:border-slate-800 bg-white/80 dark:bg-slate-900/70 p-4">
+              <MessageSquare className="h-5 w-5 text-emerald-600 dark:text-emerald-400" />
+              <p className="mt-3 text-sm font-medium text-slate-900 dark:text-slate-100">Content outputs</p>
+              <p className="mt-1 text-xs leading-5 text-slate-500 dark:text-slate-400">Open summaries, quotes, and other generated assets for each project.</p>
+            </div>
+          </div>
+
+          <div className="mt-8 flex flex-wrap items-center gap-3">
+            {filteredAndSortedProjects.length > 0 ? (
+              <button
+                onClick={() => setProjectsSidebarOpen(true)}
+                className="inline-flex items-center gap-2 rounded-xl bg-slate-900 px-4 py-2.5 text-sm font-medium text-white transition-colors hover:bg-slate-800 dark:bg-slate-100 dark:text-slate-900 dark:hover:bg-white"
+              >
+                <FileText className="h-4 w-4" />
+                Browse projects
+              </button>
+            ) : null}
+            <Link
+              href="/dashboard/upload"
+              className="inline-flex items-center gap-2 rounded-xl border border-slate-300 dark:border-slate-700 px-4 py-2.5 text-sm font-medium text-slate-700 dark:text-slate-200 transition-colors hover:bg-slate-100 dark:hover:bg-slate-800"
+            >
+              <Zap className="h-4 w-4" />
+              Upload a new project
+            </Link>
+          </div>
+
+          {filteredAndSortedProjects.length > 0 && (
+            <div className="mt-8 border-t border-slate-200 dark:border-slate-800 pt-6">
+              <p className="text-xs font-medium uppercase tracking-[0.18em] text-slate-500 dark:text-slate-400">
+                Recent projects
+              </p>
+              <div className="mt-3 grid gap-3 sm:grid-cols-3">
+                {filteredAndSortedProjects.slice(0, 3).map((project) => (
+                  <button
+                    key={project.id}
+                    onClick={() => {
+                      router.push(`/dashboard/projects?id=${project.id}`);
+                      setSelectedProject(project);
+                      setShowFullTranscription(false);
+                      setInsightsSidebarOpen(false);
+                      setInsightsStatus({ count: 0, loading: true, generating: false });
+                      setInsightsData([]);
+                      setTriggerInsightGeneration(0);
+                      fetchProjectOutputs(project.id);
+                    }}
+                    className="rounded-2xl border border-slate-200 dark:border-slate-800 bg-white dark:bg-slate-900/80 p-4 text-left transition-colors hover:border-slate-300 hover:bg-slate-50 dark:hover:border-slate-700 dark:hover:bg-slate-900"
+                  >
+                    <p className="truncate text-sm font-medium text-slate-900 dark:text-slate-100">
+                      {project.title}
+                    </p>
+                    <p className="mt-1 text-xs text-slate-500 dark:text-slate-400">
+                      {new Date(project.created_at).toLocaleDateString()}
+                    </p>
+                    <div className="mt-3 inline-flex items-center rounded-full bg-slate-100 dark:bg-slate-800 px-2.5 py-1 text-[11px] font-medium text-slate-600 dark:text-slate-300">
+                      Open project
+                    </div>
+                  </button>
+                ))}
+              </div>
+            </div>
+          )}
+
+          {filteredAndSortedProjects.length > 0 && (
+            <button
+              onClick={() => setProjectsSidebarOpen(true)}
+              className="mt-6 lg:hidden inline-flex items-center gap-2 text-sm font-medium text-blue-600 dark:text-blue-400"
+            >
+              <PanelLeftOpen className="h-4 w-4" />
+              Open project list
+            </button>
+          )}
+        </div>
+      </div>
+    </div>
+  );
+
   return (
     <div className="dashboard-page flex flex-col h-screen w-full overflow-hidden bg-white dark:bg-slate-950">
       <ConfirmModal
@@ -1819,23 +2149,8 @@ export default function ProjectsPage() {
         isDestructive
       />
       {projects.length === 0 ? (
-        // Empty state - full width centered
-        <div className="flex-1 flex items-center justify-center p-8">
-          <div className="text-center py-12 px-8 bg-slate-50 dark:bg-slate-900 rounded-lg shadow max-w-md">
-            <FileText className="mx-auto h-12 w-12 text-slate-500" />
-            <h3 className="mt-2 text-sm font-medium text-slate-900 dark:text-slate-50">Your library is empty</h3>
-            <p className="mt-1 text-sm text-slate-500 dark:text-slate-400">
-              Get started by uploading your first podcast episode.
-            </p>
-            <div className="mt-6">
-              <Link
-                href="/dashboard/upload"
-                className="inline-flex items-center px-4 py-2 border border-transparent shadow-sm text-sm font-medium rounded-md text-white bg-blue-600 hover:bg-blue-700"
-              >
-                Upload Podcast
-              </Link>
-            </div>
-          </div>
+        <div className="flex-1 overflow-hidden">
+          {studioEmptyState}
         </div>
       ) : (
         /* 3-Column Dashboard Layout */
@@ -1949,19 +2264,6 @@ export default function ProjectsPage() {
 
               {/* Filters */}
               <div className="flex gap-2 flex-wrap">
-                {/* Tier Filter */}
-                <div className="flex-1 min-w-[140px]">
-                  <select
-                    value={tierFilter}
-                    onChange={(e) => setTierFilter(e.target.value as 'all' | 'standard' | 'pro')}
-                    className="w-full px-3 py-2 bg-white dark:bg-slate-800 border border-slate-300 dark:border-slate-700 text-slate-700 dark:text-slate-200 rounded-md text-sm focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-transparent"
-                  >
-                    <option value="all">All Tiers</option>
-                    <option value="standard">Standard</option>
-                    <option value="pro">Pro</option>
-                  </select>
-                </div>
-
                 {/* Sort By */}
                 <div className="flex-1 min-w-[140px]">
                   <select
@@ -1996,7 +2298,7 @@ export default function ProjectsPage() {
               {/* Results count */}
               <div className="text-xs text-slate-500 dark:text-slate-400">
                 {filteredAndSortedProjects.length} {filteredAndSortedProjects.length === 1 ? 'project' : 'projects'}
-                {(searchTerm || tierFilter !== 'all' || typeFilter !== 'all') && ` (filtered from ${projects.length})`}
+                {(searchTerm || typeFilter !== 'all') && ` (filtered from ${projects.length})`}
               </div>
             </div>
 
@@ -2006,11 +2308,10 @@ export default function ProjectsPage() {
                 <div className="text-center py-8 text-slate-500 dark:text-slate-400">
                   <FileText className="mx-auto h-8 w-8 text-slate-400 dark:text-slate-500 mb-2" />
                   <p className="text-sm">No projects found</p>
-                  {(searchTerm || tierFilter !== 'all' || typeFilter !== 'all') && (
+                  {(searchTerm || typeFilter !== 'all') && (
                     <button
                       onClick={() => {
                         setSearchTerm('');
-                        setTierFilter('all');
                         setTypeFilter('all');
                       }}
                       className="mt-2 text-xs text-blue-600 hover:text-blue-300"
@@ -2026,7 +2327,7 @@ export default function ProjectsPage() {
                   return (
                     <div
                       key={project.id}
-                      {...(project.id === premiumFeaturedId ? { 'data-tour': 'premium-project' } : {})}
+                      {...(project.id === featuredProjectId ? { 'data-tour': 'premium-project' } : {})}
                       className={`group p-4 rounded-xl transition-colors cursor-pointer border overflow-hidden ${selectionMode && isProjectSelected
                         ? 'bg-blue-50 dark:bg-blue-900/20 border-blue-400'
                         : isActive
@@ -2080,7 +2381,7 @@ export default function ProjectsPage() {
 
                             {/* Middle Row: Tier & Features */}
                             <div className="flex flex-wrap items-center gap-2 mb-3">
-                              {getTierBadge(project.performance_level)}
+                              {getProcessingBadge(project)}
 
                               {/* Compact Content Indicators */}
                               {project.status === 'completed' && (
@@ -2116,23 +2417,6 @@ export default function ProjectsPage() {
                               {/* Hover Actions */}
                               {!isDemoMode && (
                                 <div className="flex items-center gap-1 opacity-0 group-hover:opacity-100 transition-opacity">
-                                  {project.status === 'completed' && project.transcription_text && (
-                                    <button
-                                      onClick={(e) => {
-                                        e.stopPropagation();
-                                        handleGenerateContent(project);
-                                      }}
-                                      disabled={generatingProjects.has(project.id)}
-                                      className="p-1 text-slate-500 hover:text-blue-600 transition-colors rounded hover:bg-blue-50 dark:hover:bg-blue-900/20"
-                                      title={generatingProjects.has(project.id) ? "Generating..." : "Generate content"}
-                                    >
-                                      {generatingProjects.has(project.id) ? (
-                                        <Loader2 className="h-3.5 w-3.5 animate-spin text-blue-600" />
-                                      ) : (
-                                        <Zap className="h-3.5 w-3.5" />
-                                      )}
-                                    </button>
-                                  )}
                                   <button
                                     onClick={(e) => {
                                       e.stopPropagation();
@@ -2183,7 +2467,7 @@ export default function ProjectsPage() {
                         {projectsSidebarOpen ? <PanelLeftClose className="w-4 h-4" /> : <PanelLeftOpen className="w-4 h-4" />}
                       </button>
                       <div className="hidden sm:flex items-center gap-1.5">
-                        {getTierBadge(selectedProject.performance_level)}
+                        {getProcessingBadge(selectedProject)}
                         {selectedProject.project_type && getProjectTypeBadge(selectedProject.project_type)}
                       </div>
                     </div>
@@ -2253,7 +2537,7 @@ export default function ProjectsPage() {
                               </div>
                               <div className="flex items-center gap-2">
                                 <CheckCircle className="h-3 w-3 text-emerald-400 flex-shrink-0" />
-                                <span>Insight Extraction</span>
+                                <span>Selected analysis outputs</span>
                               </div>
                             </div>
                           </div>
@@ -2363,22 +2647,6 @@ export default function ProjectsPage() {
                             <><ScanSearch className="w-4 h-4" />Run Analysis</>
                           )}
                         </button>
-                        {!isDemoMode && (
-                          <button
-                            onClick={() => handleGenerateContent(selectedProject)}
-                            disabled={generatingProjects.has(selectedProject.id)}
-                            className={`inline-flex items-center gap-1.5 px-3 py-1 text-xs font-medium rounded-md transition-colors disabled:opacity-60 disabled:cursor-not-allowed ${generatingProjects.has(selectedProject.id)
-                              ? 'bg-blue-900/20 text-blue-400'
-                              : 'bg-blue-600 text-white hover:bg-blue-700'
-                              }`}
-                          >
-                            {generatingProjects.has(selectedProject.id) ? (
-                              <><Loader2 className="w-4 h-4 animate-spin" />Generating...</>
-                            ) : (
-                              <><Zap className="w-4 h-4" />Generate Content</>
-                            )}
-                          </button>
-                        )}
                       </div>
                     </div>
 
@@ -2475,7 +2743,6 @@ export default function ProjectsPage() {
                             speakerData={parsedSpeakerData}
                             transcriptionText={selectedProject.transcription_text || ''}
                             projectId={selectedProject.id}
-                            userTier={(selectedProject.performance_level === 'basic' ? 'standard' : selectedProject.performance_level === 'premium' ? 'pro' : selectedProject.performance_level) || 'standard'}
                             onSpeakerUpdate={(updatedSpeakerData) => {
                               setSelectedProject(prev => prev ? { ...prev, speaker_data: updatedSpeakerData } : null);
                               setProjects(prev => prev.map(project =>
@@ -2497,6 +2764,10 @@ export default function ProjectsPage() {
                             onToggleSegmentSelection={handleToggleSegmentSelection}
                             scrollToSegmentIndex={scrollToSegmentIndex}
                             onConfirmSegment={handleConfirmSegment}
+                            onTranscriptInsightClick={(insightId) => {
+                              setContextSidebarOpen(true);
+                              setActiveInsightId(insightId);
+                            }}
                           />
                         )
                       ) : selectedProject.transcription_text ? (
@@ -2532,103 +2803,7 @@ export default function ProjectsPage() {
               </div>
             ) : (
               /* Empty state when no project selected */
-              <div className="h-full flex items-center justify-center bg-white dark:bg-[#0F172A] px-6 py-10">
-                <div className="w-full max-w-2xl rounded-3xl border border-slate-200/80 dark:border-slate-800 bg-gradient-to-br from-slate-50 via-white to-slate-100 dark:from-slate-950 dark:via-slate-900 dark:to-slate-950 shadow-[0_24px_80px_-40px_rgba(15,23,42,0.35)]">
-                  <div className="p-8 sm:p-10">
-                    <div className="inline-flex items-center gap-2 rounded-full border border-blue-200/80 dark:border-blue-500/20 bg-blue-50/80 dark:bg-blue-500/10 px-3 py-1 text-xs font-medium text-blue-700 dark:text-blue-300">
-                      <Sparkles className="h-3.5 w-3.5" />
-                      Studio workspace
-                    </div>
-
-                    <div className="mt-5 max-w-xl">
-                      <h3 className="text-2xl font-semibold tracking-tight text-slate-900 dark:text-slate-50">
-                        Select a project to open the studio
-                      </h3>
-                      <p className="mt-3 text-sm leading-6 text-slate-600 dark:text-slate-400">
-                        Open a transcript to review speakers, scan insights, and work through generated content without leaving this view.
-                      </p>
-                    </div>
-
-                    <div className="mt-8 grid gap-3 sm:grid-cols-3">
-                      <div className="rounded-2xl border border-slate-200 dark:border-slate-800 bg-white/80 dark:bg-slate-900/70 p-4">
-                        <BookOpen className="h-5 w-5 text-blue-600 dark:text-blue-400" />
-                        <p className="mt-3 text-sm font-medium text-slate-900 dark:text-slate-100">Transcript review</p>
-                        <p className="mt-1 text-xs leading-5 text-slate-500 dark:text-slate-400">Read the full transcript and jump between speakers quickly.</p>
-                      </div>
-                      <div className="rounded-2xl border border-slate-200 dark:border-slate-800 bg-white/80 dark:bg-slate-900/70 p-4">
-                        <Lightbulb className="h-5 w-5 text-amber-600 dark:text-amber-400" />
-                        <p className="mt-3 text-sm font-medium text-slate-900 dark:text-slate-100">Insights panel</p>
-                        <p className="mt-1 text-xs leading-5 text-slate-500 dark:text-slate-400">Surface concepts, people, and useful highlights from the conversation.</p>
-                      </div>
-                      <div className="rounded-2xl border border-slate-200 dark:border-slate-800 bg-white/80 dark:bg-slate-900/70 p-4">
-                        <MessageSquare className="h-5 w-5 text-emerald-600 dark:text-emerald-400" />
-                        <p className="mt-3 text-sm font-medium text-slate-900 dark:text-slate-100">Content outputs</p>
-                        <p className="mt-1 text-xs leading-5 text-slate-500 dark:text-slate-400">Open summaries, quotes, and other generated assets for each project.</p>
-                      </div>
-                    </div>
-
-                    <div className="mt-8 flex flex-wrap items-center gap-3">
-                      <button
-                        onClick={() => setProjectsSidebarOpen(true)}
-                        className="inline-flex items-center gap-2 rounded-xl bg-slate-900 px-4 py-2.5 text-sm font-medium text-white transition-colors hover:bg-slate-800 dark:bg-slate-100 dark:text-slate-900 dark:hover:bg-white"
-                      >
-                        <FileText className="h-4 w-4" />
-                        Browse projects
-                      </button>
-                      <Link
-                        href="/dashboard/upload"
-                        className="inline-flex items-center gap-2 rounded-xl border border-slate-300 dark:border-slate-700 px-4 py-2.5 text-sm font-medium text-slate-700 dark:text-slate-200 transition-colors hover:bg-slate-100 dark:hover:bg-slate-800"
-                      >
-                        <Zap className="h-4 w-4" />
-                        Upload a new project
-                      </Link>
-                    </div>
-
-                    {filteredAndSortedProjects.length > 0 && (
-                      <div className="mt-8 border-t border-slate-200 dark:border-slate-800 pt-6">
-                        <p className="text-xs font-medium uppercase tracking-[0.18em] text-slate-500 dark:text-slate-400">
-                          Recent projects
-                        </p>
-                        <div className="mt-3 grid gap-3 sm:grid-cols-3">
-                          {filteredAndSortedProjects.slice(0, 3).map((project) => (
-                            <button
-                              key={project.id}
-                              onClick={() => {
-                                router.push(`/dashboard/projects?id=${project.id}`);
-                                setSelectedProject(project);
-                                setShowFullTranscription(false);
-                                setInsightsSidebarOpen(false);
-                                setInsightsStatus({ count: 0, loading: true, generating: false });
-                                setInsightsData([]);
-                                setTriggerInsightGeneration(0);
-                                fetchProjectOutputs(project.id);
-                              }}
-                              className="rounded-2xl border border-slate-200 dark:border-slate-800 bg-white dark:bg-slate-900/80 p-4 text-left transition-colors hover:border-slate-300 hover:bg-slate-50 dark:hover:border-slate-700 dark:hover:bg-slate-900"
-                            >
-                              <p className="truncate text-sm font-medium text-slate-900 dark:text-slate-100">
-                                {project.title}
-                              </p>
-                              <p className="mt-1 text-xs text-slate-500 dark:text-slate-400">
-                                {new Date(project.created_at).toLocaleDateString()}
-                              </p>
-                              <div className="mt-3 inline-flex items-center rounded-full bg-slate-100 dark:bg-slate-800 px-2.5 py-1 text-[11px] font-medium text-slate-600 dark:text-slate-300">
-                                Open project
-                              </div>
-                            </button>
-                          ))}
-                        </div>
-                      </div>
-                    )}
-
-                    <button
-                      onClick={() => setProjectsSidebarOpen(true)}
-                      className="mt-6 lg:hidden inline-flex items-center gap-2 text-sm font-medium text-blue-600 dark:text-blue-400"
-                    >
-                      Open Projects
-                    </button>
-                  </div>
-                </div>
-              </div>
+              studioEmptyState
             )}
           </main>
 
@@ -2731,19 +2906,24 @@ export default function ProjectsPage() {
             chapters={selectedProject?.chapters || []}
             takeaways={selectedProject?.key_takeaways || []}
             quotes={selectedProject?.social_quotes || []}
-            tier={(selectedProject?.performance_level === 'basic' ? 'standard' : selectedProject?.performance_level === 'premium' ? 'pro' : selectedProject?.performance_level) || 'standard'}
             contentLoading={selectedProject?.status === 'processing' || isProjectRefreshing}
             outputs={outputs}
             onCopyOutput={handleCopyOutput}
             onDownloadOutput={handleDownloadOutput}
             onDeleteOutput={handleDeleteOutput}
             deletingOutput={deletingOutput}
-            onGenerateContent={() => {
-              if (selectedProject) {
-                setSelectedProjectForGeneration(selectedProject);
-                setShowContentSelection(true);
-              }
-            }}
+            generatingContentTypes={generatingContentTypes}
+            onGenerateContentBlock={handleGenerateContentBlock}
+            analysisStates={Object.fromEntries(
+              ANALYSIS_OPTION_CONFIG.map((option) => [
+                option.key,
+                {
+                  available: isAnalysisOptionAvailable(selectedProject, option.key),
+                  generating: generatingAnalysisKeys.has(option.key) || optimisticGeneratingAnalysisKeys.has(option.key),
+                },
+              ])
+            )}
+            onGenerateAnalysisOption={handleGenerateAnalysisOption}
             isOpen={contextSidebarOpen}
             onClose={() => setContextSidebarOpen(false)}
             readOnly={isDemoMode}
@@ -2754,19 +2934,6 @@ export default function ProjectsPage() {
           />
         </div>
       )}
-
-      {/* Content Selection Modal */}
-      <ContentSelectionModal
-        isOpen={showContentSelection && selectedProjectForGeneration !== null}
-        onClose={() => {
-          setShowContentSelection(false);
-          setSelectedProjectForGeneration(null);
-        }}
-        onConfirm={handleConfirmGeneration}
-        projectId={selectedProjectForGeneration?.id || ''}
-        transcriptionText={selectedProjectForGeneration?.transcription_text || ''}
-        projectTitle={selectedProjectForGeneration?.title || selectedProjectForGeneration?.audio_file_name || ''}
-      />
 
       {/* Export Modal */}
       <ExportModal
