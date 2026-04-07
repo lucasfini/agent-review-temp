@@ -795,6 +795,98 @@ async function releaseHeldAmount(
   return mapReservationRow(data);
 }
 
+async function extendReservationHold(
+  reservation: BillingReservation,
+  amount: number,
+  reason: string
+): Promise<BillingReservation> {
+  const extraAmount = Number(Math.max(0, amount).toFixed(4));
+  if (extraAmount <= 0) {
+    return reservation;
+  }
+
+  const { balanceBefore, result } = await runBalanceRpc('reserve_user_credits', reservation.userId, extraAmount);
+
+  try {
+    const { data, error } = await supabase
+      .from('billing_reservations')
+      .update({
+        reserved_amount: Number((reservation.reservedAmount + extraAmount).toFixed(4)),
+        updated_at: new Date().toISOString(),
+        metadata: {
+          ...(reservation.metadata || {}),
+          supplementalReserveAmount: Number((
+            Number((reservation.metadata as any)?.supplementalReserveAmount || 0) + extraAmount
+          ).toFixed(4)),
+        },
+      } as any)
+      .eq('id', reservation.id)
+      .select('*')
+      .single() as { data: any; error: any };
+
+    if (error || !data) {
+      throw new Error(error?.message || 'Failed to extend reservation hold');
+    }
+
+    await supabase.from('credit_transactions').insert({
+      user_id: reservation.userId,
+      amount: -extraAmount,
+      balance_before: balanceBefore,
+      balance_after: result.new_balance,
+      transaction_type: 'reserve',
+      reservation_id: reservation.id,
+      reason,
+      metadata: {
+        ...(reservation.metadata || {}),
+        supplementalReserveAmount: extraAmount,
+      },
+    } as any);
+
+    return mapReservationRow(data);
+  } catch (error) {
+    try {
+      await runBalanceRpc('release_reserved_credits', reservation.userId, extraAmount);
+    } catch (rollbackError) {
+      console.error('[BILLING] Failed to rollback supplemental reservation hold:', rollbackError);
+    }
+    throw error;
+  }
+}
+
+async function ensureReservationCoverage(
+  reservation: BillingReservation,
+  actualCost: number
+): Promise<BillingReservation> {
+  if (actualCost <= reservation.reservedAmount + 0.0001) {
+    return reservation;
+  }
+
+  const extraAmount = Number((actualCost - reservation.reservedAmount).toFixed(4));
+
+  try {
+    return await extendReservationHold(
+      reservation,
+      extraAmount,
+      `Supplemental reserve for ${reservation.workflowType}`
+    );
+  } catch (error) {
+    await supabase
+      .from('billing_reservations')
+      .update({
+        status: 'failed',
+        updated_at: new Date().toISOString(),
+        metadata: {
+          ...(reservation.metadata || {}),
+          actualCost,
+          overrun: extraAmount,
+        },
+      } as any)
+      .eq('id', reservation.id);
+
+    throw error;
+  }
+}
+
 export async function releaseReservation(
   reservationId: string,
   reason: string = 'Released unused reserved funds'
@@ -875,7 +967,7 @@ export async function failReservation(
 }
 
 export async function settleReservation(reservationId: string): Promise<BillingReservation> {
-  const reservation = await getReservation(reservationId);
+  let reservation = await getReservation(reservationId);
   if (reservation.status === 'settled' || reservation.status === 'released') {
     return reservation;
   }
@@ -907,21 +999,7 @@ export async function settleReservation(reservationId: string): Promise<BillingR
       .toFixed(4)
   );
 
-  if (actualCost > reservation.reservedAmount + 0.0001) {
-    await supabase
-      .from('billing_reservations')
-      .update({
-        status: 'failed',
-        updated_at: new Date().toISOString(),
-        metadata: {
-          ...(reservation.metadata || {}),
-          actualCost,
-          overrun: Number((actualCost - reservation.reservedAmount).toFixed(4)),
-        },
-      } as any)
-      .eq('id', reservationId);
-    throw new ReservationOverrunError(reservationId, reservation.reservedAmount, actualCost);
-  }
+  reservation = await ensureReservationCoverage(reservation, actualCost);
 
   const releaseAmount = Number((reservation.reservedAmount - actualCost).toFixed(4));
   const updatedReservation = await releaseHeldAmount(reservation, releaseAmount, `Release unused funds for ${reservation.workflowType}`, 'settling');
@@ -977,7 +1055,7 @@ export async function settleReservationAmount(
   actualCost: number,
   usageEventIds: string[] = []
 ): Promise<BillingReservation> {
-  const reservation = await getReservation(reservationId);
+  let reservation = await getReservation(reservationId);
   if (reservation.status === 'settled' || reservation.status === 'released') {
     return reservation;
   }
@@ -986,21 +1064,7 @@ export async function settleReservationAmount(
   }
 
   const normalizedCost = Number(Math.max(0, actualCost).toFixed(4));
-  if (normalizedCost > reservation.reservedAmount + 0.0001) {
-    await supabase
-      .from('billing_reservations')
-      .update({
-        status: 'failed',
-        updated_at: new Date().toISOString(),
-        metadata: {
-          ...(reservation.metadata || {}),
-          actualCost: normalizedCost,
-          overrun: Number((normalizedCost - reservation.reservedAmount).toFixed(4)),
-        },
-      } as any)
-      .eq('id', reservationId);
-    throw new ReservationOverrunError(reservationId, reservation.reservedAmount, normalizedCost);
-  }
+  reservation = await ensureReservationCoverage(reservation, normalizedCost);
 
   if (usageEventIds.length > 0) {
     await attachUsageEventsToReservation(reservationId, usageEventIds);

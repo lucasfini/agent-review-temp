@@ -1,6 +1,6 @@
 "use client";
 
-import { useState, useEffect, useMemo, type ChangeEvent } from 'react';
+import { Fragment, useState, useEffect, useMemo, type ChangeEvent } from 'react';
 import Image from 'next/image';
 import { useRouter, useSearchParams } from 'next/navigation';
 import {
@@ -272,6 +272,7 @@ export default function UnifiedSettings({ userEmail, forcedSection }: UnifiedSet
   const [usageEvents, setUsageEvents] = useState<UsageEvent[]>([]);
   const [usageTrend, setUsageTrend] = useState<Array<{ date: string; cost: number; events: number }>>([]);
   const [loadingUsage, setLoadingUsage] = useState(true);
+  const [showDeletedUsageProjects, setShowDeletedUsageProjects] = useState(false);
   const [integrations, setIntegrations] = useState<IntegrationStatus[]>([]);
   const [integrationsLoading, setIntegrationsLoading] = useState(false);
   const [integrationsError, setIntegrationsError] = useState<string | null>(null);
@@ -283,102 +284,62 @@ export default function UnifiedSettings({ userEmail, forcedSection }: UnifiedSet
     ? deleteConfirmation.trim() === username.trim()
     : deleteConfirmation.trim().toLowerCase() === email.trim().toLowerCase();
 
-  const friendlyError = (fallback: string, error: unknown) => {
+  function friendlyError(fallback: string, error: unknown) {
     if (error instanceof Error && error.message) return error.message;
     return fallback;
-  };
+  }
 
-  // Fetch billing data
   useEffect(() => {
-    const fetchBillingData = async () => {
+    const fetchDashboardSettings = async () => {
       if (!session?.access_token) {
         setLoadingBilling(false);
+        setIntegrationsLoading(false);
+        setLoadingUsage(false);
         return;
       }
 
       setLoadingBilling(true);
-      try {
-        const [balanceRes, transactionsRes] = await Promise.all([
-          fetch('/api/billing/balance', {
-            headers: { 'Authorization': `Bearer ${session.access_token}` }
-          }),
-          fetch(`/api/billing/transactions/grouped?limit=${TRANSACTIONS_PER_PAGE}&offset=${(transactionPage - 1) * TRANSACTIONS_PER_PAGE}`, {
-            headers: { 'Authorization': `Bearer ${session.access_token}` }
-          })
-        ]);
-
-        if (balanceRes.ok) {
-          const balanceData = await balanceRes.json();
-          setBalance(balanceData);
-        }
-
-        if (transactionsRes.ok) {
-          const transData = await transactionsRes.json();
-          setTransactions(transData.transactions || []);
-          setTransactionTotal(transData.total || 0);
-        }
-      } catch (error) {
-        console.error('Error fetching billing data:', error);
-      } finally {
-        setLoadingBilling(false);
-      }
-    };
-
-    fetchBillingData();
-  }, [session, transactionPage]);
-
-  useEffect(() => {
-    const fetchIntegrations = async () => {
-      if (!session?.access_token) return;
       setIntegrationsLoading(true);
       setIntegrationsError(null);
-      try {
-        const res = await fetch('/api/integrations/providers', {
-          headers: { Authorization: `Bearer ${session.access_token}` }
-        });
-        if (!res.ok) throw new Error('Failed to load integrations');
-        const data = await res.json();
-        setIntegrations(data.providers || []);
-      } catch (error) {
-        setIntegrationsError(error instanceof Error ? error.message : 'Failed to load integrations');
-      } finally {
-        setIntegrationsLoading(false);
-      }
-    };
+      setLoadingUsage(true);
 
-    fetchIntegrations();
-  }, [session?.access_token]);
-
-  useEffect(() => {
-    const fetchUserPrefs = async () => {
       try {
-        if (session?.access_token) {
-          const res = await fetch('/api/user/preferences', {
-            headers: { Authorization: `Bearer ${session.access_token}` }
-          });
-          if (res.ok) {
-            const data = await res.json();
-            setUsername(data.username || '');
-            setFirstName(data.firstName || '');
-            setLastName(data.lastName || '');
-            setAvatarUrl(data.avatarUrl || '');
-            return;
+        const response = await fetch(
+          `/api/dashboard/settings?transactionLimit=${TRANSACTIONS_PER_PAGE}&transactionOffset=${(transactionPage - 1) * TRANSACTIONS_PER_PAGE}&usageLimit=200`,
+          {
+            headers: { Authorization: `Bearer ${session.access_token}` },
+            cache: 'no-store',
           }
+        );
+
+        if (!response.ok) {
+          const payload = await response.json().catch(() => ({ error: 'Failed to load settings' }));
+          throw new Error(payload.error || 'Failed to load settings');
         }
 
-        const { data } = await supabase.auth.getUser();
-        const meta = data.user?.user_metadata || {};
-        const fullName = typeof meta.full_name === 'string' ? meta.full_name : '';
-        setUsername(typeof meta.username === 'string' ? meta.username : '');
-        setFirstName(typeof meta.first_name === 'string' ? meta.first_name : fullName.split(' ')[0] || '');
-        setLastName(typeof meta.last_name === 'string' ? meta.last_name : fullName.split(' ').slice(1).join(' '));
-        setAvatarUrl(typeof meta.avatar_url === 'string' ? meta.avatar_url : typeof meta.picture === 'string' ? meta.picture : '');
+        const data = await response.json();
+        setBalance(data.balance || null);
+        setTransactions(data.transactions || []);
+        setTransactionTotal(data.transactionTotal || 0);
+        setIntegrations(data.integrations || []);
+        setUsername(data.preferences?.username || '');
+        setFirstName(data.preferences?.firstName || '');
+        setLastName(data.preferences?.lastName || '');
+        setAvatarUrl(data.preferences?.avatarUrl || '');
+        setUsageEvents(data.usageEvents || []);
+        setUsageTrend(data.usageTrend || []);
       } catch (error) {
-        console.warn('Failed to load user preferences:', error);
+        console.error('Error fetching settings data:', error);
+        setIntegrationsError(friendlyError('Failed to load integrations', error));
+      } finally {
+        setLoadingBilling(false);
+        setIntegrationsLoading(false);
+        setLoadingUsage(false);
       }
     };
-    fetchUserPrefs();
-  }, [session?.access_token]);
+
+    fetchDashboardSettings();
+  }, [session?.access_token, transactionPage]);
 
   useEffect(() => {
     if (!avatarFile) {
@@ -391,65 +352,6 @@ export default function UnifiedSettings({ userEmail, forcedSection }: UnifiedSet
 
     return () => URL.revokeObjectURL(objectUrl);
   }, [avatarFile]);
-
-  // Fetch usage data
-  useEffect(() => {
-    const fetchUsageData = async () => {
-      if (!session?.access_token) {
-        setLoadingUsage(false);
-        return;
-      }
-
-      setLoadingUsage(true);
-      try {
-        const usageRes = await fetch('/api/billing/usage?limit=200', {
-          headers: { 'Authorization': `Bearer ${session.access_token}` }
-        });
-
-        if (usageRes.ok) {
-          const usageData = await usageRes.json();
-          const events = usageData.events || [];
-          setUsageEvents(events);
-
-          // Process trend data
-          const trendMap = new Map<string, { cost: number; count: number; timestamp: number }>();
-          events.forEach((event: any) => {
-            if (!event.createdAt) return;
-            const dateObj = new Date(event.createdAt);
-            if (isNaN(dateObj.getTime())) return;
-
-            const dateKey = dateObj.toLocaleDateString('en-US', {
-              month: 'short',
-              day: 'numeric'
-            });
-            const existing = trendMap.get(dateKey) || { cost: 0, count: 0, timestamp: dateObj.getTime() };
-            trendMap.set(dateKey, {
-              cost: existing.cost + Number(event.billedCost || 0),
-              count: existing.count + 1,
-              timestamp: Math.max(existing.timestamp, dateObj.getTime())
-            });
-          });
-
-          const trend = Array.from(trendMap.entries())
-            .sort((a, b) => a[1].timestamp - b[1].timestamp)
-            .slice(-30)
-            .map(([date, data]) => ({
-              date,
-              cost: Number(data.cost.toFixed(4)),
-              events: data.count
-            }));
-
-          setUsageTrend(trend);
-        }
-      } catch (error) {
-        console.error('Error fetching usage data:', error);
-      } finally {
-        setLoadingUsage(false);
-      }
-    };
-
-    fetchUsageData();
-  }, [session]);
 
   // Filtered transactions
   const filteredTransactions = useMemo(() => {
@@ -469,8 +371,9 @@ export default function UnifiedSettings({ userEmail, forcedSection }: UnifiedSet
     const projectMap = new Map<string, { title: string; cost: number; events: number; services: Set<string> }>();
 
     usageEvents.forEach(e => {
-      const pid = e.projectId || 'unknown';
-      const title = e.projectTitle || (pid === 'unknown' ? 'Unassigned' : pid);
+      const pid = e.projectId || (e.projectTitle ? `deleted-${e.projectTitle}` : 'unknown');
+      const baseTitle = e.projectTitle || (pid === 'unknown' ? 'Unassigned' : pid);
+      const title = !e.projectId && e.projectTitle ? `${baseTitle} (Deleted)` : baseTitle;
       const existing = projectMap.get(pid) || { title, cost: 0, events: 0, services: new Set<string>() };
       existing.cost += Number(e.billedCost || 0);
       existing.events += 1;
@@ -485,9 +388,15 @@ export default function UnifiedSettings({ userEmail, forcedSection }: UnifiedSet
         cost: data.cost,
         events: data.events,
         serviceCount: data.services.size,
+        isDeleted: id.startsWith('deleted-'),
       }))
       .sort((a, b) => b.cost - a.cost);
   }, [usageEvents]);
+
+  const visibleUsageByProject = useMemo(() => {
+    if (showDeletedUsageProjects) return usageByProject;
+    return usageByProject.filter((project) => !project.isDeleted);
+  }, [showDeletedUsageProjects, usageByProject]);
 
   // Usage stats
   const usageStats = useMemo(() => {
@@ -1277,9 +1186,8 @@ export default function UnifiedSettings({ userEmail, forcedSection }: UnifiedSet
                             const isExpanded = expandedGroups.has(transaction.id);
 
                             return (
-                              <>{/* Fragment for group + children */}
+                              <Fragment key={transaction.id}>{/* Fragment for group + children */}
                                 <tr
-                                  key={transaction.id}
                                   className={cn(
                                     "hover:bg-slate-50 dark:hover:bg-slate-800/30",
                                     isGrouped && "cursor-pointer"
@@ -1347,7 +1255,7 @@ export default function UnifiedSettings({ userEmail, forcedSection }: UnifiedSet
                                     </td>
                                   </tr>
                                 ))}
-                              </>
+                              </Fragment>
                             );
                           })}
                         </tbody>
@@ -1455,12 +1363,23 @@ export default function UnifiedSettings({ userEmail, forcedSection }: UnifiedSet
 
             {/* Per-Project Breakdown */}
             <Card>
-              <CardHeader>
-                <CardTitle>Cost by Project</CardTitle>
-                <CardDescription>Spending breakdown per project</CardDescription>
+              <CardHeader className="gap-3">
+                <div>
+                  <CardTitle>Cost by Project</CardTitle>
+                  <CardDescription>Spending breakdown per project</CardDescription>
+                </div>
+                <label className="flex items-center gap-2 text-sm text-slate-600 dark:text-slate-300">
+                  <input
+                    type="checkbox"
+                    checked={showDeletedUsageProjects}
+                    onChange={(event) => setShowDeletedUsageProjects(event.target.checked)}
+                    className="h-4 w-4 rounded border-slate-300 text-slate-900 focus:ring-slate-400 dark:border-slate-700 dark:bg-slate-950"
+                  />
+                  Show deleted projects
+                </label>
               </CardHeader>
               <CardContent>
-                {usageByProject.length === 0 ? (
+                {visibleUsageByProject.length === 0 ? (
                   <div className="py-8 text-center text-slate-400">
                     <BarChart3 className="h-10 w-10 mx-auto mb-3 text-slate-500" />
                     <p className="text-sm">No project usage data available</p>
@@ -1468,10 +1387,10 @@ export default function UnifiedSettings({ userEmail, forcedSection }: UnifiedSet
                 ) : (
                   <div className="divide-y divide-slate-200 dark:divide-slate-800">
                     {(() => {
-                      const maxCost = Math.max(...usageByProject.map(p => p.cost));
+                      const maxCost = Math.max(...visibleUsageByProject.map(p => p.cost));
                       const colors = ['#3b82f6', '#10b981', '#f59e0b', '#8b5cf6', '#ec4899', '#06b6d4'];
 
-                      return usageByProject.map((project, index) => {
+                      return visibleUsageByProject.map((project, index) => {
                         const barWidth = maxCost > 0 ? (project.cost / maxCost) * 100 : 0;
 
                         return (

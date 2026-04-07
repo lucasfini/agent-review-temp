@@ -11,6 +11,7 @@ import { useUserPrefs } from '@/lib/hooks/useUserPrefs';
 import { supabase } from '@/lib/supabase/client';
 import { DemoTour } from '@/components/demo/DemoTour';
 import { useCoverageProgress } from '@/lib/context/coverage-progress';
+import { DashboardLoadErrorState } from '@/components/dashboard/load-error-state';
 import ExportModal, { type ExportPayload } from '@/components/ExportModal';
 import { exportContent } from '@/lib/export-utils';
 import ConversationView from '@/components/ConversationView';
@@ -18,13 +19,14 @@ import { AudioPlayer } from '@/components/AudioPlayer';
 import { getSpeakerColor, getSpeakerDisplayName } from '@/lib/name-extraction';
 import TeamsStyleTranscript from '@/components/TeamsStyleTranscript';
 import ContextSidebar from '@/components/ContextSidebar';
-import type { ContentBlock } from '@/lib/content-types';
+import { CONTENT_TYPES, type ContentBlock } from '@/lib/content-types';
 import { DEFAULT_THEME_ID } from '@/lib/content-themes';
 import type { AudioPlayerRef } from '@/lib/hooks/useSpeakerSample';
 import { useProjectRefresh, useSpeakerDataRefresh } from '@/lib/hooks/useProjectRefresh';
 import { emitProjectMutation } from '@/lib/project-events';
 import { ANALYSIS_OPTION_CONFIG, getProjectAnalysisOptions, normalizeAnalysisOptions, type AnalysisOptionKey } from '@/lib/analysis-options';
 import type { ProjectGenerationJob } from '@/lib/project-generation-jobs';
+import { getDashboardErrorMessage, logDashboardLoad } from '@/lib/dashboard-load-state';
 
 type ProjectType = 'DEBATE' | 'INTERVIEW' | 'PODCAST' | 'MONOLOGUE' | 'OTHER';
 
@@ -90,6 +92,27 @@ interface Project {
   }>;
 }
 
+type ProjectListItem = Pick<
+  Project,
+  | 'id'
+  | 'title'
+  | 'status'
+  | 'created_at'
+  | 'audio_duration'
+  | 'audio_file_size'
+  | 'audio_file_name'
+  | 'audio_expires_at'
+  | 'audio_deleted_at'
+  | 'processing_time_seconds'
+  | 'selected_content_types'
+  | 'estimated_cost'
+  | 'audio_duration_seconds'
+  | 'performance_level'
+  | 'metadata'
+  | 'project_type'
+  | 'processing_stage'
+>;
+
 interface Output {
   id: string;
   type: string;
@@ -138,7 +161,7 @@ const formatAudioExpiry = (value?: string | null, locale?: string, timezone?: st
 };
 
 export default function ProjectsPage() {
-  const [projects, setProjects] = useState<Project[]>([]);
+  const [projects, setProjects] = useState<ProjectListItem[]>([]);
   const [selectedProject, setSelectedProject] = useState<Project | null>(null);
   const selectedProjectRef = useRef<string | null>(null);
 
@@ -147,6 +170,8 @@ export default function ProjectsPage() {
   const audioPlayerRef = useRef<AudioPlayerRef | null>(null);
   const [outputs, setOutputs] = useState<Output[]>([]);
   const [loading, setLoading] = useState(true);
+  const [loadError, setLoadError] = useState<string | null>(null);
+  const [selectedProjectLoading, setSelectedProjectLoading] = useState(false);
   const [refreshing, setRefreshing] = useState(false);
   const [deletingProject, setDeletingProject] = useState<string | null>(null);
   const [pendingDeleteProjectId, setPendingDeleteProjectId] = useState<string | null>(null);
@@ -171,8 +196,9 @@ export default function ProjectsPage() {
 
   // Insights control state
   const [insightsSidebarOpen, setInsightsSidebarOpen] = useState(false);
-  const [insightsStatus, setInsightsStatus] = useState<{ count: number; loading: boolean; generating: boolean }>({ count: 0, loading: true, generating: false });
+  const [insightsStatus, setInsightsStatus] = useState<{ count: number; loading: boolean; generating: boolean; refreshing: boolean }>({ count: 0, loading: true, generating: false, refreshing: false });
   const [triggerInsightGeneration, setTriggerInsightGeneration] = useState(0);
+  const [triggerInsightRefresh, setTriggerInsightRefresh] = useState(0);
   const [insightsRefreshToken, setInsightsRefreshToken] = useState(0);
   const [insightsData, setInsightsData] = useState<Array<{
     id: string;
@@ -205,6 +231,7 @@ export default function ProjectsPage() {
 
   // Toast notification state
   const [toast, setToast] = useState<{ message: string; type: 'success' | 'error' } | null>(null);
+  const notifiedFailedJobIdsRef = useRef<Set<string>>(new Set());
 
   // Reconcile (pipeline healing) state
   const [isReconciling, setIsReconciling] = useState(false);
@@ -220,6 +247,10 @@ export default function ProjectsPage() {
   // Per-output delete tracking
   const [deletingOutput, setDeletingOutput] = useState<string | null>(null);
   const previousActiveJobCountRef = useRef(0);
+  const previousGenerationJobStatusesRef = useRef<Map<string, string>>(new Map());
+  const selectedProjectGenerationActiveRef = useRef(false);
+  const selectedProjectArtifactsRefreshRef = useRef<Promise<void> | null>(null);
+  const selectedProjectArtifactsRefreshQueuedRef = useRef(false);
 
   const activeGenerationJobs = useMemo(
     () => generationJobs.filter((job) => job.status === 'queued' || job.status === 'running'),
@@ -247,37 +278,33 @@ export default function ProjectsPage() {
       ),
     [activeGenerationJobs]
   );
+  const uploadBackgroundAnalysisKeys = useMemo(() => {
+    if (!selectedProject) return new Set<AnalysisOptionKey>();
 
-  useEffect(() => {
-    const currentActiveJobCount = activeGenerationJobs.length;
-    const previousActiveJobCount = previousActiveJobCountRef.current;
+    const options = getProjectAnalysisOptions(selectedProject);
+    const aiProcessing = (selectedProject.speaker_data as any)?.detectionMetadata?.aiProcessing || {};
+    const backgroundErrors = aiProcessing.backgroundErrors || {};
+    const next = new Set<AnalysisOptionKey>();
 
-    if (!selectedProject?.id) {
-      previousActiveJobCountRef.current = currentActiveJobCount;
-      return;
-    }
-
-    let intervalId: ReturnType<typeof setInterval> | null = null;
-
-    if (currentActiveJobCount > 0) {
-      intervalId = setInterval(() => {
-        fetchGenerationJobs(selectedProject.id);
-      }, 1500);
-    } else if (previousActiveJobCount > 0) {
-      fetchGenerationJobs(selectedProject.id);
-      fetchProjects();
-      fetchProjectOutputs(selectedProject.id);
-      setInsightsRefreshToken((prev) => prev + 1);
-    }
-
-    previousActiveJobCountRef.current = currentActiveJobCount;
-
-    return () => {
-      if (intervalId) {
-        clearInterval(intervalId);
+    ANALYSIS_OPTION_CONFIG.forEach((option) => {
+      if (!options[option.key]) return;
+      if (isAnalysisOptionAvailable(selectedProject, option.key)) return;
+      if (backgroundErrors[option.key]) return;
+      if (aiProcessing[option.key] === false) {
+        next.add(option.key);
       }
-    };
-  }, [activeGenerationJobs.length, selectedProject?.id]);
+    });
+
+    return next;
+  }, [selectedProject]);
+  const effectiveGeneratingAnalysisKeys = useMemo(
+    () => new Set<AnalysisOptionKey>([
+      ...generatingAnalysisKeys,
+      ...optimisticGeneratingAnalysisKeys,
+      ...uploadBackgroundAnalysisKeys,
+    ]),
+    [generatingAnalysisKeys, optimisticGeneratingAnalysisKeys, uploadBackgroundAnalysisKeys]
+  );
 
   useEffect(() => {
     if (!selectedProject) return;
@@ -290,18 +317,18 @@ export default function ProjectsPage() {
           const mappedType =
             typeof original === 'string'
               ? {
-                  twitter_thread: 'twitter_threads',
-                  linkedin_post: 'linkedin_posts',
-                  instagram_caption: 'instagram_content',
-                  blog_post: 'blog_post',
-                  email_newsletter: 'newsletter',
-                  show_notes: 'show_notes',
-                  quote_graphic: 'quote_graphics',
-                  facebook_post: 'facebook_post',
-                  youtube_description: 'youtube_description',
-                  podcast_episode_description: 'podcast_episode_description',
-                  short_form_video_script: 'short_form_video_script',
-                }[original]
+                twitter_thread: 'twitter_threads',
+                linkedin_post: 'linkedin_posts',
+                instagram_caption: 'instagram_content',
+                blog_post: 'blog_post',
+                email_newsletter: 'newsletter',
+                show_notes: 'show_notes',
+                quote_graphic: 'quote_graphics',
+                facebook_post: 'facebook_post',
+                youtube_description: 'youtube_description',
+                podcast_episode_description: 'podcast_episode_description',
+                short_form_video_script: 'short_form_video_script',
+              }[original]
               : undefined;
           const fallbackType =
             {
@@ -351,6 +378,41 @@ export default function ProjectsPage() {
     });
   }, [selectedProject, generatingAnalysisKeys, generationJobs]);
 
+  useEffect(() => {
+    if (isDemoMode) return;
+    if (!selectedProject?.id) return;
+    if (selectedProject.status !== 'completed') return;
+    if (uploadBackgroundAnalysisKeys.size === 0) return;
+
+    let isActive = true;
+    let timeoutId: ReturnType<typeof setTimeout> | null = null;
+
+    const poll = async () => {
+      if (!isActive) return;
+
+      await fetchProjects({ source: 'poll:upload_background' });
+
+      if (isActive && selectedProjectRef.current === selectedProject.id) {
+        await fetchProjectOutputs(selectedProject.id);
+        setInsightsRefreshToken((prev) => prev + 1);
+      }
+
+      if (isActive) {
+        timeoutId = setTimeout(poll, 2500);
+      }
+    };
+
+    // Start initial poll
+    timeoutId = setTimeout(poll, 2500);
+
+    return () => {
+      isActive = false;
+      if (timeoutId) {
+        clearTimeout(timeoutId);
+      }
+    };
+  }, [selectedProject?.id, selectedProject?.status, uploadBackgroundAnalysisKeys.size]);
+
   // ─── Segment review / selection state (lifted from ConversationView) ───
   interface TouchupPreviewItem {
     index: number;
@@ -398,7 +460,7 @@ export default function ProjectsPage() {
   } = useProjectRefresh(selectedProject?.id, {
     completionDelay: 2000, // Wait 2s after completion before final refresh
     pollingInterval: 3000,
-    debug: true, // Enable logging to track refresh cycles
+    debug: false,
     onRefresh: (freshProject) => {
       console.log('[REFRESH] Got fresh project data:', {
         id: freshProject.id,
@@ -518,23 +580,6 @@ export default function ProjectsPage() {
     }
   }, [selectedProject?.id]);
 
-  // Auto-select project from URL query parameter
-  useEffect(() => {
-    const projectId = searchParams.get('id');
-
-    if (projectId && projects.length > 0 && !loading) {
-      const projectToSelect = projects.find(p => p.id === projectId);
-      if (projectToSelect && selectedProject?.id !== projectId) {
-        setSelectedProject(projectToSelect);
-        setShowFullTranscription(false);
-        fetchProjectOutputs(projectId);
-        // Reset insights state — ConversationView will fetch and report back
-        setInsightsData([]);
-        setInsightsStatus({ count: 0, loading: true, generating: false });
-      }
-    }
-  }, [searchParams, projects, loading]);
-
   const parseSpeakerData = (data: any) => {
     if (!data) return null;
     if (typeof data === 'string') {
@@ -603,13 +648,16 @@ export default function ProjectsPage() {
   }, [readerView]);
 
   const resetSelectedProject = useCallback(() => {
+    selectedProjectRef.current = null;
     setSelectedProject(null);
+    setSelectedProjectLoading(false);
     setOutputs([]);
     setInsightsData([]);
-    setInsightsStatus({ count: 0, loading: false, generating: false });
+    setInsightsStatus({ count: 0, loading: false, generating: false, refreshing: false });
     setShowFullTranscription(false);
     setInsightsSidebarOpen(false);
     setTriggerInsightGeneration(0);
+    setTriggerInsightRefresh(0);
     router.push('/dashboard/projects');
   }, [router]);
 
@@ -738,17 +786,101 @@ export default function ProjectsPage() {
 
     return () => { cancelled = true; };
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [selectedProject?.id, selectedProject?.status]);
+  }, [isDemoMode, selectedProject?.id, selectedProject?.status]);
 
   const showToast = useCallback((message: string, type: 'success' | 'error' = 'error') => {
     setToast({ message, type });
   }, []);
+
+  const getInsufficientFundsMessage = useCallback((fallback?: string) => {
+    return fallback?.trim() || 'Insufficient funds, cannot complete.';
+  }, []);
+
+  const acknowledgeFailedGenerationJobs = useCallback(async (projectId: string, jobIds: string[]) => {
+    if (jobIds.length === 0) {
+      return [];
+    }
+
+    const response = await fetch(`/api/projects/${projectId}/generation-jobs/acknowledge-failures`, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        ...(session?.access_token ? { Authorization: `Bearer ${session.access_token}` } : {}),
+      },
+      body: JSON.stringify({ jobIds }),
+    });
+
+    const data = await response.json().catch(() => null);
+    if (!response.ok) {
+      throw new Error(data?.error || 'Failed to acknowledge generation job failures');
+    }
+
+    return Array.isArray(data?.acknowledgedJobIds)
+      ? data.acknowledgedJobIds.filter((value: unknown): value is string => typeof value === 'string')
+      : [];
+  }, [session?.access_token]);
 
   useEffect(() => {
     if (!toast) return;
     const t = setTimeout(() => setToast(null), 3500);
     return () => clearTimeout(t);
   }, [toast]);
+
+  useEffect(() => {
+    if (!selectedProject?.id) return;
+
+    const handled = notifiedFailedJobIdsRef.current;
+    const failedJobs = generationJobs.filter(
+      (job) => job.status === 'failed' && !job.failure_notified_at && !handled.has(job.id)
+    );
+
+    if (failedJobs.length === 0) return;
+
+    failedJobs.forEach((job) => handled.add(job.id));
+
+    const nowIso = new Date().toISOString();
+    const pendingJobIds = failedJobs.map((job) => job.id);
+    const pendingJobIdSet = new Set(pendingJobIds);
+
+    for (const job of failedJobs) {
+      const message = job.error_message || '';
+      const lower = message.toLowerCase();
+      if (lower.includes('insufficient credit') || lower.includes('insufficient funds')) {
+        showToast(getInsufficientFundsMessage(message), 'error');
+        continue;
+      }
+
+      const label = job.kind === 'analysis'
+        ? ANALYSIS_OPTION_CONFIG.find((option) => option.key === job.target_key)?.label || 'Analysis'
+        : CONTENT_TYPES.find((contentType) => contentType.id === job.target_key)?.name || 'Content';
+
+      showToast(message || `${label} generation failed.`, 'error');
+    }
+
+    setGenerationJobs((prev) => prev.map((job) => (
+      pendingJobIdSet.has(job.id)
+        ? { ...job, failure_notified_at: nowIso }
+        : job
+    )));
+
+    void acknowledgeFailedGenerationJobs(selectedProject.id, pendingJobIds).then((acknowledgedIds) => {
+      if (acknowledgedIds.length === 0) return;
+
+      setGenerationJobs((prev) => prev.map((job) => (
+        acknowledgedIds.includes(job.id)
+          ? { ...job, failure_notified_at: job.failure_notified_at || nowIso }
+          : job
+      )));
+    }).catch((error) => {
+      console.error('[Dashboard] Failed to acknowledge generation job failures:', error);
+      pendingJobIds.forEach((jobId) => handled.delete(jobId));
+      setGenerationJobs((prev) => prev.map((job) => (
+        pendingJobIdSet.has(job.id)
+          ? { ...job, failure_notified_at: null }
+          : job
+      )));
+    });
+  }, [acknowledgeFailedGenerationJobs, generationJobs, getInsufficientFundsMessage, selectedProject?.id, showToast]);
 
   // ─── Segment review handlers ───────────────────────────────────────────────
   const handleSelectAllUncertain = useCallback(() => {
@@ -816,7 +948,6 @@ export default function ProjectsPage() {
       if (!response.ok) throw new Error(data.error || 'Apply failed');
       if (data.updatedSpeakerData) {
         setSelectedProject(prev => prev ? { ...prev, speaker_data: data.updatedSpeakerData } : null);
-        setProjects(prev => prev.map(p => p.id === selectedProject.id ? { ...p, speaker_data: data.updatedSpeakerData } : p));
       }
       setAiTouchupResult(`AI reassigned ${approved.length} segment${approved.length !== 1 ? 's' : ''}`);
       setTouchupPreview(null);
@@ -846,7 +977,6 @@ export default function ProjectsPage() {
       const data = await response.json();
       if (data.updatedSpeakerData) {
         setSelectedProject(prev => prev ? { ...prev, speaker_data: data.updatedSpeakerData } : null);
-        setProjects(prev => prev.map(p => p.id === selectedProject.id ? { ...p, speaker_data: data.updatedSpeakerData } : p));
       }
       setSelectedSegments(prev => {
         const next = new Set(prev);
@@ -870,7 +1000,6 @@ export default function ProjectsPage() {
       const data = await response.json();
       if (data.updatedSpeakerData) {
         setSelectedProject(prev => prev ? { ...prev, speaker_data: data.updatedSpeakerData } : null);
-        setProjects(prev => prev.map(p => p.id === selectedProject.id ? { ...p, speaker_data: data.updatedSpeakerData } : p));
       }
     } catch (error) {
       console.error('Error reassigning segment from sidebar:', error);
@@ -888,7 +1017,6 @@ export default function ProjectsPage() {
     const data = await res.json();
     if (data.updatedSpeakerData) {
       setSelectedProject(prev => prev ? { ...prev, speaker_data: data.updatedSpeakerData } : null);
-      setProjects(prev => prev.map(p => p.id === selectedProject.id ? { ...p, speaker_data: data.updatedSpeakerData } : p));
     }
   }, [selectedProject?.id]);
 
@@ -903,7 +1031,6 @@ export default function ProjectsPage() {
     const data = await res.json();
     if (data.updatedSpeakerData) {
       setSelectedProject(prev => prev ? { ...prev, speaker_data: data.updatedSpeakerData } : null);
-      setProjects(prev => prev.map(p => p.id === selectedProject.id ? { ...p, speaker_data: data.updatedSpeakerData } : p));
     }
   }, [selectedProject?.id]);
   // ─────────────────────────────────────────────────────────────────────────────
@@ -951,18 +1078,23 @@ export default function ProjectsPage() {
     // Fetch fresh generation progress state
     await fetchGenerationProgress();
 
-    // Fetch projects and outputs
-    await fetchProjects();
-    // Use ref to get current selection to avoid stale closure
+    // Fetch projects and selected detail
+    await fetchProjects({ source: 'manual:refresh' });
     const currentSelectedId = selectedProjectRef.current;
     if (currentSelectedId) {
-      await fetchProjectOutputs(currentSelectedId);
+      await selectProject(currentSelectedId);
     }
 
     setRefreshing(false);
   };
 
-  const fetchGenerationJobs = async (projectId: string) => {
+  const handleRedoInsights = () => {
+    if (!selectedProject?.id) return;
+    setContextSidebarOpen(true);
+    setTriggerInsightRefresh((prev) => prev + 1);
+  };
+
+  const fetchGenerationJobs = useCallback(async (projectId: string) => {
     try {
       const { data, error } = await (supabase
         .from('project_generation_jobs') as any)
@@ -975,11 +1107,13 @@ export default function ProjectsPage() {
         return;
       }
 
-      setGenerationJobs((data || []) as ProjectGenerationJob[]);
+      if (selectedProjectRef.current === projectId) {
+        setGenerationJobs((data || []) as ProjectGenerationJob[]);
+      }
     } catch (error) {
       console.error('Failed to fetch generation jobs:', error);
     }
-  };
+  }, []);
 
   const enqueueGenerationItems = async (
     items: Array<{ kind: 'analysis' | 'content'; targetKey: string; themeId?: string }>
@@ -999,7 +1133,10 @@ export default function ProjectsPage() {
 
     const data = await response.json().catch(() => null);
     if (!response.ok) {
-      throw new Error(data?.error || 'Failed to queue generation');
+      if (data?.code === 'INSUFFICIENT_CREDITS') {
+        throw new Error(getInsufficientFundsMessage(data?.message));
+      }
+      throw new Error(data?.message || data?.error || 'Failed to queue generation');
     }
 
     await fetchGenerationJobs(selectedProject.id);
@@ -1029,7 +1166,7 @@ export default function ProjectsPage() {
     }
   };
 
-  const isAnalysisOptionAvailable = (project: Project | null, key: AnalysisOptionKey) => {
+  function isAnalysisOptionAvailable(project: Project | null, key: AnalysisOptionKey) {
     if (!project) return false;
     switch (key) {
       case 'namedSpeakers':
@@ -1049,9 +1186,14 @@ export default function ProjectsPage() {
       default:
         return false;
     }
-  };
+  }
 
   const handleGenerateAnalysisOption = async (key: AnalysisOptionKey) => {
+    if (isDemoMode) {
+      showToast('Demo account is read-only.');
+      return;
+    }
+
     if (!selectedProject?.id || !selectedProject.audio_file_name) {
       showToast('This project cannot run additional analysis.');
       return;
@@ -1315,6 +1457,11 @@ export default function ProjectsPage() {
 
   // Run Coverage Analysis for a project
   const handleRunCoverage = async (project: Project) => {
+    if (isDemoMode) {
+      showToast('Demo account is read-only.');
+      return;
+    }
+
     if (!user?.id || !project.id || !project.transcription_text) return;
 
     startCoverage(project.id, project.title);
@@ -1400,7 +1547,7 @@ export default function ProjectsPage() {
 
   useEffect(() => {
     if (user) {
-      fetchProjects();
+      void fetchProjects({ markLoading: true, surfaceError: true, source: 'initial' });
       fetchGenerationProgress(); // Restore loading state on page load
 
       // Set up real-time updates for projects
@@ -1416,7 +1563,11 @@ export default function ProjectsPage() {
           },
           (payload) => {
             console.log('Project change detected:', payload);
-            fetchProjects(); // Refresh projects when changes occur
+            void fetchProjects({ source: 'realtime:projects' }); // Refresh projects when changes occur
+            const changedProjectId = (payload.new as { id?: string } | null)?.id || (payload.old as { id?: string } | null)?.id;
+            if (changedProjectId && selectedProjectRef.current === changedProjectId) {
+              void fetchSelectedProject(changedProjectId);
+            }
           }
         )
         .subscribe();
@@ -1426,7 +1577,7 @@ export default function ProjectsPage() {
       let jobSubscription: any = null;
       if (selectedProject) {
         const subscribedProjectId = selectedProject.id;
-        fetchGenerationJobs(subscribedProjectId);
+      void fetchGenerationJobs(subscribedProjectId);
         outputsSubscription = supabase
           .channel('outputs_changes')
           .on(
@@ -1441,10 +1592,10 @@ export default function ProjectsPage() {
               console.log('Output change detected:', payload);
               // Only fetch if this project is still selected (use ref for current value)
               if (selectedProjectRef.current === subscribedProjectId) {
-                fetchProjectOutputs(subscribedProjectId);
-              }
+              void fetchProjectOutputs(subscribedProjectId);
             }
-          )
+          }
+        )
           .subscribe();
 
         jobSubscription = supabase
@@ -1459,13 +1610,11 @@ export default function ProjectsPage() {
             },
             (payload) => {
               console.log('Generation job change detected:', payload);
-              fetchGenerationJobs(subscribedProjectId);
+              void fetchGenerationJobs(subscribedProjectId);
               if (payload.eventType === 'UPDATE') {
                 const data = payload.new as any;
                 if (data?.status === 'completed' || data?.status === 'failed') {
-                  fetchProjects();
-                  fetchProjectOutputs(subscribedProjectId);
-                  setInsightsRefreshToken((prev) => prev + 1);
+                  void refreshSelectedProjectArtifacts(subscribedProjectId, 'realtime:generation_jobs');
                 }
               }
             }
@@ -1510,12 +1659,12 @@ export default function ProjectsPage() {
 
                   // Refresh data AFTER updating state (not inside setState)
                   console.log('[REALTIME] Refreshing projects...');
-                  fetchProjects();
+                  void fetchProjects({ source: 'realtime:generation_progress' });
 
                   // Use ref to check selected project (avoids stale closure)
                   if (selectedProjectRef.current === data.project_id) {
                     console.log('[REALTIME] Refreshing outputs for selected project...');
-                    fetchProjectOutputs(data.project_id);
+                    void refreshSelectedProjectArtifacts(data.project_id, 'realtime:generation_progress');
 
                     // Content panel now always visible (no tab to switch)
                   }
@@ -1556,7 +1705,7 @@ export default function ProjectsPage() {
         }
       };
     }
-  }, [user, selectedProject?.id]);
+  }, [user, selectedProject?.id, fetchGenerationJobs]);
 
   // Fetch current generation progress on page load
   const fetchGenerationProgress = async () => {
@@ -1626,19 +1775,19 @@ export default function ProjectsPage() {
           });
 
           // Refresh data
-          fetchProjects();
+          void fetchProjects({ source: 'poll:generation_progress' });
 
           // Refresh outputs if selected project completed
           const selectedId = selectedProjectRef.current;
           if (selectedId && completedProjects.includes(selectedId)) {
             console.log('[POLL] Refreshing outputs for completed project:', selectedId);
-            fetchProjectOutputs(selectedId);
+            void refreshSelectedProjectArtifacts(selectedId, 'poll:generation_progress');
           }
         }
       } catch (error) {
         console.error('[POLL] Exception checking progress:', error);
       }
-    }, 3000); // Poll every 3 seconds
+    }, 8000); // Poll every 8s (real-time handles the common case)
 
     return () => {
       console.log('[POLL] Stopping poll');
@@ -1654,75 +1803,361 @@ export default function ProjectsPage() {
     }, 2500);
 
     return () => clearInterval(interval);
-  }, [selectedProject?.id, activeGenerationJobs.length]);
+  }, [selectedProject?.id, activeGenerationJobs.length, fetchGenerationJobs]);
 
-  const fetchProjects = async () => {
+  const syncProjectListEntry = useCallback((projectUpdate: Pick<Project, 'id'> & Partial<ProjectListItem>) => {
+    setProjects((prev) => prev.map((project) => (
+      project.id === projectUpdate.id ? { ...project, ...projectUpdate } : project
+    )));
+  }, []);
+
+  const fetchSelectedProject = useCallback(async (projectId: string) => {
+    setSelectedProjectLoading(true);
+    try {
+      logDashboardLoad('projects', 'detail_start', { projectId });
+      const response = await fetch(`/api/projects/${projectId}`, {
+        cache: 'no-store',
+        headers: session?.access_token ? { Authorization: `Bearer ${session.access_token}` } : {},
+      });
+
+      if (response.status === 404) {
+        if (selectedProjectRef.current === projectId) {
+          setSelectedProject(null);
+          setOutputs([]);
+        }
+        return null;
+      }
+
+      if (!response.ok) {
+        throw new Error('Failed to fetch project detail');
+      }
+
+      const project = await response.json() as Project;
+
+      if (selectedProjectRef.current === projectId || !selectedProjectRef.current) {
+        setSelectedProject(project);
+        syncProjectListEntry({
+          id: project.id,
+          title: project.title,
+          status: project.status,
+          created_at: project.created_at,
+          audio_duration: project.audio_duration,
+          audio_file_size: project.audio_file_size,
+          audio_file_name: project.audio_file_name,
+          audio_expires_at: project.audio_expires_at,
+          audio_deleted_at: project.audio_deleted_at,
+          processing_time_seconds: project.processing_time_seconds,
+          selected_content_types: project.selected_content_types,
+          estimated_cost: project.estimated_cost,
+          audio_duration_seconds: project.audio_duration_seconds,
+          performance_level: project.performance_level,
+          metadata: project.metadata,
+          project_type: project.project_type,
+          processing_stage: project.processing_stage,
+        });
+      }
+
+      logDashboardLoad('projects', 'detail_success', { projectId, status: project.status });
+
+      return project;
+    } catch (error) {
+      console.error('Failed to fetch selected project:', error);
+      logDashboardLoad('projects', 'detail_error', {
+        projectId,
+        message: getDashboardErrorMessage(error, 'Failed to fetch project detail'),
+      });
+      return null;
+    } finally {
+      setSelectedProjectLoading(false);
+    }
+  }, [session?.access_token, syncProjectListEntry]);
+
+  const selectProject = useCallback(async (projectId: string) => {
+    selectedProjectRef.current = projectId;
+    setProjectsSidebarOpen(false);
+    setInsightsData([]);
+    setInsightsStatus({ count: 0, loading: true, generating: false, refreshing: false });
+    setShowFullTranscription(false);
+    setInsightsSidebarOpen(false);
+    setTriggerInsightGeneration(0);
+    setTriggerInsightRefresh(0);
+
+    await Promise.all([
+      fetchSelectedProject(projectId),
+      fetchProjectOutputs(projectId),
+      fetchGenerationJobs(projectId),
+    ]);
+  }, [fetchGenerationJobs, fetchSelectedProject]);
+
+  const fetchProjects = useCallback(async (
+    options: { markLoading?: boolean; surfaceError?: boolean; source?: string } = {}
+  ) => {
+    const { markLoading = false, surfaceError = false, source = 'unknown' } = options;
+
+    if (markLoading) {
+      setLoading(true);
+      setLoadError(null);
+    }
+
     try {
       if (!user?.id) {
         console.log('No user ID available');
+        if (markLoading) {
+          setLoading(false);
+        }
         return;
       }
 
+      logDashboardLoad('projects', 'list_start', { userId: user.id, source });
       console.log('Fetching projects for user:', user.id);
 
-      const { data: projectsData, error } = await supabase
-        .from('projects')
-        .select('*, transcription_segments, speaker_data, performance_level, project_type, ai_summary, chapters, key_takeaways, social_quotes')
-        .eq('user_id', user.id)
-        .neq('status', 'cancelled')
-        .order('created_at', { ascending: false }) as { data: any[] | null; error: any };
+      const response = await fetch('/api/dashboard/projects?limit=100', {
+        headers: session?.access_token ? { Authorization: `Bearer ${session.access_token}` } : {},
+        cache: 'no-store',
+      });
 
-      if (error) {
-        console.error('Error fetching projects:', error);
-        return;
+      if (!response.ok) {
+        const payload = await response.json().catch(() => ({ error: 'Failed to load projects' }));
+        throw new Error(payload.error || 'Failed to load projects');
       }
 
-      console.log('Fetched projects:', projectsData);
-      const updatedProjects = projectsData || [];
+      const payload = await response.json() as { projects?: ProjectListItem[] };
+      console.log('Fetched projects:', payload.projects);
+      const updatedProjects = (payload.projects || []) as ProjectListItem[];
       setProjects(updatedProjects);
+      if (surfaceError) {
+        setLoadError(null);
+      }
+      logDashboardLoad('projects', 'list_success', {
+        userId: user.id,
+        source,
+        count: updatedProjects.length,
+      });
 
-      // Use ref to get current selection to avoid stale closure issues
-      // when this function is called from realtime subscription callbacks
       const currentSelectedId = selectedProjectRef.current;
       if (currentSelectedId) {
         const refreshedSelection = updatedProjects.find(
           (project) => project.id === currentSelectedId
         );
         if (refreshedSelection) {
-          setSelectedProject(refreshedSelection);
+          setSelectedProject((prev) => (prev && prev.id === currentSelectedId ? { ...prev, ...refreshedSelection } : prev));
         } else {
+          selectedProjectRef.current = null;
           setSelectedProject(null);
           setOutputs([]);
         }
       }
     } catch (error) {
       console.error('Failed to fetch projects:', error);
+      const message = getDashboardErrorMessage(error, 'We could not load your projects right now. Please try again.');
+      if (surfaceError) {
+        setProjects([]);
+        setOutputs([]);
+        setLoadError(message);
+      }
+      logDashboardLoad('projects', 'list_error', { userId: user?.id, source, message });
     } finally {
-      setLoading(false);
+      if (markLoading) {
+        setLoading(false);
+      }
     }
-  };
+  }, [session?.access_token, user?.id]);
 
-  const fetchProjectOutputs = async (projectId: string) => {
+  // Auto-select project from URL query parameter or default to the newest project
+  useEffect(() => {
+    const projectId = searchParams.get('id');
+
+    if (loading || projects.length === 0) return;
+
+    const requestedProjectId = projectId || projects[0]?.id;
+    if (!requestedProjectId) return;
+
+    const projectToSelect = projects.find((project) => project.id === requestedProjectId);
+    if (!projectToSelect) {
+      if (selectedProject?.id && !projects.some((project) => project.id === selectedProject.id)) {
+        resetSelectedProject();
+      }
+      return;
+    }
+
+    if (projectId !== requestedProjectId) {
+      router.replace(`/dashboard/projects?id=${requestedProjectId}`);
+    }
+
+    if (selectedProjectRef.current !== requestedProjectId) {
+      void selectProject(requestedProjectId);
+    }
+  }, [searchParams, projects, loading, selectedProject?.id, resetSelectedProject, router, selectProject]);
+
+  const fetchProjectOutputs = useCallback(async (projectId: string) => {
     try {
       console.log('Fetching outputs for project:', projectId);
 
-      const { data: outputsData, error } = await supabase
-        .from('outputs')
-        .select('*')
-        .eq('project_id', projectId)
-        .order('created_at', { ascending: false });
+      const response = await fetch(`/api/projects/${projectId}/outputs`, {
+        cache: 'no-store',
+        headers: session?.access_token ? { Authorization: `Bearer ${session.access_token}` } : {},
+      });
 
-      if (error) {
-        console.error('Error fetching outputs:', error);
-        return;
+      if (!response.ok) {
+        const payload = await response.json().catch(() => ({ error: 'Failed to load outputs' }));
+        throw new Error(payload.error || 'Failed to load outputs');
       }
 
+      const payload = await response.json() as { outputs?: Output[] };
+      const outputsData = payload.outputs || [];
       console.log('Fetched outputs:', outputsData);
-      setOutputs(outputsData || []);
+      if (selectedProjectRef.current === projectId) {
+        setOutputs(outputsData);
+      }
     } catch (error) {
       console.error('Failed to fetch outputs:', error);
     }
-  };
+  }, [session?.access_token]);
+
+  const refreshSelectedProjectArtifacts = useCallback(async (projectId: string, source: string) => {
+    if (selectedProjectRef.current !== projectId) {
+      return;
+    }
+
+    if (selectedProjectArtifactsRefreshRef.current) {
+      selectedProjectArtifactsRefreshQueuedRef.current = true;
+      await selectedProjectArtifactsRefreshRef.current;
+      return;
+    }
+
+    const runRefresh = async () => {
+      try {
+        do {
+          selectedProjectArtifactsRefreshQueuedRef.current = false;
+          await Promise.all([
+            fetchGenerationJobs(projectId),
+            fetchProjectOutputs(projectId),
+            fetchSelectedProject(projectId),
+            fetchProjects({ source }),
+          ]);
+          setInsightsRefreshToken((prev) => prev + 1);
+        } while (selectedProjectArtifactsRefreshQueuedRef.current && selectedProjectRef.current === projectId);
+      } finally {
+        selectedProjectArtifactsRefreshRef.current = null;
+      }
+    };
+
+    selectedProjectArtifactsRefreshRef.current = runRefresh();
+    await selectedProjectArtifactsRefreshRef.current;
+  }, [fetchGenerationJobs, fetchProjectOutputs, fetchSelectedProject, fetchProjects]);
+
+  useEffect(() => {
+    if (!selectedProject?.id) {
+      selectedProjectGenerationActiveRef.current = false;
+      return;
+    }
+
+    const projectId = selectedProject.id;
+    let cancelled = false;
+
+    const pollSelectedProjectGeneration = async () => {
+      try {
+        const { data, error } = await supabase
+          .from('generation_progress')
+          .select('status')
+          .eq('project_id', projectId)
+          .maybeSingle();
+
+        if (cancelled) return;
+        if (error) {
+          console.error('[POLL] Failed to check selected project generation progress:', error);
+          return;
+        }
+
+        const status = (data as { status?: string } | null)?.status;
+        const isActive = status === 'preparing' || status === 'generating';
+        const wasActive = selectedProjectGenerationActiveRef.current;
+
+        if (isActive) {
+          selectedProjectGenerationActiveRef.current = true;
+          void refreshSelectedProjectArtifacts(projectId, 'poll:selected-generation-active');
+          return;
+        }
+
+        if (wasActive) {
+          selectedProjectGenerationActiveRef.current = false;
+          void refreshSelectedProjectArtifacts(projectId, 'poll:selected-generation-complete');
+        }
+      } catch (error) {
+        console.error('[POLL] Selected project generation poll failed:', error);
+      }
+    };
+
+    void pollSelectedProjectGeneration();
+    const interval = setInterval(() => {
+      void pollSelectedProjectGeneration();
+    }, 4000);
+
+    return () => {
+      cancelled = true;
+      clearInterval(interval);
+    };
+  }, [selectedProject?.id, refreshSelectedProjectArtifacts]);
+
+  useEffect(() => {
+    const previousStatuses = previousGenerationJobStatusesRef.current;
+    const currentStatuses = new Map<string, string>();
+    let shouldRefreshOutputs = false;
+    let shouldRefreshDetail = false;
+
+    for (const job of generationJobs) {
+      currentStatuses.set(job.id, job.status);
+      const previousStatus = previousStatuses.get(job.id);
+      const transitionedToTerminal =
+        previousStatus &&
+        previousStatus !== job.status &&
+        (job.status === 'completed' || job.status === 'failed');
+
+      if (!transitionedToTerminal) continue;
+
+      if (job.kind === 'content') {
+        shouldRefreshOutputs = true;
+      }
+      shouldRefreshDetail = true;
+    }
+
+    previousGenerationJobStatusesRef.current = currentStatuses;
+
+    const selectedId = selectedProjectRef.current;
+    if (!selectedId) return;
+
+    if (shouldRefreshOutputs || shouldRefreshDetail) {
+      void refreshSelectedProjectArtifacts(selectedId, 'job-transition');
+    }
+  }, [generationJobs, refreshSelectedProjectArtifacts]);
+
+  useEffect(() => {
+    const currentActiveJobCount = activeGenerationJobs.length;
+    const previousActiveJobCount = previousActiveJobCountRef.current;
+
+    if (!selectedProject?.id) {
+      previousActiveJobCountRef.current = currentActiveJobCount;
+      return;
+    }
+
+    let intervalId: ReturnType<typeof setInterval> | null = null;
+
+    if (currentActiveJobCount > 0) {
+      intervalId = setInterval(() => {
+        void fetchGenerationJobs(selectedProject.id);
+      }, 1500);
+    } else if (previousActiveJobCount > 0) {
+      void refreshSelectedProjectArtifacts(selectedProject.id, 'jobs:settled');
+    }
+
+    previousActiveJobCountRef.current = currentActiveJobCount;
+
+    return () => {
+      if (intervalId) {
+        clearInterval(intervalId);
+      }
+    };
+  }, [activeGenerationJobs.length, selectedProject?.id, fetchGenerationJobs, refreshSelectedProjectArtifacts]);
 
   const formatDuration = (seconds: number) => {
     const hrs = Math.floor(seconds / 3600);
@@ -1863,7 +2298,7 @@ export default function ProjectsPage() {
     }
   };
 
-  const getProcessingBadge = (project: Project) => {
+  const getProcessingBadge = (project: ProjectListItem | Project) => {
     const options = getProjectAnalysisOptions(project);
     const selectedCount = Object.values(options).filter(Boolean).length;
     const label = selectedCount === 0 ? 'Transcript only' : `${selectedCount} add-on${selectedCount === 1 ? '' : 's'}`;
@@ -1937,15 +2372,15 @@ export default function ProjectsPage() {
     );
   };
 
-  const getContentAvailability = (project: Project) => {
-    const options = getProjectAnalysisOptions(project);
+  const getContentAvailability = (project: ProjectListItem, detailProject?: Project | null) => {
+    const options = getProjectAnalysisOptions(detailProject && detailProject.id === project.id ? detailProject : project);
     const features = [];
-    const aiProcessing = (project.speaker_data as any)?.detectionMetadata?.aiProcessing || {};
+    const resolvedProject = detailProject && detailProject.id === project.id ? detailProject : null;
+    const aiProcessing = (resolvedProject?.speaker_data as any)?.detectionMetadata?.aiProcessing || {};
 
-    // Standard tier - always available
     features.push({
       name: 'Transcription',
-      available: !!project.transcription_text,
+      available: project.status === 'completed',
       pending: false,
       icon: FileText,
       color: 'text-green-600'
@@ -1953,7 +2388,7 @@ export default function ProjectsPage() {
 
     features.push({
       name: 'Speakers',
-      available: !!project.speaker_data,
+      available: !!resolvedProject?.speaker_data,
       pending: false,
       icon: MessageCircle,
       color: 'text-green-600',
@@ -1963,7 +2398,7 @@ export default function ProjectsPage() {
     if (options.summary) {
       features.push({
         name: 'AI Summary',
-        available: !!project.ai_summary,
+        available: !!resolvedProject?.ai_summary,
         pending: aiProcessing.summary === false,
         icon: Sparkles,
         color: 'text-blue-600'
@@ -1973,33 +2408,33 @@ export default function ProjectsPage() {
     if (options.chapters) {
       features.push({
         name: 'Chapters',
-        available: !!project.chapters && project.chapters.length > 0,
+        available: !!resolvedProject?.chapters && resolvedProject.chapters.length > 0,
         pending: aiProcessing.chapters === false,
         icon: BookOpen,
         color: 'text-purple-600',
-        count: project.chapters?.length
+        count: resolvedProject?.chapters?.length
       });
     }
 
     if (options.takeaways) {
       features.push({
         name: 'Key Takeaways',
-        available: !!project.key_takeaways && project.key_takeaways.length > 0,
+        available: !!resolvedProject?.key_takeaways && resolvedProject.key_takeaways.length > 0,
         pending: aiProcessing.takeaways === false,
         icon: Lightbulb,
         color: 'text-purple-600',
-        count: project.key_takeaways?.length
+        count: resolvedProject?.key_takeaways?.length
       });
     }
 
     if (options.quotes) {
       features.push({
         name: 'Social Quotes',
-        available: !!project.social_quotes && project.social_quotes.length > 0,
+        available: !!resolvedProject?.social_quotes && resolvedProject.social_quotes.length > 0,
         pending: aiProcessing.quotes === false,
         icon: MessageSquare,
         color: 'text-purple-600',
-        count: project.social_quotes?.length
+        count: resolvedProject?.social_quotes?.length
       });
     }
 
@@ -2029,6 +2464,18 @@ export default function ProjectsPage() {
           </div>
         </div>
       </div>
+    );
+  }
+
+  if (loadError) {
+    return (
+      <DashboardLoadErrorState
+        title="Projects unavailable"
+        message={loadError}
+        onRetry={() => {
+          void fetchProjects({ markLoading: true, surfaceError: true, source: 'retry' });
+        }}
+      />
     );
   }
 
@@ -2098,13 +2545,7 @@ export default function ProjectsPage() {
                     key={project.id}
                     onClick={() => {
                       router.push(`/dashboard/projects?id=${project.id}`);
-                      setSelectedProject(project);
-                      setShowFullTranscription(false);
-                      setInsightsSidebarOpen(false);
-                      setInsightsStatus({ count: 0, loading: true, generating: false });
-                      setInsightsData([]);
-                      setTriggerInsightGeneration(0);
-                      fetchProjectOutputs(project.id);
+                      void selectProject(project.id);
                     }}
                     className="rounded-2xl border border-slate-200 dark:border-slate-800 bg-white dark:bg-slate-900/80 p-4 text-left transition-colors hover:border-slate-300 hover:bg-slate-50 dark:hover:border-slate-700 dark:hover:bg-slate-900"
                   >
@@ -2339,19 +2780,12 @@ export default function ProjectsPage() {
                           toggleProjectSelection(project.id);
                           return;
                         }
-                        // Update URL to match selection, preventing "sticky" URL param from reverting selection
                         router.push(`/dashboard/projects?id=${project.id}`);
-                        setSelectedProject(project);
-                        setShowFullTranscription(false);
-                        setInsightsSidebarOpen(false);
-                        setInsightsStatus({ count: 0, loading: true, generating: false });
-                        setInsightsData([]);
-                        setTriggerInsightGeneration(0);
-                        fetchProjectOutputs(project.id);
+                        void selectProject(project.id);
                       }}
                     >
                       {(() => {
-                        const availability = getContentAvailability(project);
+                        const availability = getContentAvailability(project, selectedProject?.id === project.id ? selectedProject : null);
                         const pendingFeatures = availability.filter(f => f.pending && !f.available);
                         const availableCount = availability.filter(f => f.available).length;
                         const pendingLabel = pendingFeatures.map(f => f.name).join(', ');
@@ -2567,6 +3001,18 @@ export default function ProjectsPage() {
                             <Download className="w-4 h-4" />
                             Export
                           </DropdownMenuItem>
+                          {selectedProject.status === 'completed' && getProjectAnalysisOptions(selectedProject).insights && (
+                            <>
+                              <DropdownMenuSeparator />
+                              <DropdownMenuItem
+                                onClick={handleRedoInsights}
+                                disabled={insightsStatus.loading || insightsStatus.generating || insightsStatus.refreshing}
+                              >
+                                <Sparkles className={`w-4 h-4 ${insightsStatus.refreshing ? 'animate-spin' : ''}`} />
+                                {insightsStatus.refreshing ? 'Redoing insights...' : 'Redo insights'}
+                              </DropdownMenuItem>
+                            </>
+                          )}
                           <DropdownMenuSeparator />
                           <DropdownMenuItem onClick={handleRefresh} disabled={refreshing}>
                             <RefreshCw className={`w-4 h-4 ${refreshing ? 'animate-spin' : ''}`} />
@@ -2634,12 +3080,12 @@ export default function ProjectsPage() {
                         )}
                         <button
                           onClick={() => handleRunCoverage(selectedProject)}
-                          disabled={runningCoverageIds.has(selectedProject.id) || !selectedProject.transcription_text}
+                          disabled={isDemoMode || runningCoverageIds.has(selectedProject.id) || !selectedProject.transcription_text}
                           className={`inline-flex items-center gap-1.5 px-2.5 py-1 text-xs font-medium rounded-md border transition-colors disabled:opacity-60 disabled:cursor-not-allowed ${runningCoverageIds.has(selectedProject.id)
                             ? 'border-cyan-300 dark:border-cyan-800/40 bg-cyan-50 dark:bg-cyan-900/20 text-cyan-700 dark:text-cyan-300'
                             : 'border-slate-300 dark:border-slate-700 bg-white dark:bg-slate-800/80 text-slate-700 dark:text-slate-100 hover:bg-slate-50 dark:hover:bg-slate-700'
                             }`}
-                          title={!selectedProject.transcription_text ? 'Analysis requires a transcript' : 'Run analysis'}
+                          title={isDemoMode ? 'Demo account is read-only' : !selectedProject.transcription_text ? 'Analysis requires a transcript' : 'Run analysis'}
                         >
                           {runningCoverageIds.has(selectedProject.id) ? (
                             <><Loader2 className="w-4 h-4 animate-spin" />Analyzing...</>
@@ -2745,15 +3191,13 @@ export default function ProjectsPage() {
                             projectId={selectedProject.id}
                             onSpeakerUpdate={(updatedSpeakerData) => {
                               setSelectedProject(prev => prev ? { ...prev, speaker_data: updatedSpeakerData } : null);
-                              setProjects(prev => prev.map(project =>
-                                project.id === selectedProject.id ? { ...project, speaker_data: updatedSpeakerData } : project
-                              ));
                             }}
                             insightsSidebarOpen={insightsSidebarOpen}
                             onInsightsSidebarChange={setInsightsSidebarOpen}
                             onInsightsStatusChange={setInsightsStatus}
                             onInsightsDataChange={setInsightsData}
                             triggerInsightGeneration={triggerInsightGeneration}
+                            triggerInsightRefresh={triggerInsightRefresh}
                             insightsRefreshToken={insightsRefreshToken}
                             audioPlayerRef={audioPlayerRef}
                             audioElementRef={audioElementRef}
@@ -2799,6 +3243,16 @@ export default function ProjectsPage() {
                     </div>
                   </div>
 
+                </div>
+              </div>
+            ) : selectedProjectLoading ? (
+              <div className="h-full flex flex-col bg-white dark:bg-[#0F172A] p-6">
+                <div className="animate-pulse space-y-4">
+                  <div className="h-10 w-1/3 rounded-xl bg-slate-200 dark:bg-slate-800" />
+                  <div className="h-12 rounded-xl bg-slate-200 dark:bg-slate-800" />
+                  <div className="h-24 rounded-xl bg-slate-200 dark:bg-slate-800" />
+                  <div className="h-24 rounded-xl bg-slate-200 dark:bg-slate-800" />
+                  <div className="h-24 rounded-xl bg-slate-200 dark:bg-slate-800" />
                 </div>
               </div>
             ) : (
@@ -2854,7 +3308,6 @@ export default function ProjectsPage() {
               const data = await res.json();
               if (data.updatedSpeakerData) {
                 setSelectedProject(prev => prev ? { ...prev, speaker_data: data.updatedSpeakerData } : null);
-                setProjects(prev => prev.map(p => p.id === selectedProject.id ? { ...p, speaker_data: data.updatedSpeakerData } : p));
               }
             }}
             onSpeakerRoleChange={async (speakerId, newRole) => {
@@ -2868,7 +3321,6 @@ export default function ProjectsPage() {
               const data = await res.json();
               if (data.updatedSpeakerData) {
                 setSelectedProject(prev => prev ? { ...prev, speaker_data: data.updatedSpeakerData } : null);
-                setProjects(prev => prev.map(p => p.id === selectedProject.id ? { ...p, speaker_data: data.updatedSpeakerData } : p));
               }
             }}
             onSpeakerMerge={async (sourceSpeakerId, targetSpeakerId) => {
@@ -2901,7 +3353,13 @@ export default function ProjectsPage() {
             onInsightClick={(insightId) => setActiveInsightId(prev => prev === insightId ? null : insightId)}
             insightsLoading={insightsStatus.loading}
             insightsGenerating={insightsStatus.generating}
-            onGenerateInsights={() => setTriggerInsightGeneration(prev => prev + 1)}
+            onGenerateInsights={() => {
+              if (isDemoMode) {
+                showToast('Demo account is read-only.');
+                return;
+              }
+              setTriggerInsightGeneration(prev => prev + 1);
+            }}
             summary={selectedProject?.ai_summary}
             chapters={selectedProject?.chapters || []}
             takeaways={selectedProject?.key_takeaways || []}
@@ -2919,7 +3377,7 @@ export default function ProjectsPage() {
                 option.key,
                 {
                   available: isAnalysisOptionAvailable(selectedProject, option.key),
-                  generating: generatingAnalysisKeys.has(option.key) || optimisticGeneratingAnalysisKeys.has(option.key),
+                  generating: effectiveGeneratingAnalysisKeys.has(option.key),
                 },
               ])
             )}

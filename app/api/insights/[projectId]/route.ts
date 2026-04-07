@@ -4,8 +4,43 @@
  */
 
 import { NextRequest, NextResponse } from 'next/server';
-import { createClient } from '@supabase/supabase-js';
 import { RouteAccessError, requireProjectOwner } from '@/lib/api/route-auth';
+import { supabaseAdmin } from '@/lib/supabase/server';
+
+function isTransientInsightsQueryError(error: any): boolean {
+  const message = String(error?.message || '');
+  return (
+    message.includes('Bad gateway') ||
+    message.includes('Error code 502') ||
+    message.includes('<!DOCTYPE html>') ||
+    message.includes('Cloudflare')
+  );
+}
+
+async function fetchInsightsWithRetry(projectId: string) {
+  let lastError: any = null;
+
+  for (let attempt = 0; attempt < 3; attempt++) {
+    const result = await supabaseAdmin
+      .from('insights')
+      .select('*')
+      .eq('project_id', projectId)
+      .order('confidence', { ascending: false });
+
+    if (!result.error) {
+      return result;
+    }
+
+    lastError = result.error;
+    if (!isTransientInsightsQueryError(result.error) || attempt === 2) {
+      return result;
+    }
+
+    await new Promise((resolve) => setTimeout(resolve, 250 * (attempt + 1)));
+  }
+
+  return { data: null, error: lastError };
+}
 
 function getRelationshipDescription(relationships: any[], types: string[]) {
   for (const type of types) {
@@ -134,18 +169,8 @@ export async function GET(request: NextRequest, context: RouteContext) {
 
     await requireProjectOwner(request, projectId, 'id');
 
-    // Initialize Supabase
-    const supabase = createClient(
-      process.env.NEXT_PUBLIC_SUPABASE_URL!,
-      process.env.SUPABASE_SERVICE_ROLE_KEY!
-    );
-
     // Fetch insights from database
-    const { data: insights, error } = await supabase
-      .from('insights')
-      .select('*')
-      .eq('project_id', projectId)
-      .order('confidence', { ascending: false });
+    const { data: insights, error } = await fetchInsightsWithRetry(projectId);
 
     if (error) {
       console.error('[Insights API] Database error:', error);

@@ -237,33 +237,49 @@ export function useProjectRefresh(
     }
 
     log('Project is processing, starting status poll...');
+    let isActive = true;
 
-    pollingIntervalRef.current = setInterval(async () => {
+    const poll = async () => {
+      if (!isActive) return;
+
       const freshData = await fetchFreshProject();
-      if (!freshData) return;
+      if (!isActive) return;
 
-      const oldStatus = previousStatusRef.current;
-      const newStatus = freshData.status;
+      if (freshData) {
+        const oldStatus = previousStatusRef.current;
+        const newStatus = freshData.status;
 
-      log(`Poll: status ${oldStatus} -> ${newStatus}`);
+        log(`Poll: status ${oldStatus} -> ${newStatus}`);
 
-      // Detect status transition
-      if (oldStatus !== newStatus) {
-        previousStatusRef.current = newStatus;
-        setPreviousStatus(oldStatus);
-        setProject(freshData);
+        // Detect status transition
+        if (oldStatus !== newStatus) {
+          previousStatusRef.current = newStatus;
+          setPreviousStatus(oldStatus);
+          setProject(freshData);
 
-        // Handle completion transition
-        if (newStatus === 'completed' && oldStatus !== 'completed') {
-          log('Detected status transition to completed!');
-          handleStatusCompletion();
+          // Handle completion transition
+          if (newStatus === 'completed' && oldStatus !== 'completed') {
+            log('Detected status transition to completed!');
+            handleStatusCompletion();
+            // Stop polling since it's completed
+            return;
+          }
         }
       }
-    }, pollingInterval);
+
+      // Schedule next poll ONLY after this one resolves
+      if (isActive) {
+        pollingIntervalRef.current = setTimeout(poll, pollingInterval);
+      }
+    };
+
+    // Start the first poll
+    pollingIntervalRef.current = setTimeout(poll, pollingInterval);
 
     return () => {
+      isActive = false;
       if (pollingIntervalRef.current) {
-        clearInterval(pollingIntervalRef.current);
+        clearTimeout(pollingIntervalRef.current);
         pollingIntervalRef.current = null;
       }
     };

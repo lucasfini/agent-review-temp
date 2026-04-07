@@ -16,7 +16,6 @@ function parseAdminEmails(value?: string): string[] {
 export function getAdminAllowedEmails(): string[] {
   const configuredEmails = [
     ...parseAdminEmails(process.env.ADMIN_EMAILS),
-    ...parseAdminEmails(process.env.NEXT_PUBLIC_ADMIN_EMAILS),
   ];
 
   return Array.from(new Set([...DEFAULT_ADMIN_EMAILS, ...configuredEmails]));

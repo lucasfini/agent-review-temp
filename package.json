@@ -10,6 +10,7 @@
     "lint": "eslint",
     "test": "jest",
     "test:full": "RUN_FULL_TEST_SUITE=1 jest",
+    "test:api:full": "RUN_FULL_TEST_SUITE=1 jest tests/api --runInBand",
     "test:watch": "jest --watch",
     "test:coverage": "jest --coverage",
     "test:api": "jest tests/api",

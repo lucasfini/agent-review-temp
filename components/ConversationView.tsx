@@ -51,6 +51,7 @@ interface ConversationViewProps {
     count: number;
     loading: boolean;
     generating: boolean;
+    refreshing: boolean;
   }) => void;
   onInsightsDataChange?: (insights: Array<{
     id: string;
@@ -83,6 +84,7 @@ interface ConversationViewProps {
     matchVariants?: string[];
   }>) => void;
   triggerInsightGeneration?: number;
+  triggerInsightRefresh?: number;
   insightsRefreshToken?: number;
   // Audio player ref for speaker sample playback
   audioPlayerRef?: RefObject<AudioPlayerRef | null>;
@@ -156,6 +158,7 @@ export default function ConversationView({
   onInsightsStatusChange,
   onInsightsDataChange,
   triggerInsightGeneration,
+  triggerInsightRefresh,
   insightsRefreshToken,
   audioPlayerRef,
   audioElementRef,
@@ -708,7 +711,7 @@ export default function ConversationView({
   }, [activeInsightIds, activeInsightId]);
 
 
-  const handleRefreshInsights = async () => {
+  const handleRefreshInsights = useCallback(async () => {
     if (!projectId || refreshingInsights) {
       return;
     }
@@ -779,26 +782,7 @@ export default function ConversationView({
     } finally {
       setRefreshingInsights(false);
     }
-  };
-
-  // Track previous trigger value to detect changes
-  const prevTriggerRef = useRef<number | undefined>(undefined);
-
-  // Trigger generation from external control
-  useEffect(() => {
-    // Only trigger if the value actually changed (and is greater than 0)
-    if (
-      triggerInsightGeneration !== undefined &&
-      triggerInsightGeneration > 0 &&
-      triggerInsightGeneration !== prevTriggerRef.current &&
-      !generatingInsights &&
-      !insightsLoading &&
-      inlineInsightPresets.length === 0
-    ) {
-      handleGenerateInsights();
-    }
-    prevTriggerRef.current = triggerInsightGeneration;
-  }, [triggerInsightGeneration, generatingInsights, insightsLoading, inlineInsightPresets.length]);
+  }, [projectId, refreshingInsights]);
 
   // Report status changes to parent
   useEffect(() => {
@@ -807,9 +791,10 @@ export default function ConversationView({
         count: inlineInsightPresets.length,
         loading: insightsLoading,
         generating: generatingInsights,
+        refreshing: refreshingInsights,
       });
     }
-  }, [inlineInsightPresets.length, insightsLoading, generatingInsights, onInsightsStatusChange]);
+  }, [inlineInsightPresets.length, insightsLoading, generatingInsights, refreshingInsights, onInsightsStatusChange]);
 
   // Report insights data changes to parent (for ContextSidebar)
   // Guard with !insightsLoading to prevent firing with [] during initial mount,
@@ -847,7 +832,7 @@ export default function ConversationView({
   }, [inlineInsightPresets, onInsightsDataChange, insightsLoading]);
 
   // Generate insights for the first time
-  const handleGenerateInsights = async () => {
+  const handleGenerateInsights = useCallback(async () => {
     if (!projectId || generatingInsights) {
       return;
     }
@@ -919,7 +904,41 @@ export default function ConversationView({
     } finally {
       setGeneratingInsights(false);
     }
-  };
+  }, [projectId, generatingInsights]);
+
+  // Track previous trigger value to detect changes
+  const prevTriggerRef = useRef<number | undefined>(undefined);
+
+  // Trigger generation from external control
+  useEffect(() => {
+    // Only trigger if the value actually changed (and is greater than 0)
+    if (
+      triggerInsightGeneration !== undefined &&
+      triggerInsightGeneration > 0 &&
+      triggerInsightGeneration !== prevTriggerRef.current &&
+      !generatingInsights &&
+      !insightsLoading &&
+      inlineInsightPresets.length === 0
+    ) {
+      handleGenerateInsights();
+    }
+    prevTriggerRef.current = triggerInsightGeneration;
+  }, [triggerInsightGeneration, generatingInsights, insightsLoading, inlineInsightPresets.length, handleGenerateInsights]);
+
+  const prevRefreshTriggerRef = useRef<number | undefined>(undefined);
+
+  useEffect(() => {
+    if (
+      triggerInsightRefresh !== undefined &&
+      triggerInsightRefresh > 0 &&
+      triggerInsightRefresh !== prevRefreshTriggerRef.current &&
+      !refreshingInsights &&
+      !generatingInsights
+    ) {
+      handleRefreshInsights();
+    }
+    prevRefreshTriggerRef.current = triggerInsightRefresh;
+  }, [triggerInsightRefresh, refreshingInsights, generatingInsights, handleRefreshInsights]);
 
   // New highlight function using the redesigned TranscriptHighlight component
   const highlightSegmentText = (text: string): ReactNode => {

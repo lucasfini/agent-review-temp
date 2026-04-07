@@ -21,6 +21,7 @@ export interface ProjectGenerationJob {
   theme_id?: string | null;
   status: ProjectGenerationJobStatus;
   error_message?: string | null;
+  failure_notified_at?: string | null;
   created_at: string;
   updated_at: string;
   started_at?: string | null;

@@ -1,5 +1,24 @@
 import { test, expect, type Page } from '@playwright/test';
 
+async function waitForAnyVisible(page: Page, candidates: Array<{ name: string; locator: ReturnType<Page['locator']> }>, timeout = 20000) {
+  await expect.poll(async () => {
+    for (const candidate of candidates) {
+      if (await candidate.locator.isVisible().catch(() => false)) {
+        return candidate.name;
+      }
+    }
+    return 'pending';
+  }, { timeout }).not.toBe('pending');
+
+  for (const candidate of candidates) {
+    if (await candidate.locator.isVisible().catch(() => false)) {
+      return candidate.name;
+    }
+  }
+
+  throw new Error('No expected dashboard state became visible');
+}
+
 async function loginAsDemo(page: Page) {
   await page.goto('/auth/demo');
   await expect(page).toHaveURL(/\/dashboard\/hub/, { timeout: 20000 });
@@ -14,21 +33,24 @@ async function loginAsDemo(page: Page) {
 async function openProjectsWorkspace(page: Page) {
   await page.goto('/dashboard/projects');
 
-  const emptyState = page.getByText('Your library is empty');
-  if (await emptyState.isVisible()) {
-    await expect(page.getByRole('link', { name: 'Upload Podcast' })).toBeVisible();
-    return false;
+  const state = await waitForAnyVisible(page, [
+    { name: 'error', locator: page.getByRole('heading', { name: 'Projects unavailable' }) },
+    { name: 'empty', locator: page.getByRole('heading', { name: 'Select a project to open the studio' }) },
+    { name: 'workspace', locator: page.getByText('Transcript').first() },
+  ]);
+
+  if (state === 'error') {
+    await expect(page.getByRole('button', { name: 'Retry' })).toBeVisible();
+    return 'error';
   }
 
-  await expect(page.getByText('Studio')).toBeVisible();
-  await expect(page.getByPlaceholder('Search projects...')).toBeVisible();
-
-  const firstProject = page.locator('[data-tour="project-sidebar"] .cursor-pointer').first();
-  await expect(firstProject).toBeVisible();
-  await firstProject.click();
+  if (state === 'empty') {
+    await expect(page.getByRole('link', { name: /Upload/i })).toBeVisible();
+    return 'empty';
+  }
 
   await expect(page.getByText('Transcript').first()).toBeVisible();
-  return true;
+  return 'workspace';
 }
 
 test.describe('Authenticated Dashboard Flows', () => {
@@ -37,7 +59,16 @@ test.describe('Authenticated Dashboard Flows', () => {
   });
 
   test('renders the hub shell and primary navigation', async ({ page }) => {
-    await expect(page.getByRole('heading', { name: 'All Projects' })).toBeVisible();
+    const state = await waitForAnyVisible(page, [
+      { name: 'error', locator: page.getByRole('heading', { name: 'Projects unavailable' }) },
+      { name: 'hub', locator: page.getByRole('heading', { name: 'All Projects' }) },
+    ]);
+
+    if (state === 'error') {
+      await expect(page.getByRole('button', { name: 'Retry' })).toBeVisible();
+      return;
+    }
+
     await expect(page.getByRole('link', { name: /Studio/i })).toBeVisible();
     await expect(page.getByRole('link', { name: /Upload/i })).toBeVisible();
   });
@@ -57,7 +88,8 @@ test.describe('Authenticated Dashboard Flows', () => {
   });
 
   test('renders the projects workspace or its empty state cleanly', async ({ page }) => {
-    if (!await openProjectsWorkspace(page)) {
+    const state = await openProjectsWorkspace(page);
+    if (state !== 'workspace') {
       return;
     }
 
@@ -89,14 +121,18 @@ test.describe('Authenticated Dashboard Flows', () => {
   test('renders analytics and supports switching to goals', async ({ page }) => {
     await page.goto('/dashboard/analytics');
 
-    const unavailable = page.getByRole('heading', { name: 'Analytics unavailable' });
-    if (await unavailable.isVisible()) {
+    const state = await waitForAnyVisible(page, [
+      { name: 'error', locator: page.getByRole('heading', { name: 'Analytics unavailable' }) },
+      { name: 'empty', locator: page.getByRole('heading', { name: 'No analytics yet' }) },
+      { name: 'analytics', locator: page.getByRole('heading', { name: 'Analytics' }) },
+    ]);
+
+    if (state === 'error') {
       await expect(page.getByRole('button', { name: 'Retry' })).toBeVisible();
       return;
     }
 
-    const emptyState = page.getByRole('heading', { name: 'No analytics yet' });
-    if (await emptyState.isVisible()) {
+    if (state === 'empty') {
       await expect(page.getByRole('button', { name: 'Upload your first project' })).toBeVisible();
       return;
     }

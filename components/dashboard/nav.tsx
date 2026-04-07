@@ -27,6 +27,8 @@ import {
   Plus,
   Sun,
   Moon,
+  PanelLeftClose,
+  PanelLeftOpen,
 } from 'lucide-react';
 
 type NavItemDef = {
@@ -84,9 +86,8 @@ function ThemeToggle({ isCollapsed }: { isCollapsed?: boolean }) {
   return (
     <button
       onClick={() => setTheme(isDark ? 'light' : 'dark')}
-      className={`flex items-center justify-center text-slate-500 dark:text-slate-400 hover:text-slate-900 dark:hover:text-white hover:bg-slate-100 dark:hover:bg-slate-800 transition-colors ${
-        isCollapsed ? 'h-9 w-9 rounded-xl' : 'h-10 w-10 rounded-xl'
-      }`}
+      className={`flex items-center justify-center text-slate-500 dark:text-slate-400 hover:text-slate-900 dark:hover:text-white hover:bg-slate-100 dark:hover:bg-slate-800 transition-colors ${isCollapsed ? 'h-9 w-9 rounded-xl' : 'h-10 w-10 rounded-xl'
+        }`}
       title={isDark ? 'Switch to light mode' : 'Switch to dark mode'}
       aria-label={isDark ? 'Switch to light mode' : 'Switch to dark mode'}
     >
@@ -199,14 +200,14 @@ function NavItem({
       {...(item.tourAttr ? { 'data-tour': item.tourAttr } : {})}
       aria-label={item.name}
       className={`group flex items-center ${isCollapsed ? 'justify-center' : 'gap-3'} px-3 ${mobile ? 'py-3 text-base' : 'py-2.5 text-sm'} font-medium rounded-xl transition-colors ${isActive
-          ? 'bg-blue-600/10 text-blue-600 dark:text-blue-400'
-          : 'text-slate-600 dark:text-slate-200 hover:bg-slate-100 dark:hover:bg-slate-800 hover:text-slate-900 dark:hover:text-white'
+        ? 'bg-blue-600/10 text-blue-600 dark:text-blue-400'
+        : 'text-slate-600 dark:text-slate-200 hover:bg-slate-100 dark:hover:bg-slate-800 hover:text-slate-900 dark:hover:text-white'
         }`}
     >
       <Icon
         className={`flex-shrink-0 ${mobile ? 'h-5 w-5' : isCollapsed ? 'h-5 w-5' : 'h-4 w-4'} ${isActive
-            ? 'text-blue-600 dark:text-blue-400'
-            : 'text-slate-400 dark:text-slate-300 group-hover:text-slate-700 dark:group-hover:text-slate-100'
+          ? 'text-blue-600 dark:text-blue-400'
+          : 'text-slate-400 dark:text-slate-300 group-hover:text-slate-700 dark:group-hover:text-slate-100'
           }`}
       />
       {isCollapsed && (
@@ -320,6 +321,7 @@ function SidebarContent({
   isCollapsed,
   onToggleCollapse,
   isDemo,
+  hideChromeForCapture,
   navSections,
 }: {
   pathname: string;
@@ -335,6 +337,7 @@ function SidebarContent({
   isCollapsed: boolean;
   onToggleCollapse?: () => void;
   isDemo?: boolean;
+  hideChromeForCapture?: boolean;
   navSections: Array<{ label: string; items: NavItemDef[] }>;
 }) {
   const displayName = getDisplayName(user);
@@ -356,20 +359,25 @@ function SidebarContent({
   return (
     <div className="flex flex-col h-full">
       {/* Logo */}
-      <div className={`flex-shrink-0 px-4 pt-6 pb-4 ${isCollapsed ? 'flex flex-col items-center gap-2' : 'flex items-center justify-between'}`}>
+      <div className={`flex-shrink-0 p-3 ${isCollapsed ? 'flex flex-col items-center gap-2 pt-4' : 'flex items-center justify-between'}`}>
         <Link
           href={user ? '/dashboard/hub' : '/'}
-          className={`flex items-center ${isCollapsed ? '' : 'gap-2'}`}
+          className="flex h-10 w-10 items-center justify-center rounded-lg hover:bg-slate-100 dark:hover:bg-slate-800 transition-colors"
           title={isCollapsed ? 'AudioRepurpose' : undefined}
         >
-          <BrandLogo showText={!isCollapsed} theme={logoTheme} />
+          <BrandLogo
+            showText={false}
+            showSubtitle={false}
+            size="sm"
+            theme={logoTheme}
+          />
         </Link>
         {onToggleCollapse && (
           <TooltipIconButton
             onClick={onToggleCollapse}
-            label={isCollapsed ? 'Expand menu' : 'Collapse menu'}
-            title={isCollapsed ? 'Expand menu' : 'Collapse menu'}
-            icon={<Menu className="h-5 w-5" />}
+            label={isCollapsed ? 'Open sidebar' : 'Close sidebar'}
+            title={isCollapsed ? 'Open sidebar' : 'Close sidebar'}
+            icon={isCollapsed ? <PanelLeftOpen className="h-5 w-5" /> : <PanelLeftClose className="h-5 w-5" />}
           />
         )}
       </div>
@@ -408,18 +416,18 @@ function SidebarContent({
                       project.status === 'completed'
                         ? 'bg-green-500'
                         : project.status === 'processing' || project.status === 'uploading'
-                        ? 'bg-blue-400 animate-pulse'
-                        : project.status === 'failed'
-                        ? 'bg-red-500'
-                        : 'bg-slate-400 dark:bg-slate-600';
+                          ? 'bg-blue-400 animate-pulse'
+                          : project.status === 'failed'
+                            ? 'bg-red-500'
+                            : 'bg-slate-400 dark:bg-slate-600';
                     return (
                       <Link
                         key={project.id}
                         href={`/dashboard/projects?id=${project.id}`}
                         onClick={onNavClick}
                         className={`group flex items-center gap-2 px-3 py-1.5 text-xs rounded-lg transition-all ${isActiveProject
-                            ? 'bg-slate-100 dark:bg-slate-800 text-slate-900 dark:text-slate-100'
-                            : 'text-slate-500 dark:text-slate-200 hover:bg-slate-100/80 dark:hover:bg-slate-800/50 hover:text-slate-900 dark:hover:text-white'
+                          ? 'bg-slate-100 dark:bg-slate-800 text-slate-900 dark:text-slate-100'
+                          : 'text-slate-500 dark:text-slate-200 hover:bg-slate-100/80 dark:hover:bg-slate-800/50 hover:text-slate-900 dark:hover:text-white'
                           }`}
                       >
                         <span className={`flex-shrink-0 w-1.5 h-1.5 rounded-full ${statusDot}`} />
@@ -436,145 +444,144 @@ function SidebarContent({
       </nav>
 
       {/* Bottom Area */}
-      <div className="flex-shrink-0 mt-auto px-3 pb-5 flex flex-col gap-3">
-        <div className="h-px bg-gradient-to-r from-transparent via-slate-200/80 dark:via-slate-800/60 to-transparent w-full" />
+      {!hideChromeForCapture && (
+        <div className="flex-shrink-0 mt-auto px-3 pb-5 flex flex-col gap-3">
+          <div className="h-px bg-gradient-to-r from-transparent via-slate-200/80 dark:via-slate-800/60 to-transparent w-full" />
 
-        {isCollapsed ? (
-          <div className="flex flex-col items-center gap-2 py-1">
-            <Link
-              href="/dashboard/settings?section=preferences"
-              onClick={onNavClick}
-              className="group relative flex h-9 w-9 items-center justify-center overflow-hidden rounded-xl border border-slate-200 bg-slate-50 text-xs font-semibold text-slate-700 shadow-sm transition-colors hover:bg-slate-100 dark:border-slate-800 dark:bg-slate-900 dark:text-slate-200 dark:hover:bg-slate-800"
-              title={displayName}
-              aria-label="Open settings"
-            >
-              {avatarUrl ? (
-                <Image
-                  src={avatarUrl}
-                  alt={displayName}
-                  fill
-                  sizes="36px"
-                  className="object-cover"
-                  referrerPolicy="no-referrer"
-                />
-              ) : (
-                displayName.charAt(0).toUpperCase()
-              )}
-            </Link>
-            <ThemeToggle isCollapsed />
-            <button
-              onClick={onSignOut}
-              title="Sign out"
-              aria-label="Sign out"
-              className="w-9 h-9 rounded-xl border border-slate-200 dark:border-slate-800 bg-slate-50 dark:bg-slate-900 flex items-center justify-center text-slate-500 dark:text-slate-300 shadow-sm transition-colors hover:bg-slate-100 dark:hover:bg-slate-800 hover:text-red-600 dark:hover:text-red-400"
-            >
-              <X className="h-4 w-4" />
-            </button>
-          </div>
-        ) : (
-          <div className="rounded-2xl border border-slate-200 dark:border-slate-800 bg-white/90 dark:bg-slate-950/90 shadow-[0_10px_30px_-20px_rgba(15,23,42,0.45)] backdrop-blur-sm overflow-hidden">
-            <div className="p-4 space-y-4">
-              <div className="flex items-center gap-2.5">
-                <Link
-                  href="/dashboard/settings?section=preferences"
-                  onClick={onNavClick}
-                  className="flex min-w-0 flex-1 items-center gap-3 rounded-xl transition-colors hover:bg-slate-50 dark:hover:bg-slate-900/80 -m-1 p-1 group"
-                >
-                  {avatarUrl ? (
-                    <Image
-                      src={avatarUrl}
-                      alt={displayName}
-                      width={36}
-                      height={36}
-                      className="h-9 w-9 flex-shrink-0 rounded-xl border border-slate-300/70 object-cover shadow-sm dark:border-slate-600/60"
-                      referrerPolicy="no-referrer"
-                    />
-                  ) : (
-                    <div className="flex h-9 w-9 flex-shrink-0 items-center justify-center rounded-xl border border-slate-300/70 bg-gradient-to-br from-slate-100 to-slate-200 text-sm font-semibold text-slate-700 shadow-sm select-none dark:border-slate-600/60 dark:from-slate-800 dark:to-slate-700 dark:text-slate-100">
-                      {displayName.charAt(0).toUpperCase()}
-                    </div>
-                  )}
-                  <div className="min-w-0 flex-1">
-                    <p className="truncate text-sm font-semibold text-slate-900 dark:text-slate-100 group-hover:text-slate-950 dark:group-hover:text-white">
-                      {displayName}
-                    </p>
-                    {emailLabel && (
-                      <p className="truncate text-xs text-slate-500 dark:text-slate-400">
-                        {emailLabel}
-                      </p>
-                    )}
-                  </div>
-                </Link>
-
-                <div className="flex items-center gap-1">
+          {isCollapsed ? (
+            <div className="flex flex-col items-center gap-2 py-1">
+              <Link
+                href="/dashboard/settings?section=preferences"
+                onClick={onNavClick}
+                className="group relative flex h-9 w-9 items-center justify-center overflow-hidden rounded-xl border border-slate-200 bg-slate-50 text-xs font-semibold text-slate-700 shadow-sm transition-colors hover:bg-slate-100 dark:border-slate-800 dark:bg-slate-900 dark:text-slate-200 dark:hover:bg-slate-800"
+                title={displayName}
+                aria-label="Open settings"
+              >
+                {avatarUrl ? (
+                  <Image
+                    src={avatarUrl}
+                    alt={displayName}
+                    fill
+                    sizes="36px"
+                    className="object-cover"
+                    referrerPolicy="no-referrer"
+                  />
+                ) : (
+                  displayName.charAt(0).toUpperCase()
+                )}
+              </Link>
+              <ThemeToggle isCollapsed />
+              <button
+                onClick={onSignOut}
+                title="Sign out"
+                aria-label="Sign out"
+                className="w-9 h-9 rounded-xl border border-slate-200 dark:border-slate-800 bg-slate-50 dark:bg-slate-900 flex items-center justify-center text-slate-500 dark:text-slate-300 shadow-sm transition-colors hover:bg-slate-100 dark:hover:bg-slate-800 hover:text-red-600 dark:hover:text-red-400"
+              >
+                <X className="h-4 w-4" />
+              </button>
+            </div>
+          ) : (
+            <div className="overflow-hidden pb-2">
+              <div className="space-y-4">
+                <div className="flex items-center gap-2.5">
                   <Link
                     href="/dashboard/settings?section=preferences"
                     onClick={onNavClick}
-                    className="p-2 rounded-lg text-slate-500 dark:text-slate-400 hover:text-slate-900 dark:hover:text-white hover:bg-slate-100 dark:hover:bg-slate-800 transition-colors"
-                    aria-label="Open settings"
-                    title="Open settings"
+                    className="flex min-w-0 flex-1 items-center gap-3 rounded-xl transition-colors hover:bg-slate-50 dark:hover:bg-slate-900/80 -m-1 p-1 group"
                   >
-                    <Settings className="h-4 w-4" />
+                    {avatarUrl ? (
+                      <Image
+                        src={avatarUrl}
+                        alt={displayName}
+                        width={36}
+                        height={36}
+                        className="h-9 w-9 flex-shrink-0 rounded-xl border border-slate-300/70 object-cover shadow-sm dark:border-slate-600/60"
+                        referrerPolicy="no-referrer"
+                      />
+                    ) : (
+                      <div className="flex h-9 w-9 flex-shrink-0 items-center justify-center rounded-xl border border-slate-300/70 bg-gradient-to-br from-slate-100 to-slate-200 text-sm font-semibold text-slate-700 shadow-sm select-none dark:border-slate-600/60 dark:from-slate-800 dark:to-slate-700 dark:text-slate-100">
+                        {displayName.charAt(0).toUpperCase()}
+                      </div>
+                    )}
+                    <div className="min-w-0 flex-1">
+                      <p className="truncate text-sm font-semibold text-slate-900 dark:text-slate-100 group-hover:text-slate-950 dark:group-hover:text-white">
+                        {displayName}
+                      </p>
+                      {emailLabel && (
+                        <p className="truncate text-xs text-slate-500 dark:text-slate-400">
+                          {emailLabel}
+                        </p>
+                      )}
+                    </div>
                   </Link>
-                </div>
-              </div>
 
-              <div
-                data-tour="credit-balance"
-                className={`rounded-xl border px-3.5 py-2.5 ${
-                  isLowBalance
+                  <div className="flex items-center gap-1">
+                    <Link
+                      href="/dashboard/settings?section=preferences"
+                      onClick={onNavClick}
+                      className="p-2 rounded-lg text-slate-500 dark:text-slate-400 hover:text-slate-900 dark:hover:text-white hover:bg-slate-100 dark:hover:bg-slate-800 transition-colors"
+                      aria-label="Open settings"
+                      title="Open settings"
+                    >
+                      <Settings className="h-4 w-4" />
+                    </Link>
+                  </div>
+                </div>
+
+                <div
+                  data-tour="credit-balance"
+                  className={`rounded-xl border px-3.5 py-2.5 ${isLowBalance
                     ? 'border-amber-300/80 dark:border-amber-500/30 bg-amber-50/80 dark:bg-amber-500/10'
                     : 'border-slate-200 dark:border-slate-800 bg-slate-50 dark:bg-slate-900/80'
-                }`}
-              >
-                <div className="min-w-0">
-                  <p className="text-[11px] font-semibold uppercase tracking-[0.16em] text-slate-500 dark:text-slate-400">
-                    Credits
-                  </p>
-                  <p className={`mt-1 text-sm font-semibold tabular-nums ${
-                    balance === null && !isLoadingBalance
+                    }`}
+                >
+                  <div className="min-w-0">
+                    <p className="text-[11px] font-semibold uppercase tracking-[0.16em] text-slate-500 dark:text-slate-400">
+                      Credits
+                    </p>
+                    <p className={`mt-1 text-sm font-semibold tabular-nums ${balance === null && !isLoadingBalance
                       ? 'text-slate-500 dark:text-slate-400'
                       : 'text-slate-900 dark:text-slate-100'
-                  }`}>
-                    {isLoadingBalance
-                      ? <span className="text-slate-400 dark:text-slate-500">—</span>
-                      : balance !== null
-                        ? `${usdToSiteCredits(balance).toLocaleString('en-US')}`
-                        : 'No credits'}
-                  </p>
-                </div>
+                      }`}>
+                      {isLoadingBalance
+                        ? <span className="text-slate-400 dark:text-slate-500">—</span>
+                        : balance !== null
+                          ? `${usdToSiteCredits(balance).toLocaleString('en-US')}`
+                          : 'No credits'}
+                    </p>
+                  </div>
 
-                {!isDemo && (
-                  <Link
-                    href="/dashboard/billing"
-                    onClick={onNavClick}
-                    className={`mt-2.5 inline-flex w-full items-center justify-center gap-1 rounded-lg border px-2.5 py-1.5 text-[11px] font-semibold transition-colors ${
-                      isLowBalance
+                  {!isDemo && (
+                    <Link
+                      href="/dashboard/billing"
+                      onClick={onNavClick}
+                      className={`mt-2.5 inline-flex w-full items-center justify-center gap-1 rounded-lg border px-2.5 py-1.5 text-[11px] font-semibold transition-colors ${isLowBalance
                         ? 'border-amber-400/70 dark:border-amber-500/30 text-amber-700 dark:text-amber-300 hover:bg-amber-100 dark:hover:bg-amber-500/15'
                         : 'border-slate-300 dark:border-slate-700 text-slate-700 dark:text-slate-200 hover:bg-white dark:hover:bg-slate-800'
-                    }`}
-                  >
-                    <Plus className="h-3 w-3" />
-                    Add credits
-                  </Link>
-                )}
-              </div>
-
-              <div className="grid grid-cols-[40px_minmax(0,1fr)] items-center gap-2.5">
-                <div className="flex-shrink-0 rounded-xl border border-slate-200 dark:border-slate-800 bg-slate-50 dark:bg-slate-900/80">
-                  <ThemeToggle />
+                        }`}
+                    >
+                      <Plus className="h-3 w-3" />
+                      Add credits
+                    </Link>
+                  )}
                 </div>
-                <button
-                  onClick={onSignOut}
-                  className="inline-flex min-w-0 items-center justify-center rounded-xl border border-slate-200 dark:border-slate-800 bg-slate-50 dark:bg-slate-900/80 px-3 py-2.5 text-sm font-medium text-slate-600 transition-colors hover:bg-slate-100 hover:text-red-600 dark:text-slate-300 dark:hover:bg-slate-800 dark:hover:text-red-400"
-                >
-                  Sign out
-                </button>
+
+                <div className="grid grid-cols-[40px_minmax(0,1fr)] items-center gap-2.5">
+                  <div className="flex-shrink-0 rounded-xl border border-slate-200 dark:border-slate-800 bg-slate-50 dark:bg-slate-900/80">
+                    <ThemeToggle />
+                  </div>
+                  <button
+                    onClick={onSignOut}
+                    className="inline-flex min-w-0 items-center justify-center rounded-xl border border-slate-200 dark:border-slate-800 bg-slate-50 dark:bg-slate-900/80 px-3 py-2.5 text-sm font-medium text-slate-600 transition-colors hover:bg-slate-100 hover:text-red-600 dark:text-slate-300 dark:hover:bg-slate-800 dark:hover:text-red-400"
+                  >
+                    Sign out
+                  </button>
+                </div>
               </div>
             </div>
-          </div>
-        )}
-      </div>
+          )}
+        </div>
+      )}
     </div>
   );
 }
@@ -597,6 +604,7 @@ export default function DashboardNav({
   const { user, session, signOut } = useAuth();
   const { resolvedTheme } = useTheme();
   const isDemo = isDemoUser(user as { email?: string } | null);
+  const hideChromeForCapture = searchParams.get('capture') === '1';
 
   const rawSettingsSection = searchParams.get('section') || 'preferences';
   const activeSettingsSection = pathname.startsWith('/dashboard/settings')
@@ -632,14 +640,23 @@ export default function DashboardNav({
     let isActive = true;
 
     const fetchRecentProjects = async () => {
-      const { data } = await supabase
-        .from('projects')
-        .select('id, title, status')
-        .eq('user_id', user.id)
-        .neq('status', 'cancelled')
-        .order('created_at', { ascending: false })
-        .limit(8);
-      if (isActive && data) setRecentProjects(data as RecentProject[]);
+      try {
+        const response = await fetch('/api/dashboard/projects?limit=8', {
+          headers: session?.access_token ? { Authorization: `Bearer ${session.access_token}` } : {},
+          cache: 'no-store',
+        });
+
+        if (!response.ok) return;
+
+        const payload = await response.json() as { projects?: RecentProject[] };
+        if (isActive && payload.projects) {
+          setRecentProjects(
+            payload.projects.filter((project) => project.status === 'completed').slice(0, 8)
+          );
+        }
+      } catch (error) {
+        console.error('Error fetching recent projects:', error);
+      }
     };
 
     fetchRecentProjects();
@@ -656,7 +673,7 @@ export default function DashboardNav({
         (payload) => {
           const created = payload.new as RecentProject & { user_id?: string } | undefined;
           if (!created || created.user_id !== user.id) return;
-          if (created.status === 'cancelled') return;
+          if (created.status !== 'completed') return;
           setRecentProjects((prev) => {
             const next = [{ id: created.id, title: created.title, status: created.status }, ...prev.filter(p => p.id !== created.id)];
             return next.slice(0, 8);
@@ -678,10 +695,13 @@ export default function DashboardNav({
           if (!updatedId) return;
           setRecentProjects((prev) => {
             const isInList = prev.some((project) => project.id === updatedId);
-            if (updatedStatus === 'cancelled') {
+            if (updatedStatus !== 'completed') {
               return prev.filter((project) => project.id !== updatedId);
             }
-            if (!isInList) return prev;
+            if (!isInList) {
+              fetchRecentProjects();
+              return prev;
+            }
             if (!updatedTitle) {
               fetchRecentProjects();
               return prev;
@@ -726,7 +746,7 @@ export default function DashboardNav({
       window.removeEventListener(PROJECT_MUTATION_EVENT, handleProjectMutation);
       supabase.removeChannel(channel);
     };
-  }, [user]);
+  }, [session?.access_token, user]);
 
   const handleSignOut = async () => {
     await signOut();
@@ -764,6 +784,7 @@ export default function DashboardNav({
     isCollapsed: collapsed,
     onToggleCollapse: () => setCollapsed(!collapsed),
     isDemo,
+    hideChromeForCapture,
     navSections,
   };
 
@@ -780,7 +801,7 @@ export default function DashboardNav({
       <div className="md:hidden">
         <div className="flex items-center justify-between bg-white dark:bg-slate-950 border-b border-slate-200 dark:border-slate-800 px-4 py-3">
           <Link href="/dashboard/hub" className="flex items-center gap-2">
-            <BrandLogo theme={logoTheme} />
+            <BrandLogo showSubtitle={false} theme={logoTheme} />
           </Link>
           <div className="flex items-center gap-1">
             <ThemeToggle />

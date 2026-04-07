@@ -1,6 +1,7 @@
 "use client";
 
 import { useState, useCallback, useEffect, useRef, useMemo } from 'react';
+import { useSearchParams } from 'next/navigation';
 import { Upload, FileAudio, X, AlertCircle, CheckCircle, Clock, History, Trash2, Eye, FileVideo, Loader2, ChevronDown, ChevronUp, Lightbulb, Users, Mic, Pencil, UserCircle, MoreHorizontal } from 'lucide-react';
 import Link from 'next/link';
 import { supabase } from '@/lib/supabase/client';
@@ -9,6 +10,7 @@ import { DemoTour } from '@/components/demo/DemoTour';
 import { calculateOverallProgress, getStageDisplayName, getUserFacingProcessingMessage, type ProcessingStage } from '@/lib/tier-progress-config';
 import { SpeakerRosterForm, type RosterSpeaker } from '@/components/SpeakerRosterForm';
 import { useAudioExtractor } from '@/lib/hooks/useAudioExtractor';
+import { useActiveProcessingProjects } from '@/lib/hooks/useActiveProcessingProjects';
 import { emitProjectMutation } from '@/lib/project-events';
 import { normalizeTier, type TierLevel } from '@/lib/tier-config';
 import { ANALYSIS_OPTION_CONFIG, DEFAULT_ANALYSIS_OPTIONS, getProcessingTierForAnalysis, getSelectedAnalysisKeys, normalizeAnalysisOptions, type AnalysisOptions } from '@/lib/analysis-options';
@@ -80,23 +82,6 @@ interface UploadHistory {
   processing_completed_at?: string;
 }
 
-interface ActiveProject {
-  id: string;
-  title: string;
-  audio_file_name: string | null;
-  audio_file_size: number | null;
-  audio_duration: number | null;
-  audio_expires_at?: string | null;
-  audio_deleted_at?: string | null;
-  status: 'uploading' | 'processing' | 'completed' | 'failed' | 'cancelled';
-  created_at: string;
-  processing_stage?: ProcessingStage;
-  processing_progress?: number;
-  processing_message?: string | null;
-  performance_level?: TierLevel;
-  metadata?: any;
-}
-
 async function readErrorMessage(response: Response, fallback: string) {
   try {
     const data = await response.json();
@@ -166,8 +151,6 @@ export default function UploadPage() {
   const [historyPage, setHistoryPage] = useState(1);
   const [historyTotalCount, setHistoryTotalCount] = useState(0);
   const [historyTotalPages, setHistoryTotalPages] = useState(1);
-  const [activeProjects, setActiveProjects] = useState<ActiveProject[]>([]);
-  const [activeProjectsLoading, setActiveProjectsLoading] = useState(false);
   const [analysisOptions, setAnalysisOptions] = useState<AnalysisOptions>(DEFAULT_ANALYSIS_OPTIONS);
   const analysisOptionsRef = useRef<AnalysisOptions>(DEFAULT_ANALYSIS_OPTIONS);
   const [rosterSpeakers, setRosterSpeakers] = useState<RosterSpeaker[]>([]);
@@ -198,6 +181,16 @@ export default function UploadPage() {
 
   const { extractAudio } = useAudioExtractor();
   const { user, session, isDemoMode } = useAuth();
+  const {
+    activeProjects,
+    isLoading: activeProjectsLoading,
+    refresh: refreshActiveProjects,
+  } = useActiveProcessingProjects(user?.id, 10, {
+    pollingEnabled: false,
+    pollIntervalMs: 5000,
+  });
+  const searchParams = useSearchParams();
+  const hideDemoChromeForCapture = searchParams.get('capture') === '1';
   const processingTier = useMemo(() => getProcessingTierForAnalysis(analysisOptions), [analysisOptions]);
   const selectedAnalysisSummary = useMemo(() => formatAnalysisSummary(analysisOptions), [analysisOptions]);
   const previewFile = useMemo(
@@ -271,17 +264,9 @@ export default function UploadPage() {
       setHistoryPage(1);
       fetchUploadHistory(1);
       fetchIntegrations();
-      fetchActiveProjects();
+      refreshActiveProjects();
     }
-  }, [user]);
-
-  useEffect(() => {
-    if (!user) return;
-    const interval = setInterval(() => {
-      fetchActiveProjects();
-    }, 5000);
-    return () => clearInterval(interval);
-  }, [user]);
+  }, [user, session?.access_token]);
 
   const fetchIntegrations = async () => {
     if (!session?.access_token) return;
@@ -359,7 +344,7 @@ export default function UploadPage() {
         throw new Error(await readErrorMessage(res, 'Import failed.'));
       }
       await fetchUploadHistory();
-      await fetchActiveProjects();
+      await refreshActiveProjects();
       setShowImportDialog(false);
       toast.success('Import started. Your recording is now processing.');
     } catch {
@@ -371,24 +356,26 @@ export default function UploadPage() {
 
   const fetchUploadHistory = async (page = historyPage) => {
     try {
-      if (!user?.id) return;
+      if (!session?.access_token) return;
       setHistoryLoading(true);
-      const offset = (page - 1) * HISTORY_PAGE_SIZE;
-      const { data, error, count } = await supabase
-        .from('projects')
-        .select('id, title, audio_file_name, audio_file_size, audio_duration, audio_expires_at, audio_deleted_at, status, created_at, processing_completed_at', { count: 'exact' })
-        .eq('user_id', user.id)
-        .in('status', ['completed', 'failed'])
-        .order('created_at', { ascending: false })
-        .range(offset, offset + HISTORY_PAGE_SIZE - 1) as { data: any[] | null; error: any; count?: number | null };
+      const response = await fetch(`/api/dashboard/upload-history?page=${page}&limit=${HISTORY_PAGE_SIZE}`, {
+        headers: { Authorization: `Bearer ${session.access_token}` },
+        cache: 'no-store',
+      });
 
-      if (error) {
-        console.error('Error fetching upload history:', error);
-        return;
+      if (!response.ok) {
+        const payload = await response.json().catch(() => ({ error: 'Failed to load upload history' }));
+        throw new Error(payload.error || 'Failed to load upload history');
       }
 
-      const total = count ?? 0;
-      const totalPages = Math.max(1, Math.ceil(total / HISTORY_PAGE_SIZE));
+      const payload = await response.json() as {
+        items?: UploadHistory[];
+        total?: number;
+        totalPages?: number;
+      };
+
+      const total = payload.total ?? 0;
+      const totalPages = payload.totalPages ?? Math.max(1, Math.ceil(total / HISTORY_PAGE_SIZE));
       if (page > totalPages && totalPages > 0) {
         setHistoryPage(totalPages);
         await fetchUploadHistory(totalPages);
@@ -397,7 +384,7 @@ export default function UploadPage() {
 
       setHistoryTotalCount(total);
       setHistoryTotalPages(totalPages);
-      setUploadHistory((data || []).filter(item => item.status === 'completed' || item.status === 'failed'));
+      setUploadHistory((payload.items || []).filter(item => item.status === 'completed' || item.status === 'failed'));
     } catch (error) {
       console.error('Failed to fetch upload history:', error);
     } finally {
@@ -405,36 +392,14 @@ export default function UploadPage() {
     }
   };
 
-  const fetchActiveProjects = async () => {
-    try {
-      if (!user?.id) return;
-      setActiveProjectsLoading(true);
-      const { data, error } = await supabase
-        .from('projects')
-        .select('id, title, audio_file_name, audio_file_size, audio_duration, audio_expires_at, audio_deleted_at, status, created_at, processing_stage, processing_progress, processing_message, performance_level, metadata')
-        .eq('user_id', user.id)
-        .in('status', ['uploading', 'processing'])
-        .order('created_at', { ascending: false })
-        .limit(10) as { data: any[] | null; error: any };
-
-      if (error) {
-        console.error('Error fetching active projects:', error);
-        return;
-      }
-
-      const activeCount = (data || []).length;
-      setActiveProjects((data || []) as ActiveProject[]);
-      const previousCount = lastActiveProjectCountRef.current;
-      if (activeCount === 0 && previousCount && previousCount > 0) {
-        fetchUploadHistory();
-      }
-      lastActiveProjectCountRef.current = activeCount;
-    } catch (error) {
-      console.error('Failed to fetch active projects:', error);
-    } finally {
-      setActiveProjectsLoading(false);
+  useEffect(() => {
+    const activeCount = activeProjects.length;
+    const previousCount = lastActiveProjectCountRef.current;
+    if (activeCount === 0 && previousCount && previousCount > 0) {
+      fetchUploadHistory();
     }
-  };
+    lastActiveProjectCountRef.current = activeCount;
+  }, [activeProjects.length]);
 
   const clearTrackedUploadState = (fileId: string) => {
     uploadControllersRef.current.get(fileId)?.abort();
@@ -494,7 +459,7 @@ export default function UploadPage() {
 
       setConfirmDeleteId(null);
       await fetchUploadHistory(historyPage);
-      await fetchActiveProjects();
+      await refreshActiveProjects();
     } catch (error) {
       console.error('Failed to delete upload:', error);
       setConfirmDeleteId(null);
@@ -520,7 +485,7 @@ export default function UploadPage() {
     }
 
     setUploadedFiles(prev => prev.filter(f => f.id !== uploadedFile.id));
-    await fetchActiveProjects();
+    await refreshActiveProjects();
     toast.success('Upload cancelled.');
   };
 
@@ -537,7 +502,7 @@ export default function UploadPage() {
           });
         return prev.filter(file => file.projectId !== projectId);
       });
-      await fetchActiveProjects();
+      await refreshActiveProjects();
       await fetchUploadHistory();
       toast.success('Project deleted.');
     } catch (error) {
@@ -690,7 +655,7 @@ export default function UploadPage() {
       pollForProgress(newEntry.id, result.projectId, processingTier);
       setUrlInput('');
       setUrlTitle('');
-      await fetchActiveProjects();
+      await refreshActiveProjects();
       await fetchUploadHistory();
     } catch (error) {
       const message = error instanceof Error ? error.message : 'We could not import that URL. Check the link and try again.';
@@ -1089,6 +1054,9 @@ export default function UploadPage() {
         );
 
         if (status.status === 'completed' || status.status === 'failed') {
+          if (status.status === 'completed') {
+            emitProjectMutation({ projectId, action: 'updated' });
+          }
           clearTrackedUploadState(fileId);
           return;
         }
@@ -1200,7 +1168,7 @@ export default function UploadPage() {
           <div className="flex-1 min-w-0">
 
             {/* Demo overlay */}
-            {isDemoMode && (
+            {isDemoMode && !hideDemoChromeForCapture && (
               <div className="mb-6 bg-amber-950/50 border border-amber-700/50 rounded-xl p-4 flex items-start gap-3">
                 <div className="flex-shrink-0 h-8 w-8 bg-amber-500/20 rounded-lg flex items-center justify-center mt-0.5">
                   <Eye className="h-4 w-4 text-amber-400" />
@@ -1499,7 +1467,7 @@ export default function UploadPage() {
               <div className="mb-6 space-y-3">
                 <h3 className="text-sm font-semibold text-slate-600 dark:text-slate-300">Files</h3>
 
-                {uploadedFiles.map((uploadedFile, _idx) => {
+                {uploadedFiles.map((uploadedFile) => {
                   const isActive = ['queued', 'pending', 'extracting', 'uploading', 'processing'].includes(uploadedFile.status);
                   const isProcessing = ['pending', 'extracting', 'uploading', 'processing'].includes(uploadedFile.status);
                   const displayName = uploadedFile.displayName || uploadedFile.file?.name || 'Untitled';

@@ -19,18 +19,11 @@ export async function DELETE(
       return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
     }
 
-    const body = await request.json().catch(() => ({}));
-    const fileName = body.fileName as string;
-
-    if (!fileName) {
-      return NextResponse.json({ error: 'fileName is required' }, { status: 400 });
-    }
-
     const { data: project, error: projectError } = await supabaseAdmin
       .from('projects')
-      .select('id, user_id')
+      .select('id, user_id, audio_file_name')
       .eq('id', projectId)
-      .single() as { data: { id: string; user_id: string } | null; error: any };
+      .single() as { data: { id: string; user_id: string; audio_file_name: string | null } | null; error: any };
 
     if (projectError || !project) {
       return NextResponse.json({ error: 'Project not found' }, { status: 404 });
@@ -40,9 +33,16 @@ export async function DELETE(
       return NextResponse.json({ error: 'Forbidden' }, { status: 403 });
     }
 
+    if (!project.audio_file_name) {
+      return NextResponse.json({ error: 'No audio file on record for this project' }, { status: 404 });
+    }
+
+    // Derive key server-side — never trust a client-supplied path
+    const r2Key = `${projectId}/${project.audio_file_name}`;
+
     await r2Client.send(new DeleteObjectCommand({
       Bucket: BUCKET_NAME,
-      Key: fileName,
+      Key: r2Key,
     }));
 
     await supabaseAdmin
@@ -51,7 +51,7 @@ export async function DELETE(
       .eq('id', projectId)
       .is('audio_deleted_at', null);
 
-    console.log(`[audio-delete] Deleted R2 file: ${fileName} (project ${projectId})`);
+    console.log(`[audio-delete] Deleted R2 file: ${r2Key} (project ${projectId})`);
     return NextResponse.json({ success: true });
   } catch (error) {
     console.error('[audio-delete] Error:', error);

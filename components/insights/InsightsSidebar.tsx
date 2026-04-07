@@ -15,6 +15,7 @@ interface InsightsSidebarProps {
   onInsightClick: (insightId: string) => void;
   onClose?: () => void;
   className?: string;
+  embedded?: boolean;
 }
 
 export function InsightsSidebar({
@@ -23,6 +24,7 @@ export function InsightsSidebar({
   onInsightClick,
   onClose,
   className,
+  embedded = false,
 }: InsightsSidebarProps) {
   const cardRefs = useRef<Map<string, HTMLDivElement>>(new Map());
   const scrollContainerRef = useRef<HTMLDivElement>(null);
@@ -33,7 +35,17 @@ export function InsightsSidebar({
     if (!activeInsightId) return;
 
     const cardElement = cardRefs.current.get(activeInsightId);
-    if (cardElement && scrollContainerRef.current) {
+    if (!cardElement) return;
+
+    if (embedded) {
+      cardElement.scrollIntoView({
+        block: 'center',
+        behavior: 'smooth',
+      });
+      return;
+    }
+
+    if (scrollContainerRef.current) {
       const container = scrollContainerRef.current;
       const containerRect = container.getBoundingClientRect();
       const cardRect = cardElement.getBoundingClientRect();
@@ -44,7 +56,7 @@ export function InsightsSidebar({
         behavior: 'smooth',
       });
     }
-  }, [activeInsightId]);
+  }, [activeInsightId, embedded]);
 
   const setCardRef = useCallback((id: string, element: HTMLDivElement | null) => {
     if (element) {
@@ -82,7 +94,8 @@ export function InsightsSidebar({
   return (
     <div
       className={cn(
-        'flex h-full flex-col border-l border-slate-200 bg-white dark:border-slate-800 dark:bg-slate-900',
+        'flex flex-col border-l border-slate-200 bg-white dark:border-slate-800 dark:bg-slate-900',
+        embedded ? 'h-auto border-l-0 bg-transparent dark:bg-transparent' : 'h-full',
         className
       )}
     >
@@ -108,7 +121,8 @@ export function InsightsSidebar({
       )}
 
       {/* Filter Row */}
-      <div className="flex flex-shrink-0 gap-1 border-b border-slate-200 px-4 py-2 dark:border-slate-800">
+      <div className="flex-shrink-0 border-b border-slate-200 px-1 pb-2 dark:border-slate-800">
+        <div className="grid grid-cols-4 items-stretch justify-center gap-1">
         {filters.map((f) => {
           const isActive = activeFilter === f.key;
           const config = f.key !== 'all' ? CATEGORY_CONFIG[f.key] : null;
@@ -120,11 +134,11 @@ export function InsightsSidebar({
               onClick={() => setActiveFilter(f.key)}
               disabled={f.count === 0 && f.key !== 'all'}
               className={cn(
-                'px-2.5 py-1 text-xs font-medium rounded-md transition-colors',
+                'flex h-9 w-full items-center justify-center rounded-lg px-2.5 py-1 text-xs font-medium transition-colors',
                 'disabled:opacity-40 disabled:cursor-not-allowed',
                 isActive
                   ? 'bg-slate-900 text-white dark:bg-gray-100 dark:text-slate-900'
-                  : 'text-slate-500 hover:bg-slate-100 hover:text-slate-700 dark:text-slate-400 dark:hover:bg-slate-800 dark:hover:text-slate-300'
+                  : 'text-slate-500 hover:text-slate-700 dark:text-slate-400 dark:hover:text-slate-300'
               )}
             >
               <span className="flex items-center gap-1.5">
@@ -136,12 +150,16 @@ export function InsightsSidebar({
             </button>
           );
         })}
+        </div>
       </div>
 
       {/* Insight List */}
       <div
         ref={scrollContainerRef}
-        className="flex-1 overflow-y-auto py-2"
+        className={cn(
+          'py-2',
+          embedded ? 'flex-none overflow-visible' : 'flex-1 overflow-y-auto'
+        )}
       >
         {filteredInsights.length === 0 ? (
           <div className="flex flex-col items-center justify-center py-12 px-4 text-center">

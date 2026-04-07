@@ -13,6 +13,7 @@
 import { CONTENT_TYPES } from '@/lib/content-types';
 import { getFeaturesFromAnalysisOptions, normalizeAnalysisOptions, type AnalysisOptions } from '@/lib/analysis-options';
 import { normalizeTier } from '@/lib/tier-config';
+import { prompts } from '@/lib/prompts/loader';
 
 export type UnitType =
   | 'seconds'
@@ -610,9 +611,30 @@ export function estimateAnalysisJobCost(params: {
       ).billedCost.toFixed(6));
     }
     case 'insights': {
+      const model = prompts.audioRepurpose.insightExtraction.model;
+      const serviceKeys = model.includes('gpt-5-nano')
+        ? {
+            input: 'openai_gpt5_nano_input',
+            output: 'openai_gpt5_nano_output',
+          }
+        : model.includes('gpt-5-mini')
+          ? {
+              input: 'openai_gpt5_mini_input',
+              output: 'openai_gpt5_mini_output',
+            }
+          : model.includes('gpt-5')
+            ? {
+                input: 'openai_gpt5_input',
+                output: 'openai_gpt5_output',
+              }
+            : {
+                input: 'openai_gpt4o_mini_input',
+                output: 'openai_gpt4o_mini_output',
+              };
+
       return Number(calculateTokenCost(
-        'openai_gpt4o_mini_input',
-        'openai_gpt4o_mini_output',
+        serviceKeys.input,
+        serviceKeys.output,
         estimatedTokens,
         1200
       ).billedCost.toFixed(6));

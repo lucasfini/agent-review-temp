@@ -33,24 +33,27 @@ export async function proxy(request: NextRequest) {
   // Skip Stripe webhook (Stripe IPs vary and it retries legitimately)
   if (pathname.startsWith('/api/') && !pathname.startsWith('/api/stripe/webhook')) {
     const limiter = getRatelimit()
-    if (limiter) {
-      const ip =
-        request.headers.get('x-forwarded-for')?.split(',')[0].trim() ??
-        request.headers.get('x-real-ip') ??
-        '127.0.0.1'
+    if (!limiter) {
+      // Redis not configured — fail closed to prevent unmetered API access
+      return new NextResponse('Service Unavailable: rate limiting not configured', { status: 503 })
+    }
 
-      const { success, limit, reset, remaining } = await limiter.limit(ip)
+    const ip =
+      request.headers.get('x-forwarded-for')?.split(',')[0].trim() ??
+      request.headers.get('x-real-ip') ??
+      '127.0.0.1'
 
-      if (!success) {
-        return new NextResponse('Too Many Requests', {
-          status: 429,
-          headers: {
-            'X-RateLimit-Limit': limit.toString(),
-            'X-RateLimit-Remaining': remaining.toString(),
-            'X-RateLimit-Reset': reset.toString(),
-          },
-        })
-      }
+    const { success, limit, reset, remaining } = await limiter.limit(ip)
+
+    if (!success) {
+      return new NextResponse('Too Many Requests', {
+        status: 429,
+        headers: {
+          'X-RateLimit-Limit': limit.toString(),
+          'X-RateLimit-Remaining': remaining.toString(),
+          'X-RateLimit-Reset': reset.toString(),
+        },
+      })
     }
   }
 

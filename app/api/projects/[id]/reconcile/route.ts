@@ -13,6 +13,7 @@ import { failReservation, settleReservation } from '@/lib/billing/credit';
 import { getOpenAIApiKeyForUser } from '@/lib/openai/consent';
 import { aiRatelimit } from '@/lib/rate-limit';
 import { isAuthorizedMaintenanceRequest } from '@/lib/maintenance-auth';
+import { isDemoUser } from '@/lib/demo-mode';
 
 export const dynamic = 'force-dynamic';
 export const maxDuration = 300;
@@ -94,6 +95,7 @@ export async function POST(
     const isInternal = isAuthorizedMaintenanceRequest(request);
     let userIdForRateLimit: string | null = null;
     let authenticatedUserId: string | null = null;
+    let authenticatedUserEmail: string | null = null;
 
     if (!isInternal) {
       const authHeader = request.headers.get('Authorization');
@@ -106,7 +108,12 @@ export async function POST(
         return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
       }
       authenticatedUserId = user.id;
+      authenticatedUserEmail = user.email ?? null;
       userIdForRateLimit = user.id;
+
+      if (isDemoUser(user)) {
+        return NextResponse.json({ error: 'Demo account is read-only' }, { status: 403 });
+      }
     }
 
     // Fetch project with all relevant content fields
@@ -125,6 +132,15 @@ export async function POST(
     // Ownership check
     if (!isInternal && project.user_id !== authenticatedUserId) {
       return NextResponse.json({ error: 'Forbidden' }, { status: 403 });
+    }
+
+    if (isInternal) {
+      const { data: { user: projectUser } } = await supabaseAdmin.auth.admin.getUserById(project.user_id);
+      if (isDemoUser(projectUser)) {
+        return NextResponse.json({ error: 'Demo account is read-only' }, { status: 403 });
+      }
+    } else if (authenticatedUserEmail && isDemoUser({ email: authenticatedUserEmail })) {
+      return NextResponse.json({ error: 'Demo account is read-only' }, { status: 403 });
     }
 
     if (!userIdForRateLimit) {

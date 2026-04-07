@@ -10,6 +10,7 @@ import { estimateCoverageAnalysisCost } from '@/lib/billing/cost-map';
 import { billingErrorResponse, requireCredits } from '@/lib/billing/middleware';
 import { createReservation, failReservation, settleReservation } from '@/lib/billing/credit';
 import { normalizeTier } from '@/lib/tier-config';
+import { isDemoUser } from '@/lib/demo-mode';
 
 export const maxDuration = 300;
 
@@ -33,16 +34,17 @@ export async function POST(
       );
     }
 
-    const payload = (await request.json().catch(() => ({}))) as RunCoveragePayload;
-    const userId = payload.userId;
-    const force = Boolean(payload.force);
-
-    if (!userId) {
-      return NextResponse.json(
-        { error: 'userId is required to run coverage' },
-        { status: 400 }
-      );
+    const authHeader = request.headers.get('authorization');
+    const { data: { user }, error: authError } = await supabaseAdmin.auth.getUser(
+      authHeader?.replace('Bearer ', '') || ''
+    );
+    if (authError || !user) {
+      return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
     }
+    const userId = user.id;
+
+    const payload = (await request.json().catch(() => ({}))) as RunCoveragePayload;
+    const force = Boolean(payload.force);
 
     const { data: project, error: projectError } = await supabaseAdmin
       .from('projects')
@@ -75,6 +77,11 @@ export async function POST(
         { error: 'You do not have permission to run coverage for this project' },
         { status: 403 }
       );
+    }
+
+    const { data: { user: projectUser } } = await supabaseAdmin.auth.admin.getUserById(userId);
+    if (isDemoUser(projectUser)) {
+      return NextResponse.json({ error: 'Demo account is read-only' }, { status: 403 });
     }
 
     if (!project.transcription_text) {

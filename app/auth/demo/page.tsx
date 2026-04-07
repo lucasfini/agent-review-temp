@@ -2,8 +2,6 @@
 
 import { useEffect, useState } from 'react';
 import { useRouter } from 'next/navigation';
-import { supabase } from '@/lib/supabase/client';
-import { DEMO_EMAIL } from '@/lib/demo-mode';
 import BrandLogo from '@/components/site/BrandLogo';
 
 export default function DemoLoginPage() {
@@ -12,18 +10,9 @@ export default function DemoLoginPage() {
 
   useEffect(() => {
     const signIn = async () => {
-      const password = process.env.NEXT_PUBLIC_DEMO_PASSWORD;
-      if (!password) {
-        setError('Demo account is not configured. Please try again later.');
-        return;
-      }
+      const res = await fetch('/api/auth/demo-login', { method: 'POST' });
 
-      const { error: signInError } = await supabase.auth.signInWithPassword({
-        email: DEMO_EMAIL,
-        password,
-      });
-
-      if (signInError) {
+      if (!res.ok) {
         setError('Unable to access the demo account. Please try again later.');
         return;
       }

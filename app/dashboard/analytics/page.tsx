@@ -31,6 +31,7 @@ import { InsightsHeader } from '@/components/analytics/InsightsHeader';
 import { ProjectAnalysisSection } from '@/components/analytics/ProjectAnalysisSection';
 import { RunAnalysisSection } from '@/components/analytics/RunAnalysisSection';
 import { FeatureHelp } from '@/components/ui/feature-help';
+import { getDashboardErrorMessage, logDashboardLoad } from '@/lib/dashboard-load-state';
 
 // ============================================================================
 // TYPES
@@ -611,9 +612,8 @@ function ProjectSwitcher({
                   onSelect(project.id);
                   setIsOpen(false);
                 }}
-                className={`w-full text-left px-4 py-2 text-sm hover:bg-slate-50 dark:hover:bg-slate-800/50 ${
-                  selectedProjectId === project.id ? 'bg-blue-50 dark:bg-blue-900/20 text-blue-600 dark:text-blue-400 font-medium' : 'text-slate-600 dark:text-slate-300'
-                }`}
+                className={`w-full text-left px-4 py-2 text-sm hover:bg-slate-50 dark:hover:bg-slate-800/50 ${selectedProjectId === project.id ? 'bg-blue-50 dark:bg-blue-900/20 text-blue-600 dark:text-blue-400 font-medium' : 'text-slate-600 dark:text-slate-300'
+                  }`}
               >
                 <span className="block truncate">{project.title || 'Untitled'}</span>
                 <span className="text-xs text-slate-500 dark:text-slate-400">
@@ -728,7 +728,7 @@ function ExampleGoalsModal({
 export default function AnalyticsPage() {
   const router = useRouter();
   const searchParams = useSearchParams();
-  const { user, isDemoMode } = useAuth();
+  const { user, session, isDemoMode } = useAuth();
 
   // URL-based project filter
   const projectIdFromUrl = searchParams.get('projectId');
@@ -772,91 +772,49 @@ export default function AnalyticsPage() {
         return;
       }
 
+      logDashboardLoad('analytics', 'start', { userId: user.id, range: timeRange });
+
       const now = new Date();
       const rangeDays = timeRange === '7d' ? 7 : timeRange === '30d' ? 30 : 90;
       const startDate = new Date(now.getTime() - rangeDays * 24 * 60 * 60 * 1000);
       const prevStartDate = new Date(startDate.getTime() - rangeDays * 24 * 60 * 60 * 1000);
 
-      // Fetch all projects for project-first analytics
-      const { data: projects, error: projectsError } = await supabase
-        .from('projects')
-        .select('*')
-        .eq('user_id', user.id)
-        .order('created_at', { ascending: false }) as { data: any[] | null; error: any };
+      const response = await fetch('/api/dashboard/analytics', {
+        headers: session?.access_token ? { Authorization: `Bearer ${session.access_token}` } : {},
+        cache: 'no-store',
+      });
 
-      if (projectsError) {
-        console.error('Error fetching projects:', projectsError);
-        setAnalyticsError('We could not load your analytics right now. Please try again.');
-        return;
+      if (!response.ok) {
+        const payload = await response.json().catch(() => ({ error: 'We could not load your analytics right now. Please try again.' }));
+        throw new Error(payload.error || 'We could not load your analytics right now. Please try again.');
       }
-
-      // Fetch all outputs so project content mix and spend trends can be derived locally
-      const { data: outputs, error: outputsError } = await supabase
-        .from('outputs')
-        .select('*')
-        .eq('user_id', user.id)
-        .order('created_at', { ascending: false }) as { data: any[] | null; error: any };
-
-      if (outputsError) {
-        console.error('Error fetching outputs:', outputsError);
-        setAnalyticsError('We could not load your analytics right now. Please try again.');
-        return;
-      }
-
-      // Fetch coverage snapshots
-      const { data: coverageSnapshots, error: coverageError } = await supabase
-        .from('narrative_coverage_snapshots')
-        .select('*')
-        .eq('user_id', user.id)
-        .order('created_at', { ascending: false })
-        .limit(30) as { data: any[] | null; error: any };
-
-      if (coverageError) {
-        console.error('Error fetching coverage snapshots:', coverageError);
-      }
-
-      // Fetch narrative goals (exclude archived)
-      const { data: coverageGoals, error: goalsError } = await supabase
-        .from('narrative_goals')
-        .select('*')
-        .eq('user_id', user.id)
-        .order('created_at', { ascending: true }) as { data: any[] | null; error: any };
-
-      if (goalsError) {
-        console.error('Error fetching coverage goals:', goalsError);
-      }
-
-      // Fetch insights
-      let insights: any[] | null = null;
-      if (projects && projects.length > 0) {
-        const projectIds = projects.map((p: any) => p.id);
-        const { data: insightsData, error: insightsError } = await supabase
-          .from('insights')
-          .select('id, project_id, entity_id, label, category, confidence, cost_usd, created_at')
-          .in('project_id', projectIds)
-          .order('created_at', { ascending: false }) as { data: any[] | null; error: any };
-
-        if (insightsError) {
-          console.error('Error fetching insights:', insightsError);
-        } else {
-          insights = insightsData;
-        }
-      }
+      const payload = await response.json() as {
+        projects?: any[];
+        outputs?: any[];
+        coverageSnapshots?: any[];
+        coverageGoals?: any[];
+        insights?: any[];
+      };
+      const projects = payload.projects || [];
+      const outputs = payload.outputs || [];
+      const coverageSnapshots = payload.coverageSnapshots || [];
+      const coverageGoals = payload.coverageGoals || [];
+      const insights = payload.insights || [];
 
       // ---- Compute real values ----
-      const safeProjects = projects || [];
-      const safeOutputs = outputs || [];
+      const safeProjects = projects;
+      const safeOutputs = outputs;
       const totalProjects = safeProjects.length;
       const totalOutputs = safeOutputs.length;
       const totalProcessingTime = safeProjects.reduce((sum: number, p: any) => sum + (p.processing_time_seconds || 0), 0);
 
       // Real AI spend: sum output ai_cost_usd + coverage snapshot costs + insight costs
       const outputAiCost = safeOutputs.reduce((sum: number, o: any) => sum + Number(o.ai_cost_usd || 0), 0);
-      const coverageSnapshotData = coverageSnapshots || [];
+      const coverageSnapshotData = coverageSnapshots;
       const snapshotAiCost = coverageSnapshotData.reduce(
         (sum: number, s: any) => sum + Number(s.ai_cost_usd || s.ai_usage?.costUsd || 0), 0
       );
-      const insightRecords = insights || [];
+      const insightRecords = insights;
       const insightAiCost = insightRecords.reduce((sum: number, i: any) => sum + Number(i.cost_usd || 0), 0);
       const realAiSpend = outputAiCost + snapshotAiCost + insightAiCost;
       // Fallback to flat estimate only if all real costs are 0
@@ -903,12 +861,12 @@ export default function AnalyticsPage() {
         id: project.id,
         title: project.title,
         action: project.status === 'completed' ? 'Completed transcription' :
-                project.status === 'processing' ? 'Processing audio' : 'Uploaded',
+          project.status === 'processing' ? 'Processing audio' : 'Uploaded',
         timestamp: project.created_at,
         status: project.status
       }));
 
-      const coverageGoalData = coverageGoals || [];
+      const coverageGoalData = coverageGoals;
       const coverageSummary = summarizeCoverage(coverageSnapshotData, coverageGoalData);
 
       // Real goal progress
@@ -955,13 +913,21 @@ export default function AnalyticsPage() {
           content_category: getAnalyticsContentLabel(o)
         }))
       });
+      logDashboardLoad('analytics', 'success', {
+        userId: user.id,
+        range: timeRange,
+        projects: totalProjects,
+        outputs: totalOutputs,
+      });
     } catch (error) {
       console.error('Error fetching analytics:', error);
-      setAnalyticsError('We could not load your analytics right now. Please try again.');
+      const message = getDashboardErrorMessage(error, 'We could not load your analytics right now. Please try again.');
+      setAnalyticsError(message);
+      logDashboardLoad('analytics', 'error', { userId: user?.id, range: timeRange, message });
     } finally {
       setLoading(false);
     }
-  }, [timeRange, user?.id]);
+  }, [session?.access_token, timeRange, user?.id]);
 
   useEffect(() => {
     if (user) {
@@ -1233,7 +1199,7 @@ export default function AnalyticsPage() {
     const timestamps = analytics.coverage.goals
       .map(g => g.updated_at ? new Date(g.updated_at).getTime() : 0)
       .filter(t => t > 0);
-    
+
     if (timestamps.length === 0) return null;
     return new Date(Math.max(...timestamps)).toISOString();
   }, [analytics?.coverage?.goals]);
@@ -1379,6 +1345,11 @@ export default function AnalyticsPage() {
   };
 
   const handleRunCoverage = async (projectId: string) => {
+    if (isDemoMode) {
+      toast.error('Demo account is read-only.');
+      return;
+    }
+
     const title = projectTitleMap[projectId] || projectId;
     startCoverage(projectId, title);
     try {
@@ -1509,19 +1480,18 @@ export default function AnalyticsPage() {
             <h1 className="text-2xl font-bold text-slate-900 dark:text-slate-50">Analytics</h1>
           </div>
           <div className="ml-auto flex items-center gap-1 self-start rounded-lg border border-slate-200 bg-white p-1 shadow-sm dark:border-slate-800 dark:bg-slate-900">
-              {(['7d', '30d', '90d'] as const).map((range) => (
-                <button
-                  key={range}
-                  onClick={() => setTimeRange(range)}
-                  className={`px-3 py-1.5 rounded-md text-sm font-medium transition-colors ${
-                    timeRange === range
-                      ? 'text-blue-600 dark:text-blue-400'
-                      : 'text-slate-500 dark:text-slate-400 hover:text-slate-900 dark:hover:text-slate-50'
+            {(['7d', '30d', '90d'] as const).map((range) => (
+              <button
+                key={range}
+                onClick={() => setTimeRange(range)}
+                className={`px-3 py-1.5 rounded-md text-sm font-medium transition-colors ${timeRange === range
+                    ? 'text-blue-600 dark:text-blue-400'
+                    : 'text-slate-500 dark:text-slate-400 hover:text-slate-900 dark:hover:text-slate-50'
                   }`}
-                >
-                  {range.toUpperCase()}
-                </button>
-              ))}
+              >
+                {range.toUpperCase()}
+              </button>
+            ))}
           </div>
         </div>
 
@@ -1538,6 +1508,7 @@ export default function AnalyticsPage() {
               selectedHasSnapshot={selectedProjectHasSnapshot}
               runningCoverageIds={runningCoverageIds}
               onRunAnalysis={handleRunCoverage}
+              readOnly={isDemoMode}
             />
             <div className="inline-flex items-center gap-2">
               <span className="inline-flex items-center rounded-lg border border-slate-300 bg-transparent px-3 py-2.5 text-[11px] font-semibold uppercase tracking-[0.14em] text-slate-600 dark:border-slate-700 dark:text-slate-300">
@@ -1583,11 +1554,10 @@ export default function AnalyticsPage() {
                 aria-selected={activeTab === 'insights'}
                 aria-controls="tabpanel-insights"
                 onClick={() => setActiveTab('insights')}
-                className={`flex items-center gap-2 px-4 py-2.5 text-sm font-medium rounded-lg transition-colors ${
-                  activeTab === 'insights'
+                className={`flex items-center gap-2 px-4 py-2.5 text-sm font-medium rounded-lg transition-colors ${activeTab === 'insights'
                     ? 'bg-white dark:bg-slate-900 text-slate-900 dark:text-white shadow'
                     : 'text-slate-500 dark:text-slate-400 hover:text-slate-900 dark:hover:text-slate-50 hover:bg-slate-50 dark:hover:bg-slate-800/50'
-                }`}
+                  }`}
               >
                 <Lightbulb className="h-4 w-4" />
                 Creator Coaching
@@ -1599,11 +1569,10 @@ export default function AnalyticsPage() {
                 aria-selected={activeTab === 'goals'}
                 aria-controls="tabpanel-goals"
                 onClick={() => setActiveTab('goals')}
-                className={`flex items-center gap-2 px-4 py-2.5 text-sm font-medium rounded-lg transition-colors ${
-                  activeTab === 'goals'
+                className={`flex items-center gap-2 px-4 py-2.5 text-sm font-medium rounded-lg transition-colors ${activeTab === 'goals'
                     ? 'bg-white dark:bg-slate-900 text-slate-900 dark:text-white shadow'
                     : 'text-slate-500 dark:text-slate-400 hover:text-slate-900 dark:hover:text-slate-50 hover:bg-slate-50 dark:hover:bg-slate-800/50'
-                }`}
+                  }`}
               >
                 <Target className="h-4 w-4" />
                 Goals

@@ -16,6 +16,7 @@ import {
 import { getAICompletion, type AIMessage } from '@/lib/ai-providers/multi-provider';
 import { getOpenAIApiKeyForUser } from '@/lib/openai/consent';
 import { createReservation, failReservation, settleReservationAmount } from '@/lib/billing/credit';
+import { isAuthorizedMaintenanceRequest } from '@/lib/maintenance-auth';
 
 /**
  * Parse JSON response from AI, stripping markdown code fences and conversational filler
@@ -513,6 +514,24 @@ export async function POST(request: NextRequest) {
   let savedOutputIds: string[] = [];
 
   try {
+    // Auth: internal maintenance requests or authenticated users only
+    const isMaintenance = isAuthorizedMaintenanceRequest(request);
+    let callerUserId: string | null = null;
+
+    if (!isMaintenance) {
+      const authHeader = request.headers.get('authorization');
+      if (!authHeader) {
+        return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
+      }
+      const { data: { user } } = await supabaseAdmin.auth.getUser(
+        authHeader.replace('Bearer ', '')
+      );
+      if (!user) {
+        return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
+      }
+      callerUserId = user.id;
+    }
+
     const payload = await request.json();
     projectId = payload.projectId;
     const { transcription, segments, blocks, speakerData, modelId, outputStyleModifier } = payload;
@@ -538,9 +557,15 @@ export async function POST(request: NextRequest) {
       .eq('id', projectId)
       .single() as { data: { user_id: string } | null };
 
-    const userId = project?.user_id;
-    if (!userId) {
-      console.warn('[BILLING] Could not find user_id for project:', projectId);
+    if (!project) {
+      return NextResponse.json({ error: 'Project not found' }, { status: 404 });
+    }
+
+    const userId = project.user_id;
+
+    // Non-internal callers must own the project
+    if (callerUserId && userId !== callerUserId) {
+      return NextResponse.json({ error: 'Forbidden' }, { status: 403 });
     }
     const openaiApiKey = await getOpenAIApiKeyForUser(userId || undefined);
 

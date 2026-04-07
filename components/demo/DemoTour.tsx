@@ -1,7 +1,7 @@
 "use client";
 
 import { useEffect, useRef, useCallback } from 'react';
-import { useRouter } from 'next/navigation';
+import { useRouter, useSearchParams } from 'next/navigation';
 
 export type TourChapter = 'hub' | 'projects' | 'upload' | 'analytics' | 'settings';
 
@@ -581,6 +581,8 @@ function getSettingsSteps(onNavigateToHub: () => void, onNavigateToSignup: () =>
 
 export function DemoTour({ chapter, autoStart = true }: DemoTourProps) {
   const router = useRouter();
+  const searchParams = useSearchParams();
+  const hideForCapture = searchParams.get('capture') === '1';
   const driverRef = useRef<any>(null);
   const startedRef = useRef(false);
 
@@ -775,6 +777,7 @@ export function DemoTour({ chapter, autoStart = true }: DemoTourProps) {
   }, [chapter, navigateTo, router]);
 
   useEffect(() => {
+    if (hideForCapture) return;
     if (!autoStart) return;
     const storedChapter = localStorage.getItem('demoTourChapter');
     if (storedChapter !== chapter) return;
@@ -785,10 +788,11 @@ export function DemoTour({ chapter, autoStart = true }: DemoTourProps) {
     }, 400);
 
     return () => clearTimeout(timeout);
-  }, [autoStart, chapter, startTour]);
+  }, [autoStart, chapter, hideForCapture, startTour]);
 
   // Also listen for the custom event dispatched by WelcomeModal
   useEffect(() => {
+    if (hideForCapture) return;
     if (chapter !== 'hub') return;
     const handler = () => {
       startedRef.current = false; // reset so it can start
@@ -796,7 +800,7 @@ export function DemoTour({ chapter, autoStart = true }: DemoTourProps) {
     };
     window.addEventListener('demoTourStart', handler);
     return () => window.removeEventListener('demoTourStart', handler);
-  }, [chapter, startTour]);
+  }, [chapter, hideForCapture, startTour]);
 
   return null;
 }

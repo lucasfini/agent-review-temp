@@ -29,6 +29,9 @@ import { classifyProjectTypeWithAI, type ProjectType } from '@/lib/utils/classif
 import { correctDebateSpeakers, applyDebateCorrectionToSpeakerData, summarizeDebateCorrections } from '@/lib/utils/correctDebateSpeakers';
 import { getOpenAIApiKeyForUser } from '@/lib/openai/consent';
 import { r2Client, BUCKET_NAME } from '@/lib/r2';
+import { isAuthorizedMaintenanceRequest } from '@/lib/maintenance-auth';
+
+const sleep = (ms: number) => new Promise<void>(resolve => setTimeout(resolve, ms));
 
 // Allow this function to run for up to 5 minutes (300 seconds)
 export const maxDuration = 300;
@@ -388,6 +391,24 @@ export async function POST(request: NextRequest) {
   let parsedProjectId: string | undefined;
 
   try {
+    // Auth: accept internal job token (from finalize route) OR user bearer token
+    const isMaintenance = isAuthorizedMaintenanceRequest(request);
+    let callerUserId: string | null = null;
+
+    if (!isMaintenance) {
+      const authHeader = request.headers.get('authorization');
+      if (!authHeader) {
+        return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
+      }
+      const { data: { user } } = await supabaseAdmin.auth.getUser(
+        authHeader.replace('Bearer ', '')
+      );
+      if (!user) {
+        return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
+      }
+      callerUserId = user.id;
+    }
+
     // Parse request
     const payload = await request.json().catch(() => null);
     if (!payload) {
@@ -442,6 +463,16 @@ export async function POST(request: NextRequest) {
         } | null;
         error: any
       };
+
+    // Project must exist before any provider work begins
+    if (projectError || !existingProject) {
+      return NextResponse.json({ error: 'Project not found' }, { status: 404 });
+    }
+
+    // Non-internal callers must own the project
+    if (callerUserId && existingProject.user_id !== callerUserId) {
+      return NextResponse.json({ error: 'Forbidden' }, { status: 403 });
+    }
 
     const analysisOptions = existingProject
       ? getProjectAnalysisOptions(existingProject)
@@ -631,6 +662,34 @@ export async function POST(request: NextRequest) {
 
       // Call Provider for transcription + diarization
       let result: any;
+      let transcriptionDone = false;
+
+      // Background drip: advance stage progress while the provider works.
+      // delayMs values are CUMULATIVE from start (not per-step).
+      // Stops as soon as the real transcription result arrives.
+      const drip = (async () => {
+        const steps = [
+          { delayMs: 5_000,   progress: 10, message: 'Transcribing audio...' },
+          { delayMs: 12_000,  progress: 20, message: 'Transcribing audio...' },
+          { delayMs: 30_000,  progress: 35, message: 'Transcribing audio...' },
+          { delayMs: 55_000,  progress: 50, message: 'Transcribing audio...' },
+          { delayMs: 85_000,  progress: 65, message: 'Transcribing audio...' },
+          { delayMs: 120_000, progress: 80, message: 'Almost done transcribing...' },
+        ];
+        const dripStart = Date.now();
+        for (const step of steps) {
+          const elapsed = Date.now() - dripStart;
+          const delta = step.delayMs - elapsed;
+          if (delta > 0) await sleep(delta);
+          if (transcriptionDone) break;
+          await updateProcessingProgress(projectId, {
+            stage: 'transcribing' as ProcessingStage,
+            progress: step.progress,
+            message: step.message,
+          });
+        }
+      })();
+
       if (diarizationProvider === 'deepgram') {
         console.log('[TRANSCRIPTION] 📡 Starting Deepgram transcription...');
         result = await transcribeWithDeepgram(tempAudioFilePath);
@@ -640,6 +699,9 @@ export async function POST(request: NextRequest) {
           speakersExpected: speakerCount
         });
       }
+
+      transcriptionDone = true;
+      void drip; // drip will exit on its next iteration check
 
       if (!result.success) {
         throw new Error(result.error || 'Transcription failed');

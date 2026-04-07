@@ -24,6 +24,8 @@ import {
   ListChecks,
   Plus,
   Layers,
+  PanelBottomClose,
+  PanelBottomOpen,
   Facebook,
   Instagram,
   Youtube,
@@ -382,6 +384,7 @@ export function ContextSidebar({
   const [activeContentSection, setActiveContentSection] = useState<ContentSectionId>('analysis');
   const [activeAnalysisView, setActiveAnalysisView] = useState<AnalysisViewId>('summary');
   const [activeOutputType, setActiveOutputType] = useState<string | null>(null);
+  const [contentOptionsCollapsed, setContentOptionsCollapsed] = useState(false);
 
   // Speaker editing state
   const [editingSpeakerId, setEditingSpeakerId] = useState<string | null>(null);
@@ -654,6 +657,8 @@ export function ContextSidebar({
 
   // Determine if insights truly exist (check array length properly)
   const hasInsights = insights && insights.length > 0;
+  const activeAnalysisLabel = availableAnalysisViews.find((view) => view.id === activeAnalysisView)?.label ?? 'Analysis';
+  const activeOutputLabel = availableOutputViews.find((view) => view.id === activeOutputType)?.label ?? 'Output';
 
   return (
     <aside
@@ -711,7 +716,7 @@ export function ContextSidebar({
           );
 
           return (
-            <div className="grid grid-cols-[1fr_auto_1fr] items-stretch gap-0 border border-slate-200/80 bg-white/70 px-1 py-1 shadow-sm dark:border-slate-700/70 dark:bg-slate-900/60">
+            <div className="mx-auto inline-grid grid-cols-[auto_auto_auto] items-stretch gap-2 border border-slate-200/80 bg-white/70 px-1 py-1 shadow-sm dark:border-slate-700/70 dark:bg-slate-900/60">
               <div className="min-w-0 self-stretch">
                 <div className="flex h-full items-stretch gap-1">
                   {reviewTabs.map(renderTabButton)}
@@ -1172,36 +1177,94 @@ export function ContextSidebar({
 
         {/* Content Tab */}
         {activeTab === 'content' && (
-          <div className="p-3 space-y-3">
+          <div className="p-2.5 space-y-2.5">
             <>
-              <div className="space-y-3">
-                <section className="space-y-2">
-                  <button
-                    type="button"
-                    onClick={() => toggleContentPanel('analysis')}
-                    className="flex w-full items-center justify-between gap-3 border-b border-slate-200 pb-2 text-left dark:border-slate-800"
-                  >
-                    <div className="flex items-center gap-2">
-                      <span className={cn(
-                        'text-sm font-semibold transition-colors',
-                        activeContentSection === 'analysis'
-                          ? 'text-blue-600 dark:text-blue-400'
-                          : 'text-slate-900 dark:text-slate-50'
-                      )}>
-                        Analysis
-                      </span>
-                      <span className="rounded-full bg-slate-200 px-1.5 py-0.5 text-[10px] font-semibold text-slate-700 dark:bg-slate-700 dark:text-slate-200">
-                        {availableAnalysisViews.length}
-                      </span>
+              <div className="relative rounded-xl border border-slate-200 bg-slate-100/50 p-2 dark:border-slate-800 dark:bg-slate-900/40">
+                {contentOptionsCollapsed ? (
+                  availableAnalysisViews.length > 0 ? (
+                    <div className="grid grid-cols-5 gap-1">
+                      {availableAnalysisViews.map((view) => {
+                        const Icon = view.icon;
+                        return (
+                          <button
+                            key={view.id}
+                            type="button"
+                            onClick={() => {
+                              setActiveContentSection('analysis');
+                              setActiveAnalysisView(view.id);
+                            }}
+                            aria-label={view.label}
+                            title={view.label}
+                            className={cn(
+                              'flex h-10 w-full items-center justify-center gap-1 rounded-lg border border-transparent bg-transparent text-slate-700 transition-colors dark:text-slate-200',
+                              activeContentSection === 'analysis' && activeAnalysisView === view.id
+                                ? 'text-blue-600 dark:text-blue-400'
+                                : 'text-slate-500 hover:text-slate-900 dark:text-slate-400 dark:hover:text-slate-100'
+                            )}
+                          >
+                            <span className="flex items-center justify-center">
+                              <Icon className="h-4 w-4" />
+                            </span>
+                            {view.count ? (
+                              <span className={cn(
+                                'rounded-full px-1 py-0.5 text-[9px] font-semibold leading-none',
+                                activeContentSection === 'analysis' && activeAnalysisView === view.id
+                                  ? 'bg-blue-50 text-blue-600 dark:bg-blue-950/40 dark:text-blue-300'
+                                  : 'bg-slate-200 text-slate-700 dark:bg-slate-700 dark:text-slate-200'
+                              )}>
+                                {view.count}
+                              </span>
+                            ) : null}
+                          </button>
+                        );
+                      })}
                     </div>
-                    {expandedContentPanels.has('analysis') ? (
-                      <ChevronUp className="h-4 w-4 text-slate-500" />
-                    ) : (
-                      <ChevronDown className="h-4 w-4 text-slate-500" />
-                    )}
-                  </button>
-                  {expandedContentPanels.has('analysis') ? (
-                    availableAnalysisViews.length > 0 ? (
+                  ) : availableOutputViews.length > 0 ? (
+                    <div className="grid grid-cols-5 gap-1">
+                      {availableOutputViews.map((view) => {
+                        const Icon = view.icon;
+                        return (
+                          <button
+                            key={view.id}
+                            type="button"
+                            onClick={() => {
+                              setActiveContentSection('outputs');
+                              setActiveOutputType(view.id);
+                            }}
+                            aria-label={view.label}
+                            title={view.label}
+                            className={cn(
+                              'flex h-10 w-full items-center justify-center gap-1 rounded-lg border border-transparent bg-transparent text-slate-700 transition-colors dark:text-slate-200',
+                              activeContentSection === 'outputs' && activeOutputType === view.id
+                                ? 'text-blue-600 dark:text-blue-400'
+                                : 'text-slate-500 hover:text-slate-900 dark:text-slate-400 dark:hover:text-slate-100'
+                            )}
+                          >
+                            <span className="flex items-center justify-center">
+                              <Icon className="h-4 w-4" />
+                            </span>
+                            {view.count ? (
+                              <span className={cn(
+                                'rounded-full px-1 py-0.5 text-[9px] font-semibold leading-none',
+                                activeContentSection === 'outputs' && activeOutputType === view.id
+                                  ? 'bg-blue-50 text-blue-600 dark:bg-blue-950/40 dark:text-blue-300'
+                                  : 'bg-slate-200 text-slate-700 dark:bg-slate-700 dark:text-slate-200'
+                              )}>
+                                {view.count}
+                              </span>
+                            ) : null}
+                          </button>
+                        );
+                      })}
+                    </div>
+                  ) : (
+                    <p className="px-1 text-xs text-slate-500 dark:text-slate-400">
+                      Generate summaries, insights, chapters, takeaways, or quotes to populate this section.
+                    </p>
+                  )
+                ) : (
+                  <div className="space-y-2">
+                    {availableAnalysisViews.length > 0 ? (
                       <div className="grid grid-cols-5 gap-1">
                         {availableAnalysisViews.map((view) => {
                           const Icon = view.icon;
@@ -1211,16 +1274,15 @@ export function ContextSidebar({
                               type="button"
                               onClick={() => {
                                 setActiveContentSection('analysis');
-                                setExpandedContentPanels((prev) => new Set(prev).add('analysis'));
                                 setActiveAnalysisView(view.id);
                               }}
                               aria-label={view.label}
                               title={view.label}
                               className={cn(
-                                'flex h-11 w-full items-center justify-center gap-1 border text-slate-700 transition-all dark:text-slate-200',
+                                'flex h-10 w-full items-center justify-center gap-1 rounded-lg border border-transparent bg-transparent text-slate-700 transition-colors dark:text-slate-200',
                                 activeContentSection === 'analysis' && activeAnalysisView === view.id
-                                  ? 'border-transparent text-blue-600 dark:text-blue-400'
-                                  : 'border-transparent bg-transparent text-slate-500 hover:text-slate-900 dark:text-slate-400 dark:hover:text-slate-100'
+                                  ? 'text-blue-600 dark:text-blue-400'
+                                  : 'text-slate-500 hover:text-slate-900 dark:text-slate-400 dark:hover:text-slate-100'
                               )}
                             >
                               <span className="flex items-center justify-center">
@@ -1244,82 +1306,71 @@ export function ContextSidebar({
                       <p className="px-1 text-xs text-slate-500 dark:text-slate-400">
                         Generate summaries, insights, chapters, takeaways, or quotes to populate this section.
                       </p>
-                    )
-                  ) : null}
-                </section>
-
-                <section className="space-y-2">
-                  <button
-                    type="button"
-                    onClick={() => toggleContentPanel('outputs')}
-                    className="flex w-full items-center justify-between gap-3 border-b border-slate-200 pb-2 text-left dark:border-slate-800"
-                  >
-                    <div className="flex items-center gap-2">
-                      <span className={cn(
-                        'text-sm font-semibold transition-colors',
-                        activeContentSection === 'outputs'
-                          ? 'text-blue-600 dark:text-blue-400'
-                          : 'text-slate-900 dark:text-slate-50'
-                      )}>
-                        Outputs
-                      </span>
-                      <span className="rounded-full bg-slate-200 px-1.5 py-0.5 text-[10px] font-semibold text-slate-700 dark:bg-slate-700 dark:text-slate-200">
-                        {availableOutputViews.length}
-                      </span>
-                    </div>
-                    {expandedContentPanels.has('outputs') ? (
-                      <ChevronUp className="h-4 w-4 text-slate-500" />
-                    ) : (
-                      <ChevronDown className="h-4 w-4 text-slate-500" />
                     )}
-                  </button>
-                  {expandedContentPanels.has('outputs') ? (
-                    availableOutputViews.length > 0 ? (
-                      <div className="grid grid-cols-5 gap-1">
-                        {availableOutputViews.map((view) => {
-                          const Icon = view.icon;
-                          return (
-                            <button
-                              key={view.id}
-                              type="button"
-                              onClick={() => {
-                                setActiveContentSection('outputs');
-                                setExpandedContentPanels((prev) => new Set(prev).add('outputs'));
-                                setActiveOutputType(view.id);
-                              }}
-                              aria-label={view.label}
-                              title={view.label}
-                              className={cn(
-                                'flex h-11 w-full items-center justify-center gap-1 border text-slate-700 transition-all dark:text-slate-200',
-                                activeContentSection === 'outputs' && activeOutputType === view.id
-                                  ? 'border-transparent text-blue-600 dark:text-blue-400'
-                                  : 'border-transparent bg-transparent text-slate-500 hover:text-slate-900 dark:text-slate-400 dark:hover:text-slate-100'
-                              )}
-                            >
-                              <span className="flex items-center justify-center">
-                                <Icon className="h-4 w-4" />
-                              </span>
-                              {view.count ? (
-                                <span className={cn(
-                                  'rounded-full px-1 py-0.5 text-[9px] font-semibold leading-none',
+
+                    {availableOutputViews.length > 0 ? (
+                      <>
+                        {availableAnalysisViews.length > 0 ? (
+                          <div className="border-t border-slate-200/80 dark:border-slate-800/80" />
+                        ) : null}
+                        <div className="grid grid-cols-5 gap-1">
+                          {availableOutputViews.map((view) => {
+                            const Icon = view.icon;
+                            return (
+                              <button
+                                key={view.id}
+                                type="button"
+                                onClick={() => {
+                                  setActiveContentSection('outputs');
+                                  setActiveOutputType(view.id);
+                                }}
+                                aria-label={view.label}
+                                title={view.label}
+                                className={cn(
+                                  'flex h-10 w-full items-center justify-center gap-1 rounded-lg border border-transparent bg-transparent text-slate-700 transition-colors dark:text-slate-200',
                                   activeContentSection === 'outputs' && activeOutputType === view.id
-                                    ? 'bg-blue-50 text-blue-600 dark:bg-blue-950/40 dark:text-blue-300'
-                                    : 'bg-slate-200 text-slate-700 dark:bg-slate-700 dark:text-slate-200'
-                                )}>
-                                  {view.count}
+                                    ? 'text-blue-600 dark:text-blue-400'
+                                    : 'text-slate-500 hover:text-slate-900 dark:text-slate-400 dark:hover:text-slate-100'
+                                )}
+                              >
+                                <span className="flex items-center justify-center">
+                                  <Icon className="h-4 w-4" />
                                 </span>
-                              ) : null}
-                            </button>
-                          );
-                        })}
-                      </div>
-                    ) : (
+                                {view.count ? (
+                                  <span className={cn(
+                                    'rounded-full px-1 py-0.5 text-[9px] font-semibold leading-none',
+                                    activeContentSection === 'outputs' && activeOutputType === view.id
+                                      ? 'bg-blue-50 text-blue-600 dark:bg-blue-950/40 dark:text-blue-300'
+                                      : 'bg-slate-200 text-slate-700 dark:bg-slate-700 dark:text-slate-200'
+                                  )}>
+                                    {view.count}
+                                  </span>
+                                ) : null}
+                              </button>
+                            );
+                          })}
+                        </div>
+                      </>
+                    ) : availableAnalysisViews.length > 0 ? null : (
                       <p className="px-1 text-xs text-slate-500 dark:text-slate-400">
                         Generate a content type from the Generate tab to populate this section.
                       </p>
-                    )
-                  ) : null}
-                </section>
+                    )}
+                  </div>
+                )}
+                <button
+                  type="button"
+                  onClick={() => setContentOptionsCollapsed((prev) => !prev)}
+                  className="absolute -bottom-3 right-3 inline-flex h-6 w-6 items-center justify-center rounded-full border border-slate-200 bg-white text-slate-500 transition-colors hover:text-slate-900 dark:border-slate-700 dark:bg-slate-900 dark:text-slate-400 dark:hover:text-slate-100"
+                  title={contentOptionsCollapsed ? 'Expand content options' : 'Collapse content options'}
+                  aria-label={contentOptionsCollapsed ? 'Expand content options' : 'Collapse content options'}
+                >
+                  {contentOptionsCollapsed ? (
+                    <PanelBottomOpen className="h-4 w-4" />
+                  ) : (
+                    <PanelBottomClose className="h-4 w-4" />
+                  )}
+                </button>
               </div>
             </>
           </div>
@@ -1328,6 +1379,9 @@ export function ContextSidebar({
         {/* Insights Content View */}
         {activeTab === 'content' && activeContentSection === 'analysis' && activeAnalysisView === 'insights' && (
           <div className="p-3 h-full" data-tour="insights-panel">
+            <p className="mb-3 text-[10px] font-semibold uppercase tracking-[0.18em] text-slate-500 dark:text-slate-400">
+              {activeAnalysisLabel}
+            </p>
             {hasInsights ? (
               /* Display insights if they exist */
               <InsightsSidebar
@@ -1335,6 +1389,7 @@ export function ContextSidebar({
                 activeInsightId={activeInsightId ?? null}
                 onInsightClick={onInsightClick || (() => {})}
                 className="border-l-0"
+                embedded
               />
             ) : insightsLoading ? (
               /* Loading state */
@@ -1414,6 +1469,8 @@ export function ContextSidebar({
                   <button
                     onClick={onDismissPreview}
                     className="text-violet-400 hover:text-violet-400 p-0.5"
+                    title="Dismiss AI corrections"
+                    aria-label="Dismiss AI corrections"
                   >
                     <X className="h-3.5 w-3.5" />
                   </button>
@@ -1578,6 +1635,9 @@ export function ContextSidebar({
         {/* Summary Content View */}
         {activeTab === 'content' && activeContentSection === 'analysis' && activeAnalysisView === 'summary' && (
           <div className="p-4" data-tour="summary-panel">
+            <p className="mb-3 text-[10px] font-semibold uppercase tracking-[0.18em] text-slate-500 dark:text-slate-400">
+              {activeAnalysisLabel}
+            </p>
             {summary ? (
               <div className="prose prose-sm max-w-none">
                 {summary.split('\n\n').map((paragraph, idx) => (
@@ -1607,6 +1667,9 @@ export function ContextSidebar({
         {/* Chapters Content View */}
         {activeTab === 'content' && activeContentSection === 'analysis' && activeAnalysisView === 'chapters' && (
           <div className="p-3" data-tour="chapters-panel">
+            <p className="mb-3 text-[10px] font-semibold uppercase tracking-[0.18em] text-slate-500 dark:text-slate-400">
+              {activeAnalysisLabel}
+            </p>
             {chapters.length > 0 ? (
               <div className="space-y-2">
                 {chapters.map((chapter, idx) => (
@@ -1659,6 +1722,9 @@ export function ContextSidebar({
         {/* Takeaways Content View */}
         {activeTab === 'content' && activeContentSection === 'analysis' && activeAnalysisView === 'takeaways' && (
           <div className="p-3" data-tour="takeaways-panel">
+            <p className="mb-3 text-[10px] font-semibold uppercase tracking-[0.18em] text-slate-500 dark:text-slate-400">
+              {activeAnalysisLabel}
+            </p>
             {takeaways.length > 0 ? (
               <div className="space-y-2">
                 {takeaways.map((item, idx) => (
@@ -1702,6 +1768,9 @@ export function ContextSidebar({
         {/* Quotes Content View */}
         {activeTab === 'content' && activeContentSection === 'analysis' && activeAnalysisView === 'quotes' && (
           <div className="p-3" data-tour="quotes-panel">
+            <p className="mb-3 text-[10px] font-semibold uppercase tracking-[0.18em] text-slate-500 dark:text-slate-400">
+              {activeAnalysisLabel}
+            </p>
             {quotes.length > 0 ? (
               <div className="space-y-2">
                 {quotes.map((quote, idx) => (
@@ -1745,6 +1814,9 @@ export function ContextSidebar({
         {/* Generated Output Content View */}
         {activeTab === 'content' && activeContentSection === 'outputs' && activeOutputType ? (
           <div className="p-3">
+            <p className="mb-3 text-[10px] font-semibold uppercase tracking-[0.18em] text-slate-500 dark:text-slate-400">
+              {activeOutputLabel}
+            </p>
             <InlineContentStudio
               outputs={outputs}
               generatingIds={generatingContentTypes}
@@ -1762,6 +1834,7 @@ export function ContextSidebar({
           </div>
         ) : null}
       </div>
+
     </aside>
   );
 }

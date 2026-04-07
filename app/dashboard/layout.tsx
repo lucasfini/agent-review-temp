@@ -11,19 +11,10 @@ import { CoverageBanner } from '@/app/dashboard/_banners/coverage-banner';
 import { DemoBanner } from '@/components/demo/DemoBanner';
 import { WelcomeModal } from '@/components/demo/WelcomeModal';
 import { FirstLoginWelcomeModal } from '@/components/dashboard/first-login-welcome-modal';
-import { calculateOverallProgress, getUserFacingProcessingMessage, type ProcessingStage } from '@/lib/tier-progress-config';
+import CompactFooter from '@/components/site/CompactFooter';
+import { calculateOverallProgress, getUserFacingProcessingMessage } from '@/lib/tier-progress-config';
 import { normalizeTier } from '@/lib/tier-config';
-
-interface ActiveUpload {
-  id: string;
-  title: string;
-  audio_file_name: string | null;
-  status: 'uploading' | 'processing';
-  processing_stage?: ProcessingStage;
-  processing_progress?: number;
-  processing_message?: string | null;
-  performance_level?: string;
-}
+import { useActiveProcessingProjects, type ActiveProcessingProject } from '@/lib/hooks/useActiveProcessingProjects';
 
 export default function DashboardLayout({
   children,
@@ -36,9 +27,14 @@ export default function DashboardLayout({
   const router = useRouter();
   const pathname = usePathname();
   const searchParams = useSearchParams();
-  const [activeUploads, setActiveUploads] = useState<ActiveUpload[]>([]);
   const [isSidebarCollapsed, setIsSidebarCollapsed] = useState(false);
   const forceWelcomePreview = searchParams.get('welcome') === '1';
+  const hideDemoChromeForCapture = searchParams.get('capture') === '1';
+  const isUploadRoute = pathname === '/dashboard/upload';
+  const { activeProjects: activeUploads } = useActiveProcessingProjects(user?.id, 5, {
+    pollingEnabled: !isUploadRoute,
+    pollIntervalMs: 5000,
+  });
 
   const usesDocumentFlow = pathname === '/dashboard/settings'
     || pathname === '/dashboard/billing'
@@ -69,30 +65,6 @@ export default function DashboardLayout({
       setShowFirstLoginWelcome(true);
     }
   }, [loading, user, isDemoMode, forceWelcomePreview]);
-
-  // Poll for in-progress uploads/transcriptions across the whole session
-  useEffect(() => {
-    if (!user?.id) return;
-
-    const poll = async () => {
-      try {
-        const { data } = await supabase
-          .from('projects')
-          .select('id, title, audio_file_name, status, processing_stage, processing_progress, processing_message, performance_level')
-          .eq('user_id', user.id)
-          .in('status', ['uploading', 'processing'])
-          .order('created_at', { ascending: false })
-          .limit(5);
-        setActiveUploads((data || []) as ActiveUpload[]);
-      } catch {
-        // Non-fatal — banner just won't show
-      }
-    };
-
-    poll();
-    const interval = setInterval(poll, 5000);
-    return () => clearInterval(interval);
-  }, [user?.id]);
 
   if (loading) {
     return (
@@ -133,7 +105,7 @@ export default function DashboardLayout({
   return (
     <CoverageProgressProvider>
       <div className={`${usesDocumentFlow ? 'min-h-screen' : 'h-screen'} flex flex-col ${usesDocumentFlow ? 'overflow-visible' : 'overflow-hidden'} bg-slate-50 dark:bg-slate-950`}>
-        {isDemoMode && <DemoBanner />}
+        {isDemoMode && !hideDemoChromeForCapture && <DemoBanner />}
         <div className={`flex flex-1 flex-col md:flex-row ${usesDocumentFlow ? 'overflow-visible' : 'overflow-hidden'}`}>
           <Suspense fallback={<div className="hidden md:block md:w-64 md:flex-shrink-0" />}>
             <DashboardNav
@@ -149,6 +121,7 @@ export default function DashboardLayout({
             <main className={`${usesDocumentFlow ? 'overflow-visible' : 'flex-1 overflow-y-auto'} relative focus:outline-none${activeUploads.length > 0 ? ' pb-16' : ''}`}>
               {children}
             </main>
+            {usesDocumentFlow && <CompactFooter inDashboard={true} />}
           </div>
 
           {/* Global upload/transcription progress banner */}
@@ -159,7 +132,7 @@ export default function DashboardLayout({
               <Loader2 className="h-4 w-4 animate-spin flex-shrink-0 text-blue-400" />
               <div className="flex-1 min-w-0">
                 {(() => {
-                  const activeUpload = activeUploads[0];
+                  const activeUpload = activeUploads[0] as ActiveProcessingProject;
                   const stage = activeUpload.processing_stage ||
                     (activeUpload.status === 'uploading' ? 'uploading' : 'transcribing');
                   const tier = normalizeTier(activeUpload.performance_level || 'content_kit');
@@ -206,7 +179,7 @@ export default function DashboardLayout({
       </div>
 
       {/* Demo welcome modal */}
-      {isDemoMode && (
+      {isDemoMode && !hideDemoChromeForCapture && (
         <WelcomeModal
           isOpen={showWelcomeModal}
           onClose={() => {
@@ -228,7 +201,7 @@ export default function DashboardLayout({
       )}
 
       {/* Floating restart tour button — demo only */}
-      {isDemoMode && (
+      {isDemoMode && !hideDemoChromeForCapture && (
         <button
           onClick={() => {
             localStorage.removeItem('demoWelcomeSeen');

@@ -7,6 +7,7 @@ CREATE TABLE IF NOT EXISTS public.project_generation_jobs (
   theme_id TEXT,
   status TEXT NOT NULL DEFAULT 'queued' CHECK (status IN ('queued', 'running', 'completed', 'failed')),
   error_message TEXT,
+  failure_notified_at TIMESTAMPTZ,
   started_at TIMESTAMPTZ,
   completed_at TIMESTAMPTZ,
   created_at TIMESTAMPTZ NOT NULL DEFAULT now(),

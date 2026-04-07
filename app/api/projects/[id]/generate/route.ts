@@ -7,12 +7,17 @@ import { DEFAULT_THEME_ID } from '@/lib/content-themes';
 import { isAnalysisJobKey } from '@/lib/project-generation-jobs';
 import { billingErrorResponse, requireCredits } from '@/lib/billing/middleware';
 import { estimateAnalysisJobCost, estimateContentGenerationCost } from '@/lib/billing/cost-map';
+import { isDemoUser } from '@/lib/demo-mode';
 
 type GenerateItem = {
   kind: 'analysis' | 'content';
   targetKey: string;
   themeId?: string;
 };
+
+function estimateJobReserveAmount(cost: number): number {
+  return Number((cost * 1.15).toFixed(4));
+}
 
 export async function POST(
   request: NextRequest,
@@ -29,6 +34,10 @@ export async function POST(
     const { data: { user }, error: authError } = await supabaseAdmin.auth.getUser(token);
     if (authError || !user) {
       return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
+    }
+
+    if (isDemoUser(user)) {
+      return NextResponse.json({ error: 'Demo account is read-only' }, { status: 403 });
     }
 
     const body = await request.json().catch(() => null);
@@ -74,8 +83,19 @@ export async function POST(
       return sum + estimateContentGenerationCost([item.targetKey]);
     }, 0);
 
-    if (estimatedCost > 0) {
-      await requireCredits(user.id, Number(estimatedCost.toFixed(6)));
+    const estimatedReserveAmount = normalizedItems.reduce((sum, item) => {
+      const itemCost = item.kind === 'analysis'
+        ? estimateAnalysisJobCost({
+            targetKey: item.targetKey,
+            estimatedTranscriptLength: project.transcription_text?.length || 0,
+          })
+        : estimateContentGenerationCost([item.targetKey]);
+
+      return Number((sum + estimateJobReserveAmount(itemCost)).toFixed(4));
+    }, 0);
+
+    if (estimatedReserveAmount > 0) {
+      await requireCredits(user.id, estimatedReserveAmount);
     }
 
     const targetKeys = normalizedItems.map((item) => item.targetKey);
@@ -133,6 +153,8 @@ export async function POST(
       success: true,
       queued: rowsToInsert.length,
       skipped: normalizedItems.length - rowsToInsert.length,
+      estimatedCost: Number(estimatedCost.toFixed(6)),
+      estimatedReserveAmount,
     });
   } catch (error) {
     const billingResponse = billingErrorResponse(error);

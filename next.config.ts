@@ -4,7 +4,23 @@ const supabaseHostname = process.env.NEXT_PUBLIC_SUPABASE_URL
   ? new URL(process.env.NEXT_PUBLIC_SUPABASE_URL).hostname
   : null;
 
+const securityHeaders = [
+  { key: 'X-Frame-Options', value: 'DENY' },
+  { key: 'X-Content-Type-Options', value: 'nosniff' },
+  { key: 'Referrer-Policy', value: 'strict-origin-when-cross-origin' },
+  { key: 'X-DNS-Prefetch-Control', value: 'on' },
+  { key: 'Permissions-Policy', value: 'camera=(), microphone=(), geolocation=()' },
+];
+
 const nextConfig: NextConfig = {
+  async headers() {
+    return [
+      {
+        source: '/(.*)',
+        headers: securityHeaders,
+      },
+    ];
+  },
   // Temporarily disable the React Compiler in dev to reduce overhead
   // Re-enable once dev compiles reliably
   reactCompiler: false,

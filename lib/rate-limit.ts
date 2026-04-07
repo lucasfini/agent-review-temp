@@ -12,10 +12,10 @@ try {
     console.warn('Failed to initialize Upstash Redis. Rate limiting will be bypassed.', e);
 }
 
-// A silent fallback for environments without Redis configured
+// Fail closed when Redis is not configured — do not allow requests through
 const fallbackLimiter = {
-    limit: async (identifier: string) => {
-        return { success: true, limit: 100, remaining: 99, reset: Date.now() + 60000, pending: Promise.resolve() };
+    limit: async (_identifier: string) => {
+        return { success: false, limit: 0, remaining: 0, reset: Date.now() + 60000, pending: Promise.resolve() };
     }
 };
 

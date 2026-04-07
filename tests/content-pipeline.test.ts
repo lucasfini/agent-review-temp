@@ -195,16 +195,15 @@ const SIDEBAR_KIND_KEYS = [
   'short_form_video_script',
 ] as const;
 
-describe('components/ContextSidebar.tsx – KIND_LABELS', () => {
+describe('components/ContextSidebar.tsx – OUTPUT_TYPE_TO_CONTENT_TYPE', () => {
   it.each(SIDEBAR_KIND_KEYS)(
-    'KIND_LABELS contains key "%s"',
+    'maps key "%s"',
     (key) => {
-      // Extract KIND_LABELS block
-      const kindLabelsMatch = sidebarSource.match(
-        /const KIND_LABELS: Record<string, string> = \{([\s\S]*?)\};/
+      const outputTypeMapMatch = sidebarSource.match(
+        /const OUTPUT_TYPE_TO_CONTENT_TYPE: Record<string, string> = \{([\s\S]*?)\};/
       );
-      expect(kindLabelsMatch).not.toBeNull();
-      expect(kindLabelsMatch![0]).toContain(`${key}:`);
+      expect(outputTypeMapMatch).not.toBeNull();
+      expect(outputTypeMapMatch![0]).toContain(`${key}:`);
     }
   );
 });

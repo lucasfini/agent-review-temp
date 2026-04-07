@@ -1,5 +1,6 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { supabaseAdmin } from '@/lib/supabase/server';
+import { isAdminEmail } from '@/lib/admin-access';
 
 export const dynamic = 'force-dynamic';
 export const revalidate = 0;
@@ -17,6 +18,14 @@ export async function GET(
   { params }: { params: Promise<{ id: string }> }
 ) {
   try {
+    const authHeader = request.headers.get('authorization');
+    const { data: { user } } = await supabaseAdmin.auth.getUser(
+      authHeader?.replace('Bearer ', '') || ''
+    );
+    if (!user || !isAdminEmail(user.email)) {
+      return NextResponse.json({ error: 'Forbidden' }, { status: 403 });
+    }
+
     const { id: projectId } = await params;
     const { searchParams } = new URL(request.url);
     const query = searchParams.get('q')?.toLowerCase().trim();

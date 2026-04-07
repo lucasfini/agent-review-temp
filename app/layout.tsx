@@ -17,8 +17,15 @@ const geistMono = Geist_Mono({
 });
 
 export const metadata: Metadata = {
-  title: "AudioRepurpose - AI-Powered Podcast Content Creation",
-  description: "Turn your podcast into 15+ social posts automatically with AI-powered content repurposing.",
+  title: "AudioRepurpose - Transcript, Analysis, and Content in One Workflow",
+  description: "Turn audio into transcript, insights, and publish-ready content from one workflow built for interviews, podcasts, and recorded conversations.",
+  icons: {
+    icon: [
+      { url: "/brand-icon.svg", type: "image/svg+xml" },
+    ],
+    shortcut: ["/brand-icon.svg"],
+    apple: ["/brand-icon.svg"],
+  },
 };
 
 export const viewport = {

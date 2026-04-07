@@ -1,6 +1,6 @@
 "use client";
 
-import { useState, useEffect, useMemo } from 'react';
+import { useState, useEffect, useMemo, useCallback } from 'react';
 import Link from 'next/link';
 import {
   FileText,
@@ -38,6 +38,8 @@ import { emitProjectMutation } from '@/lib/project-events';
 import { toast } from 'sonner';
 import ConfirmModal from '@/components/ui/confirm-modal';
 import { useUserPrefs } from '@/lib/hooks/useUserPrefs';
+import { DashboardLoadErrorState } from '@/components/dashboard/load-error-state';
+import { getDashboardErrorMessage, logDashboardLoad } from '@/lib/dashboard-load-state';
 
 // ============================================================================
 // TYPES
@@ -208,11 +210,12 @@ function EmptyState() {
 // ============================================================================
 
 export default function ProjectHubPage() {
-  const { user, isDemoMode } = useAuth();
+  const { user, session, isDemoMode } = useAuth();
   const prefs = useUserPrefs();
   const [projects, setProjects] = useState<Project[]>([]);
   const [outputs, setOutputs] = useState<Output[]>([]);
   const [loading, setLoading] = useState(true);
+  const [loadError, setLoadError] = useState<string | null>(null);
   const [searchTerm, setSearchTerm] = useState('');
   const [statusFilter, setStatusFilter] = useState<'all' | Project['status']>('all');
   const [typeFilter, setTypeFilter] = useState<'all' | ProjectType>('all');
@@ -223,42 +226,60 @@ export default function ProjectHubPage() {
   const [hubPage, setHubPage] = useState(1);
 
   // Fetch data
-  useEffect(() => {
-    if (user) {
-      fetchData();
+  const fetchData = useCallback(async () => {
+    if (!user?.id) {
+      setLoading(false);
+      return;
     }
-  }, [user]);
 
-  const fetchData = async () => {
-    if (!user?.id) return;
     setLoading(true);
+    setLoadError(null);
+    logDashboardLoad('hub', 'start', { userId: user.id });
 
     try {
-      // Fetch projects
-      const { data: projectsData, error: projectsError } = await supabase
-        .from('projects')
-        .select('*')
-        .eq('user_id', user.id)
-        .neq('status', 'cancelled')
-        .order('created_at', { ascending: false }) as { data: Project[] | null; error: any };
+      const response = await fetch('/api/dashboard/projects?includeOutputs=1&limit=100', {
+        headers: session?.access_token ? { Authorization: `Bearer ${session.access_token}` } : {},
+        cache: 'no-store',
+      });
 
-      if (projectsError) throw projectsError;
-      setProjects(projectsData || []);
+      if (!response.ok) {
+        const payload = await response.json().catch(() => ({ error: 'Failed to load hub projects' }));
+        throw new Error(payload.error || 'Failed to load hub projects');
+      }
 
-      // Fetch outputs count
-      const { data: outputsData, error: outputsError } = await supabase
-        .from('outputs')
-        .select('id, project_id, type, platform, status, created_at')
-        .eq('user_id', user.id) as { data: Output[] | null; error: any };
+      const payload = await response.json() as { projects?: Project[]; outputs?: Output[] };
+      const validProjects = payload.projects || [];
+      setProjects(validProjects);
+      setOutputs(payload.outputs || []);
 
-      if (outputsError) throw outputsError;
-      setOutputs(outputsData || []);
+      logDashboardLoad('hub', 'success', {
+        userId: user.id,
+        projects: validProjects.length,
+      });
     } catch (error) {
-      console.error('Error fetching data:', error);
+      console.error('Error fetching dashboard data:', error);
+      setProjects([]);
+      setOutputs([]);
+      const message = getDashboardErrorMessage(error, 'We could not load your projects right now. Please try again.');
+      setLoadError(message);
+      logDashboardLoad('hub', 'error', { userId: user.id, message });
     } finally {
       setLoading(false);
     }
-  };
+  }, [session?.access_token, user?.id]);
+
+  useEffect(() => {
+    let active = true;
+
+    void (async () => {
+      await fetchData();
+      if (!active) return;
+    })();
+
+    return () => {
+      active = false;
+    };
+  }, [fetchData]);
 
   // Computed stats
   const stats = useMemo<Stats>(() => {
@@ -267,13 +288,13 @@ export default function ProjectHubPage() {
     const totalAudioMinutes = projects.reduce((sum, p) => sum + ((p.audio_duration || 0) / 60), 0);
     // Time saved = transcription time (5× audio) + per-piece content creation time
     const CONTENT_TIME_MINUTES: Record<string, number> = {
-      twitter_thread:    30,
-      linkedin_post:     45,
+      twitter_thread: 30,
+      linkedin_post: 45,
       instagram_caption: 20,
-      blog_post:         120,
-      email_newsletter:  90,
-      show_notes:        45,
-      quote_graphic:     15,
+      blog_post: 120,
+      email_newsletter: 90,
+      show_notes: 45,
+      quote_graphic: 15,
     };
     const contentMinutes = outputs.reduce(
       (sum, o) => sum + (CONTENT_TIME_MINUTES[o.type] ?? 30), 0
@@ -407,6 +428,18 @@ export default function ProjectHubPage() {
           </div>
         </div>
       </div>
+    );
+  }
+
+  if (loadError) {
+    return (
+      <DashboardLoadErrorState
+        title="Projects unavailable"
+        message={loadError}
+        onRetry={() => {
+          void fetchData();
+        }}
+      />
     );
   }
 
@@ -777,11 +810,10 @@ export default function ProjectHubPage() {
                       type="button"
                       onClick={() => setHubPage(hubPage - 1)}
                       disabled={hubPage <= 1}
-                      className={`px-2.5 py-1.5 text-xs font-medium rounded border transition-colors ${
-                        hubPage <= 1
-                          ? 'border-slate-200 dark:border-slate-800 text-slate-400 dark:text-slate-600 cursor-not-allowed'
-                          : 'border-slate-300 dark:border-slate-700 text-slate-600 dark:text-slate-300 hover:bg-slate-100 dark:hover:bg-slate-800'
-                      }`}
+                      className={`px-2.5 py-1.5 text-xs font-medium rounded border transition-colors ${hubPage <= 1
+                        ? 'border-slate-200 dark:border-slate-800 text-slate-400 dark:text-slate-600 cursor-not-allowed'
+                        : 'border-slate-300 dark:border-slate-700 text-slate-600 dark:text-slate-300 hover:bg-slate-100 dark:hover:bg-slate-800'
+                        }`}
                     >
                       Previous
                     </button>
@@ -789,11 +821,10 @@ export default function ProjectHubPage() {
                       type="button"
                       onClick={() => setHubPage(hubPage + 1)}
                       disabled={hubPage >= totalPages}
-                      className={`px-2.5 py-1.5 text-xs font-medium rounded border transition-colors ${
-                        hubPage >= totalPages
-                          ? 'border-slate-200 dark:border-slate-800 text-slate-400 dark:text-slate-600 cursor-not-allowed'
-                          : 'border-slate-300 dark:border-slate-700 text-slate-600 dark:text-slate-300 hover:bg-slate-100 dark:hover:bg-slate-800'
-                      }`}
+                      className={`px-2.5 py-1.5 text-xs font-medium rounded border transition-colors ${hubPage >= totalPages
+                        ? 'border-slate-200 dark:border-slate-800 text-slate-400 dark:text-slate-600 cursor-not-allowed'
+                        : 'border-slate-300 dark:border-slate-700 text-slate-600 dark:text-slate-300 hover:bg-slate-100 dark:hover:bg-slate-800'
+                        }`}
                     >
                       Next
                     </button>

@@ -37,10 +37,10 @@ function RightPanel() {
 
         {/* Headline */}
         <h2 className="mb-3 text-3xl font-bold leading-tight text-slate-900 motion-safe:animate-fade-up-200 dark:text-white">
-          One recording.<br />A month of content.
+          One upload.<br />One clear workflow.
         </h2>
         <p className="mb-10 text-sm leading-relaxed text-slate-600 motion-safe:animate-fade-up-400 dark:text-blue-200/70">
-          AI that transforms your podcast into optimized content<br />for every platform — automatically.
+          Transcribe the recording, review the conversation, and generate publish-ready drafts without leaving the same workspace.
         </p>
 
         {/* Glassmorphism card */}
@@ -234,7 +234,7 @@ export default function SignupPage() {
           {/* Heading */}
           <div className="mb-8 motion-safe:animate-fade-up-200">
             <h1 className="text-2xl font-bold text-slate-900 dark:text-slate-50">Create your account</h1>
-            <p className="text-slate-500 dark:text-slate-400 text-sm mt-1.5">Start repurposing your podcasts with AI</p>
+            <p className="text-slate-500 dark:text-slate-400 text-sm mt-1.5">Start turning recordings into transcripts, analysis, and publish-ready content</p>
           </div>
 
           {/* Google OAuth button */}

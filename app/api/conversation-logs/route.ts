@@ -1,8 +1,18 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { getRecentConversationLogs, generateQualityReport } from '@/lib/conversation-logger';
+import { supabaseAdmin } from '@/lib/supabase/server';
+import { isAdminEmail } from '@/lib/admin-access';
 
 export async function GET(request: NextRequest) {
   try {
+    const authHeader = request.headers.get('authorization');
+    const { data: { user } } = await supabaseAdmin.auth.getUser(
+      authHeader?.replace('Bearer ', '') || ''
+    );
+    if (!user || !isAdminEmail(user.email)) {
+      return NextResponse.json({ error: 'Forbidden' }, { status: 403 });
+    }
+
     const { searchParams } = new URL(request.url);
     const type = searchParams.get('type') || 'recent';
     const limit = parseInt(searchParams.get('limit') || '10');

@@ -3,8 +3,8 @@ import { supabaseAdmin } from '@/lib/supabase/server';
 import { isAuthorizedMaintenanceRequest } from '@/lib/maintenance-auth';
 import { getAppBaseUrl } from '@/lib/app-url';
 import { createReservation, failReservation, InsufficientCreditError } from '@/lib/billing/credit';
-import { requireCredits } from '@/lib/billing/middleware';
 import { estimateAnalysisJobCost, estimateContentGenerationCost } from '@/lib/billing/cost-map';
+import { isDemoUser } from '@/lib/demo-mode';
 import {
   buildContentBlockForJob,
   isAnalysisJobKey,
@@ -12,28 +12,47 @@ import {
   type ProjectGenerationJob,
 } from '@/lib/project-generation-jobs';
 
-async function completeJob(jobId: string) {
-  await (supabaseAdmin as any)
+function isMissingFailureNotifiedAtColumn(error: any): boolean {
+  return error?.code === 'PGRST204'
+    && typeof error?.message === 'string'
+    && error.message.includes('failure_notified_at');
+}
+
+async function updateJob(jobId: string, payload: Record<string, unknown>) {
+  const primaryResult = await (supabaseAdmin as any)
     .from('project_generation_jobs')
-    .update({
-      status: 'completed',
-      completed_at: new Date().toISOString(),
-      updated_at: new Date().toISOString(),
-      error_message: null,
-    })
+    .update(payload)
+    .eq('id', jobId);
+
+  if (!primaryResult.error || !isMissingFailureNotifiedAtColumn(primaryResult.error)) {
+    return primaryResult;
+  }
+
+  const { failure_notified_at, ...fallbackPayload } = payload;
+  return (supabaseAdmin as any)
+    .from('project_generation_jobs')
+    .update(fallbackPayload)
     .eq('id', jobId);
 }
 
+async function completeJob(jobId: string) {
+  await updateJob(jobId, {
+    status: 'completed',
+    completed_at: new Date().toISOString(),
+    updated_at: new Date().toISOString(),
+    error_message: null,
+    failure_notified_at: null,
+  });
+}
+
 async function failJob(jobId: string, message: string) {
-  await (supabaseAdmin as any)
-    .from('project_generation_jobs')
-    .update({
-      status: 'failed',
-      completed_at: new Date().toISOString(),
-      updated_at: new Date().toISOString(),
-      error_message: message,
-    })
-    .eq('id', jobId);
+  await updateJob(jobId, {
+    status: 'failed',
+    completed_at: new Date().toISOString(),
+    updated_at: new Date().toISOString(),
+    error_message: message,
+    failure_notified_at: null,
+  });
 }
 
 export async function POST(
@@ -41,21 +60,36 @@ export async function POST(
   { params }: { params: Promise<{ id: string }> }
 ) {
   try {
-    let isAuthorized = isAuthorizedMaintenanceRequest(request);
-    if (!isAuthorized) {
-      const authHeader = request.headers.get('Authorization');
-      if (authHeader) {
-        const token = authHeader.replace('Bearer ', '');
-        const { data: { user } } = await supabaseAdmin.auth.getUser(token);
-        isAuthorized = Boolean(user);
-      }
-    }
+    const isMaintenance = isAuthorizedMaintenanceRequest(request);
+    let callerUserId: string | null = null;
 
-    if (!isAuthorized) {
-      return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
+    if (!isMaintenance) {
+      const authHeader = request.headers.get('Authorization');
+      if (!authHeader) {
+        return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
+      }
+      const token = authHeader.replace('Bearer ', '');
+      const { data: { user } } = await supabaseAdmin.auth.getUser(token);
+      if (!user) {
+        return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
+      }
+      callerUserId = user.id;
     }
 
     const { id: projectId } = await params;
+
+    // Non-maintenance callers must own the project
+    if (callerUserId) {
+      const { data: projectOwner } = await supabaseAdmin
+        .from('projects')
+        .select('user_id')
+        .eq('id', projectId)
+        .single() as { data: { user_id: string } | null };
+
+      if (!projectOwner || projectOwner.user_id !== callerUserId) {
+        return NextResponse.json({ error: 'Forbidden' }, { status: 403 });
+      }
+    }
     const runningCheck = await (supabaseAdmin as any)
       .from('project_generation_jobs')
       .select('id')
@@ -81,18 +115,34 @@ export async function POST(
 
       if (!nextJob) break;
 
-      const claim = await (supabaseAdmin as any)
+      let claim = await (supabaseAdmin as any)
         .from('project_generation_jobs')
         .update({
           status: 'running',
           started_at: new Date().toISOString(),
           updated_at: new Date().toISOString(),
           error_message: null,
+          failure_notified_at: null,
         })
         .eq('id', nextJob.id)
         .eq('status', 'queued')
         .select('*')
         .maybeSingle();
+
+      if (claim.error && isMissingFailureNotifiedAtColumn(claim.error)) {
+        claim = await (supabaseAdmin as any)
+          .from('project_generation_jobs')
+          .update({
+            status: 'running',
+            started_at: new Date().toISOString(),
+            updated_at: new Date().toISOString(),
+            error_message: null,
+          })
+          .eq('id', nextJob.id)
+          .eq('status', 'queued')
+          .select('*')
+          .maybeSingle();
+      }
 
       const job = claim.data as ProjectGenerationJob | null;
       if (!job) {
@@ -110,16 +160,20 @@ export async function POST(
           throw new Error('Project transcription not available');
         }
 
+        const {
+          data: { user: projectOwner },
+        } = await supabaseAdmin.auth.admin.getUserById(project.user_id);
+
+        if (isDemoUser(projectOwner)) {
+          throw new Error('Demo account is read-only');
+        }
+
         const estimatedCost = job.kind === 'analysis'
           ? estimateAnalysisJobCost({
               targetKey: job.target_key,
               estimatedTranscriptLength: project.transcription_text.length,
             })
           : estimateContentGenerationCost([job.target_key]);
-
-        if (estimatedCost > 0) {
-          await requireCredits(project.user_id, estimatedCost);
-        }
 
         if (job.kind === 'analysis') {
           if (!isAnalysisJobKey(job.target_key)) {
@@ -178,11 +232,11 @@ export async function POST(
           if (!res.ok) {
             const data = await res.json().catch(() => null);
             if (reservation?.id) {
-              await failReservation(reservation.id, data?.error || `Failed to generate ${job.target_key}`).catch((billingError) => {
+              await failReservation(reservation.id, data?.message || data?.error || `Failed to generate ${job.target_key}`).catch((billingError) => {
                 console.error('[PROJECT-GENERATE-PROCESS] Failed to fail analysis reservation:', billingError);
               });
             }
-            throw new Error(data?.error || `Failed to generate ${job.target_key}`);
+            throw new Error(data?.message || data?.error || `Failed to generate ${job.target_key}`);
           }
 
           const reconcileResult = await res.json().catch(() => null);
@@ -212,7 +266,7 @@ export async function POST(
 
           if (!res.ok) {
             const data = await res.json().catch(() => null);
-            throw new Error(data?.error || `Failed to generate ${job.target_key}`);
+            throw new Error(data?.message || data?.error || `Failed to generate ${job.target_key}`);
           }
         }
 

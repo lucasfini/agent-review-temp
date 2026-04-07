@@ -7,12 +7,14 @@ import {
   calculateServiceCost,
   calculateTokenCost,
   estimateTranscriptionCost,
+  estimateAnalysisJobCost,
   formatCost,
   applyMargin,
   calculateMarginAmount,
   isValidServiceKey,
   getServiceInfo,
 } from '@/lib/billing/cost-map';
+import { prompts } from '@/lib/prompts/loader';
 
 describe('COST_MAP', () => {
   test('should have all required AI services', () => {
@@ -161,6 +163,28 @@ describe('estimateTranscriptionCost', () => {
     });
 
     expect(result.total).toBeLessThan(0.01); // Should be very cheap
+  });
+});
+
+describe('estimateAnalysisJobCost', () => {
+  test('should price insights using the configured insight extraction model', () => {
+    const estimatedTranscriptLength = 24000;
+    const estimatedTokens = Math.ceil(estimatedTranscriptLength / 4);
+    const estimated = estimateAnalysisJobCost({
+      targetKey: 'insights',
+      estimatedTranscriptLength,
+    });
+
+    const model = prompts.audioRepurpose.insightExtraction.model;
+    const expected = model.includes('gpt-5-nano')
+      ? calculateTokenCost('openai_gpt5_nano_input', 'openai_gpt5_nano_output', estimatedTokens, 1200).billedCost
+      : model.includes('gpt-5-mini')
+        ? calculateTokenCost('openai_gpt5_mini_input', 'openai_gpt5_mini_output', estimatedTokens, 1200).billedCost
+        : model.includes('gpt-5')
+          ? calculateTokenCost('openai_gpt5_input', 'openai_gpt5_output', estimatedTokens, 1200).billedCost
+          : calculateTokenCost('openai_gpt4o_mini_input', 'openai_gpt4o_mini_output', estimatedTokens, 1200).billedCost;
+
+    expect(estimated).toBeCloseTo(expected, 6);
   });
 });
 

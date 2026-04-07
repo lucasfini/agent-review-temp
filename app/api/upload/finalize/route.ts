@@ -111,7 +111,7 @@ export async function POST(request: NextRequest) {
       .eq('id', projectId);
 
     // Call /api/transcribe using fireAndForget
-    if (process.env.OPENAI_API_KEY_OPTIN) {
+    {
       const diarizationProvider = (process.env.ASSEMBLYAI_API_KEY || process.env.ASSEMBLYAI_ACCESS_KEY) ? 'assemblyai' : 'deepgram';
 
       const baseUrl = getAppBaseUrl();
@@ -161,8 +161,6 @@ export async function POST(request: NextRequest) {
               .neq('status', 'cancelled');
           })
       );
-    } else {
-      console.warn('OPENAI_API_KEY_OPTIN not found, transcription skipped');
     }
 
     return NextResponse.json({ success: true, message: 'Transcription queued' });
