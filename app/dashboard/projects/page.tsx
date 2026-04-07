@@ -1330,76 +1330,99 @@ export default function ProjectsPage() {
   };
 
   const prepareExportForProjects = async (projectIds: string[]) => {
-    // Fetch fresh project data + outputs for each selected project
-    const projectsWithOutputs = await Promise.all(
-      projectIds.map(async (projectId) => {
-        const fallbackProject = projects.find(p => p.id === projectId);
-        if (!fallbackProject) return null;
+    try {
+      // Fetch fresh project data + outputs for each selected project
+      const projectsWithOutputs = await Promise.all(
+        projectIds.map(async (projectId) => {
+          const fallbackProject = projects.find(p => p.id === projectId);
+          if (!fallbackProject) return null;
 
-        const { data: projectData } = await supabase
-          .from('projects')
-          .select('id, title, transcription_text, ai_summary, chapters, key_takeaways, social_quotes, speaker_data')
-          .eq('id', projectId)
-          .single();
+          const { data: projectData, error: projectError } = await supabase
+            .from('projects')
+            .select('id, title, transcription_text, ai_summary, chapters, key_takeaways, social_quotes, speaker_data')
+            .eq('id', projectId)
+            .single();
 
-        const { data: outputsData } = await supabase
-          .from('outputs')
-          .select('*')
-          .eq('project_id', projectId)
-          .order('created_at', { ascending: false });
-
-        const { data: insightsData } = await supabase
-          .from('insights')
-          .select('id, entity_id, label, category, simple_definition, full_explanation, why_it_matters, external_sources, transcript_excerpts, relationships')
-          .eq('project_id', projectId)
-          .order('confidence', { ascending: false });
-
-        const project = projectData || fallbackProject;
-
-        const buildPersonProfile = (insight: any) => {
-          if (insight.category !== 'person') return undefined;
-          const relationships = Array.isArray(insight.relationships) ? insight.relationships : [];
-          const getSection = (type: string) =>
-            relationships.find((relationship: any) => relationship?.type === type)?.description;
-
-          const whoTheyAre = getSection('person_summary') || insight.simple_definition || '';
-          const currentWork = getSection('current_work') || '';
-          const notableBackground = getSection('notable_background') || '';
-          const whyRelevant = getSection('episode_relevance') || insight.why_it_matters || '';
-
-          if (!whoTheyAre && !currentWork && !notableBackground && !whyRelevant) {
-            return undefined;
+          if (projectError) {
+            throw new Error(projectError.message || 'Failed to load project for export');
           }
 
-          return {
-            who_they_are: whoTheyAre,
-            current_work: currentWork,
-            notable_background: notableBackground,
-            why_relevant: whyRelevant,
+          const { data: outputsData, error: outputsError } = await supabase
+            .from('outputs')
+            .select('*')
+            .eq('project_id', projectId)
+            .order('created_at', { ascending: false });
+
+          if (outputsError) {
+            throw new Error(outputsError.message || 'Failed to load outputs for export');
+          }
+
+          const { data: insightsData, error: insightsError } = await supabase
+            .from('insights')
+            .select('id, entity_id, label, category, simple_definition, full_explanation, why_it_matters, external_sources, transcript_excerpts, relationships')
+            .eq('project_id', projectId)
+            .order('confidence', { ascending: false });
+
+          if (insightsError) {
+            throw new Error(insightsError.message || 'Failed to load insights for export');
+          }
+
+          const project = projectData || fallbackProject;
+
+          const buildPersonProfile = (insight: any) => {
+            if (insight.category !== 'person') return undefined;
+            const relationships = Array.isArray(insight.relationships) ? insight.relationships : [];
+            const getSection = (type: string) =>
+              relationships.find((relationship: any) => relationship?.type === type)?.description;
+
+            const whoTheyAre = getSection('person_summary') || insight.simple_definition || '';
+            const currentWork = getSection('current_work') || '';
+            const notableBackground = getSection('notable_background') || '';
+            const whyRelevant = getSection('episode_relevance') || insight.why_it_matters || '';
+
+            if (!whoTheyAre && !currentWork && !notableBackground && !whyRelevant) {
+              return undefined;
+            }
+
+            return {
+              who_they_are: whoTheyAre,
+              current_work: currentWork,
+              notable_background: notableBackground,
+              why_relevant: whyRelevant,
+            };
           };
-        };
 
-        return {
-          ...project,
-          outputs: outputsData || [],
-          // Include core content fields for export
-          transcription_text: (project as any).transcription_text,
-          ai_summary: (project as any).ai_summary,
-          chapters: (project as any).chapters,
-          key_takeaways: (project as any).key_takeaways,
-          social_quotes: (project as any).social_quotes,
-          insights: (insightsData || []).map((insight: any) => ({
-            ...insight,
-            person_profile: buildPersonProfile(insight),
-          })),
-          speaker_data: (project as any).speaker_data,
-        };
-      })
-    );
+          return {
+            ...project,
+            outputs: outputsData || [],
+            // Include core content fields for export
+            transcription_text: (project as any).transcription_text,
+            ai_summary: (project as any).ai_summary,
+            chapters: (project as any).chapters,
+            key_takeaways: (project as any).key_takeaways,
+            social_quotes: (project as any).social_quotes,
+            insights: (insightsData || []).map((insight: any) => ({
+              ...insight,
+              person_profile: buildPersonProfile(insight),
+            })),
+            speaker_data: (project as any).speaker_data,
+          };
+        })
+      );
 
-    const validProjects = projectsWithOutputs.filter(p => p !== null) as Array<Project & { outputs: Output[] }>;
-    setExportProjects(validProjects);
-    setShowExportModal(true);
+      const validProjects = projectsWithOutputs.filter(p => p !== null) as Array<Project & { outputs: Output[] }>;
+
+      if (validProjects.length === 0) {
+        showToast('Nothing available to export');
+        return;
+      }
+
+      setExportProjects(validProjects);
+      setShowExportModal(true);
+    } catch (error: any) {
+      console.error('[EXPORT] Failed to prepare export:', error);
+      showToast(error?.message || 'Failed to prepare export');
+    }
   };
 
   const handleBulkExport = async () => {
@@ -1462,14 +1485,20 @@ export default function ProjectsPage() {
       return;
     }
 
-    if (!user?.id || !project.id || !project.transcription_text) return;
+    if (!user?.id || !session?.access_token || !project.id || !project.transcription_text) {
+      showToast('You need to be signed in to run analysis.');
+      return;
+    }
 
     startCoverage(project.id, project.title);
 
     try {
       const response = await fetch(`/api/projects/${project.id}/run-coverage`, {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
+        headers: {
+          'Content-Type': 'application/json',
+          Authorization: `Bearer ${session.access_token}`,
+        },
         body: JSON.stringify({
           userId: user.id,
           force: true,
@@ -1485,6 +1514,7 @@ export default function ProjectsPage() {
       console.log('[Coverage] Analysis complete:', result);
     } catch (error: any) {
       console.error('[Coverage] Analysis failed:', error);
+      showToast(error?.message || 'Coverage analysis failed');
     } finally {
       stopCoverage(project.id);
     }
@@ -2984,41 +3014,6 @@ export default function ProjectsPage() {
                         </div>
                       )}
                       <div className="flex items-center gap-2">
-                        <DropdownMenu
-                          align="right"
-                          trigger={
-                            <button
-                              type="button"
-                              data-tour="export-btn"
-                              className="p-1.5 text-slate-500 dark:text-slate-300 hover:text-slate-900 dark:hover:text-white hover:bg-slate-100 dark:hover:bg-slate-800 rounded-lg transition-colors"
-                            >
-                              <MoreHorizontal className="w-4 h-4" />
-                              <span className="sr-only">More actions</span>
-                            </button>
-                          }
-                        >
-                          <DropdownMenuItem onClick={() => handleSingleExport(selectedProject)}>
-                            <Download className="w-4 h-4" />
-                            Export
-                          </DropdownMenuItem>
-                          {selectedProject.status === 'completed' && getProjectAnalysisOptions(selectedProject).insights && (
-                            <>
-                              <DropdownMenuSeparator />
-                              <DropdownMenuItem
-                                onClick={handleRedoInsights}
-                                disabled={insightsStatus.loading || insightsStatus.generating || insightsStatus.refreshing}
-                              >
-                                <Sparkles className={`w-4 h-4 ${insightsStatus.refreshing ? 'animate-spin' : ''}`} />
-                                {insightsStatus.refreshing ? 'Redoing insights...' : 'Redo insights'}
-                              </DropdownMenuItem>
-                            </>
-                          )}
-                          <DropdownMenuSeparator />
-                          <DropdownMenuItem onClick={handleRefresh} disabled={refreshing}>
-                            <RefreshCw className={`w-4 h-4 ${refreshing ? 'animate-spin' : ''}`} />
-                            {refreshing ? 'Refreshing...' : 'Refresh'}
-                          </DropdownMenuItem>
-                        </DropdownMenu>
                         <button
                           onClick={() => setContextSidebarOpen(!contextSidebarOpen)}
                           className="flex p-1.5 text-slate-500 dark:text-slate-400 hover:text-slate-700 dark:hover:text-slate-300 hover:bg-slate-100 dark:hover:bg-slate-800 rounded-md transition-colors"
@@ -3039,9 +3034,16 @@ export default function ProjectsPage() {
                   <div className="flex flex-col min-h-0 overflow-hidden">
                     {/* Panel Header */}
                     <div data-tour="transcript-header" className="flex-shrink-0 flex items-center justify-between gap-3 px-4 py-3 border-b border-slate-200 dark:border-slate-800 bg-white/50 dark:bg-slate-900/50 overflow-x-auto">
-                      <div className="flex items-center gap-2 flex-shrink-0">
+                      <div className="flex items-start gap-2 flex-shrink-0">
                         <BarChart2 className="w-4 h-4 text-blue-600 dark:text-blue-400" />
-                        <span className="text-slate-800 dark:text-slate-100 font-semibold text-sm whitespace-nowrap">Transcript</span>
+                        <div className="min-w-0">
+                          <span className="block text-slate-800 dark:text-slate-100 font-semibold text-sm whitespace-nowrap">Transcript</span>
+                          {parsedSpeakerData?.detectionMetadata && (
+                            <p className="mt-0.5 text-xs text-slate-500 dark:text-slate-400 whitespace-nowrap">
+                              {parsedSpeakerData.detectionMetadata.totalSpeakers} speaker{parsedSpeakerData.detectionMetadata.totalSpeakers !== 1 ? 's' : ''} • {parsedSpeakerData.detectionMetadata.totalSegments} segments
+                            </p>
+                          )}
+                        </div>
                       </div>
                       <div className="flex items-center justify-end gap-2 flex-shrink-0 whitespace-nowrap">
                         {parsedSpeakerData && (
@@ -3078,21 +3080,69 @@ export default function ProjectsPage() {
                             </select>
                           </>
                         )}
-                        <button
-                          onClick={() => handleRunCoverage(selectedProject)}
-                          disabled={isDemoMode || runningCoverageIds.has(selectedProject.id) || !selectedProject.transcription_text}
-                          className={`inline-flex items-center gap-1.5 px-2.5 py-1 text-xs font-medium rounded-md border transition-colors disabled:opacity-60 disabled:cursor-not-allowed ${runningCoverageIds.has(selectedProject.id)
-                            ? 'border-cyan-300 dark:border-cyan-800/40 bg-cyan-50 dark:bg-cyan-900/20 text-cyan-700 dark:text-cyan-300'
-                            : 'border-slate-300 dark:border-slate-700 bg-white dark:bg-slate-800/80 text-slate-700 dark:text-slate-100 hover:bg-slate-50 dark:hover:bg-slate-700'
-                            }`}
-                          title={isDemoMode ? 'Demo account is read-only' : !selectedProject.transcription_text ? 'Analysis requires a transcript' : 'Run analysis'}
+                        <DropdownMenu
+                          align="right"
+                          side="bottom"
+                          offset={8}
+                          portal
+                          trigger={
+                            <button
+                              type="button"
+                              data-tour="export-btn"
+                              className={`inline-flex items-center gap-1.5 px-2.5 py-1 text-xs font-medium rounded-md border transition-colors disabled:opacity-60 disabled:cursor-not-allowed ${runningCoverageIds.has(selectedProject.id)
+                                ? 'border-cyan-300 dark:border-cyan-800/40 bg-cyan-50 dark:bg-cyan-900/20 text-cyan-700 dark:text-cyan-300'
+                                : 'border-slate-300 dark:border-slate-700 bg-white dark:bg-slate-800/80 text-slate-700 dark:text-slate-100 hover:bg-slate-50 dark:hover:bg-slate-700'
+                                }`}
+                              title={isDemoMode ? 'Demo account is read-only' : !selectedProject.transcription_text ? 'Analysis requires a transcript' : 'More actions'}
+                            >
+                              {runningCoverageIds.has(selectedProject.id) ? (
+                                <Loader2 className="w-4 h-4 animate-spin" />
+                              ) : (
+                                <MoreHorizontal className="w-4 h-4" />
+                              )}
+                              <span className="sr-only">More actions</span>
+                            </button>
+                          }
                         >
-                          {runningCoverageIds.has(selectedProject.id) ? (
-                            <><Loader2 className="w-4 h-4 animate-spin" />Analyzing...</>
-                          ) : (
-                            <><ScanSearch className="w-4 h-4" />Run Analysis</>
+                          <DropdownMenuItem
+                            onClick={() => handleRunCoverage(selectedProject)}
+                            disabled={isDemoMode || runningCoverageIds.has(selectedProject.id) || !selectedProject.transcription_text}
+                          >
+                            {runningCoverageIds.has(selectedProject.id) ? (
+                              <>
+                                <Loader2 className="w-4 h-4 animate-spin" />
+                                Analyzing...
+                              </>
+                            ) : (
+                              <>
+                                <ScanSearch className="w-4 h-4" />
+                                Run Analysis
+                              </>
+                            )}
+                          </DropdownMenuItem>
+                          {selectedProject.status === 'completed' && getProjectAnalysisOptions(selectedProject).insights && (
+                            <>
+                              <DropdownMenuSeparator />
+                              <DropdownMenuItem
+                                onClick={handleRedoInsights}
+                                disabled={insightsStatus.loading || insightsStatus.generating || insightsStatus.refreshing}
+                              >
+                                <Sparkles className={`w-4 h-4 ${insightsStatus.refreshing ? 'animate-spin' : ''}`} />
+                                {insightsStatus.refreshing ? 'Redoing insights...' : 'Redo insights'}
+                              </DropdownMenuItem>
+                            </>
                           )}
-                        </button>
+                          <DropdownMenuSeparator />
+                          <DropdownMenuItem onClick={handleRefresh} disabled={refreshing}>
+                            <RefreshCw className={`w-4 h-4 ${refreshing ? 'animate-spin' : ''}`} />
+                            {refreshing ? 'Refreshing...' : 'Refresh'}
+                          </DropdownMenuItem>
+                          <DropdownMenuSeparator />
+                          <DropdownMenuItem onClick={() => handleSingleExport(selectedProject)}>
+                            <Download className="w-4 h-4" />
+                            Export
+                          </DropdownMenuItem>
+                        </DropdownMenu>
                       </div>
                     </div>
 

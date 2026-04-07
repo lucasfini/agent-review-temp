@@ -51,7 +51,3 @@ async function handleReconcile(request: NextRequest) {
 export async function POST(request: NextRequest) {
   return handleReconcile(request);
 }
-
-export async function GET(request: NextRequest) {
-  return handleReconcile(request);
-}

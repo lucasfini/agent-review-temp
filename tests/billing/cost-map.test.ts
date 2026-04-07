@@ -54,9 +54,9 @@ describe('calculateServiceCost', () => {
     const durationSeconds = 3600; // 1 hour
     const result = calculateServiceCost('assemblyai_transcription', durationSeconds);
 
-    expect(result.rawCost).toBeCloseTo(0.27, 4);
-    expect(result.billedCost).toBeCloseTo(0.3645, 4);
-    expect(result.marginPercent).toBe(35);
+    expect(result.rawCost).toBeCloseTo(0.37, 4);
+    expect(result.billedCost).toBeCloseTo(0.5365, 4);
+    expect(result.marginPercent).toBe(45);
     expect(result.unitType).toBe('seconds');
   });
 
@@ -129,7 +129,7 @@ describe('estimateTranscriptionCost', () => {
       tier: 'basic',
     });
 
-    expect(result.transcription).toBeCloseTo(0.3645, 4);
+    expect(result.transcription).toBeCloseTo(0.5365, 4);
     expect(result.aiProcessing).toBe(0); // Basic tier has no AI processing
     expect(result.total).toBe(result.transcription);
   });
@@ -140,7 +140,7 @@ describe('estimateTranscriptionCost', () => {
       tier: 'pro',
     });
 
-    expect(result.transcription).toBeCloseTo(0.3645, 4);
+    expect(result.transcription).toBeCloseTo(0.5365, 4);
     expect(result.aiProcessing).toBeGreaterThan(0); // Pro includes name extraction and summary
     expect(result.total).toBeGreaterThan(result.transcription);
     expect(result.breakdown.length).toBeGreaterThan(1);

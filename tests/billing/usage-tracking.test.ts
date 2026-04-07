@@ -146,35 +146,35 @@ describe('Token Cost Calculations', () => {
 describe('AssemblyAI Duration Cost Calculations', () => {
   test('should calculate cost for 1 minute of audio', () => {
     const durationSeconds = 60;
-    const providerRate = 0.27 / 3600; // $0.27 per hour in seconds
+    const providerRate = 0.37 / 3600; // $0.37 per hour (Universal-3)
 
     const rawCost = durationSeconds * providerRate;
-    const billedCost = rawCost * 1.35;
+    const billedCost = rawCost * 1.45;
 
-    expect(rawCost).toBeCloseTo(0.0045, 6);
-    expect(billedCost).toBeCloseTo(0.006075, 6);
+    expect(rawCost).toBeCloseTo(0.006167, 6);
+    expect(billedCost).toBeCloseTo(0.008942, 6);
   });
 
   test('should calculate cost for 1 hour of audio', () => {
     const durationSeconds = 3600;
-    const providerRate = 0.000075; // $0.27/hour = $0.000075/second
+    const providerRate = 0.000102778; // $0.37/hour (Universal-3)
 
     const rawCost = durationSeconds * providerRate;
-    const billedCost = rawCost * 1.35;
+    const billedCost = rawCost * 1.45;
 
-    expect(rawCost).toBeCloseTo(0.27, 4);
-    expect(billedCost).toBeCloseTo(0.3645, 4);
+    expect(rawCost).toBeCloseTo(0.37, 4);
+    expect(billedCost).toBeCloseTo(0.5365, 4);
   });
 
   test('should calculate cost for 30 minute podcast', () => {
     const durationSeconds = 1800;
-    const providerRate = 0.000075;
+    const providerRate = 0.000102778; // $0.37/hour (Universal-3)
 
     const rawCost = durationSeconds * providerRate;
-    const billedCost = rawCost * 1.35;
+    const billedCost = rawCost * 1.45;
 
-    expect(rawCost).toBeCloseTo(0.135, 4);
-    expect(billedCost).toBeCloseTo(0.18225, 5);
+    expect(rawCost).toBeCloseTo(0.185, 4);
+    expect(billedCost).toBeCloseTo(0.26825, 5);
   });
 });
 
@@ -220,7 +220,7 @@ describe('Usage Metadata Formatting', () => {
 describe('Batch Usage Aggregation', () => {
   test('should calculate total cost for multiple services', () => {
     const usageEvents = [
-      { serviceKey: 'assemblyai_transcription', billedCost: 0.3645 },
+      { serviceKey: 'assemblyai_transcription', billedCost: 0.5365 },
       { serviceKey: 'openai_gpt4o_mini_input', billedCost: 0.0002 },
       { serviceKey: 'openai_gpt4o_mini_output', billedCost: 0.0008 },
       { serviceKey: 'claude_sonnet_input', billedCost: 0.03 },
@@ -229,12 +229,12 @@ describe('Batch Usage Aggregation', () => {
 
     const totalBilledCost = usageEvents.reduce((sum, event) => sum + event.billedCost, 0);
 
-    expect(totalBilledCost).toBeCloseTo(0.4705, 4);
+    expect(totalBilledCost).toBeCloseTo(0.6425, 4);
   });
 
   test('should group usage by provider', () => {
     const usageEvents = [
-      { provider: 'assemblyai', billedCost: 0.3645, units: 3600 },
+      { provider: 'assemblyai', billedCost: 0.5365, units: 3600 },
       { provider: 'openai', billedCost: 0.0002, units: 1000 },
       { provider: 'openai', billedCost: 0.0008, units: 500 },
       { provider: 'anthropic', billedCost: 0.03, units: 10000 },
@@ -262,11 +262,11 @@ describe('Pre-flight Estimate Accuracy', () => {
     // Estimate based on file size
     const fileSizeMB = 5;
     const estimatedDurationSeconds = Math.ceil(fileSizeMB * 60); // 1MB ≈ 60 seconds
-    const estimatedCost = estimatedDurationSeconds * 0.000075 * 1.35;
+    const estimatedCost = estimatedDurationSeconds * 0.000102778 * 1.45;
 
     // Actual duration (slightly different)
     const actualDurationSeconds = 280; // 4 minutes 40 seconds
-    const actualCost = actualDurationSeconds * 0.000075 * 1.35;
+    const actualCost = actualDurationSeconds * 0.000102778 * 1.45;
 
     const difference = Math.abs(estimatedCost - actualCost);
     const percentDifference = (difference / actualCost) * 100;

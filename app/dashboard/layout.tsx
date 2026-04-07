@@ -15,12 +15,15 @@ import CompactFooter from '@/components/site/CompactFooter';
 import { calculateOverallProgress, getUserFacingProcessingMessage } from '@/lib/tier-progress-config';
 import { normalizeTier } from '@/lib/tier-config';
 import { useActiveProcessingProjects, type ActiveProcessingProject } from '@/lib/hooks/useActiveProcessingProjects';
+import { UploadProgressSyncProvider, useUploadProgressSync } from '@/lib/context/upload-progress-sync';
 
-export default function DashboardLayout({
+function DashboardLayoutContent({
   children,
 }: {
   children: React.ReactNode;
 }) {
+  const { syncedUploads } = useUploadProgressSync();
+
   const { user, loading, isDemoMode } = useAuth();
   const [showWelcomeModal, setShowWelcomeModal] = useState(false);
   const [showFirstLoginWelcome, setShowFirstLoginWelcome] = useState(false);
@@ -41,6 +44,13 @@ export default function DashboardLayout({
     || pathname === '/dashboard/usage'
     || pathname === '/dashboard/contact'
     || pathname === '/dashboard/analytics';
+  const syncedProjectIds = new Set(syncedUploads.map((upload) => upload.projectId).filter(Boolean));
+  const displayedUploads = isUploadRoute
+    ? syncedUploads
+    : [
+        ...syncedUploads,
+        ...activeUploads.filter((project) => !syncedProjectIds.has(project.id)),
+      ];
 
   useEffect(() => {
     if (!loading && !user) {
@@ -118,42 +128,55 @@ export default function DashboardLayout({
           <div
             className={`flex flex-col min-w-0 w-full md:w-0 flex-1 transition-[margin] duration-200 ease-out ${usesDocumentFlow ? 'overflow-visible' : 'overflow-hidden'} ${isSidebarCollapsed ? 'md:ml-20' : 'md:ml-64'}`}
           >
-            <main className={`${usesDocumentFlow ? 'overflow-visible' : 'flex-1 overflow-y-auto'} relative focus:outline-none${activeUploads.length > 0 ? ' pb-16' : ''}`}>
+            <main className={`${usesDocumentFlow ? 'overflow-visible' : 'flex-1 overflow-y-auto'} relative focus:outline-none${displayedUploads.length > 0 ? ' pb-16' : ''}`}>
               {children}
             </main>
             {usesDocumentFlow && <CompactFooter inDashboard={true} />}
           </div>
 
           {/* Global upload/transcription progress banner */}
-          {activeUploads.length > 0 && (
+          {displayedUploads.length > 0 && (
             <div
               className={`fixed bottom-0 left-0 right-0 z-50 flex items-center gap-3 border-t border-slate-200 bg-white px-3 py-2 text-slate-900 shadow-lg transition-[left] duration-200 ease-out dark:border-transparent dark:bg-gray-900 dark:text-white sm:px-6 sm:py-3 ${isSidebarCollapsed ? 'md:left-20' : 'md:left-64'}`}
             >
               <Loader2 className="h-4 w-4 animate-spin flex-shrink-0 text-blue-400" />
               <div className="flex-1 min-w-0">
                 {(() => {
-                  const activeUpload = activeUploads[0] as ActiveProcessingProject;
-                  const stage = activeUpload.processing_stage ||
-                    (activeUpload.status === 'uploading' ? 'uploading' : 'transcribing');
-                  const tier = normalizeTier(activeUpload.performance_level || 'content_kit');
-                  const overallProgress = calculateOverallProgress(
-                    tier,
-                    stage,
-                    typeof activeUpload.processing_progress === 'number' ? activeUpload.processing_progress : 0
+                  const activeUpload = displayedUploads[0] as ActiveProcessingProject;
+                  const isSyncedUpload = 'processingTier' in activeUpload;
+                  const stage = isSyncedUpload
+                    ? activeUpload.processingStage || 'pending'
+                    : activeUpload.processing_stage || (activeUpload.status === 'uploading' ? 'uploading' : 'transcribing');
+                  const tier = normalizeTier(
+                    isSyncedUpload
+                      ? activeUpload.processingTier
+                      : activeUpload.performance_level || 'content_kit'
                   );
-                  const message = getUserFacingProcessingMessage(
-                    tier,
-                    stage,
-                    activeUpload.processing_message
-                  );
+                  const overallProgress = isSyncedUpload
+                    ? Math.min(100, Math.max(0, Math.round(activeUpload.progress)))
+                    : calculateOverallProgress(
+                        tier,
+                        stage,
+                        typeof activeUpload.processing_progress === 'number' ? activeUpload.processing_progress : 0
+                      );
+                  const message = isSyncedUpload
+                    ? (activeUpload.processingMessage || getUserFacingProcessingMessage(tier, stage, undefined))
+                    : getUserFacingProcessingMessage(
+                        tier,
+                        stage,
+                        activeUpload.processing_message
+                      );
+                  const title = isSyncedUpload
+                    ? activeUpload.title
+                    : activeUpload.title || activeUpload.audio_file_name;
 
                   return (
                     <>
                       <p className="text-sm font-medium truncate leading-snug">
                         {message}
                         <span className="text-slate-400"> — </span>
-                        <span className="text-slate-600 dark:text-slate-300 truncate">&ldquo;{activeUpload.title || activeUpload.audio_file_name}&rdquo;</span>
-                        {activeUploads.length > 1 && <span className="text-slate-400"> +{activeUploads.length - 1} more</span>}
+                        <span className="text-slate-600 dark:text-slate-300 truncate">&ldquo;{title}&rdquo;</span>
+                        {displayedUploads.length > 1 && <span className="text-slate-400"> +{displayedUploads.length - 1} more</span>}
                       </p>
                       <div className="mt-1 flex items-center gap-3">
                         <div className="h-1 flex-1 bg-slate-200 dark:bg-gray-700 rounded-full overflow-hidden relative">
@@ -215,5 +238,17 @@ export default function DashboardLayout({
         </button>
       )}
     </CoverageProgressProvider>
+  );
+}
+
+export default function DashboardLayout({
+  children,
+}: {
+  children: React.ReactNode;
+}) {
+  return (
+    <UploadProgressSyncProvider>
+      <DashboardLayoutContent>{children}</DashboardLayoutContent>
+    </UploadProgressSyncProvider>
   );
 }

@@ -1,5 +1,6 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { supabaseAdmin } from '@/lib/supabase/server';
+import { isDemoUser } from '@/lib/demo-mode';
 import { getSignedUrl } from '@aws-sdk/s3-request-presigner';
 import { PutObjectCommand } from '@aws-sdk/client-s3';
 import { r2Client, BUCKET_NAME } from '@/lib/r2';
@@ -41,7 +42,7 @@ export async function POST(request: NextRequest) {
             return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
         }
 
-        if (user.email === process.env.DEMO_EMAIL) {
+        if (isDemoUser(user)) {
             return NextResponse.json({ error: 'Demo account cannot upload' }, { status: 403 });
         }
 

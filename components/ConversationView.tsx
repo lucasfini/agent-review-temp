@@ -1033,28 +1033,8 @@ export default function ConversationView({
 
   return (
     <div className={`h-full flex flex-col ${className}`}>
-      {/* Conversation Header */}
-      <div className="flex-shrink-0 p-4 pb-3 flex flex-col gap-3 lg:flex-row lg:items-center lg:justify-between">
-        <div className="flex items-center gap-4">
-          {/* Conversation Info */}
-          <div className="flex items-center gap-3">
-            <div className="flex items-center justify-center h-9 w-9 rounded-full bg-blue-50 dark:bg-blue-900/20 text-blue-600">
-              <MessageCircle className="h-4 w-4" />
-            </div>
-            <div>
-              <h4 className="text-sm font-semibold text-slate-900 dark:text-slate-50">Conversation</h4>
-              <p className="text-xs text-slate-500 dark:text-slate-400">
-                {detectionMetadata.totalSpeakers} speaker{detectionMetadata.totalSpeakers !== 1 ? 's' : ''} • {detectionMetadata.totalSegments} segments
-              </p>
-            </div>
-          </div>
-
-        </div>
-
-      </div>
-
       {/* Conversation Segments */}
-      <div ref={transcriptContainerRef} className="flex-1 overflow-y-auto px-4 pb-4" data-tour="conversation-feed">
+      <div ref={transcriptContainerRef} className="flex-1 overflow-y-auto px-4 pt-4 pb-4" data-tour="conversation-feed">
         {/* Resume auto-scroll button — sticky at top when user has scrolled away */}
         {autoScrollPaused && (
           <div className="sticky top-2 z-10 flex justify-center mb-2 pointer-events-none">

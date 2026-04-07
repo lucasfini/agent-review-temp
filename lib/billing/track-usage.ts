@@ -127,7 +127,7 @@ export async function trackOpenAIUsage(params: {
       units: usage.promptTokens + usage.completionTokens,
       unitType: 'tokens',
       rawCost: totalRawCost,
-      marginPercent: 35,
+      marginPercent: 45,
       billedCost: totalBilledCost,
       metadata: {
         model: modelName,
@@ -251,7 +251,7 @@ export async function trackAnthropicUsage(params: {
       units: usage.inputTokens,
       unitType: 'input_tokens',
       rawCost: costResult.breakdown.input.rawCost,
-      marginPercent: 35,
+      marginPercent: 45,
       billedCost: costResult.breakdown.input.billedCost,
       metadata: {
         model: modelName,
@@ -443,7 +443,7 @@ export async function trackBatchUsage(params: {
         units: event.units,
         unitType: event.unitType,
         rawCost: event.rawCost,
-        marginPercent: 35,
+        marginPercent: 45,
         billedCost: event.billedCost,
         metadata: event.metadata,
         status: reservationId ? 'pending' : 'completed',

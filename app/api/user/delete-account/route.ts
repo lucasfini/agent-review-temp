@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { deleteUserAccountData } from '@/lib/account-lifecycle';
 import { supabaseAdmin } from '@/lib/supabase/server';
+import { isDemoUser } from '@/lib/demo-mode';
 
 export const runtime = 'nodejs';
 export const maxDuration = 300;
@@ -16,7 +17,7 @@ export async function DELETE(request: NextRequest) {
       return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
     }
 
-    if (user.email === process.env.DEMO_EMAIL || user.email === 'admin@audiorepurpose.com') {
+    if (isDemoUser(user) || user.email === 'admin@audiorepurpose.com') {
       return NextResponse.json({ error: 'System accounts cannot be deleted' }, { status: 403 });
     }
 

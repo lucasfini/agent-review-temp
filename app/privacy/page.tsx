@@ -1,3 +1,5 @@
+import { PRIVACY_EMAIL } from '@/lib/site-config';
+
 export default function PrivacyPage() {
   return (
     <div className="min-h-screen bg-white text-slate-700 dark:bg-slate-950 dark:text-slate-200">
@@ -64,7 +66,7 @@ export default function PrivacyPage() {
           <section>
             <h2 className="text-lg font-semibold text-slate-900 dark:text-slate-50 mb-2">8. Contact</h2>
             <p>
-              For privacy inquiries, contact us at privacy@audiorepurpose.com.
+              For privacy inquiries, contact us at {PRIVACY_EMAIL}.
             </p>
           </section>
         </div>

@@ -7,6 +7,7 @@ import { billingErrorResponse, requireCredits } from '@/lib/billing/middleware';
 import { createReservation, failReservation, settleReservation } from '@/lib/billing/credit';
 import { getOpenAIApiKeyForUser } from '@/lib/openai/consent';
 import { RouteAccessError, requireProjectOwner } from '@/lib/api/route-auth';
+import { isDemoUser } from '@/lib/demo-mode';
 
 // Force dynamic to prevent caching
 export const dynamic = 'force-dynamic';
@@ -164,7 +165,7 @@ export async function POST(
       return NextResponse.json({ error: 'Missing projectId' }, { status: 400 });
     }
 
-    if (user.email === process.env.DEMO_EMAIL) {
+    if (isDemoUser(user)) {
       return NextResponse.json({ error: 'Demo account is read-only' }, { status: 403 });
     }
 

@@ -24,11 +24,29 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
   const [loading, setLoading] = useState(true);
 
   useEffect(() => {
+    const ensureWelcomeBonus = async (activeSession: Session | null) => {
+      if (!activeSession?.access_token || !activeSession.user || isDemoUser(activeSession.user)) {
+        return;
+      }
+
+      try {
+        await fetch('/api/billing/welcome-bonus', {
+          method: 'POST',
+          headers: {
+            Authorization: `Bearer ${activeSession.access_token}`,
+          },
+        });
+      } catch (error) {
+        console.warn('[AUTH] Failed to ensure welcome bonus:', error);
+      }
+    };
+
     const getSession = async () => {
       const { data: { session } } = await supabase.auth.getSession();
       setSession(session);
       setUser(session?.user ?? null);
       setLoading(false);
+      void ensureWelcomeBonus(session);
     };
 
     getSession();
@@ -73,6 +91,10 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
           } catch (error) {
             console.warn('[AUTH] Failed to persist signup consents:', error);
           }
+        }
+
+        if (event === 'SIGNED_IN') {
+          void ensureWelcomeBonus(session);
         }
       }
     );

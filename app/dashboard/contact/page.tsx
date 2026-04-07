@@ -2,10 +2,9 @@
 
 import { useMemo, useState } from 'react';
 import { useAuth } from '@/lib/auth/context';
+import { SUPPORT_EMAIL } from '@/lib/site-config';
 import { AlertCircle, Copy, LifeBuoy, Loader2, Mail, Send, Sparkles } from 'lucide-react';
 import { toast } from 'sonner';
-
-const SUPPORT_EMAIL = 'support@audiorepurpose.com';
 
 type Category = 'bug' | 'feedback' | 'billing' | 'account' | 'feature';
 type Severity = 'low' | 'normal' | 'high';

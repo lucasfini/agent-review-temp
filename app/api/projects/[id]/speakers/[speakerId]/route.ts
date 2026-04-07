@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { supabaseAdmin } from '@/lib/supabase/server';
 import { RouteAccessError, requireProjectOwner } from '@/lib/api/route-auth';
+import { isDemoUser } from '@/lib/demo-mode';
 
 export const dynamic = 'force-dynamic';
 export const revalidate = 0;
@@ -18,7 +19,7 @@ export async function PATCH(
       return NextResponse.json({ error: 'Missing required fields' }, { status: 400 });
     }
 
-    if (user.email === process.env.DEMO_EMAIL) {
+    if (isDemoUser(user)) {
       return NextResponse.json({ error: 'Demo account is read-only' }, { status: 403 });
     }
 
@@ -141,7 +142,7 @@ export async function DELETE(
       return NextResponse.json({ error: 'Missing reassignToSpeakerId' }, { status: 400 });
     }
 
-    if (user.email === process.env.DEMO_EMAIL) {
+    if (isDemoUser(user)) {
       return NextResponse.json({ error: 'Demo account is read-only' }, { status: 403 });
     }
 

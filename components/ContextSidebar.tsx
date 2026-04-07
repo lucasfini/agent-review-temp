@@ -716,21 +716,17 @@ export function ContextSidebar({
           );
 
           return (
-            <div className="mx-auto inline-grid grid-cols-[auto_auto_auto] items-stretch gap-2 border border-slate-200/80 bg-white/70 px-1 py-1 shadow-sm dark:border-slate-700/70 dark:bg-slate-900/60">
-              <div className="min-w-0 self-stretch">
-                <div className="flex h-full items-stretch gap-1">
-                  {reviewTabs.map(renderTabButton)}
-                </div>
+            <div className="flex w-full items-stretch gap-2 border border-slate-200/80 bg-white/70 px-1 py-1 shadow-sm dark:border-slate-700/70 dark:bg-slate-900/60">
+              <div className="flex flex-1 items-stretch gap-1">
+                {reviewTabs.map(renderTabButton)}
               </div>
 
               <div className="flex items-stretch justify-center py-0">
                 <div className="h-full w-px bg-slate-300/80 dark:bg-slate-700/80" />
               </div>
 
-              <div className="min-w-0 self-stretch">
-                <div className="flex h-full items-stretch gap-1">
-                  {contentTabs.map(renderTabButton)}
-                </div>
+              <div className="flex flex-1 items-stretch gap-1">
+                {contentTabs.map(renderTabButton)}
               </div>
             </div>
           );

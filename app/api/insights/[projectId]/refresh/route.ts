@@ -10,6 +10,7 @@ import { RouteAccessError, requireProjectOwner } from '@/lib/api/route-auth';
 import { estimateAnalysisJobCost } from '@/lib/billing/cost-map';
 import { billingErrorResponse, requireCredits } from '@/lib/billing/middleware';
 import { createReservation, failReservation, settleReservation } from '@/lib/billing/credit';
+import { isDemoUser } from '@/lib/demo-mode';
 
 interface RouteContext {
   params: Promise<{
@@ -31,7 +32,7 @@ export async function POST(request: NextRequest, context: RouteContext) {
       'performance_level, transcription_text'
     );
 
-    if (user.email === process.env.DEMO_EMAIL) {
+    if (isDemoUser(user)) {
       return NextResponse.json({ error: 'Demo account is read-only' }, { status: 403 });
     }
 

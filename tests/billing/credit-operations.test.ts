@@ -179,7 +179,7 @@ describe('Transaction Metadata', () => {
   });
 
   test('should format transaction reason', () => {
-    const amount = 0.3645;
+    const amount = 0.5365;
     const duration = 60; // 1 minute
     const reason = `AssemblyAI Transcription - ${(duration / 60).toFixed(1)} minutes`;
 
@@ -244,18 +244,18 @@ describe('Lifetime Totals Calculations', () => {
 describe('Usage Event Aggregation', () => {
   test('should sum costs from multiple events', () => {
     const events = [
-      { billedCost: 0.3645, serviceKey: 'assemblyai_transcription' },
+      { billedCost: 0.5365, serviceKey: 'assemblyai_transcription' },
       { billedCost: 0.0002, serviceKey: 'openai_gpt4o_mini_input' },
       { billedCost: 0.0008, serviceKey: 'openai_gpt4o_mini_output' },
     ];
 
     const totalCost = events.reduce((sum, event) => sum + event.billedCost, 0);
-    expect(totalCost).toBeCloseTo(0.3655, 4);
+    expect(totalCost).toBeCloseTo(0.5375, 4);
   });
 
   test('should group events by provider', () => {
     const events = [
-      { provider: 'assemblyai', billedCost: 0.3645 },
+      { provider: 'assemblyai', billedCost: 0.5365 },
       { provider: 'openai', billedCost: 0.0002 },
       { provider: 'openai', billedCost: 0.0008 },
     ];

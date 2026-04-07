@@ -6,6 +6,7 @@
 import { NextRequest, NextResponse } from 'next/server';
 import Stripe from 'stripe';
 import { supabaseAdmin } from '@/lib/supabase/server';
+import { isDemoUser } from '@/lib/demo-mode';
 import { getAppBaseUrl } from '@/lib/app-url';
 import { resolveCreditPackage } from '@/lib/billing/credit-packages';
 
@@ -29,7 +30,7 @@ export async function POST(request: NextRequest) {
     }
 
     // Demo account guard
-    if (user.email === process.env.DEMO_EMAIL) {
+    if (isDemoUser(user)) {
       return NextResponse.json({ error: 'Demo account is read-only' }, { status: 403 });
     }
 

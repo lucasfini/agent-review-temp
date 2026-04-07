@@ -28,6 +28,9 @@ export default function CompactFooter({ inDashboard = false }: { inDashboard?: b
         </div>
 
         <div className="flex items-center gap-4">
+          <Link href="/contact" className="hover:text-slate-600 dark:hover:text-slate-300 transition-colors">
+            Contact
+          </Link>
           <Link href="/privacy" className="hover:text-slate-600 dark:hover:text-slate-300 transition-colors">
             Privacy
           </Link>

@@ -1,5 +1,6 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { supabaseAdmin } from '@/lib/supabase/server';
+import { isDemoUser } from '@/lib/demo-mode';
 import type { ContentBlock } from '@/lib/content-types';
 import { initializeGenerationProgress } from '@/lib/generation-progress';
 import { aiRatelimit } from '@/lib/rate-limit';
@@ -60,7 +61,7 @@ export async function POST(request: NextRequest) {
     }
 
     // Demo account guard
-    if (user.email === process.env.DEMO_EMAIL) {
+    if (isDemoUser(user)) {
       return NextResponse.json({ error: 'Demo account is read-only' }, { status: 403 });
     }
 

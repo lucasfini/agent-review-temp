@@ -63,12 +63,12 @@ export const COST_MAP: Record<string, ServiceCost> = {
     serviceName: 'AssemblyAI Transcription',
     provider: 'assemblyai',
     unitType: 'seconds',
-    providerRate: 0.000075, // $0.27/hour = $0.000075/second
-    providerRateDisplay: '$0.27/hour',
+    providerRate: 0.000102778, // $0.37/hour = $0.000102778/second (Universal-3)
+    providerRateDisplay: '$0.37/hour',
     marginPercent: 45,
-    billedRate: 0.000075 * 1.45, // $0.000075 * 1.45
-    billedRateDisplay: '$0.3915/hour',
-    notes: 'Universal-1 model. Includes speaker diarization for 95+ languages.',
+    billedRate: 0.000102778 * 1.45, // = $0.000149028/sec = $0.5365/hour
+    billedRateDisplay: '$0.54/hour',
+    notes: 'Universal-3 (universal-3-pro) model. Highest accuracy. Includes speaker diarization.',
   },
 
   // ============================================================================
@@ -534,6 +534,38 @@ export function estimateTranscriptionCost(params: {
     );
     aiProcessingCost += quotes.billedCost;
     breakdown.push({ service: 'Social Quotes', cost: quotes.billedCost });
+  }
+
+  if (features.insights) {
+    const model = prompts.audioRepurpose.insightExtraction.model;
+    const serviceKeys = model.includes('gpt-5-nano')
+      ? {
+          input: 'openai_gpt5_nano_input',
+          output: 'openai_gpt5_nano_output',
+        }
+      : model.includes('gpt-5-mini')
+        ? {
+            input: 'openai_gpt5_mini_input',
+            output: 'openai_gpt5_mini_output',
+          }
+        : model.includes('gpt-5')
+          ? {
+              input: 'openai_gpt5_input',
+              output: 'openai_gpt5_output',
+            }
+          : {
+              input: 'openai_gpt4o_mini_input',
+              output: 'openai_gpt4o_mini_output',
+            };
+
+    const insights = calculateTokenCost(
+      serviceKeys.input,
+      serviceKeys.output,
+      estimatedTokens,
+      1200
+    );
+    aiProcessingCost += insights.billedCost;
+    breakdown.push({ service: 'Insights Extraction', cost: insights.billedCost });
   }
 
   if (features.contentGeneration && normalizedTier === 'repurpose_pack') {

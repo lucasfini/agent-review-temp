@@ -97,7 +97,7 @@ export async function transcribeWithAssemblyAI(
     languageCode = 'en',
     speakerLabels = true,
     speakersExpected,
-    speechModel = 'best', // Default to highest accuracy model
+    speechModel = 'universal-3-pro', // Universal-3 — highest accuracy model
     punctuation = true,
     formatText = true,
     autoHighlights = false,
@@ -148,9 +148,9 @@ export async function transcribeWithAssemblyAI(
       format_text: formatText,
     };
 
-    // Only set speech_model if explicitly specified (API defaults to 'best')
-    if (speechModel && speechModel !== 'best') {
-      transcriptParams.speech_model = speechModel;
+    // Always set speech_models (plural array) explicitly so the correct model is used
+    if (speechModel) {
+      transcriptParams.speech_models = [speechModel];
     }
 
     // Optional: hint for expected number of speakers (helps with speaker merging issues)
@@ -163,7 +163,7 @@ export async function transcribeWithAssemblyAI(
     }
 
     // Log the configuration being used
-    console.log(`[ASSEMBLYAI] 🛠️  Config: model=${speechModel}, punctuation=${punctuation}, format=${formatText}, diarization=${speakerLabels}`);
+    console.log(`[ASSEMBLYAI] 🛠️  Config: models=[${speechModel}], punctuation=${punctuation}, format=${formatText}, diarization=${speakerLabels}`);
 
     // Optional features
     if (autoHighlights) transcriptParams.auto_highlights = true;
@@ -300,8 +300,8 @@ function convertAssemblyAIResponse(
       confidence: transcript.confidence || 0,
       speech_model: transcript.speech_model || undefined,
       cost_usd: actualDuration !== undefined
-        ? (actualDuration / 3600) * 0.27  // $0.27 per hour
-        : ((transcript.audio_duration || 0) / 3600) * 0.27
+        ? (actualDuration / 3600) * 0.37  // $0.37 per hour (Universal-3)
+        : ((transcript.audio_duration || 0) / 3600) * 0.37
     }
   };
 }
@@ -329,14 +329,14 @@ To enable fast cloud-based transcription with AssemblyAI:
 Benefits of AssemblyAI:
 - Speed: 2-hour podcast processed in ~2 minutes
 - Accuracy: 97%+ speaker diarization accuracy
-- Cost: $0.15/hour of audio ($0.30 for 2-hour podcast)
+- Cost: $0.37/hour of audio ($0.74 for 2-hour podcast)
 - Zero infrastructure: No Python, no GPU, no dependencies
 - Word-level timestamps included automatically
 - Supports 99 languages with diarization in 95
 
 Pricing:
 - Free tier: $50 credits + 60 minutes/month
-- Pay as you go: $0.15/hour of audio
+- Pay as you go: $0.37/hour of audio (Universal-3 / slam-1)
 - No hidden costs, includes all features
 
 Processing time:
@@ -359,7 +359,7 @@ export function estimateAssemblyAICost(audioDurationSeconds: number): {
   estimatedProcessingSeconds: number;
 } {
   const durationHours = audioDurationSeconds / 3600;
-  const costUSD = durationHours * 0.15; // $0.15/hour
+  const costUSD = durationHours * 0.37; // $0.37/hour (Universal-3)
   const estimatedProcessingSeconds = audioDurationSeconds * 0.008; // 0.008x RTF
 
   return {

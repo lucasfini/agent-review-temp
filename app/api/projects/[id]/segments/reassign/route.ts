@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { supabaseAdmin } from '@/lib/supabase/server';
 import { RouteAccessError, requireProjectOwner } from '@/lib/api/route-auth';
+import { isDemoUser } from '@/lib/demo-mode';
 
 // Force dynamic to prevent caching
 export const dynamic = 'force-dynamic';
@@ -29,7 +30,7 @@ export async function PATCH(
       );
     }
 
-    if (user.email === process.env.DEMO_EMAIL) {
+    if (isDemoUser(user)) {
       return NextResponse.json({ error: 'Demo account is read-only' }, { status: 403 });
     }
 

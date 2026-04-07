@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { supabaseAdmin } from '@/lib/supabase/server';
 import { RouteAccessError, requireProjectOwner } from '@/lib/api/route-auth';
+import { isDemoUser } from '@/lib/demo-mode';
 
 // Helper function to generate keywords from speaker name for matching
 function generateKeywordsFromName(name: string): string[] {
@@ -66,7 +67,7 @@ export async function PATCH(
       return NextResponse.json({ error: 'Invalid roster format' }, { status: 400 });
     }
 
-    if (user.email === process.env.DEMO_EMAIL) {
+    if (isDemoUser(user)) {
       return NextResponse.json({ error: 'Demo account is read-only' }, { status: 403 });
     }
 

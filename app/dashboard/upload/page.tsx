@@ -18,6 +18,7 @@ import { estimateTranscriptionCost } from '@/lib/billing/cost-map';
 import { formatSiteCreditDeltaFromUsd } from '@/lib/billing/display';
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogDescription } from '@/components/ui/dialog';
 import { FeatureHelp } from '@/components/ui/feature-help';
+import { useUploadProgressSync } from '@/lib/context/upload-progress-sync';
 import { toast } from 'sonner';
 
 type IntegrationProvider = 'zoom' | 'microsoft';
@@ -65,8 +66,10 @@ interface UploadedFile {
   processingTier: TierLevel;
   analysisOptions: AnalysisOptions;
   displayName: string;
+  estimatedDurationSeconds?: number;
   sourceUrl?: string;
-  sourceType?: 'local' | 'url' | 'youtube' | 'direct';
+  sourceType?: 'local' | 'url' | 'youtube' | 'direct' | 'zoom' | 'microsoft';
+  importPayload?: Record<string, unknown>;
 }
 
 interface UploadHistory {
@@ -170,6 +173,8 @@ export default function UploadPage() {
   const [urlTitle, setUrlTitle] = useState('');
   const [urlError, setUrlError] = useState<string | null>(null);
   const [isUrlSubmitting, setIsUrlSubmitting] = useState(false);
+  const [isStartingQueuedUploads, setIsStartingQueuedUploads] = useState(false);
+  const [selectedQueuedFileId, setSelectedQueuedFileId] = useState<string | null>(null);
   const lastActiveProjectCountRef = useRef<number | null>(null);
   const uploadControllersRef = useRef<Map<string, AbortController>>(new Map());
   const uploadRequestRef = useRef<Map<string, XMLHttpRequest>>(new Map());
@@ -181,6 +186,7 @@ export default function UploadPage() {
 
   const { extractAudio } = useAudioExtractor();
   const { user, session, isDemoMode } = useAuth();
+  const { setSyncedUploads } = useUploadProgressSync();
   const {
     activeProjects,
     isLoading: activeProjectsLoading,
@@ -192,23 +198,34 @@ export default function UploadPage() {
   const searchParams = useSearchParams();
   const hideDemoChromeForCapture = searchParams.get('capture') === '1';
   const processingTier = useMemo(() => getProcessingTierForAnalysis(analysisOptions), [analysisOptions]);
-  const selectedAnalysisSummary = useMemo(() => formatAnalysisSummary(analysisOptions), [analysisOptions]);
-  const previewFile = useMemo(
-    () => uploadedFiles.find((file) => file.file && ['queued', 'pending', 'extracting', 'uploading'].includes(file.status)),
+  const queuedFiles = useMemo(
+    () => uploadedFiles.filter((file) => file.status === 'queued'),
     [uploadedFiles]
   );
-  const previewDurationSeconds = useMemo(() => {
-    if (!previewFile?.file) return null;
-    return Math.max(1, Math.round(previewFile.file.size / (128000 / 8)));
-  }, [previewFile]);
+  const selectedQueuedFile = useMemo(
+    () => queuedFiles.find((file) => file.id === selectedQueuedFileId) || null,
+    [queuedFiles, selectedQueuedFileId]
+  );
+  const selectedAnalysisSummary = useMemo(
+    () => formatAnalysisSummary(selectedQueuedFile?.analysisOptions || analysisOptions),
+    [analysisOptions, selectedQueuedFile]
+  );
+  const selectedQueuedDurationSeconds = useMemo(() => {
+    if (!selectedQueuedFile) return null;
+    if (typeof selectedQueuedFile.estimatedDurationSeconds === 'number' && selectedQueuedFile.estimatedDurationSeconds > 0) {
+      return selectedQueuedFile.estimatedDurationSeconds;
+    }
+    if (!selectedQueuedFile.file) return null;
+    return Math.max(1, Math.round(selectedQueuedFile.file.size / (128000 / 8)));
+  }, [selectedQueuedFile]);
   const uploadCostEstimate = useMemo(() => {
-    if (!previewDurationSeconds) return null;
+    if (!selectedQueuedDurationSeconds || !selectedQueuedFile) return null;
     return estimateTranscriptionCost({
-      durationSeconds: previewDurationSeconds,
-      tier: processingTier,
-      analysisOptions,
+      durationSeconds: selectedQueuedDurationSeconds,
+      tier: selectedQueuedFile.processingTier,
+      analysisOptions: selectedQueuedFile.analysisOptions,
     });
-  }, [previewDurationSeconds, processingTier, analysisOptions]);
+  }, [selectedQueuedDurationSeconds, selectedQueuedFile]);
 
   useEffect(() => {
     const controllers = uploadControllersRef.current;
@@ -220,6 +237,31 @@ export default function UploadPage() {
       pollTimeouts.forEach((timeoutId) => clearTimeout(timeoutId));
     };
   }, []);
+
+  useEffect(() => {
+    const synced = uploadedFiles
+      .filter((file) => ['queued', 'pending', 'extracting', 'uploading', 'processing'].includes(file.status))
+      .map((file) => ({
+        id: file.id,
+        projectId: file.projectId,
+        title: file.displayName || file.file?.name || 'Untitled',
+        status: file.status,
+        progress: file.status === 'extracting'
+          ? (file.extractionProgress || 0)
+          : file.progress,
+        processingStage: file.processingStage,
+        processingMessage: file.processingMessage,
+        processingTier: file.processingTier,
+      }));
+
+    setSyncedUploads(synced);
+  }, [setSyncedUploads, uploadedFiles]);
+
+  useEffect(() => {
+    return () => {
+      setSyncedUploads([]);
+    };
+  }, [setSyncedUploads]);
 
   // Heuristic to estimate speaker count from title
   const estimateSpeakerCountFromTitle = (filename: string): number | undefined => {
@@ -240,7 +282,7 @@ export default function UploadPage() {
 
   // Update recommendation when a new file is added
   useEffect(() => {
-    const pendingFile = uploadedFiles.find(f => f.status === 'pending' || f.status === 'extracting');
+    const pendingFile = selectedQueuedFile || uploadedFiles.find(f => f.status === 'pending' || f.status === 'extracting');
     if (pendingFile?.file) {
       const estimated = estimateSpeakerCountFromTitle(pendingFile.file.name);
       setRecommendedSpeakerCount(estimated);
@@ -249,12 +291,37 @@ export default function UploadPage() {
     } else {
       setRecommendedSpeakerCount(undefined);
     }
-  }, [uploadedFiles]);
+  }, [selectedQueuedFile, uploadedFiles]);
+
+  useEffect(() => {
+    if (selectedQueuedFile) {
+      const next = normalizeAnalysisOptions(selectedQueuedFile.analysisOptions);
+      analysisOptionsRef.current = next;
+      setAnalysisOptions(next);
+      return;
+    }
+
+    setSelectedQueuedFileId((current) => {
+      if (current && queuedFiles.some((file) => file.id === current)) return current;
+      return queuedFiles[0]?.id || null;
+    });
+  }, [queuedFiles, selectedQueuedFile]);
 
   const handleAnalysisOptionToggle = (key: keyof AnalysisOptions) => {
     setAnalysisOptions(prev => {
       const next = { ...prev, [key]: !prev[key] };
       analysisOptionsRef.current = next;
+      if (selectedQueuedFileId) {
+        setUploadedFiles((currentFiles) => currentFiles.map((file) => (
+          file.id === selectedQueuedFileId && file.status === 'queued'
+            ? {
+                ...file,
+                analysisOptions: next,
+                processingTier: getProcessingTierForAnalysis(next),
+              }
+            : file
+        )));
+      }
       return next;
     });
   };
@@ -327,12 +394,14 @@ export default function UploadPage() {
     }
   };
 
-  const importRecording = async (payload: any) => {
-    if (!session?.access_token || !activeProvider) return;
+  const importRecording = async (provider: IntegrationProvider, payload: any) => {
+    if (!session?.access_token) {
+      throw new Error('You need to be signed in to import recordings.');
+    }
     setRecordingsLoading(true);
     setRecordingsError(null);
     try {
-      const res = await fetch(`/api/integrations/${activeProvider}/import`, {
+      const res = await fetch(`/api/integrations/${provider}/import`, {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
@@ -347,11 +416,42 @@ export default function UploadPage() {
       await refreshActiveProjects();
       setShowImportDialog(false);
       toast.success('Import started. Your recording is now processing.');
-    } catch {
+    } catch (error) {
       setRecordingsError('We could not import that recording. Please try again.');
+      throw error;
     } finally {
       setRecordingsLoading(false);
     }
+  };
+
+  const queueImportRecording = (params: {
+    displayName: string;
+    estimatedDurationSeconds: number;
+    sourceType: 'zoom' | 'microsoft';
+    importPayload: Record<string, unknown>;
+  }) => {
+    const selectedAnalysisOptions = normalizeAnalysisOptions(analysisOptionsRef.current);
+    const selectedProcessingTier = getProcessingTierForAnalysis(selectedAnalysisOptions);
+
+    const queuedImport: UploadedFile = {
+      id: Math.random().toString(36).substr(2, 9),
+      status: 'queued',
+      progress: 0,
+      processingStage: 'pending' as ProcessingStage,
+      stageProgress: 0,
+      processingMessage: 'Waiting to import...',
+      processingTier: selectedProcessingTier,
+      analysisOptions: selectedAnalysisOptions,
+      displayName: params.displayName,
+      estimatedDurationSeconds: params.estimatedDurationSeconds,
+      sourceType: params.sourceType,
+      importPayload: params.importPayload,
+    };
+
+    setUploadedFiles((prev) => [...prev, queuedImport]);
+    setSelectedQueuedFileId(queuedImport.id);
+    setShowImportDialog(false);
+    toast.success('Recording added to queue.');
   };
 
   const fetchUploadHistory = async (page = historyPage) => {
@@ -741,6 +841,7 @@ export default function UploadPage() {
 
     // Queue files — the useEffect queue processor will start them one at a time
     setUploadedFiles(prev => [...prev, ...newFiles]);
+    setSelectedQueuedFileId((current) => current || newFiles.find((file) => file.status === 'queued')?.id || null);
   };
 
   const processVideoFile = async (uploadedFile: UploadedFile) => {
@@ -786,6 +887,58 @@ export default function UploadPage() {
           status: 'error',
           error: 'Failed to extract audio from video.',
           processingMessage: 'Extraction failed',
+        } : f
+      ));
+    }
+  };
+
+  const processImportedRecording = async (uploadedFile: UploadedFile) => {
+    if (!uploadedFile.importPayload || !uploadedFile.sourceType || !['zoom', 'microsoft'].includes(uploadedFile.sourceType)) {
+      setUploadedFiles(prev => prev.map(f =>
+        f.id === uploadedFile.id ? {
+          ...f,
+          status: 'error',
+          error: 'Missing import details.',
+          processingStage: 'failed',
+          processingMessage: 'Import setup failed',
+          stageProgress: 0,
+          progress: 0,
+        } : f
+      ));
+      return;
+    }
+
+    setUploadedFiles(prev =>
+      prev.map(f => f.id === uploadedFile.id ? {
+        ...f,
+        status: 'processing',
+        processingStage: 'transcribing',
+        stageProgress: 0,
+        processingMessage: 'Importing recording...',
+        progress: calculateOverallProgress(f.processingTier, 'transcribing', 0),
+      } : f)
+    );
+
+    try {
+      const payload = {
+        ...uploadedFile.importPayload,
+        analysisOptions: normalizeAnalysisOptions(uploadedFile.analysisOptions),
+      };
+
+      const provider = uploadedFile.sourceType as IntegrationProvider;
+      await importRecording(provider, payload);
+      removeFile(uploadedFile.id);
+    } catch (error) {
+      console.error('Recording import error:', error);
+      setUploadedFiles(prev => prev.map(f =>
+        f.id === uploadedFile.id ? {
+          ...f,
+          status: 'error',
+          error: error instanceof Error ? error.message : 'Import failed.',
+          processingStage: 'failed',
+          processingMessage: 'Import failed',
+          stageProgress: 0,
+          progress: 0,
         } : f
       ));
     }
@@ -1083,12 +1236,19 @@ export default function UploadPage() {
     cancelledUploadsRef.current.delete(id);
     clearTrackedUploadState(id);
     setUploadedFiles(prev => prev.filter(f => f.id !== id));
+    setSelectedQueuedFileId((current) => (current === id ? null : current));
   };
 
-  // ── Queue processor: start the next queued file when nothing is active ──
+  const startQueuedUploads = () => {
+    if (isDemoMode) return;
+    setIsStartingQueuedUploads(true);
+  };
+
+  // ── Queue processor: start the next queued file when allowed and nothing is active ──
   const queueProcessingRef = useRef(false);
 
   useEffect(() => {
+    if (!isStartingQueuedUploads) return;
     // Prevent re-entrance while we're already promoting a file
     if (queueProcessingRef.current) return;
 
@@ -1099,26 +1259,31 @@ export default function UploadPage() {
     if (activeFile) return; // something is already running
 
     const nextQueued = uploadedFiles.find(f => f.status === 'queued');
-    if (!nextQueued) return; // nothing waiting
+    if (!nextQueued) {
+      setIsStartingQueuedUploads(false);
+      return;
+    }
 
     queueProcessingRef.current = true;
 
-    if (!nextQueued.file) {
+    if (!nextQueued.file && !nextQueued.importPayload) {
       queueProcessingRef.current = false;
       return;
     }
     const queuedFile = nextQueued.file;
 
-    const isVideo = queuedFile.type.startsWith('video/') ||
+    const isVideo = Boolean(queuedFile) && (
+      queuedFile.type.startsWith('video/') ||
       ['.mp4', '.mov', '.mkv', '.avi', '.webm'].some(ext =>
         queuedFile.name.toLowerCase().endsWith(ext)
-      );
+      )
+    );
 
     // Promote the file from queued → pending/extracting
     const promoted: UploadedFile = {
       ...nextQueued,
-      status: isVideo ? 'extracting' as const : 'pending' as const,
-      processingMessage: isVideo ? 'Extracting audio...' : 'Starting upload...',
+      status: nextQueued.importPayload ? 'pending' as const : isVideo ? 'extracting' as const : 'pending' as const,
+      processingMessage: nextQueued.importPayload ? 'Starting import...' : isVideo ? 'Extracting audio...' : 'Starting upload...',
       extractionProgress: isVideo ? 0 : undefined,
     };
 
@@ -1126,7 +1291,9 @@ export default function UploadPage() {
       f.id === nextQueued.id ? promoted : f
     ));
 
-    if (isVideo) {
+    if (nextQueued.importPayload) {
+      processImportedRecording(promoted);
+    } else if (isVideo) {
       processVideoFile(promoted);
     } else {
       processFile(promoted);
@@ -1134,7 +1301,7 @@ export default function UploadPage() {
 
     // Allow next cycle after a tick
     setTimeout(() => { queueProcessingRef.current = false; }, 0);
-  }, [uploadedFiles]);
+  }, [isStartingQueuedUploads, uploadedFiles]);
 
   const uploadedProjectIds = new Set(
     uploadedFiles.map(f => f.projectId).filter(Boolean) as string[]
@@ -1389,11 +1556,16 @@ export default function UploadPage() {
                     <p className="mt-1 text-sm text-slate-500 dark:text-slate-400">
                       Pick exactly what to generate during processing. Leave everything off if you just want the transcript now.
                     </p>
+                    <p className="mt-2 text-xs font-medium text-slate-500 dark:text-slate-400">
+                      {selectedQueuedFile
+                        ? `Editing queued file: ${selectedQueuedFile.displayName || selectedQueuedFile.file?.name || 'Untitled'}`
+                        : 'These options become the default for your next queued upload or URL import.'}
+                    </p>
                   </div>
                   <div className="rounded-full border border-slate-200 dark:border-slate-700 bg-slate-50 dark:bg-slate-800 px-3 py-1 text-xs font-medium text-slate-600 dark:text-slate-300">
-                        {selectedAnalysisSummary}
-                      </div>
-                    </div>
+                    {selectedAnalysisSummary}
+                  </div>
+                </div>
               </div>
               <div className="grid gap-3 p-5 md:grid-cols-2">
                 {ANALYSIS_OPTION_CONFIG.map((option) => (
@@ -1432,28 +1604,63 @@ export default function UploadPage() {
                 ))}
               </div>
               <div className="border-t border-slate-200 dark:border-slate-800 px-5 py-3">
-                <div className="flex flex-col gap-2 text-xs text-slate-500 dark:text-slate-400 md:flex-row md:items-center md:justify-between">
-                  <span>
-                    Transcription and numbered speaker labels are always included. You can generate any unselected analysis or content later from the project page.
-                  </span>
-                  {uploadCostEstimate ? (
-                    <div className="flex flex-wrap items-center gap-2 text-[11px]">
-                      <span className="rounded-full border border-slate-200 bg-slate-50 px-2.5 py-1 font-medium text-slate-600 dark:border-slate-700 dark:bg-slate-900 dark:text-slate-300">
-                        Base {formatSiteCreditDeltaFromUsd(uploadCostEstimate.transcription)}
-                      </span>
-                      <span className="rounded-full border border-slate-200 bg-slate-50 px-2.5 py-1 font-medium text-slate-600 dark:border-slate-700 dark:bg-slate-900 dark:text-slate-300">
-                        Add-ons {formatSiteCreditDeltaFromUsd(uploadCostEstimate.aiProcessing)}
-                      </span>
-                      <span className="rounded-full border border-blue-200 bg-blue-50 px-2.5 py-1 font-semibold text-blue-700 dark:border-blue-800/30 dark:bg-blue-900/20 dark:text-blue-300">
-                        Estimate {formatSiteCreditDeltaFromUsd(uploadCostEstimate.total)}
-                      </span>
-                    </div>
-                  ) : (
-                    <span className="text-[11px]">
-                      Estimate appears after you attach a file or choose a recording.
-                    </span>
-                  )}
+                <span className="text-xs text-slate-500 dark:text-slate-400">
+                  Transcription and numbered speaker labels are always included. You can generate any unselected analysis or content later from the project page.
+                </span>
+              </div>
+            </div>
+
+            <div className="mb-6 rounded-2xl border border-slate-200 bg-white dark:border-slate-800 dark:bg-slate-900">
+              <div className="border-b border-slate-200 px-5 py-4 dark:border-slate-800">
+                <div className="flex flex-col gap-2 sm:flex-row sm:items-start sm:justify-between">
+                  <div>
+                    <h2 className="text-base font-semibold text-slate-900 dark:text-slate-50">Estimated cost</h2>
+                    <p className="mt-1 text-sm text-slate-500 dark:text-slate-400">
+                      {selectedQueuedFile
+                        ? `Estimate for ${selectedQueuedFile.displayName || selectedQueuedFile.file?.name || 'Untitled'}`
+                        : 'Select a queued file to review cost and start the upload.'}
+                    </p>
+                  </div>
+                  <button
+                    type="button"
+                    onClick={startQueuedUploads}
+                    disabled={queuedFiles.length === 0 || isStartingQueuedUploads || isDemoMode}
+                    className="inline-flex items-center justify-center rounded-lg bg-blue-600 px-4 py-2 text-sm font-medium text-white transition-colors hover:bg-blue-700 disabled:cursor-not-allowed disabled:opacity-60"
+                  >
+                    {isStartingQueuedUploads ? 'Starting...' : 'Upload queued files'}
+                  </button>
                 </div>
+              </div>
+              <div className="p-5">
+                {uploadCostEstimate && selectedQueuedFile ? (
+                  <div className="grid gap-3 md:grid-cols-3">
+                    <div className="rounded-2xl border border-slate-200 bg-slate-50/80 p-4 dark:border-slate-800 dark:bg-slate-950">
+                      <p className="text-[11px] font-semibold uppercase tracking-[0.18em] text-slate-500 dark:text-slate-400">Base</p>
+                      <p className="mt-3 text-2xl font-semibold text-slate-900 dark:text-slate-50">
+                        {formatSiteCreditDeltaFromUsd(uploadCostEstimate.transcription)}
+                      </p>
+                      <p className="mt-1 text-xs text-slate-500 dark:text-slate-400">Transcription only</p>
+                    </div>
+                    <div className="rounded-2xl border border-slate-200 bg-slate-50/80 p-4 dark:border-slate-800 dark:bg-slate-950">
+                      <p className="text-[11px] font-semibold uppercase tracking-[0.18em] text-slate-500 dark:text-slate-400">Add-ons</p>
+                      <p className="mt-3 text-2xl font-semibold text-slate-900 dark:text-slate-50">
+                        {formatSiteCreditDeltaFromUsd(uploadCostEstimate.aiProcessing)}
+                      </p>
+                      <p className="mt-1 text-xs text-slate-500 dark:text-slate-400">{selectedAnalysisSummary}</p>
+                    </div>
+                    <div className="rounded-2xl border border-blue-200 bg-gradient-to-br from-blue-50 to-white p-4 dark:border-blue-800/30 dark:from-blue-950/40 dark:to-slate-950">
+                      <p className="text-[11px] font-semibold uppercase tracking-[0.18em] text-blue-600 dark:text-blue-300">Estimated total</p>
+                      <p className="mt-3 text-3xl font-semibold text-slate-900 dark:text-slate-50">
+                        {formatSiteCreditDeltaFromUsd(uploadCostEstimate.total)}
+                      </p>
+                      <p className="mt-1 text-xs text-slate-600 dark:text-slate-300">Based on this file’s saved options</p>
+                    </div>
+                  </div>
+                ) : (
+                  <div className="rounded-2xl border border-dashed border-slate-300 bg-slate-50/70 px-4 py-5 text-sm text-slate-500 dark:border-slate-700 dark:bg-slate-950 dark:text-slate-400">
+                    Add a file or queue a recording, then select it from the Files list to review the estimate here.
+                  </div>
+                )}
               </div>
             </div>
 
@@ -1470,10 +1677,9 @@ export default function UploadPage() {
                 {uploadedFiles.map((uploadedFile) => {
                   const isActive = ['queued', 'pending', 'extracting', 'uploading', 'processing'].includes(uploadedFile.status);
                   const isProcessing = ['pending', 'extracting', 'uploading', 'processing'].includes(uploadedFile.status);
+                  const isSelectedQueued = uploadedFile.status === 'queued' && uploadedFile.id === selectedQueuedFileId;
                   const displayName = uploadedFile.displayName || uploadedFile.file?.name || 'Untitled';
                   const fileSize = uploadedFile.file?.size;
-                  // Queue position for display (1-based, only among queued files)
-                  const queuedFiles = uploadedFiles.filter(f => f.status === 'queued');
                   const queuePosition = uploadedFile.status === 'queued'
                     ? queuedFiles.findIndex(f => f.id === uploadedFile.id) + 1
                     : 0;
@@ -1481,7 +1687,16 @@ export default function UploadPage() {
                   return (
                     <div
                       key={uploadedFile.id}
-                      className="bg-white dark:bg-slate-900 p-4 rounded-lg border border-slate-200 dark:border-slate-700 shadow-sm"
+                      onClick={() => {
+                        if (uploadedFile.status === 'queued') {
+                          setSelectedQueuedFileId(uploadedFile.id);
+                        }
+                      }}
+                      className={`rounded-lg border p-4 shadow-sm transition-colors ${
+                        isSelectedQueued
+                          ? 'border-blue-300 bg-blue-50/70 ring-1 ring-blue-200 dark:border-blue-700 dark:bg-blue-950/20 dark:ring-blue-900/50'
+                          : 'border-slate-200 bg-white dark:border-slate-700 dark:bg-slate-900'
+                      } ${uploadedFile.status === 'queued' ? 'cursor-pointer hover:border-slate-300 dark:hover:border-slate-600' : ''}`}
                     >
                       {/* Row 1: icon + name + cancel/remove */}
                       <div className="flex items-start gap-3">
@@ -1511,7 +1726,10 @@ export default function UploadPage() {
                         {/* Cancel/Remove — always top-right */}
                         {isProcessing ? (
                           <button
-                            onClick={() => cancelUploadedFile(uploadedFile)}
+                            onClick={(event) => {
+                              event.stopPropagation();
+                              cancelUploadedFile(uploadedFile);
+                            }}
                             className="flex-shrink-0 p-1 rounded text-amber-400 hover:text-amber-300 hover:bg-amber-900/20 transition-colors"
                             title="Cancel upload"
                           >
@@ -1519,7 +1737,10 @@ export default function UploadPage() {
                           </button>
                         ) : (
                           <button
-                            onClick={() => removeFile(uploadedFile.id)}
+                            onClick={(event) => {
+                              event.stopPropagation();
+                              removeFile(uploadedFile.id);
+                            }}
                             className="flex-shrink-0 p-1 rounded text-slate-500 hover:text-slate-600 dark:hover:text-slate-400 hover:bg-slate-100 dark:hover:bg-slate-800 transition-colors"
                             title={uploadedFile.status === 'queued' ? 'Remove from queue' : 'Remove file'}
                           >
@@ -1538,6 +1759,11 @@ export default function UploadPage() {
                                 <span className="text-xs px-2 py-1 rounded-full bg-amber-100 dark:bg-amber-900/20 text-amber-700 dark:text-amber-400 font-medium">
                                   {queueTotal > 1 ? `Queued (${queuePosition} of ${queueTotal})` : 'Queued'}
                                 </span>
+                                {isSelectedQueued && (
+                                  <span className="text-xs px-2 py-1 rounded-full bg-blue-100 text-blue-700 font-medium dark:bg-blue-900/20 dark:text-blue-300">
+                                    Editing
+                                  </span>
+                                )}
                               </div>
                             )}
                             {uploadedFile.status === 'pending' && (
@@ -2068,10 +2294,20 @@ export default function UploadPage() {
                           <button
                             key={file.fileId}
                             type="button"
-                            onClick={() => importRecording({ meetingId: rec.meetingId, fileId: file.fileId, analysisOptions, estimatedDurationSeconds: rec.duration * 60 })}
+                            onClick={() =>
+                              queueImportRecording({
+                                displayName: `${rec.topic || rec.meetingId} (${file.fileType || file.fileExtension})`,
+                                estimatedDurationSeconds: rec.duration * 60,
+                                sourceType: 'zoom',
+                                importPayload: {
+                                  meetingId: rec.meetingId,
+                                  fileId: file.fileId,
+                                },
+                              })
+                            }
                             className="px-2.5 py-1.5 text-xs font-medium bg-blue-600 text-white rounded-md hover:bg-blue-700"
                           >
-                            Import {file.fileType || file.fileExtension}
+                            Add {file.fileType || file.fileExtension}
                           </button>
                         ))}
                       </div>
@@ -2087,10 +2323,19 @@ export default function UploadPage() {
                       </div>
                       <button
                         type="button"
-                        onClick={() => importRecording({ itemId: rec.id, analysisOptions, estimatedDurationSeconds: Math.max(1, Math.round(rec.size / (128000 / 8))) })}
+                        onClick={() =>
+                          queueImportRecording({
+                            displayName: rec.name,
+                            estimatedDurationSeconds: Math.max(1, Math.round(rec.size / (128000 / 8))),
+                            sourceType: 'microsoft',
+                            importPayload: {
+                              itemId: rec.id,
+                            },
+                          })
+                        }
                         className="px-3 py-1.5 text-xs font-medium bg-blue-600 text-white rounded-md hover:bg-blue-700"
                       >
-                        Import
+                        Add
                       </button>
                     </div>
                   ))}

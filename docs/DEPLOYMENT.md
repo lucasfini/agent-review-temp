@@ -71,7 +71,9 @@ NEXT_PUBLIC_STRIPE_PUBLISHABLE_KEY=pk_live_...
 STRIPE_WEBHOOK_SECRET=whsec_...
 
 # App Config
-NEXT_PUBLIC_APP_URL=https://yourdomain.com
+APP_DOMAIN=audiorepurpose.com
+NEXT_PUBLIC_APP_URL=https://audiorepurpose.com
+ACME_EMAIL=support@audiorepurpose.com
 ```
 
 See `.env.example` for all available options.
@@ -110,7 +112,7 @@ Add this configuration:
 ```nginx
 server {
     listen 80;
-    server_name yourdomain.com www.yourdomain.com;
+    server_name audiorepurpose.com www.audiorepurpose.com;
 
     client_max_body_size 100M;  # Allow large audio file uploads
 
@@ -144,7 +146,7 @@ sudo systemctl restart nginx
 ### 5. Set Up SSL with Let's Encrypt
 
 ```bash
-sudo certbot --nginx -d yourdomain.com -d www.yourdomain.com
+sudo certbot --nginx -d audiorepurpose.com -d www.audiorepurpose.com
 ```
 
 Follow the prompts. Certbot will automatically configure SSL and set up auto-renewal.

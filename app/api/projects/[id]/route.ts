@@ -2,6 +2,7 @@ import { NextRequest, NextResponse } from 'next/server';
 import { supabaseAdmin } from '@/lib/supabase/server';
 import { expireProjectAudio, isAudioExpired } from '@/lib/audio-retention';
 import { RouteAccessError, requireProjectOwner } from '@/lib/api/route-auth';
+import { isDemoUser } from '@/lib/demo-mode';
 import { deleteProjectStoragePrefix } from '@/lib/storage-lifecycle';
 
 // ============================================================
@@ -169,7 +170,7 @@ export async function PATCH(
 
     const { user } = await requireProjectOwner(request, projectId);
 
-    if (user.email === process.env.DEMO_EMAIL) {
+    if (isDemoUser(user)) {
       return NextResponse.json({ error: 'Demo account is read-only' }, { status: 403 });
     }
 

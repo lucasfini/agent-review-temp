@@ -1,23 +1,42 @@
 "use client"
 
 import * as React from "react"
+import { createPortal } from "react-dom"
 import { cn } from "@/lib/utils"
 
 interface DropdownMenuProps {
   trigger: React.ReactNode
   children: React.ReactNode
   align?: 'left' | 'right'
+  side?: 'top' | 'bottom'
+  offset?: number
+  portal?: boolean
   className?: string
 }
 
-export function DropdownMenu({ trigger, children, align = 'right', className }: DropdownMenuProps) {
+export function DropdownMenu({
+  trigger,
+  children,
+  align = 'right',
+  side = 'bottom',
+  offset = 4,
+  portal = false,
+  className
+}: DropdownMenuProps) {
   const [isOpen, setIsOpen] = React.useState(false)
   const menuRef = React.useRef<HTMLDivElement>(null)
+  const triggerRef = React.useRef<HTMLDivElement>(null)
+  const contentRef = React.useRef<HTMLDivElement>(null)
+  const [portalStyle, setPortalStyle] = React.useState<React.CSSProperties | null>(null)
 
   // Close on outside click
   React.useEffect(() => {
     const handleClickOutside = (event: MouseEvent) => {
-      if (menuRef.current && !menuRef.current.contains(event.target as Node)) {
+      const target = event.target as Node
+      const clickedTrigger = menuRef.current?.contains(target)
+      const clickedContent = contentRef.current?.contains(target)
+
+      if (!clickedTrigger && !clickedContent) {
         setIsOpen(false)
       }
     }
@@ -40,23 +59,65 @@ export function DropdownMenu({ trigger, children, align = 'right', className }: 
     }
   }, [isOpen])
 
+  React.useLayoutEffect(() => {
+    if (!isOpen || !portal || !triggerRef.current) return
+
+    const updatePosition = () => {
+      const rect = triggerRef.current?.getBoundingClientRect()
+      if (!rect) return
+
+      setPortalStyle({
+        position: 'fixed',
+        top: side === 'top' ? rect.top - offset : rect.bottom + offset,
+        left: align === 'right' ? rect.right : rect.left,
+        transform: align === 'right'
+          ? `translateX(-100%)${side === 'top' ? ' translateY(-100%)' : ''}`
+          : side === 'top'
+            ? 'translateY(-100%)'
+            : undefined,
+        zIndex: 1000,
+      })
+    }
+
+    updatePosition()
+    window.addEventListener('resize', updatePosition)
+    window.addEventListener('scroll', updatePosition, true)
+
+    return () => {
+      window.removeEventListener('resize', updatePosition)
+      window.removeEventListener('scroll', updatePosition, true)
+    }
+  }, [align, isOpen, offset, portal, side])
+
+  const menu = isOpen ? (
+    <div
+      ref={contentRef}
+      className={cn(
+        "z-50 min-w-[180px] rounded-md bg-white py-1 shadow-lg ring-1 ring-slate-200 focus:outline-none dark:bg-slate-900 dark:ring-slate-700",
+        portal
+          ? ""
+          : cn(
+              "absolute",
+              side === 'top' ? 'bottom-full mb-1' : 'mt-1',
+              align === 'right' ? 'right-0' : 'left-0'
+            )
+      )}
+      style={portal ? portalStyle ?? undefined : undefined}
+      onClick={() => setIsOpen(false)}
+    >
+      {children}
+    </div>
+  ) : null
+
   return (
     <div ref={menuRef} className={cn("relative", className)}>
-      <div onClick={() => setIsOpen(!isOpen)}>
+      <div ref={triggerRef} onClick={() => setIsOpen(!isOpen)}>
         {trigger}
       </div>
 
-      {isOpen && (
-        <div
-          className={cn(
-            "absolute z-50 mt-1 min-w-[180px] rounded-md bg-white py-1 shadow-lg ring-1 ring-slate-200 focus:outline-none dark:bg-slate-900 dark:ring-slate-700",
-            align === 'right' ? 'right-0' : 'left-0'
-          )}
-          onClick={() => setIsOpen(false)}
-        >
-          {children}
-        </div>
-      )}
+      {portal
+        ? isOpen && portalStyle ? createPortal(menu, document.body) : null
+        : menu}
     </div>
   )
 }

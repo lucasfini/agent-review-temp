@@ -1,3 +1,5 @@
+import { SUPPORT_EMAIL } from '@/lib/site-config';
+
 export default function TermsPage() {
   return (
     <div className="min-h-screen bg-white text-slate-700 dark:bg-slate-950 dark:text-slate-200">
@@ -88,7 +90,7 @@ export default function TermsPage() {
           <section>
             <h2 className="text-lg font-semibold text-slate-900 dark:text-slate-50 mb-2">11. Contact</h2>
             <p>
-              For questions about these Terms, contact us at support@audiorepurpose.com.
+              For questions about these Terms, contact us at {SUPPORT_EMAIL}.
             </p>
           </section>
         </div>

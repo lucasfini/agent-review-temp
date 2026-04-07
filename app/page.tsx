@@ -621,7 +621,7 @@ function generateRandomSignal(prev: number[]): number[] {
 const PAYG_SECTIONS = [
   {
     name: "Base transcription",
-    price: "$0.49/hr",
+    price: "$0.54/hr",
     description:
       "Always-on transcript with numbered speaker labels and timestamps.",
     features: [
@@ -1200,7 +1200,7 @@ function HowItWorksGraphic({ step }: { step: HowItWorksStep }) {
             <div className="h-3 w-3 rounded-full bg-amber-400/70" />
             <div className="h-3 w-3 rounded-full bg-emerald-400/70" />
             <div className="ml-3 flex h-9 flex-1 items-center rounded-xl border border-slate-200/80 bg-white/80 px-4 text-xs font-medium text-slate-500 dark:border-white/10 dark:bg-white/5 dark:text-slate-300">
-              app.audiorepurpose.com/dashboard/upload
+              audiorepurpose.com/dashboard/upload
             </div>
           </div>
           <div className="grid flex-1 grid-cols-[1.25fr_0.68fr] gap-4">
