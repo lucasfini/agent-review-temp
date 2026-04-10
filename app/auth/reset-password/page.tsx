@@ -1,7 +1,8 @@
 "use client";
 
-import { useState } from 'react';
+import { useEffect, useState } from 'react';
 import Link from 'next/link';
+import { useTheme } from 'next-themes';
 import { supabase } from '@/lib/supabase/client';
 import BrandLogo from '@/components/site/BrandLogo';
 import { Mail, ArrowRight, CheckCircle } from 'lucide-react';
@@ -11,6 +12,12 @@ export default function ResetPasswordPage() {
   const [isLoading, setIsLoading] = useState(false);
   const [error, setError] = useState('');
   const [isSuccess, setIsSuccess] = useState(false);
+  const { resolvedTheme } = useTheme();
+  const [mounted, setMounted] = useState(false);
+
+  useEffect(() => setMounted(true), []);
+
+  const logoTheme = mounted && resolvedTheme === 'dark' ? 'dark' : 'light';
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -56,7 +63,7 @@ export default function ResetPasswordPage() {
     <div className="min-h-screen flex flex-col items-center justify-center bg-white dark:bg-slate-950 px-4">
       <div className="max-w-sm w-full">
         <div className="mb-8 flex flex-col items-center text-center">
-          <BrandLogo size="md" theme="dark" className="mb-6" />
+          <BrandLogo size="md" theme={logoTheme} className="mb-6" />
           <h1 className="text-2xl font-bold text-slate-900 dark:text-slate-50">Reset your password</h1>
           <p className="text-slate-500 dark:text-slate-400 text-sm mt-1.5">
             Enter your email and we&apos;ll send you a reset link.

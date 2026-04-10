@@ -9,7 +9,6 @@ import ConfirmModal from '@/components/ui/confirm-modal';
 import { useAuth } from '@/lib/auth/context';
 import { useUserPrefs } from '@/lib/hooks/useUserPrefs';
 import { supabase } from '@/lib/supabase/client';
-import { DemoTour } from '@/components/demo/DemoTour';
 import { useCoverageProgress } from '@/lib/context/coverage-progress';
 import { DashboardLoadErrorState } from '@/components/dashboard/load-error-state';
 import ExportModal, { type ExportPayload } from '@/components/ExportModal';
@@ -19,7 +18,7 @@ import { AudioPlayer } from '@/components/AudioPlayer';
 import { getSpeakerColor, getSpeakerDisplayName } from '@/lib/name-extraction';
 import TeamsStyleTranscript from '@/components/TeamsStyleTranscript';
 import ContextSidebar from '@/components/ContextSidebar';
-import { CONTENT_TYPES, type ContentBlock } from '@/lib/content-types';
+import { CONTENT_TYPES, MAX_CUSTOM_GUIDANCE_LENGTH, normalizeCustomGuidance, type ContentBlock } from '@/lib/content-types';
 import { DEFAULT_THEME_ID } from '@/lib/content-themes';
 import type { AudioPlayerRef } from '@/lib/hooks/useSpeakerSample';
 import { useProjectRefresh, useSpeakerDataRefresh } from '@/lib/hooks/useProjectRefresh';
@@ -160,6 +159,42 @@ const formatAudioExpiry = (value?: string | null, locale?: string, timezone?: st
   });
 };
 
+type ContentGuidanceMap = Record<string, string>;
+
+function getProjectContentGuidance(project?: { metadata?: any } | null): ContentGuidanceMap {
+  const raw = project?.metadata?.content_generation_preferences?.guidance_by_type;
+  if (!raw || typeof raw !== 'object') return {};
+
+  const next: ContentGuidanceMap = {};
+  for (const contentType of CONTENT_TYPES) {
+    const value = normalizeCustomGuidance((raw as Record<string, unknown>)[contentType.id] as string | undefined);
+    if (value) {
+      next[contentType.id] = value;
+    }
+  }
+  return next;
+}
+
+function mergeProjectContentGuidance(metadata: any, guidanceByType: ContentGuidanceMap) {
+  const cleanedEntries = Object.entries(guidanceByType)
+    .map(([contentTypeId, value]) => [contentTypeId, normalizeCustomGuidance(value)] as const)
+    .filter(([, value]) => value.length > 0);
+
+  const currentMetadata = (metadata && typeof metadata === 'object') ? metadata : {};
+  const currentPreferences = (
+    currentMetadata.content_generation_preferences
+    && typeof currentMetadata.content_generation_preferences === 'object'
+  ) ? currentMetadata.content_generation_preferences : {};
+
+  return {
+    ...currentMetadata,
+    content_generation_preferences: {
+      ...currentPreferences,
+      guidance_by_type: Object.fromEntries(cleanedEntries),
+    },
+  };
+}
+
 export default function ProjectsPage() {
   const [projects, setProjects] = useState<ProjectListItem[]>([]);
   const [selectedProject, setSelectedProject] = useState<Project | null>(null);
@@ -246,11 +281,20 @@ export default function ProjectsPage() {
 
   // Per-output delete tracking
   const [deletingOutput, setDeletingOutput] = useState<string | null>(null);
+  const [contentGuidanceByType, setContentGuidanceByType] = useState<ContentGuidanceMap>({});
   const previousActiveJobCountRef = useRef(0);
   const previousGenerationJobStatusesRef = useRef<Map<string, string>>(new Map());
   const selectedProjectGenerationActiveRef = useRef(false);
   const selectedProjectArtifactsRefreshRef = useRef<Promise<void> | null>(null);
   const selectedProjectArtifactsRefreshQueuedRef = useRef(false);
+  const contentGuidancePersistTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const lastPersistedContentGuidanceRef = useRef<string>('');
+  const { user, session, isDemoMode } = useAuth();
+  const prefs = useUserPrefs();
+  const searchParams = useSearchParams();
+  const router = useRouter();
+  const selectedProjectAudioExpired = isProjectAudioExpired(selectedProject);
+  const selectedProjectAudioExpiryLabel = formatAudioExpiry(selectedProject?.audio_expires_at, prefs.locale, prefs.timezone);
 
   const activeGenerationJobs = useMemo(
     () => generationJobs.filter((job) => job.status === 'queued' || job.status === 'running'),
@@ -379,6 +423,56 @@ export default function ProjectsPage() {
   }, [selectedProject, generatingAnalysisKeys, generationJobs]);
 
   useEffect(() => {
+    const nextGuidance = getProjectContentGuidance(selectedProject);
+    setContentGuidanceByType(nextGuidance);
+    lastPersistedContentGuidanceRef.current = JSON.stringify(nextGuidance);
+  }, [selectedProject, selectedProject?.id, selectedProject?.metadata]);
+
+  useEffect(() => {
+    if (contentGuidancePersistTimeoutRef.current) {
+      clearTimeout(contentGuidancePersistTimeoutRef.current);
+    }
+
+    if (!selectedProject?.id || isDemoMode) return;
+
+    const serialized = JSON.stringify(
+      Object.fromEntries(
+        Object.entries(contentGuidanceByType)
+          .map(([contentTypeId, value]) => [contentTypeId, normalizeCustomGuidance(value)])
+          .filter(([, value]) => value.length > 0)
+      )
+    );
+
+    if (serialized === lastPersistedContentGuidanceRef.current) return;
+
+    const nextMetadata = mergeProjectContentGuidance(selectedProject.metadata, contentGuidanceByType);
+    contentGuidancePersistTimeoutRef.current = setTimeout(async () => {
+      const { error } = await supabase
+        .from('projects')
+        .update({ metadata: nextMetadata })
+        .eq('id', selectedProject.id);
+
+      if (error) {
+        console.error('Error saving content guidance:', error);
+        showToast('Failed to save guidance defaults');
+        return;
+      }
+
+      lastPersistedContentGuidanceRef.current = serialized;
+      setSelectedProject((prev) => (prev ? { ...prev, metadata: nextMetadata } : prev));
+      setProjects((prev) => prev.map((project) => (
+        project.id === selectedProject.id ? { ...project, metadata: nextMetadata } : project
+      )));
+    }, 500);
+
+    return () => {
+      if (contentGuidancePersistTimeoutRef.current) {
+        clearTimeout(contentGuidancePersistTimeoutRef.current);
+      }
+    };
+  }, [contentGuidanceByType, isDemoMode, selectedProject?.id, selectedProject?.metadata]);
+
+  useEffect(() => {
     if (isDemoMode) return;
     if (!selectedProject?.id) return;
     if (selectedProject.status !== 'completed') return;
@@ -429,13 +523,6 @@ export default function ProjectsPage() {
   const [touchupPreview, setTouchupPreview] = useState<TouchupPreviewItem[] | null>(null);
   const [applyingTouchup, setApplyingTouchup] = useState(false);
   const [scrollToSegmentIndex, setScrollToSegmentIndex] = useState<number | null>(null);
-
-  const { user, session, isDemoMode } = useAuth();
-  const prefs = useUserPrefs();
-  const searchParams = useSearchParams();
-  const router = useRouter();
-  const selectedProjectAudioExpired = isProjectAudioExpired(selectedProject);
-  const selectedProjectAudioExpiryLabel = formatAudioExpiry(selectedProject?.audio_expires_at, prefs.locale, prefs.timezone);
 
   // Keep ref in sync with selectedProject for use in realtime callbacks
   useEffect(() => {
@@ -1116,7 +1203,7 @@ export default function ProjectsPage() {
   }, []);
 
   const enqueueGenerationItems = async (
-    items: Array<{ kind: 'analysis' | 'content'; targetKey: string; themeId?: string }>
+    items: Array<{ kind: 'analysis' | 'content'; targetKey: string; themeId?: string; customGuidance?: string }>
   ) => {
     if (!selectedProject?.id) {
       throw new Error('No project selected');
@@ -1147,11 +1234,15 @@ export default function ProjectsPage() {
     if (!selectedProject?.id || !selectedProject.transcription_text) return;
     try {
       setPendingContentTypeIds((prev) => new Set(prev).add(block.contentTypeId));
+      const customGuidance = normalizeCustomGuidance(
+        block.customGuidance || contentGuidanceByType[block.contentTypeId] || ''
+      );
       await enqueueGenerationItems([
         {
           kind: 'content',
           targetKey: block.contentTypeId,
           themeId: block.theme || DEFAULT_THEME_ID,
+          customGuidance,
         },
       ]);
       showToast(`${block.name} generation started`, 'success');
@@ -1165,6 +1256,16 @@ export default function ProjectsPage() {
       showToast(error instanceof Error ? error.message : 'Failed to start content generation');
     }
   };
+
+  const handleContentGuidanceChange = useCallback((contentTypeId: string, value: string) => {
+    if (!selectedProject?.id) return;
+
+    const nextValue = value.slice(0, MAX_CUSTOM_GUIDANCE_LENGTH);
+    setContentGuidanceByType((prev) => ({
+      ...prev,
+      [contentTypeId]: nextValue,
+    }));
+  }, [selectedProject?.id]);
 
   function isAnalysisOptionAvailable(project: Project | null, key: AnalysisOptionKey) {
     if (!project) return false;
@@ -3422,6 +3523,8 @@ export default function ProjectsPage() {
             deletingOutput={deletingOutput}
             generatingContentTypes={generatingContentTypes}
             onGenerateContentBlock={handleGenerateContentBlock}
+            contentGuidanceByType={contentGuidanceByType}
+            onContentGuidanceChange={handleContentGuidanceChange}
             analysisStates={Object.fromEntries(
               ANALYSIS_OPTION_CONFIG.map((option) => [
                 option.key,
@@ -3466,7 +3569,6 @@ export default function ProjectsPage() {
         </div>
       )}
 
-      {isDemoMode && <DemoTour chapter="projects" />}
     </div>
   );
 }

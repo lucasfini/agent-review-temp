@@ -286,6 +286,8 @@ interface ContextSidebarProps {
   deletingOutput?: string | null;
   generatingContentTypes?: Set<string>;
   onGenerateContentBlock?: (block: any) => Promise<void>;
+  contentGuidanceByType?: Record<string, string>;
+  onContentGuidanceChange?: (contentTypeId: string, value: string) => void;
   analysisStates?: Partial<Record<AnalysisOptionKey, { available: boolean; generating: boolean }>>;
   onGenerateAnalysisOption?: (key: AnalysisOptionKey) => Promise<void> | void;
   /** When true, hides all write actions (demo mode) */
@@ -369,6 +371,8 @@ export function ContextSidebar({
   deletingOutput,
   generatingContentTypes = new Set(),
   onGenerateContentBlock,
+  contentGuidanceByType = {},
+  onContentGuidanceChange,
   analysisStates = {},
   onGenerateAnalysisOption,
   readOnly = false,
@@ -1152,6 +1156,9 @@ export function ContextSidebar({
                       onCopyOutput={async (output) => { onCopyOutput?.(output); }}
                       onDownloadOutput={(output) => { onDownloadOutput?.(output); }}
                       onDeleteOutput={async (outputId) => { await onDeleteOutput?.(outputId); }}
+                      guidanceByType={contentGuidanceByType}
+                      onGuidanceChange={onContentGuidanceChange}
+                      readOnly={readOnly}
                       compact
                       title=""
                       description=""
@@ -1821,6 +1828,9 @@ export function ContextSidebar({
               onCopyOutput={async (output) => { onCopyOutput?.(output); }}
               onDownloadOutput={(output) => { onDownloadOutput?.(output); }}
               onDeleteOutput={async (outputId) => { await onDeleteOutput?.(outputId); }}
+              guidanceByType={contentGuidanceByType}
+              onGuidanceChange={onContentGuidanceChange}
+              readOnly={readOnly}
               compact
               title=""
               description=""

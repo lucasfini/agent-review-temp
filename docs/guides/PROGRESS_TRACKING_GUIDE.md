@@ -1,5 +1,7 @@
 # Progress Tracking Feature Guide
 
+> Note: this guide describes the progress-tracking UX and backend stages. For current deployment and provider configuration, use the production docs first.
+
 ## Overview
 
 Your AudioRepurpose application now has **granular progress tracking** that shows real-time status updates during the entire transcription pipeline:
@@ -28,8 +30,8 @@ Your AudioRepurpose application now has **granular progress tracking** that show
 |-------|-------------|------------------|
 | `pending` | Project created, not started | 0s |
 | `uploading` | File upload in progress | 5-30s |
-| `transcribing` | Audio transcription (Whisper/AssemblyAI) | 30s-2min |
-| `diarization` | Speaker detection (PyAnnote/AssemblyAI) | 1-3min |
+| `transcribing` | Audio transcription | 30s-2min |
+| `diarization` | Speaker detection | 1-3min |
 | `role_assignment` | AI naming + role assignment | 10-30s |
 | `finalizing` | Persisting speaker data | 5-15s |
 | `completed` | All processing done | - |
@@ -324,22 +326,7 @@ interface ProgressTrackerProps {
 Total Time: ~2-3 minutes for 2-hour podcast
 ```
 
-### Local Pipeline (Whisper + PyAnnote)
-
-```
-1. Upload                 →  0-10%
-2. Transcribing          → 10-50%
-   (Whisper transcription)
-3. Diarization           → 50-80%
-   (PyAnnote speaker detection - runs in background)
-4. Name Extraction       → 80-90%
-   (AI extracts names)
-5. Keyword Detection     → 90-100%
-   (If keywords configured)
-6. Completed             → 100%
-
-Total Time: ~6+ hours for 2-hour podcast
-```
+The older local Whisper/PyAnnote pipeline notes have been intentionally removed from this guide because they are no longer the runtime source of truth.
 
 ---
 
@@ -675,4 +662,4 @@ Your AudioRepurpose application now provides **real-time, granular progress trac
 5. ✅ `app/api/transcribe/route.ts` - Transcription progress updates
 6. ✅ `app/api/projects/[id]/status/route.ts` - Status API updates
 
-All features are production-ready! 🚀
+Treat this as an implementation guide, not a launch-readiness guarantee.

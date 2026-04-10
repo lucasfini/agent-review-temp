@@ -1,3 +1,5 @@
+import { CONTENT_OUTPUT_PRICES } from '@/lib/pricing-config';
+
 export type ContentCategory = 'social' | 'longform' | 'support';
 
 // Database types (matching database-outputs.sql)
@@ -55,6 +57,13 @@ export interface ContentType {
   maxCount?: number; // Maximum quantity user can request in the modal
 }
 
+export const MAX_CUSTOM_GUIDANCE_LENGTH = 240;
+
+export function normalizeCustomGuidance(value?: string | null): string {
+  if (typeof value !== 'string') return '';
+  return value.trim().slice(0, MAX_CUSTOM_GUIDANCE_LENGTH);
+}
+
 export const CONTENT_TYPES: ContentType[] = [
   // ── SOCIAL ────────────────────────────────────────────────────────────────
   {
@@ -69,7 +78,7 @@ export const CONTENT_TYPES: ContentType[] = [
     badge: '𝕏',
     outputType: 'twitter_thread',
     platformType: 'twitter',
-    estimatedCostUSD: 0.02,
+    estimatedCostUSD: CONTENT_OUTPUT_PRICES.twitter_threads,
     limits: {
       min: 100,
       max: 280, // Per post
@@ -91,7 +100,7 @@ export const CONTENT_TYPES: ContentType[] = [
     badge: 'LinkedIn',
     outputType: 'linkedin_post',
     platformType: 'linkedin',
-    estimatedCostUSD: 0.02,
+    estimatedCostUSD: CONTENT_OUTPUT_PRICES.linkedin_posts,
     limits: {
       min: 1200,
       max: 1500,
@@ -113,7 +122,7 @@ export const CONTENT_TYPES: ContentType[] = [
     badge: 'Instagram',
     outputType: 'instagram_caption',
     platformType: 'instagram',
-    estimatedCostUSD: 0.015,
+    estimatedCostUSD: CONTENT_OUTPUT_PRICES.instagram_content,
     limits: {
       min: 300,
       max: 500,
@@ -135,7 +144,7 @@ export const CONTENT_TYPES: ContentType[] = [
     badge: 'Facebook',
     outputType: 'facebook_post',
     platformType: 'facebook',
-    estimatedCostUSD: 0.015,
+    estimatedCostUSD: CONTENT_OUTPUT_PRICES.facebook_post,
     limits: {
       min: 150,
       max: 300,
@@ -158,7 +167,7 @@ export const CONTENT_TYPES: ContentType[] = [
     badge: 'Blog',
     outputType: 'blog_post',
     platformType: 'blog',
-    estimatedCostUSD: 0.08,
+    estimatedCostUSD: CONTENT_OUTPUT_PRICES.blog_post,
     limits: {
       min: 1200,
       max: 1800,
@@ -180,7 +189,7 @@ export const CONTENT_TYPES: ContentType[] = [
     badge: 'Email',
     outputType: 'email_newsletter',
     platformType: 'email',
-    estimatedCostUSD: 0.03,
+    estimatedCostUSD: CONTENT_OUTPUT_PRICES.newsletter,
     limits: {
       min: 800,
       max: 1200,
@@ -203,7 +212,7 @@ export const CONTENT_TYPES: ContentType[] = [
     badge: 'Show Notes',
     outputType: 'show_notes',
     platformType: 'general',
-    estimatedCostUSD: 0.04,
+    estimatedCostUSD: CONTENT_OUTPUT_PRICES.show_notes,
     limits: {
       min: 500,
       max: 800,
@@ -225,7 +234,7 @@ export const CONTENT_TYPES: ContentType[] = [
     badge: 'YouTube',
     outputType: 'youtube_description',
     platformType: 'youtube',
-    estimatedCostUSD: 0.03,
+    estimatedCostUSD: CONTENT_OUTPUT_PRICES.youtube_description,
     limits: {
       min: 150,
       max: 300,
@@ -247,7 +256,7 @@ export const CONTENT_TYPES: ContentType[] = [
     badge: 'Podcast',
     outputType: 'podcast_episode_description',
     platformType: 'general',
-    estimatedCostUSD: 0.02,
+    estimatedCostUSD: CONTENT_OUTPUT_PRICES.podcast_episode_description,
     limits: {
       min: 100,
       max: 200,
@@ -269,7 +278,7 @@ export const CONTENT_TYPES: ContentType[] = [
     badge: 'Video Script',
     outputType: 'short_form_video_script',
     platformType: 'general',
-    estimatedCostUSD: 0.04,
+    estimatedCostUSD: CONTENT_OUTPUT_PRICES.short_form_video_script,
     limits: {
       min: 120,
       max: 150,
@@ -291,7 +300,7 @@ export const CONTENT_TYPES: ContentType[] = [
     badge: 'Quote Graphic',
     outputType: 'quote_graphic',
     platformType: 'general',
-    estimatedCostUSD: 0.015,
+    estimatedCostUSD: CONTENT_OUTPUT_PRICES.quote_graphics,
     limits: {
       min: 10,
       max: 25,
@@ -311,6 +320,7 @@ export interface ContentBlock {
   name: string; // e.g., "X Thread #1"
   enabled: boolean;
   theme: string; // Theme ID from content-themes.ts
+  customGuidance?: string;
 }
 
 // Helper functions

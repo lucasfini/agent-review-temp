@@ -1,8 +1,8 @@
 "use client";
 
 import { useEffect, useMemo, useState, type SVGProps } from 'react';
-import { CheckCircle, ChevronDown, ChevronUp, Copy, Download, Loader2, Pencil, Sparkles, Trash2, X, Facebook, Instagram, Youtube, Mail, FileText, Quote, Newspaper, Mic } from 'lucide-react';
-import { CONTENT_TYPES, type ContentBlock } from '@/lib/content-types';
+import { ChevronDown, ChevronUp, Copy, Download, Loader2, Pencil, Sparkles, Trash2, X, Facebook, Instagram, Youtube, Mail, FileText, Quote, Newspaper, Mic } from 'lucide-react';
+import { CONTENT_TYPES, MAX_CUSTOM_GUIDANCE_LENGTH, normalizeCustomGuidance, type ContentBlock } from '@/lib/content-types';
 import { DEFAULT_THEME_ID, getCuratedThemes } from '@/lib/content-themes';
 
 type Output = {
@@ -218,6 +218,9 @@ type Props = {
   showGrid?: boolean;
   showOutputs?: boolean;
   contentTypeFilter?: string | null;
+  guidanceByType?: Record<string, string>;
+  onGuidanceChange?: (contentTypeId: string, value: string) => void;
+  readOnly?: boolean;
 };
 
 export default function InlineContentStudio({
@@ -234,6 +237,9 @@ export default function InlineContentStudio({
   showGrid = true,
   showOutputs = true,
   contentTypeFilter = null,
+  guidanceByType = {},
+  onGuidanceChange,
+  readOnly = false,
 }: Props) {
   const themes = useMemo(() => getCuratedThemes(), []);
   const [editingThemeId, setEditingThemeId] = useState<string | null>(null);
@@ -321,9 +327,9 @@ export default function InlineContentStudio({
         {showGrid ? (
           <div className={`mt-4 grid gap-3 ${compact ? 'grid-cols-3' : 'md:grid-cols-2 xl:grid-cols-3'}`}>
             {CONTENT_TYPES.map((contentType) => {
-            const output = latestOutputsByType.get(contentType.id);
             const selectedThemeId = themeByType[contentType.id] || DEFAULT_THEME_ID;
             const themeName = themes.find((theme) => theme.id === selectedThemeId)?.name || 'Professional';
+            const guidanceValue = guidanceByType[contentType.id] || '';
             const isGenerating = generatingIds.has(contentType.id);
             const cardTheme = getCardTheme(contentType.platformType || contentType.platform);
             const LaunchLogo = CONTENT_LOGOS[getLaunchPageLogoKey(contentType.id)];
@@ -339,12 +345,17 @@ export default function InlineContentStudio({
                     name: contentType.name,
                     enabled: true,
                     theme: selectedThemeId,
+                    customGuidance: normalizeCustomGuidance(guidanceValue),
                   })
                 }
                 role="button"
                 tabIndex={isGenerating ? -1 : 0}
                 onKeyDown={(event) => {
                   if (isGenerating) return;
+                  const target = event.target as HTMLElement | null;
+                  if (target && ['INPUT', 'TEXTAREA', 'SELECT', 'BUTTON'].includes(target.tagName)) {
+                    return;
+                  }
                   if (event.key === 'Enter' || event.key === ' ') {
                     event.preventDefault();
                     onGenerate({
@@ -354,6 +365,7 @@ export default function InlineContentStudio({
                       name: contentType.name,
                       enabled: true,
                       theme: selectedThemeId,
+                      customGuidance: normalizeCustomGuidance(guidanceValue),
                     });
                   }
                 }}
@@ -438,6 +450,28 @@ export default function InlineContentStudio({
                     </option>
                   ))}
                 </select>
+              </div>
+              <div className="mt-4">
+                <label
+                  htmlFor={`content-guidance-popup-${activeThemeContentType.id}`}
+                  className="mb-2 block text-xs font-medium uppercase tracking-wide text-slate-500 dark:text-slate-400"
+                >
+                  Extra Guidance
+                </label>
+                <textarea
+                  id={`content-guidance-popup-${activeThemeContentType.id}`}
+                  value={guidanceByType[activeThemeContentType.id] || ''}
+                  onChange={(event) => onGuidanceChange?.(activeThemeContentType.id, event.target.value)}
+                  placeholder="Optional: emphasize a hook, audience, angle, or CTA."
+                  maxLength={MAX_CUSTOM_GUIDANCE_LENGTH}
+                  disabled={readOnly}
+                  rows={4}
+                  className="w-full resize-none rounded-xl border border-slate-200 bg-white px-3 py-2 text-sm text-slate-900 placeholder:text-slate-400 focus:border-blue-400 focus:outline-none focus:ring-1 focus:ring-blue-400 disabled:cursor-not-allowed disabled:opacity-60 dark:border-slate-700 dark:bg-slate-950 dark:text-slate-100 dark:placeholder:text-slate-500"
+                />
+                <div className="mt-1 flex items-center justify-between gap-2 text-[10px] text-slate-500 dark:text-slate-400">
+                  <span>Optional. Counts toward prompt tokens.</span>
+                  <span>{(guidanceByType[activeThemeContentType.id] || '').length}/{MAX_CUSTOM_GUIDANCE_LENGTH}</span>
+                </div>
               </div>
               <div className="mt-4 flex justify-end">
                 <button

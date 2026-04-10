@@ -3,6 +3,7 @@
 import { useState, useEffect } from 'react';
 import { useRouter } from 'next/navigation';
 import Link from 'next/link';
+import { useTheme } from 'next-themes';
 import { supabase } from '@/lib/supabase/client';
 import BrandLogo from '@/components/site/BrandLogo';
 import { Lock, Eye, EyeOff, CheckCircle, ArrowRight, AlertCircle } from 'lucide-react';
@@ -18,6 +19,8 @@ export default function UpdatePasswordPage() {
   // Recovery session states
   const [isReady, setIsReady] = useState(false);
   const [linkExpired, setLinkExpired] = useState(false);
+  const { resolvedTheme } = useTheme();
+  const [mounted, setMounted] = useState(false);
 
   const router = useRouter();
 
@@ -53,6 +56,10 @@ export default function UpdatePasswordPage() {
       clearTimeout(timeout);
     };
   }, []);
+
+  useEffect(() => setMounted(true), []);
+
+  const logoTheme = mounted && resolvedTheme === 'dark' ? 'dark' : 'light';
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -151,7 +158,7 @@ export default function UpdatePasswordPage() {
     <div className="min-h-screen flex flex-col items-center justify-center bg-white dark:bg-slate-950 px-4">
       <div className="max-w-sm w-full">
         <div className="mb-8 flex flex-col items-center text-center">
-          <BrandLogo size="md" theme="dark" className="mb-6" />
+          <BrandLogo size="md" theme={logoTheme} className="mb-6" />
           <h1 className="text-2xl font-bold text-slate-900 dark:text-slate-50">Set a new password</h1>
           <p className="text-slate-500 dark:text-slate-400 text-sm mt-1.5">
             Choose a strong password for your account.

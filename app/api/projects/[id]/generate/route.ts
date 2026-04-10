@@ -4,20 +4,20 @@ import { getInternalJobToken } from '@/lib/internal-job-auth';
 import { getAppBaseUrl } from '@/lib/app-url';
 import { scheduleBackgroundTask } from '@/lib/background-task';
 import { DEFAULT_THEME_ID } from '@/lib/content-themes';
+import { normalizeCustomGuidance } from '@/lib/content-types';
 import { isAnalysisJobKey } from '@/lib/project-generation-jobs';
 import { billingErrorResponse, requireCredits } from '@/lib/billing/middleware';
 import { estimateAnalysisJobCost, estimateContentGenerationCost } from '@/lib/billing/cost-map';
 import { isDemoUser } from '@/lib/demo-mode';
+import { aiRatelimit } from '@/lib/rate-limit';
+import { estimateReservationAmount } from '@/lib/billing/reserve-amount';
 
 type GenerateItem = {
   kind: 'analysis' | 'content';
   targetKey: string;
   themeId?: string;
+  customGuidance?: string;
 };
-
-function estimateJobReserveAmount(cost: number): number {
-  return Number((cost * 1.15).toFixed(4));
-}
 
 export async function POST(
   request: NextRequest,
@@ -38,6 +38,14 @@ export async function POST(
 
     if (isDemoUser(user)) {
       return NextResponse.json({ error: 'Demo account is read-only' }, { status: 403 });
+    }
+
+    const { success } = await aiRatelimit.limit(user.id);
+    if (!success) {
+      return NextResponse.json(
+        { error: 'Rate limit exceeded for AI operations. Please wait a moment.' },
+        { status: 429 }
+      );
     }
 
     const body = await request.json().catch(() => null);
@@ -91,7 +99,7 @@ export async function POST(
           })
         : estimateContentGenerationCost([item.targetKey]);
 
-      return Number((sum + estimateJobReserveAmount(itemCost)).toFixed(4));
+      return Number((sum + estimateReservationAmount(itemCost, item.kind === 'analysis' ? 'analysis_job' : 'content_generation')).toFixed(4));
     }, 0);
 
     if (estimatedReserveAmount > 0) {
@@ -118,6 +126,7 @@ export async function POST(
         kind: item.kind,
         target_key: item.targetKey,
         theme_id: item.kind === 'content' ? (item.themeId || DEFAULT_THEME_ID) : null,
+        custom_guidance: item.kind === 'content' ? (normalizeCustomGuidance(item.customGuidance) || null) : null,
         status: 'queued',
       }));
 

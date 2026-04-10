@@ -1,49 +1,31 @@
-# AudioRepurpose Documentation
+# Documentation
 
-Complete documentation for the AudioRepurpose project.
+This folder contains both current operational docs and older implementation notes.
 
-## Directory Structure
+## Current Source Of Truth
 
-```
-docs/
-├── setup/          Setup and installation guides
-├── guides/         Feature implementation guides
-├── reference/      Technical reference documentation
-└── README.md       This file
-```
+Use these first:
 
-## Setup Documentation (`setup/`)
+- [../README.md](../README.md)
+- [DEPLOYMENT.md](./DEPLOYMENT.md)
+- [guides/DIGITALOCEAN_HOSTING_GUIDE.md](./guides/DIGITALOCEAN_HOSTING_GUIDE.md)
+- [PRODUCTION_READINESS_PLAN.md](./PRODUCTION_READINESS_PLAN.md)
+- [setup/TRANSCRIPTION_SETUP.md](./setup/TRANSCRIPTION_SETUP.md)
 
-Getting started and initial configuration:
+## Current Technical References
 
-- **TRANSCRIPTION_SETUP.md** - AssemblyAI transcription service configuration
-- **SPEAKER_DIARIZATION_CONFIG.md** - Speaker detection configuration (Sortformer)
+- [reference/AI-PROMPTS-REFERENCE.md](./reference/AI-PROMPTS-REFERENCE.md)
+- [reference/COST_ANALYSIS.md](./reference/COST_ANALYSIS.md)
+- [setup/SPEAKER_DIARIZATION_CONFIG.md](./setup/SPEAKER_DIARIZATION_CONFIG.md)
 
-## Guides (`guides/`)
+## Historical Or Design Docs
 
-Feature-specific implementation guides:
+These can still be useful for context, but they are not the production source of truth:
 
-- **PROGRESS_TRACKING_GUIDE.md** - Real-time progress tracking implementation
-- **SPEAKER_MANAGEMENT_GUIDE.md** - Speaker identification and management
+- implementation summaries
+- migration writeups
+- prompt/design explorations
+- older pipeline notes
+- anything under [archive/](./archive/)
 
-## Reference Documentation (`reference/`)
-
-Technical specifications and implementation details:
-
-- **AI-PROMPTS-REFERENCE.md** - Complete AI prompt catalog and configuration
-- **COST_ANALYSIS.md** - AI API cost breakdown and optimization
-- **INSIGHTS-IMPLEMENTATION.md** - Educational insights feature architecture
-- **MIGRATION_SUMMARY.md** - Database migration history and notes
-
-## Other Documentation
-
-- **instructions.md** - General project instructions
-- **quick-fix.md** - Common issues and quick fixes
-
-## Main Documentation
-
-See the main [README.md](../README.md) in the project root for:
-- Project overview
-- Quick start guide
-- Technology stack
-- Development workflow
+If a document conflicts with the current deployment docs or runtime code, trust the current deployment docs and code.

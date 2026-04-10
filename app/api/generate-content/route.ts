@@ -2,7 +2,8 @@ import { NextRequest, NextResponse } from 'next/server';
 import { supabaseAdmin } from '@/lib/supabase/server';
 import { trackOpenAIUsage } from '@/lib/billing/track-usage';
 import { billingErrorResponse, requireCredits } from '@/lib/billing/middleware';
-import { calculateBlocksCost, type ContentBlock, type OutputType } from '@/lib/content-types';
+import { aiRatelimit } from '@/lib/rate-limit';
+import { calculateBlocksCost, normalizeCustomGuidance, type ContentBlock, type OutputType } from '@/lib/content-types';
 import { getThemeById, type ContentTheme } from '@/lib/content-themes';
 import { enforceContentLimit, PLATFORM_PSYCHOLOGY } from '@/lib/content-psychology';
 import { preProcessTranscript, type NarrativeMetadata } from '@/lib/content-generators/pre-processor';
@@ -17,6 +18,7 @@ import { getAICompletion, type AIMessage } from '@/lib/ai-providers/multi-provid
 import { getOpenAIApiKeyForUser } from '@/lib/openai/consent';
 import { createReservation, failReservation, settleReservationAmount } from '@/lib/billing/credit';
 import { isAuthorizedMaintenanceRequest } from '@/lib/maintenance-auth';
+import { estimateReservationAmount } from '@/lib/billing/reserve-amount';
 
 /**
  * Parse JSON response from AI, stripping markdown code fences and conversational filler
@@ -266,7 +268,23 @@ interface MasterPromptParams {
   platformStructure: string;
   outputSchema: string;
   additionalContext?: string;
+  customGuidance?: string;
   outputStyleModifier?: string;
+}
+
+function buildCustomGuidanceSection(customGuidance?: string, platformLabel?: string): string {
+  const normalized = normalizeCustomGuidance(customGuidance);
+  if (!normalized) return '';
+
+  return `=== USER GUIDANCE ===
+User request for this ${platformLabel || 'output'}:
+${normalized}
+
+Follow this guidance as a high-priority instruction when it is compatible with the transcript, platform format, and quality bar.
+- Keep all claims grounded in the transcript
+- Do not invent facts, quotes, names, or outcomes
+- Do not break required structure or length limits
+- If this guidance conflicts with the selected theme, preserve the theme where possible but prioritize the user's request`;
 }
 
 /**
@@ -274,7 +292,7 @@ interface MasterPromptParams {
  * Universal prompt template with ad-blocking, single-angle enforcement, and platform requirements
  */
 function buildMasterPrompt(params: MasterPromptParams): string {
-  const { angle, themeName, cleanedSummary, platformLabel, badgeColor, platformStructure, outputSchema, additionalContext, outputStyleModifier } = params;
+  const { angle, themeName, cleanedSummary, platformLabel, badgeColor, platformStructure, outputSchema, additionalContext, customGuidance, outputStyleModifier } = params;
 
   return `You are an expert Content Strategist. Your task is to transform a transcript into high-performing, ad-free content assets.
 
@@ -318,6 +336,7 @@ Structure: ${platformStructure}
 - Make the piece feel complete on first read: strong opening, clean middle structure, specific close
 
 ${additionalContext || ''}
+${buildCustomGuidanceSection(customGuidance, platformLabel)}
 ${outputStyleModifier ? `\n=== OUTPUT STYLE MODIFIER ===\n${outputStyleModifier}\n` : ''}
 
 === OUTPUT FORMAT ===
@@ -567,6 +586,17 @@ export async function POST(request: NextRequest) {
     if (callerUserId && userId !== callerUserId) {
       return NextResponse.json({ error: 'Forbidden' }, { status: 403 });
     }
+
+    if (!isMaintenance && userId) {
+      const { success } = await aiRatelimit.limit(userId);
+      if (!success) {
+        return NextResponse.json(
+          { error: 'Rate limit exceeded for AI operations. Please wait a moment.' },
+          { status: 429 }
+        );
+      }
+    }
+
     const openaiApiKey = await getOpenAIApiKeyForUser(userId || undefined);
 
     // Demo account guard
@@ -579,7 +609,7 @@ export async function POST(request: NextRequest) {
 
     const estimatedGenerationCost = Number(calculateBlocksCost(blocks).toFixed(6));
     if (userId && estimatedGenerationCost > 0) {
-      const estimatedHold = Number((estimatedGenerationCost * 1.15).toFixed(4));
+      const estimatedHold = estimateReservationAmount(estimatedGenerationCost, 'content_generation');
       await requireCredits(userId, estimatedHold);
       const reservation = await createReservation({
         userId,
@@ -883,32 +913,58 @@ async function generateBlockContent(
     throw new Error(`Theme not found: ${block.theme}`);
   }
 
+  let result: { content: any[], usageEventId?: string, billedCost: number };
+
   switch (block.contentTypeId) {
     case 'twitter_threads':
-      return await generateTwitterThread(block, transcription, analysis, narrativeMetadata, theme, model, userId, projectId, openaiApiKey, outputStyleModifier);
+      result = await generateTwitterThread(block, transcription, analysis, narrativeMetadata, theme, model, userId, projectId, openaiApiKey, outputStyleModifier);
+      break;
     case 'linkedin_posts':
-      return await generateLinkedInPost(block, transcription, analysis, narrativeMetadata, theme, model, userId, projectId, openaiApiKey, outputStyleModifier);
+      result = await generateLinkedInPost(block, transcription, analysis, narrativeMetadata, theme, model, userId, projectId, openaiApiKey, outputStyleModifier);
+      break;
     case 'instagram_content':
-      return await generateInstagramCarousel(block, transcription, analysis, narrativeMetadata, theme, model, userId, projectId, openaiApiKey, outputStyleModifier);
+      result = await generateInstagramCarousel(block, transcription, analysis, narrativeMetadata, theme, model, userId, projectId, openaiApiKey, outputStyleModifier);
+      break;
     case 'blog_post':
-      return await generateBlogPost(block, transcription, analysis, narrativeMetadata, theme, model, userId, projectId, openaiApiKey, outputStyleModifier);
+      result = await generateBlogPost(block, transcription, analysis, narrativeMetadata, theme, model, userId, projectId, openaiApiKey, outputStyleModifier);
+      break;
     case 'newsletter':
-      return await generateNewsletter(block, transcription, analysis, narrativeMetadata, theme, model, userId, projectId, openaiApiKey, outputStyleModifier);
+      result = await generateNewsletter(block, transcription, analysis, narrativeMetadata, theme, model, userId, projectId, openaiApiKey, outputStyleModifier);
+      break;
     case 'show_notes':
-      return await generateShowNotes(block, transcription, analysis, narrativeMetadata, theme, model, userId, projectId, openaiApiKey, outputStyleModifier);
+      result = await generateShowNotes(block, transcription, analysis, narrativeMetadata, theme, model, userId, projectId, openaiApiKey, outputStyleModifier);
+      break;
     case 'quote_graphics':
-      return await generateQuoteGraphic(block, analysis, theme, model, userId, projectId, openaiApiKey, outputStyleModifier);
+      result = await generateQuoteGraphic(block, analysis, theme, model, userId, projectId, openaiApiKey, outputStyleModifier);
+      break;
     case 'facebook_post':
-      return await generateFacebookPost(block, transcription, analysis, narrativeMetadata, theme, model, userId, projectId, openaiApiKey, outputStyleModifier);
+      result = await generateFacebookPost(block, transcription, analysis, narrativeMetadata, theme, model, userId, projectId, openaiApiKey, outputStyleModifier);
+      break;
     case 'youtube_description':
-      return await generateYoutubeDescription(block, transcription, analysis, narrativeMetadata, theme, model, userId, projectId, openaiApiKey, outputStyleModifier);
+      result = await generateYoutubeDescription(block, transcription, analysis, narrativeMetadata, theme, model, userId, projectId, openaiApiKey, outputStyleModifier);
+      break;
     case 'podcast_episode_description':
-      return await generatePodcastEpisodeDescription(block, transcription, analysis, narrativeMetadata, theme, model, userId, projectId, openaiApiKey, outputStyleModifier);
+      result = await generatePodcastEpisodeDescription(block, transcription, analysis, narrativeMetadata, theme, model, userId, projectId, openaiApiKey, outputStyleModifier);
+      break;
     case 'short_form_video_script':
-      return await generateShortFormVideoScript(block, transcription, analysis, narrativeMetadata, theme, model, userId, projectId, openaiApiKey, outputStyleModifier);
+      result = await generateShortFormVideoScript(block, transcription, analysis, narrativeMetadata, theme, model, userId, projectId, openaiApiKey, outputStyleModifier);
+      break;
     default:
       throw new Error(`Unknown content type: ${block.contentTypeId}`);
   }
+
+  const customGuidance = normalizeCustomGuidance(block.customGuidance);
+  if (customGuidance) {
+    result.content = result.content.map((item) => ({
+      ...item,
+      metadata: {
+        ...(item.metadata || {}),
+        customGuidance,
+      },
+    }));
+  }
+
+  return result;
 }
 
 // Twitter Thread Generator with Topic Selector
@@ -964,6 +1020,7 @@ async function generateTwitterThread(
     platformStructure: '6-8 posts. Narrative arc: Hook → Evidence → Synthesis → CTA.',
     outputSchema,
     additionalContext,
+    customGuidance: block.customGuidance,
     outputStyleModifier
   });
 
@@ -1125,6 +1182,7 @@ async function generateLinkedInPost(
     platformStructure: 'Hook-Value-CTA. No more than 2 rhetorical questions.',
     outputSchema,
     additionalContext,
+    customGuidance: block.customGuidance,
     outputStyleModifier
   });
 
@@ -1278,6 +1336,7 @@ async function generateInstagramCarousel(
     platformStructure: 'Array of 7 Slide Objects. Each must have a Headline and Body.',
     outputSchema,
     additionalContext,
+    customGuidance: block.customGuidance,
     outputStyleModifier
   });
 
@@ -1457,6 +1516,7 @@ async function generateBlogPost(
     platformStructure: '1,200 words. H2/H3s must be bold claims, not generic labels.',
     outputSchema,
     additionalContext,
+    customGuidance: block.customGuidance,
     outputStyleModifier
   });
 
@@ -1613,6 +1673,7 @@ async function generateNewsletter(
     platformStructure: '1-2-1 Structure: 1 Big Idea, 2 Tactical Bullets, 1 Personal Question.',
     outputSchema,
     additionalContext,
+    customGuidance: block.customGuidance,
     outputStyleModifier
   });
 
@@ -1771,6 +1832,7 @@ FORBIDDEN: Darktrace, recruitment agencies, sponsor websites, promo codes.
     platformStructure: "Executive Summary + 3 'Aha!' Moments + Ad-free Resources.",
     outputSchema,
     additionalContext,
+    customGuidance: block.customGuidance,
     outputStyleModifier
   });
 
@@ -1987,6 +2049,7 @@ async function generateFacebookPost(
     platformStructure: 'Personal story or insight + engagement question + 2-3 hashtags.',
     outputSchema,
     additionalContext,
+    customGuidance: block.customGuidance,
     outputStyleModifier
   });
 
@@ -2102,6 +2165,7 @@ async function generateYoutubeDescription(
     platformStructure: 'Compelling opener + episode overview + timestamps + hashtags + CTA.',
     outputSchema,
     additionalContext,
+    customGuidance: block.customGuidance,
     outputStyleModifier
   });
 
@@ -2228,6 +2292,7 @@ async function generatePodcastEpisodeDescription(
     platformStructure: 'Episode hook + 3 key topics + CTA.',
     outputSchema,
     additionalContext,
+    customGuidance: block.customGuidance,
     outputStyleModifier
   });
 
@@ -2343,6 +2408,7 @@ async function generateShortFormVideoScript(
     platformStructure: 'Hook (3 sec) → Body with pattern interrupt → Direct CTA.',
     outputSchema,
     additionalContext,
+    customGuidance: block.customGuidance,
     outputStyleModifier
   });
 

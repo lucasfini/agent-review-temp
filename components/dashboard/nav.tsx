@@ -1,6 +1,6 @@
 "use client";
 
-import { useState, useEffect, useRef } from 'react';
+import { useState, useEffect, useRef, useCallback } from 'react';
 import Link from 'next/link';
 import Image from 'next/image';
 import { usePathname, useRouter, useSearchParams } from 'next/navigation';
@@ -615,25 +615,32 @@ export default function DashboardNav({
   const collapsed = isCollapsed ?? localCollapsed;
   const setCollapsed = onCollapseChange ?? setLocalCollapsed;
 
-  useEffect(() => {
-    const fetchBalance = async () => {
-      if (!user || !session?.access_token) return;
-      try {
-        const response = await fetch('/api/billing/balance', {
-          headers: { Authorization: `Bearer ${session.access_token}` },
-        });
-        if (response.ok) {
-          const data = await response.json();
-          setBalance(data.balance);
-        }
-      } catch (error) {
-        console.error('Error fetching balance:', error);
-      } finally {
-        setIsLoadingBalance(false);
+  const fetchBalance = useCallback(async () => {
+    if (!user || !session?.access_token) {
+      setIsLoadingBalance(false);
+      return;
+    }
+
+    try {
+      const response = await fetch('/api/billing/balance', {
+        headers: { Authorization: `Bearer ${session.access_token}` },
+        cache: 'no-store',
+      });
+      if (response.ok) {
+        const data = await response.json();
+        setBalance(data.balance);
       }
-    };
+    } catch (error) {
+      console.error('Error fetching balance:', error);
+    } finally {
+      setIsLoadingBalance(false);
+    }
+  }, [session?.access_token, user]);
+
+  useEffect(() => {
+    setIsLoadingBalance(true);
     fetchBalance();
-  }, [user, session]);
+  }, [fetchBalance]);
 
   useEffect(() => {
     if (!user) return;
@@ -641,7 +648,7 @@ export default function DashboardNav({
 
     const fetchRecentProjects = async () => {
       try {
-        const response = await fetch('/api/dashboard/projects?limit=8', {
+        const response = await fetch('/api/dashboard/projects?limit=5', {
           headers: session?.access_token ? { Authorization: `Bearer ${session.access_token}` } : {},
           cache: 'no-store',
         });
@@ -651,7 +658,7 @@ export default function DashboardNav({
         const payload = await response.json() as { projects?: RecentProject[] };
         if (isActive && payload.projects) {
           setRecentProjects(
-            payload.projects.filter((project) => project.status === 'completed').slice(0, 8)
+            payload.projects.filter((project) => project.status === 'completed').slice(0, 5)
           );
         }
       } catch (error) {
@@ -676,7 +683,7 @@ export default function DashboardNav({
           if (created.status !== 'completed') return;
           setRecentProjects((prev) => {
             const next = [{ id: created.id, title: created.title, status: created.status }, ...prev.filter(p => p.id !== created.id)];
-            return next.slice(0, 8);
+            return next.slice(0, 5);
           });
         }
       )
@@ -736,6 +743,7 @@ export default function DashboardNav({
         return;
       }
 
+      void fetchBalance();
       fetchRecentProjects();
     };
 
@@ -746,7 +754,7 @@ export default function DashboardNav({
       window.removeEventListener(PROJECT_MUTATION_EVENT, handleProjectMutation);
       supabase.removeChannel(channel);
     };
-  }, [session?.access_token, user]);
+  }, [fetchBalance, session?.access_token, user]);
 
   const handleSignOut = async () => {
     await signOut();

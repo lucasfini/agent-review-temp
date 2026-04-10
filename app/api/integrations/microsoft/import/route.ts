@@ -6,6 +6,7 @@ import { billingErrorResponse, requireCredits } from '@/lib/billing/middleware';
 import { estimateTranscriptionCost } from '@/lib/billing/cost-map';
 import { getProcessingTierForAnalysis, normalizeAnalysisOptions } from '@/lib/analysis-options';
 import { createReservation, releaseReservation } from '@/lib/billing/credit';
+import { estimateReservationAmount } from '@/lib/billing/reserve-amount';
 
 async function ensureAuth(request: NextRequest) {
   const authHeader = request.headers.get('authorization');
@@ -33,7 +34,7 @@ export async function POST(request: NextRequest) {
       tier: performanceLevel,
       analysisOptions,
     });
-    const estimatedHold = Number((estimatedCost.total * 1.15).toFixed(4));
+    const estimatedHold = estimateReservationAmount(estimatedCost.total, 'upload_processing');
 
     await requireCredits(user.id, estimatedHold);
 

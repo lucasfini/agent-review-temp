@@ -1,17 +1,17 @@
 /**
- * Cost Map - AI Service Pricing with 45% Margin
+ * Cost Map - AI Service Pricing
  *
  * Enumerates all AI services used in the application with:
  * - Provider rates (raw cost from API providers)
- * - Margin-adjusted prices (with 45% markup)
+ * - Billed rates where applicable
  * - Unit types and conversion helpers
  *
  * Pricing verified as of January 2025
- * Margin: 45% standard markup on all services
  */
 
 import { CONTENT_TYPES } from '@/lib/content-types';
 import { getFeaturesFromAnalysisOptions, normalizeAnalysisOptions, type AnalysisOptions } from '@/lib/analysis-options';
+import { ANALYSIS_PRICE_RULES, BASE_TRANSCRIPTION_PRICE_PER_HOUR } from '@/lib/pricing-config';
 import { normalizeTier } from '@/lib/tier-config';
 import { prompts } from '@/lib/prompts/loader';
 
@@ -65,9 +65,9 @@ export const COST_MAP: Record<string, ServiceCost> = {
     unitType: 'seconds',
     providerRate: 0.000102778, // $0.37/hour = $0.000102778/second (Universal-3)
     providerRateDisplay: '$0.37/hour',
-    marginPercent: 45,
-    billedRate: 0.000102778 * 1.45, // = $0.000149028/sec = $0.5365/hour
-    billedRateDisplay: '$0.54/hour',
+    marginPercent: 5.41,
+    billedRate: BASE_TRANSCRIPTION_PRICE_PER_HOUR / 3600,
+    billedRateDisplay: '$0.39/hour',
     notes: 'Universal-3 (universal-3-pro) model. Highest accuracy. Includes speaker diarization.',
   },
 
@@ -312,6 +312,11 @@ export const COST_MAP: Record<string, ServiceCost> = {
   },
 } as const;
 
+function applyAnalysisPriceRule(targetKey: keyof typeof ANALYSIS_PRICE_RULES, rawEstimate: number): number {
+  const { multiplier, minimumCharge } = ANALYSIS_PRICE_RULES[targetKey];
+  return Number(Math.max(rawEstimate * multiplier, minimumCharge).toFixed(6));
+}
+
 /**
  * Calculate cost for a service given units consumed
  */
@@ -472,8 +477,12 @@ export function estimateTranscriptionCost(params: {
       estimatedTokens + 500,
       500
     );
-    aiProcessingCost += speakerIntel.billedCost;
-    breakdown.push({ service: 'Speaker Intelligence', cost: speakerIntel.billedCost });
+    const pricedSpeakerIntel = applyAnalysisPriceRule(
+      'namedSpeakers',
+      speakerIntel.billedCost
+    );
+    aiProcessingCost += pricedSpeakerIntel;
+    breakdown.push({ service: 'Speaker Intelligence', cost: pricedSpeakerIntel });
   }
 
   if (features.aiSummary) {
@@ -484,8 +493,9 @@ export function estimateTranscriptionCost(params: {
       estimatedTokens,
       500
     );
-    aiProcessingCost += summary.billedCost;
-    breakdown.push({ service: 'AI Summary', cost: summary.billedCost });
+    const pricedSummary = applyAnalysisPriceRule('summary', summary.billedCost);
+    aiProcessingCost += pricedSummary;
+    breakdown.push({ service: 'AI Summary', cost: pricedSummary });
   }
 
   if (features.roleClassification) {
@@ -508,8 +518,9 @@ export function estimateTranscriptionCost(params: {
       estimatedTokens,
       400
     );
-    aiProcessingCost += chapters.billedCost;
-    breakdown.push({ service: 'Chapter Detection', cost: chapters.billedCost });
+    const pricedChapters = applyAnalysisPriceRule('chapters', chapters.billedCost);
+    aiProcessingCost += pricedChapters;
+    breakdown.push({ service: 'Chapter Detection', cost: pricedChapters });
   }
 
   if (features.keyTakeaways) {
@@ -520,8 +531,9 @@ export function estimateTranscriptionCost(params: {
       estimatedTokens,
       300
     );
-    aiProcessingCost += takeaways.billedCost;
-    breakdown.push({ service: 'Key Takeaways', cost: takeaways.billedCost });
+    const pricedTakeaways = applyAnalysisPriceRule('takeaways', takeaways.billedCost);
+    aiProcessingCost += pricedTakeaways;
+    breakdown.push({ service: 'Key Takeaways', cost: pricedTakeaways });
   }
 
   if (features.quotesExtraction) {
@@ -532,8 +544,9 @@ export function estimateTranscriptionCost(params: {
       estimatedTokens,
       400
     );
-    aiProcessingCost += quotes.billedCost;
-    breakdown.push({ service: 'Social Quotes', cost: quotes.billedCost });
+    const pricedQuotes = applyAnalysisPriceRule('quotes', quotes.billedCost);
+    aiProcessingCost += pricedQuotes;
+    breakdown.push({ service: 'Social Quotes', cost: pricedQuotes });
   }
 
   if (features.insights) {
@@ -564,8 +577,9 @@ export function estimateTranscriptionCost(params: {
       estimatedTokens,
       1200
     );
-    aiProcessingCost += insights.billedCost;
-    breakdown.push({ service: 'Insights Extraction', cost: insights.billedCost });
+    const pricedInsights = applyAnalysisPriceRule('insights', insights.billedCost);
+    aiProcessingCost += pricedInsights;
+    breakdown.push({ service: 'Insights Extraction', cost: pricedInsights });
   }
 
   if (features.contentGeneration && normalizedTier === 'repurpose_pack') {
@@ -608,39 +622,42 @@ export function estimateAnalysisJobCost(params: {
         500,
         50
       );
-      return Number((speakerIntel.billedCost + roleClassification.billedCost).toFixed(6));
+      return applyAnalysisPriceRule(
+        'namedSpeakers',
+        speakerIntel.billedCost + roleClassification.billedCost
+      );
     }
     case 'summary': {
-      return Number(calculateTokenCost(
+      return applyAnalysisPriceRule('summary', calculateTokenCost(
         'openai_gpt5_mini_input',
         'openai_gpt5_mini_output',
         estimatedTokens,
         500
-      ).billedCost.toFixed(6));
+      ).billedCost);
     }
     case 'chapters': {
-      return Number(calculateTokenCost(
+      return applyAnalysisPriceRule('chapters', calculateTokenCost(
         'openai_gpt5_nano_input',
         'openai_gpt5_nano_output',
         estimatedTokens,
         400
-      ).billedCost.toFixed(6));
+      ).billedCost);
     }
     case 'takeaways': {
-      return Number(calculateTokenCost(
+      return applyAnalysisPriceRule('takeaways', calculateTokenCost(
         'openai_gpt5_nano_input',
         'openai_gpt5_nano_output',
         estimatedTokens,
         300
-      ).billedCost.toFixed(6));
+      ).billedCost);
     }
     case 'quotes': {
-      return Number(calculateTokenCost(
+      return applyAnalysisPriceRule('quotes', calculateTokenCost(
         'openai_gpt5_mini_input',
         'openai_gpt5_mini_output',
         estimatedTokens,
         400
-      ).billedCost.toFixed(6));
+      ).billedCost);
     }
     case 'insights': {
       const model = prompts.audioRepurpose.insightExtraction.model;
@@ -664,12 +681,12 @@ export function estimateAnalysisJobCost(params: {
                 output: 'openai_gpt4o_mini_output',
               };
 
-      return Number(calculateTokenCost(
+      return applyAnalysisPriceRule('insights', calculateTokenCost(
         serviceKeys.input,
         serviceKeys.output,
         estimatedTokens,
         1200
-      ).billedCost.toFixed(6));
+      ).billedCost);
     }
     default:
       return 0;

@@ -1,5 +1,7 @@
 # AssemblyAI-Only Architecture Migration Summary
 
+> Historical note: this document describes a migration phase and should not be treated as the current production source of truth for pricing, env vars, or deployment. Use [README.md](/Users/lucas/Desktop/audiorepurpose/README.md), [DEPLOYMENT.md](/Users/lucas/Desktop/audiorepurpose/docs/DEPLOYMENT.md), and [DIGITALOCEAN_HOSTING_GUIDE.md](/Users/lucas/Desktop/audiorepurpose/docs/guides/DIGITALOCEAN_HOSTING_GUIDE.md) first.
+
 ## Overview
 Successfully migrated from a complex multi-provider transcription system (Whisper + PyAnnote + AssemblyAI) to a simplified **AssemblyAI-only** architecture with tier-based AI features.
 
@@ -235,7 +237,7 @@ ASSEMBLYAI_API_KEY=your_assemblyai_key_here
 
 # AI Content Generation (Required for Pro/Premium)
 ANTHROPIC_API_KEY=your_anthropic_key_here
-OPENAI_API_KEY=your_openai_key_here
+OPENAI_API_KEY_OPTIN=your_openai_key_here
 
 # Tier Selection (Optional - defaults to 'basic')
 PERFORMANCE_LEVEL=basic|pro|premium

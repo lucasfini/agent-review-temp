@@ -101,35 +101,96 @@ const supabaseUrl = process.env.NEXT_PUBLIC_SUPABASE_URL || ''
 const supabaseAnonKey = process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY || ''
 const isTestEnv = process.env.NODE_ENV === 'test'
 
-// Safe localStorage adapter — catches corrupted session tokens (Invalid UTF-8 sequence)
-// instead of crashing the app. On read failure the bad key is cleared and null returned,
-// forcing a fresh sign-in rather than an unhandled error.
-const safeStorage =
-  typeof window !== 'undefined'
-    ? {
-        getItem: (key: string): string | null => {
-          try {
-            return window.localStorage.getItem(key)
-          } catch {
-            try { window.localStorage.removeItem(key) } catch {}
-            return null
-          }
-        },
-        setItem: (key: string, value: string): void => {
-          try { window.localStorage.setItem(key, value) } catch {}
-        },
-        removeItem: (key: string): void => {
-          try { window.localStorage.removeItem(key) } catch {}
-        },
+const SUPABASE_STORAGE_KEYS = [
+  'supabase.auth.token',
+  'supabase.auth.token-code-verifier',
+  'supabase.auth.token-user',
+] as const
+
+const base64UrlToBytes = (value: string): Uint8Array => {
+  const normalized = value.replace(/-/g, '+').replace(/_/g, '/')
+  const padding = normalized.length % 4 === 0 ? '' : '='.repeat(4 - (normalized.length % 4))
+  const binary = window.atob(normalized + padding)
+  const bytes = new Uint8Array(binary.length)
+
+  for (let index = 0; index < binary.length; index += 1) {
+    bytes[index] = binary.charCodeAt(index)
+  }
+
+  return bytes
+}
+
+const decodeCookiePart = (value: string) => {
+  try {
+    return decodeURIComponent(value)
+  } catch {
+    return value
+  }
+}
+
+const clearCookie = (name: string) => {
+  document.cookie = `${encodeURIComponent(name)}=; Path=/; Max-Age=0; SameSite=Lax`
+}
+
+const sanitizeSupabaseAuthStorage = () => {
+  if (typeof window === 'undefined' || typeof document === 'undefined') {
+    return
+  }
+
+  const cookiePairs = document.cookie
+    .split(';')
+    .map((entry) => entry.trim())
+    .filter(Boolean)
+    .map((entry) => {
+      const separatorIndex = entry.indexOf('=')
+      const rawName = separatorIndex >= 0 ? entry.slice(0, separatorIndex) : entry
+      const rawValue = separatorIndex >= 0 ? entry.slice(separatorIndex + 1) : ''
+
+      return {
+        name: decodeCookiePart(rawName),
+        value: decodeCookiePart(rawValue),
       }
-    : undefined
+    })
+
+  for (const key of SUPABASE_STORAGE_KEYS) {
+    const matchingCookies = cookiePairs
+      .filter(({ name }) => name === key || name.startsWith(`${key}.`))
+      .sort((left, right) => left.name.localeCompare(right.name, undefined, { numeric: true }))
+
+    if (matchingCookies.length === 0) {
+      continue
+    }
+
+    const combinedValue = matchingCookies.map(({ value }) => value).join('')
+
+    if (!combinedValue.startsWith('base64-')) {
+      continue
+    }
+
+    const encodedValue = combinedValue.slice('base64-'.length)
+
+    try {
+      const bytes = base64UrlToBytes(encodedValue)
+      new TextDecoder('utf-8', { fatal: true }).decode(bytes)
+    } catch {
+      matchingCookies.forEach(({ name }) => clearCookie(name))
+
+      try {
+        window.localStorage.removeItem(key)
+      } catch {}
+    }
+  }
+}
+
+if (!isTestEnv) {
+  sanitizeSupabaseAuthStorage()
+}
 
 export const supabase: SupabaseClient<any> = isTestEnv
   ? createMockSupabaseClient()
   : createBrowserClient<any>(supabaseUrl, supabaseAnonKey, {
       auth: {
         flowType: 'pkce',
-        ...(safeStorage ? { storage: safeStorage } : {}),
       },
     })
 

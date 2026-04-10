@@ -1,4 +1,5 @@
 import { supabaseAdmin } from '@/lib/supabase/server';
+import { formatWorkflowReason } from '@/lib/billing/presentation';
 
 export interface GroupedTransactionChild {
   reason: string;
@@ -36,17 +37,6 @@ function getDefaultReason(type: string): string {
     case 'settle': return 'Final charge';
     case 'release': return 'Released back';
     default: return type;
-  }
-}
-
-function formatWorkflowTitle(workflowType?: string | null): string {
-  switch (workflowType) {
-    case 'upload_processing': return 'Upload processing';
-    case 'content_generation': return 'Content generation';
-    case 'analysis_job': return 'Analysis generation';
-    case 'coverage_analysis': return 'Creator coaching run';
-    case 'segment_touchup': return 'Segment touchup';
-    default: return 'Workflow';
   }
 }
 
@@ -139,7 +129,6 @@ export async function getGroupedTransactions(
     const sortedTxs = [...txs].sort((a, b) => new Date(b.created_at).getTime() - new Date(a.created_at).getTime());
     const latestTx = sortedTxs[0];
     const reserveTx = sortedTxs.find((tx) => tx.transaction_type === 'reserve');
-    const settleTx = sortedTxs.find((tx) => tx.transaction_type === 'settle');
     const releaseTxs = sortedTxs.filter((tx) => tx.transaction_type === 'release');
 
     const projectId = reservation?.project_id || latestTx.metadata?.projectId || usageEventProjectMap[latestTx.usage_event_id];
@@ -148,28 +137,20 @@ export async function getGroupedTransactions(
     const finalCharge = Number(reservation?.settled_amount || 0);
     const releasedAmount = Number(releaseTxs.reduce((sum, tx) => sum + Math.max(0, Number(tx.amount || 0)), 0).toFixed(4));
 
-    const children: GroupedTransactionChild[] = [];
-    if (holdAmount > 0 && reserveTx) {
-      children.push({ reason: reserveTx.reason || 'Estimated hold', amount: -holdAmount, createdAt: reserveTx.created_at, kind: 'hold' });
-    }
-    if (finalCharge > 0) {
-      children.push({ reason: 'Final charge based on actual usage', amount: -finalCharge, createdAt: settleTx?.created_at || latestTx.created_at, kind: 'charge' });
-    }
-    if (releasedAmount > 0) {
-      children.push({ reason: 'Released back to balance', amount: releasedAmount, createdAt: releaseTxs[0]?.created_at || latestTx.created_at, kind: 'release' });
-    }
-
     grouped.push({
       id: reservationId,
       type: 'workflow',
       createdAt: latestTx.created_at,
       transactionType: 'workflow',
       amount: -finalCharge,
-      reason: `${formatWorkflowTitle(reservation?.workflow_type)}${projectTitle ? ` — ${projectTitle}` : ''}`,
+      reason: formatWorkflowReason({
+        workflowType: reservation?.workflow_type,
+        metadata: reservation?.metadata || latestTx.metadata || {},
+      }),
       projectTitle,
       balanceAfter: Number(latestTx.balance_after),
-      childCount: children.length,
-      children,
+      childCount: 0,
+      children: [],
       workflowType: reservation?.workflow_type,
       holdAmount,
       finalCharge,

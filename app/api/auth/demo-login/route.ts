@@ -4,7 +4,7 @@ import { cookies } from 'next/headers';
 import { DEMO_EMAIL } from '@/lib/demo-mode';
 
 export async function POST() {
-  const password = process.env.DEMO_PASSWORD;
+  const password = process.env.DEMO_PASSWORD || process.env.NEXT_PUBLIC_DEMO_PASSWORD;
   if (!password) {
     return NextResponse.json(
       { error: 'Demo account is not configured' },
@@ -39,7 +39,7 @@ export async function POST() {
 
   if (error) {
     return NextResponse.json(
-      { error: 'Unable to access the demo account' },
+      { error: error.message || 'Unable to access the demo account' },
       { status: 401 }
     );
   }

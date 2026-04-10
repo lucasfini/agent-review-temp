@@ -5,6 +5,7 @@ import { getAppBaseUrl } from '@/lib/app-url';
 import { createReservation, failReservation, InsufficientCreditError } from '@/lib/billing/credit';
 import { estimateAnalysisJobCost, estimateContentGenerationCost } from '@/lib/billing/cost-map';
 import { isDemoUser } from '@/lib/demo-mode';
+import { estimateReservationAmount } from '@/lib/billing/reserve-amount';
 import {
   buildContentBlockForJob,
   isAnalysisJobKey,
@@ -186,7 +187,7 @@ export async function POST(
                 userId: project.user_id,
                 projectId,
                 workflowType: 'analysis_job',
-                amount: Number((estimatedCost * 1.15).toFixed(4)),
+                amount: estimateReservationAmount(estimatedCost, 'analysis_job'),
                 metadata: {
                   targetKey: job.target_key,
                   queuedJobId: job.id,
@@ -249,12 +250,25 @@ export async function POST(
             throw new Error(`Reconcile did not complete ${job.target_key}`);
           }
         } else {
-          const block = buildContentBlockForJob(job.target_key, job.theme_id || 'professional');
+          const block = buildContentBlockForJob(
+            job.target_key,
+            job.theme_id || 'professional',
+            job.custom_guidance || undefined
+          );
+          const generationHeaders: Record<string, string> = {
+            'Content-Type': 'application/json',
+          };
+          const forwardedAuth = request.headers.get('Authorization');
+          const internalToken = request.headers.get('x-internal-job-token');
+          if (forwardedAuth) {
+            generationHeaders.Authorization = forwardedAuth;
+          }
+          if (internalToken) {
+            generationHeaders['x-internal-job-token'] = internalToken;
+          }
           const res = await fetch(`${baseUrl}/api/generate-content`, {
             method: 'POST',
-            headers: {
-              'Content-Type': 'application/json',
-            },
+            headers: generationHeaders,
             body: JSON.stringify({
               projectId,
               transcription: project.transcription_text,

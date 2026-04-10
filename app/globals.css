@@ -235,7 +235,7 @@
 }
 
 
-/* ── Dark scrollbars for the dashboard ─────────────────────────────────── */
+/* Dark scrollbars for the dashboard */
 .dark-scroll::-webkit-scrollbar,
 .dark-scroll *::-webkit-scrollbar {
   width: 6px;
@@ -275,7 +275,7 @@
   scrollbar-color: var(--dashboard-scrollbar-thumb) var(--dashboard-scrollbar-track);
 }
 
-/* ── Driver.js dark theme overrides ────────────────────────────────────── */
+/* Driver.js dark theme overrides */
 .driver-popover {
   --driver-popover-bg-color: #1e293b;
   --driver-popover-text-color: #f1f5f9;

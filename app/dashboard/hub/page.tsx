@@ -33,7 +33,6 @@ import { supabase } from '@/lib/supabase/client';
 import { KPICard, CollapsibleStatsRow } from '@/components/ui/kpi-card';
 import { Badge } from '@/components/ui/badge';
 import { cn } from '@/lib/utils';
-import { DemoTour } from '@/components/demo/DemoTour';
 import { emitProjectMutation } from '@/lib/project-events';
 import { toast } from 'sonner';
 import ConfirmModal from '@/components/ui/confirm-modal';
@@ -835,7 +834,6 @@ export default function ProjectHubPage() {
           )}
         </div>
       </div>
-      {isDemoMode && <DemoTour chapter="hub" />}
     </div>
   );
 }

@@ -1,5 +1,7 @@
 # Two-Pass Speaker Attribution System
 
+> Historical implementation note: this document is useful for speaker-pipeline context, but it is not the current deployment or env-var source of truth.
+
 ## Overview
 
 A robust speaker attribution system that eliminates false speakers (locations, networks, shows) and consolidates fragmented speaker identities.
@@ -50,7 +52,7 @@ import { runTwoPassAttribution } from '@/lib/two-pass-speaker-attribution';
 const segments: SpeakerSegment[] = [...]; // from AssemblyAI
 
 const result = await runTwoPassAttribution(segments, {
-  openaiApiKey: process.env.OPENAI_API_KEY,
+  openaiApiKey: process.env.OPENAI_API_KEY_OPTIN,
   anthropicApiKey: process.env.ANTHROPIC_API_KEY,
   projectTitle: 'Raging Moderates Podcast'
 });
@@ -209,7 +211,7 @@ If quality checks fail, the system returns the speakers but marks `qualityPassed
 
 ### Environment Variables
 ```bash
-OPENAI_API_KEY=sk-...        # Required for Pass 1
+OPENAI_API_KEY_OPTIN=sk-...  # Required for OpenAI-backed runtime features
 ANTHROPIC_API_KEY=sk-...     # Required for Pass 2
 ```
 

@@ -1,5 +1,7 @@
 # Transcription Setup
 
+> This is the current high-level setup guide. For launch infrastructure and env setup, pair it with the deployment docs.
+
 This project uses **AssemblyAI** for cloud-based transcription + speaker diarization, providing professional-grade accuracy with fast processing times.
 
 **Optional**: Sortformer can be used for local speaker diarization if preferred.
@@ -197,9 +199,9 @@ const result = await transcribeAudio({
 
 ## Migration Notes
 
-If you previously used local PyAnnote/Whisper:
+If you previously used older local diarization/transcription experiments:
 - All processing now uses AssemblyAI by default
-- PyAnnote configuration variables are no longer needed
+- Older PyAnnote-specific configuration is no longer the default path
 - HuggingFace tokens no longer required
 - Python environment setup no longer needed (unless using Sortformer)
 - Expect significant speed improvements (60x faster)

@@ -11,6 +11,8 @@ import { estimateAnalysisJobCost } from '@/lib/billing/cost-map';
 import { billingErrorResponse, requireCredits } from '@/lib/billing/middleware';
 import { createReservation, failReservation, settleReservation } from '@/lib/billing/credit';
 import { isDemoUser } from '@/lib/demo-mode';
+import { aiRatelimit } from '@/lib/rate-limit';
+import { estimateReservationAmount } from '@/lib/billing/reserve-amount';
 
 interface RouteContext {
   params: Promise<{
@@ -36,6 +38,14 @@ export async function POST(request: NextRequest, context: RouteContext) {
       return NextResponse.json({ error: 'Demo account is read-only' }, { status: 403 });
     }
 
+    const { success } = await aiRatelimit.limit(user.id);
+    if (!success) {
+      return NextResponse.json(
+        { error: 'Rate limit exceeded for AI operations. Please wait a moment.' },
+        { status: 429 }
+      );
+    }
+
     if (!project.transcription_text) {
       return NextResponse.json({ error: 'Project transcription not available' }, { status: 400 });
     }
@@ -44,7 +54,7 @@ export async function POST(request: NextRequest, context: RouteContext) {
       targetKey: 'insights',
       estimatedTranscriptLength: project.transcription_text.length,
     });
-    const estimatedHold = Number((estimatedCost * 1.15).toFixed(4));
+    const estimatedHold = estimateReservationAmount(estimatedCost, 'analysis_job');
     if (estimatedHold > 0) {
       await requireCredits(user.id, estimatedHold);
     }

@@ -1,7 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { requireAuthenticatedUser, RouteAccessError } from '@/lib/api/route-auth';
 import { supabaseAdmin } from '@/lib/supabase/server';
-import { getBalance, getUsageHistory } from '@/lib/billing/credit';
+import { getDisplayBalance, getUsageHistory } from '@/lib/billing/credit';
 import { formatSiteCreditsFromUsd } from '@/lib/billing/display';
 import { getGroupedTransactions } from '@/lib/billing/grouped-transactions';
 
@@ -26,7 +26,7 @@ export async function GET(request: NextRequest) {
         .from('integration_connections')
         .select('provider,status,metadata,created_at,updated_at,external_account_id')
         .eq('user_id', user.id),
-      getBalance(user.id),
+      getDisplayBalance(user.id),
       getGroupedTransactions(user.id, transactionLimit, transactionOffset),
       getUsageHistory(user.id, { limit: usageLimit, offset: 0 }),
     ]);
@@ -112,8 +112,10 @@ export async function GET(request: NextRequest) {
       },
       integrations,
       balance: {
-        balance: balanceResult.balance,
-        formatted: formatSiteCreditsFromUsd(balanceResult.balance),
+        balance: balanceResult.visibleBalance,
+        formatted: formatSiteCreditsFromUsd(balanceResult.visibleBalance),
+        availableBalance: balanceResult.availableBalance,
+        reservedPending: balanceResult.reservedPending,
         lifetimeCreditsAdded: balanceResult.lifetimeCreditsAdded,
         lifetimeCreditsSpent: balanceResult.lifetimeCreditsSpent,
         lastUpdated: balanceResult.updatedAt,

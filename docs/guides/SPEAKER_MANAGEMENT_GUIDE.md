@@ -1,5 +1,7 @@
 # Speaker Management Features Guide
 
+> Note: this guide is for feature behavior and implementation context. For current runtime/provider configuration, trust the live code and current deployment docs first.
+
 ## Overview
 
 Your AudioRepurpose application now has comprehensive speaker management capabilities:
@@ -322,8 +324,8 @@ speaker_keywords JSONB DEFAULT '[]'::jsonb
 
 When a new audio file is transcribed:
 
-1. **Whisper/AssemblyAI transcription** → segments with timestamps
-2. **PyAnnote speaker detection** → speaker segments
+1. **Transcription** → segments with timestamps
+2. **Speaker detection** → speaker segments
 3. **AI name extraction** → speaker names
 4. **NEW: Keyword detection** (if keywords configured):
    - Fetch project's `speaker_keywords`
@@ -560,4 +562,4 @@ Your AudioRepurpose application now has a complete speaker management system wit
 ✅ **Safety Checks:** Error handling and data validation
 ✅ **Database Schema:** Proper structure for speaker data
 
-All features are production-ready and integrated into your existing transcription workflow!
+Treat this as a feature guide, not a production-readiness statement.

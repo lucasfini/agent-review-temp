@@ -1,5 +1,6 @@
 import { createServerClient } from '@supabase/ssr';
 import { cookies } from 'next/headers';
+import Link from 'next/link';
 import { redirect } from 'next/navigation';
 import { isAdminEmail } from '@/lib/admin-access';
 
@@ -33,5 +34,29 @@ export default async function AdminLayout({
     redirect('/dashboard/hub');
   }
 
-  return <>{children}</>;
+  const adminLinks = [
+    { href: '/dashboard/admin', label: 'Control Center' },
+    { href: '/dashboard/admin/users', label: 'Users' },
+    { href: '/dashboard/admin/monitoring', label: 'Monitoring' },
+    { href: '/dashboard/admin/data', label: 'Billing Data' },
+  ];
+
+  return (
+    <div className="min-h-full bg-transparent">
+      <div className="mx-auto max-w-7xl px-6 pt-6">
+        <div className="flex flex-wrap gap-2 rounded-2xl border border-slate-800 bg-slate-950/70 p-2">
+          {adminLinks.map((link) => (
+            <Link
+              key={link.href}
+              href={link.href}
+              className="rounded-xl px-3 py-2 text-sm text-slate-300 transition hover:bg-slate-900 hover:text-white"
+            >
+              {link.label}
+            </Link>
+          ))}
+        </div>
+      </div>
+      {children}
+    </div>
+  );
 }

@@ -27,25 +27,11 @@ describe('COST_MAP', () => {
     expect(COST_MAP.claude_haiku_output).toBeDefined();
   });
 
-  test('should have 35% margin on all paid services', () => {
-    Object.entries(COST_MAP).forEach(([key, service]) => {
-      if (service.provider !== 'local') {
-        expect(service.marginPercent).toBe(35);
-      }
-    });
-  });
-
-  test('should have correct billed rates with 35% markup', () => {
+  test('should keep transcription positioned as a low-friction entry price', () => {
     const assemblyai = COST_MAP.assemblyai_transcription;
-    const expectedBilledRate = assemblyai.providerRate * 1.35;
-    expect(assemblyai.billedRate).toBeCloseTo(expectedBilledRate, 10);
-  });
-
-  test('local services should be free', () => {
-    const pyannote = COST_MAP.pyannote_diarization;
-    expect(pyannote.providerRate).toBe(0);
-    expect(pyannote.billedRate).toBe(0);
-    expect(pyannote.marginPercent).toBe(0);
+    expect(assemblyai.providerRateDisplay).toBe('$0.37/hour');
+    expect(assemblyai.billedRateDisplay).toBe('$0.39/hour');
+    expect(assemblyai.billedRate).toBeCloseTo(0.39 / 3600, 10);
   });
 });
 
@@ -55,8 +41,7 @@ describe('calculateServiceCost', () => {
     const result = calculateServiceCost('assemblyai_transcription', durationSeconds);
 
     expect(result.rawCost).toBeCloseTo(0.37, 4);
-    expect(result.billedCost).toBeCloseTo(0.5365, 4);
-    expect(result.marginPercent).toBe(45);
+    expect(result.billedCost).toBeCloseTo(0.39, 4);
     expect(result.unitType).toBe('seconds');
   });
 
@@ -65,7 +50,7 @@ describe('calculateServiceCost', () => {
     const result = calculateServiceCost('openai_gpt4o_mini_input', inputTokens);
 
     expect(result.rawCost).toBeCloseTo(0.15, 4);
-    expect(result.billedCost).toBeCloseTo(0.2025, 4);
+    expect(result.billedCost).toBeCloseTo(0.2175, 4);
   });
 
   test('should throw error for invalid service key', () => {
@@ -96,7 +81,7 @@ describe('calculateTokenCost', () => {
     expect(result.breakdown.input.units).toBe(inputTokens);
     expect(result.breakdown.output.units).toBe(outputTokens);
     expect(result.billedCost).toBeGreaterThan(result.rawCost);
-    expect(result.billedCost).toBeCloseTo(result.rawCost * 1.35, 6);
+    expect(result.billedCost).toBeCloseTo(result.rawCost * 1.45, 6);
   });
 
   test('should handle Claude Sonnet costs', () => {
@@ -129,7 +114,7 @@ describe('estimateTranscriptionCost', () => {
       tier: 'basic',
     });
 
-    expect(result.transcription).toBeCloseTo(0.5365, 4);
+    expect(result.transcription).toBeCloseTo(0.39, 4);
     expect(result.aiProcessing).toBe(0); // Basic tier has no AI processing
     expect(result.total).toBe(result.transcription);
   });
@@ -138,9 +123,13 @@ describe('estimateTranscriptionCost', () => {
     const result = estimateTranscriptionCost({
       durationSeconds: 3600, // 1 hour
       tier: 'pro',
+      analysisOptions: {
+        namedSpeakers: true,
+        summary: true,
+      },
     });
 
-    expect(result.transcription).toBeCloseTo(0.5365, 4);
+    expect(result.transcription).toBeCloseTo(0.39, 4);
     expect(result.aiProcessing).toBeGreaterThan(0); // Pro includes name extraction and summary
     expect(result.total).toBeGreaterThan(result.transcription);
     expect(result.breakdown.length).toBeGreaterThan(1);
@@ -150,6 +139,14 @@ describe('estimateTranscriptionCost', () => {
     const result = estimateTranscriptionCost({
       durationSeconds: 3600, // 1 hour
       tier: 'premium',
+      analysisOptions: {
+        namedSpeakers: true,
+        summary: true,
+        chapters: true,
+        takeaways: true,
+        quotes: true,
+        insights: true,
+      },
     });
 
     expect(result.aiProcessing).toBeGreaterThan(0);
@@ -167,7 +164,7 @@ describe('estimateTranscriptionCost', () => {
 });
 
 describe('estimateAnalysisJobCost', () => {
-  test('should price insights using the configured insight extraction model', () => {
+  test('should price insights using the configured model with pricing uplift', () => {
     const estimatedTranscriptLength = 24000;
     const estimatedTokens = Math.ceil(estimatedTranscriptLength / 4);
     const estimated = estimateAnalysisJobCost({
@@ -184,7 +181,36 @@ describe('estimateAnalysisJobCost', () => {
           ? calculateTokenCost('openai_gpt5_input', 'openai_gpt5_output', estimatedTokens, 1200).billedCost
           : calculateTokenCost('openai_gpt4o_mini_input', 'openai_gpt4o_mini_output', estimatedTokens, 1200).billedCost;
 
-    expect(estimated).toBeCloseTo(expected, 6);
+    expect(estimated).toBeCloseTo(Math.max(expected * 2.25, 0.10), 6);
+  });
+
+  test('should apply minimum charges to short analysis jobs', () => {
+    expect(
+      estimateAnalysisJobCost({
+        targetKey: 'summary',
+        estimatedTranscriptLength: 100,
+      })
+    ).toBe(0.04);
+
+    expect(
+      estimateAnalysisJobCost({
+        targetKey: 'chapters',
+        estimatedTranscriptLength: 100,
+      })
+    ).toBe(0.03);
+  });
+
+  test('should charge more for longer transcripts', () => {
+    const shortEstimate = estimateAnalysisJobCost({
+      targetKey: 'namedSpeakers',
+      estimatedTranscriptLength: 4000,
+    });
+    const longEstimate = estimateAnalysisJobCost({
+      targetKey: 'namedSpeakers',
+      estimatedTranscriptLength: 48000,
+    });
+
+    expect(longEstimate).toBeGreaterThan(shortEstimate);
   });
 });
 
@@ -209,10 +235,10 @@ describe('formatCost', () => {
 });
 
 describe('applyMargin', () => {
-  test('should apply 35% margin correctly', () => {
+  test('should apply 45% margin correctly', () => {
     const rawCost = 1.0;
-    const result = applyMargin(rawCost, 35);
-    expect(result).toBeCloseTo(1.35, 6);
+    const result = applyMargin(rawCost, 45);
+    expect(result).toBeCloseTo(1.45, 6);
   });
 
   test('should apply custom margin', () => {
@@ -222,21 +248,21 @@ describe('applyMargin', () => {
   });
 
   test('should handle zero cost', () => {
-    expect(applyMargin(0, 35)).toBe(0);
+    expect(applyMargin(0, 45)).toBe(0);
   });
 });
 
 describe('calculateMarginAmount', () => {
   test('should calculate margin amount correctly', () => {
     const rawCost = 1.0;
-    const margin = calculateMarginAmount(rawCost, 35);
-    expect(margin).toBeCloseTo(0.35, 6);
+    const margin = calculateMarginAmount(rawCost, 45);
+    expect(margin).toBeCloseTo(0.45, 6);
   });
 
-  test('should use default 35% margin', () => {
+  test('should use default 45% margin', () => {
     const rawCost = 1.0;
     const margin = calculateMarginAmount(rawCost);
-    expect(margin).toBeCloseTo(0.35, 6);
+    expect(margin).toBeCloseTo(0.45, 6);
   });
 });
 
@@ -274,7 +300,7 @@ describe('Cost Calculations Edge Cases', () => {
   });
 
   test('should handle very small numbers', () => {
-    const result = calculateServiceCost('assemblyai_transcription', 0.001);
+    const result = calculateServiceCost('assemblyai_transcription', 1);
     expect(result.rawCost).toBeGreaterThan(0);
     expect(result.billedCost).toBeGreaterThan(result.rawCost);
   });

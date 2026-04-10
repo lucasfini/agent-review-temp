@@ -2,21 +2,17 @@
 
 import { useEffect, useRef } from 'react';
 import Link from 'next/link';
-import { usePathname, useRouter } from 'next/navigation';
 import { useTheme } from 'next-themes';
 import BrandLogo from '@/components/site/BrandLogo';
-import { X, MapPin, Compass } from 'lucide-react';
+import { X, Compass } from 'lucide-react';
 
 interface WelcomeModalProps {
   isOpen: boolean;
   onClose: () => void;
-  onStartTour?: () => void;
 }
 
-export function WelcomeModal({ isOpen, onClose, onStartTour }: WelcomeModalProps) {
+export function WelcomeModal({ isOpen, onClose }: WelcomeModalProps) {
   const overlayRef = useRef<HTMLDivElement>(null);
-  const router = useRouter();
-  const pathname = usePathname();
   const { resolvedTheme } = useTheme();
 
   // Close on backdrop click
@@ -34,19 +30,6 @@ export function WelcomeModal({ isOpen, onClose, onStartTour }: WelcomeModalProps
   }, [isOpen, onClose]);
 
   if (!isOpen) return null;
-
-  const handleStartTour = () => {
-    onClose();
-    onStartTour?.();
-    // Signal the hub to start the tour
-    localStorage.setItem('demoTourChapter', 'hub');
-    if (pathname !== '/dashboard/hub') {
-      router.push('/dashboard/hub');
-      return;
-    }
-    // Dispatch a custom event so the hub page can react without a full nav
-    window.dispatchEvent(new CustomEvent('demoTourStart'));
-  };
 
   const logoTheme = resolvedTheme === 'dark' ? 'dark' : 'light';
 
@@ -77,24 +60,17 @@ export function WelcomeModal({ isOpen, onClose, onStartTour }: WelcomeModalProps
 
         {/* Body */}
         <p className="mb-6 text-sm leading-relaxed text-slate-600 dark:text-slate-300">
-          Take the guided tour to see every feature, or explore freely on your own.
+          Explore the demo account on your own. It is read-only and preloaded with example projects so you can click through the product without changing anything.
         </p>
 
         {/* Actions */}
         <div className="space-y-3">
           <button
-            onClick={handleStartTour}
-            className="flex items-center justify-center gap-2 w-full bg-blue-600 hover:bg-blue-500 text-white font-semibold py-3 rounded-xl transition-colors"
-          >
-            <MapPin className="h-4 w-4" />
-            Start Guided Tour →
-          </button>
-          <button
             onClick={onClose}
             className="flex w-full items-center justify-center gap-2 rounded-xl border border-slate-300 py-3 text-sm font-medium text-slate-600 transition-colors hover:border-slate-400 hover:text-slate-900 dark:border-slate-700 dark:text-slate-400 dark:hover:border-slate-600 dark:hover:text-slate-200"
           >
             <Compass className="h-4 w-4" />
-            Explore on my own
+            Enter demo
           </button>
         </div>
 

@@ -24,6 +24,7 @@ import type { SpeakerSegment, TranscriptionSegment } from '@/lib/types';
 import { estimateTranscriptionCost } from '@/lib/billing/cost-map';
 import { trackAssemblyAIUsage, requireSufficientCredit } from '@/lib/billing/track-usage';
 import { InsufficientCreditError, failReservation, settleReservation } from '@/lib/billing/credit';
+import { aiRatelimit } from '@/lib/rate-limit';
 import { autoCorrectSpeakers, applySpeakerCorrections } from '@/lib/utils/autoCorrectSpeakers';
 import { classifyProjectTypeWithAI, type ProjectType } from '@/lib/utils/classifyProjectType';
 import { correctDebateSpeakers, applyDebateCorrectionToSpeakerData, summarizeDebateCorrections } from '@/lib/utils/correctDebateSpeakers';
@@ -407,6 +408,14 @@ export async function POST(request: NextRequest) {
         return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
       }
       callerUserId = user.id;
+
+      const { success } = await aiRatelimit.limit(user.id);
+      if (!success) {
+        return NextResponse.json(
+          { error: 'Rate limit exceeded for AI operations. Please wait a moment.' },
+          { status: 429 }
+        );
+      }
     }
 
     // Parse request

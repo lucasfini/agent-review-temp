@@ -17,6 +17,7 @@ import { billingErrorResponse, requireCredits } from '@/lib/billing/middleware';
 import { estimateTranscriptionCost } from '@/lib/billing/cost-map';
 import { getProcessingTierForAnalysis, normalizeAnalysisOptions } from '@/lib/analysis-options';
 import { createReservation, releaseReservation } from '@/lib/billing/credit';
+import { estimateReservationAmount } from '@/lib/billing/reserve-amount';
 
 export const runtime = 'nodejs';
 
@@ -79,7 +80,10 @@ export async function POST(request: NextRequest) {
         }
 
         const sanitizedBaseName = sanitizeFileName(fileName);
-        const estimatedDuration = Math.round(size / (ESTIMATED_BITRATE_BPS / 8));
+        const providedEstimatedDuration = typeof body?.estimatedDurationSeconds === 'number'
+            ? Math.max(1, Math.round(body.estimatedDurationSeconds))
+            : null;
+        const estimatedDuration = providedEstimatedDuration || Math.round(size / (ESTIMATED_BITRATE_BPS / 8));
         const analysisOptions = normalizeAnalysisOptions(body.analysisOptions);
         const processingTier = getProcessingTierForAnalysis(analysisOptions);
         const estimatedCost = estimateTranscriptionCost({
@@ -88,7 +92,7 @@ export async function POST(request: NextRequest) {
             analysisOptions,
         });
 
-        const estimatedHold = Number((estimatedCost.total * 1.15).toFixed(4));
+        const estimatedHold = estimateReservationAmount(estimatedCost.total, 'upload_processing');
         await requireCredits(user.id, estimatedHold);
 
         const reservation = await createReservation({
@@ -99,6 +103,7 @@ export async function POST(request: NextRequest) {
                 estimatedCost: estimatedCost.total,
                 analysisOptions,
                 estimatedDuration,
+                durationSource: providedEstimatedDuration ? 'client_metadata' : 'file_size_estimate',
             },
             expiresAt: new Date(Date.now() + (2 * 60 * 60 * 1000)).toISOString(),
         });

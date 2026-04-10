@@ -43,6 +43,7 @@ import {
   Newspaper,
 } from "lucide-react";
 import BrandLogo from "@/components/site/BrandLogo";
+import { PAYG_SECTIONS, PRICING_MODEL_SUMMARY } from "@/lib/pricing-config";
 
 const XIcon = ({ className, ...props }: SVGProps<SVGSVGElement>) => (
   <svg viewBox="0 0 24 24" fill="currentColor" className={className} {...props}>
@@ -78,7 +79,7 @@ const OUTPUT_ICONS = {
 
 type OutputIconKey = keyof typeof OUTPUT_ICONS;
 
-// ─── Constants ────────────────────────────────────────────────────────────────
+// Constants
 const SOCIAL_TAGS = [
   "Podcasts",
   "Interviews",
@@ -140,7 +141,7 @@ type HowItWorksStep = {
   Icon: ElementType;
 };
 
-// ─── How It Works steps ───────────────────────────────────────────────────────
+// How It Works steps
 const HOW_IT_WORKS_STEPS: HowItWorksStep[] = [
   {
     id: "upload",
@@ -177,7 +178,7 @@ const HOW_IT_WORKS_STEPS: HowItWorksStep[] = [
   },
 ];
 
-// ─── Output formats ───────────────────────────────────────────────────────────
+// Output formats
 const OUTPUT_GROUPS: Array<{
   title: string;
   description: string;
@@ -194,7 +195,7 @@ const OUTPUT_GROUPS: Array<{
           icon: "x",
           badgeBg: "bg-slate-900",
           name: "X Threads",
-          desc: "6\u20138 posts per thread",
+          desc: "6-8 posts per thread",
         },
         {
           icon: "linkedin",
@@ -232,7 +233,7 @@ const OUTPUT_GROUPS: Array<{
           icon: "tiktok",
           badgeBg: "bg-cyan-600",
           name: "TikTok / Reels Script",
-          desc: "45–60 second short-form hook and CTA",
+          desc: "45-60 second short-form hook and CTA",
         },
         {
           icon: "podcast",
@@ -258,13 +259,13 @@ const OUTPUT_GROUPS: Array<{
           icon: "blog",
           badgeBg: "bg-emerald-600",
           name: "Blog Post",
-          desc: "SEO-optimized, 1,200–1,800 words",
+          desc: "SEO-optimized, 1,200-1,800 words",
         },
         {
           icon: "newsletter",
           badgeBg: "bg-orange-500",
           name: "Email Newsletter",
-          desc: "800–1,200 words with CTA",
+          desc: "800-1,200 words with CTA",
         },
         {
           icon: "quote",
@@ -287,7 +288,7 @@ const FEATURED_OUTPUT_STACK: FeaturedOutputCard[] = [
     preview: [
       {
         label: "Hook",
-        text: '"This moment from our podcast is about to reframe how you think about customer retention…"',
+        text: '"This moment from our podcast is about to reframe how you think about customer retention..."',
       },
       {
         label: "Build",
@@ -309,11 +310,11 @@ const FEATURED_OUTPUT_STACK: FeaturedOutputCard[] = [
     preview: [
       {
         label: "Summary",
-        text: "Sarah Chen explains what separates high-retention SaaS from the rest — and the metrics teams get wrong.",
+        text: "Sarah Chen explains what separates high-retention SaaS from the rest - and the metrics teams get wrong.",
       },
       {
         label: "Chapters",
-        text: "00:00 Intro  ·  04:22 Retention paradox  ·  18:45 Framework  ·  32:10 Q&A",
+        text: "00:00 Intro | 04:22 Retention paradox | 18:45 Framework | 32:10 Q&A",
       },
       {
         label: "Tags",
@@ -335,9 +336,9 @@ const FEATURED_OUTPUT_STACK: FeaturedOutputCard[] = [
       },
       {
         label: "Insight",
-        text: "The teams that win aren't reducing churn — they're engineering indispensability at 30, 60, and 90 days.",
+        text: "The teams that win aren't reducing churn - they're engineering indispensability at 30, 60, and 90 days.",
       },
-      { label: "CTA", text: "Read the full breakdown → [Listen Now]" },
+      { label: "CTA", text: "Read the full breakdown -> [Listen Now]" },
     ],
   },
 ];
@@ -617,51 +618,7 @@ function generateRandomSignal(prev: number[]): number[] {
   });
 }
 
-// ─── Pricing — single pay-as-you-go model ────────────────────────────────────
-const PAYG_SECTIONS = [
-  {
-    name: "Base transcription",
-    price: "$0.54/hr",
-    description:
-      "Always-on transcript with numbered speaker labels and timestamps.",
-    features: [
-      "Clean transcript",
-      "Speaker labels (numbered)",
-      "Word-level timestamps",
-      "Export to Markdown / Notion",
-    ],
-  },
-  {
-    name: "Optional analysis add-ons",
-    price: "Per selection",
-    description: "Choose only the structure you want during processing.",
-    features: [
-      "Named speakers with roles",
-      "Episode summary",
-      "Insights",
-      "Chapter breakdown",
-      "Key takeaways",
-      "Notable quotes",
-    ],
-  },
-  {
-    name: "Content generation",
-    price: "Per output",
-    description:
-      "Generate content later from the project page, one content type at a time.",
-    features: [
-      "X / Twitter thread",
-      "LinkedIn post",
-      "YouTube description",
-      "TikTok / Reels script",
-      "Podcast show notes",
-      "Email newsletter",
-      "Blog post",
-    ],
-  },
-] as const;
-
-// ─── Utilities ────────────────────────────────────────────────────────────────
+// Utilities
 function ScrollProgressBar() {
   const { scrollYProgress } = useScroll();
   const scaleX = useSpring(scrollYProgress, {
@@ -1456,7 +1413,7 @@ function HowItWorksGraphic({ step }: { step: HowItWorksStep }) {
                       {index === 0
                         ? "Speaker-attributed summary with timestamps."
                         : index === 1
-                          ? "Post draft based on the episode’s core insight."
+                          ? "Post draft based on the episode's core insight."
                           : "Thread built from key discussion points."}
                     </div>
                   </div>
@@ -1638,7 +1595,7 @@ function SpeakerWorkflowSpotlight({
   );
 }
 
-// ─── Navbar ───────────────────────────────────────────────────────────────────
+// Navbar
 function Navbar({
   open,
   setOpen,
@@ -1765,7 +1722,7 @@ function Navbar({
   );
 }
 
-// ─── Hero ─────────────────────────────────────────────────────────────────────
+// Hero
 function Hero() {
   const [activePhrase, setActivePhrase] = useState(0);
 
@@ -1841,7 +1798,7 @@ function Hero() {
                 href="/auth/demo"
                 className="inline-flex items-center gap-2 rounded-xl border border-slate-300 px-6 py-3.5 font-medium text-slate-700 transition-colors hover:border-slate-400 hover:bg-white/70 dark:border-white/25 dark:text-white/80 dark:hover:border-white/50 dark:hover:bg-white/5 dark:hover:text-white"
               >
-                Try Demo →
+                Try Demo {"->"}
               </Link>
             </motion.div>
 
@@ -1883,7 +1840,7 @@ function Hero() {
   );
 }
 
-// ─── Speaker Intelligence Section ────────────────────────────────────────────
+// Speaker Intelligence Section
 function SpeakerIntelligenceSection() {
   const [activeStep, setActiveStep] = useState(1);
 
@@ -1986,7 +1943,7 @@ function SpeakerIntelligenceSection() {
   );
 }
 
-// ─── How It Works ─────────────────────────────────────────────────────────────
+// How It Works
 function HowItWorks() {
   const reduceMotion = useReducedMotion();
   const [activeStep, setActiveStep] = useState(0);
@@ -2118,7 +2075,7 @@ function HowItWorks() {
   );
 }
 
-// ─── Content Outputs Section ──────────────────────────────────────────────────
+// Content Outputs Section
 function ContentOutputsSection() {
   const [activeCard, setActiveCard] = useState(0);
   const [signalHeights, setSignalHeights] = useState<number[]>(
@@ -2207,7 +2164,7 @@ function ContentOutputsSection() {
         </motion.div>
 
         <div className="grid gap-8 xl:grid-cols-5 xl:items-start">
-          {/* Left column — Content Menu */}
+          {/* Left column - Content Menu */}
           <motion.div
             initial={{ opacity: 0, y: 20 }}
             whileInView={{ opacity: 1, y: 0 }}
@@ -2271,7 +2228,7 @@ function ContentOutputsSection() {
             </div>
           </motion.div>
 
-          {/* Right column — Cycling Output Preview */}
+          {/* Right column - Cycling Output Preview */}
           <motion.div
             initial={{ opacity: 0, y: 24 }}
             whileInView={{ opacity: 1, y: 0 }}
@@ -2281,21 +2238,6 @@ function ContentOutputsSection() {
           >
             <div className="relative pt-4">
               <div className="absolute left-0 right-0 top-0 h-px bg-gradient-to-r from-transparent via-slate-300 to-transparent dark:via-white/15" />
-              <div className="mb-6 flex items-start justify-between gap-4">
-                <div>
-                  <p className="text-[11px] font-semibold uppercase tracking-[0.2em] text-slate-500 dark:text-slate-400">
-                    Editorial Rotation
-                  </p>
-                  <h3 className="mt-2 text-2xl font-bold tracking-tight text-slate-950 dark:text-white">
-                    See one publish-ready example from the same recording.
-                  </h3>
-                  <p className="mt-2 max-w-md text-sm leading-6 text-slate-500 dark:text-slate-300">
-                    Start with a single output, then switch tabs if you want to
-                    see how the same source can be repackaged elsewhere.
-                  </p>
-                </div>
-              </div>
-
               <div className="relative min-h-[19rem] border-y border-slate-200 py-6 dark:border-white/10">
                 <AnimatePresence mode="wait">
                   <motion.div
@@ -2752,7 +2694,7 @@ function AnalysisSection() {
   );
 }
 
-// ─── Pricing ──────────────────────────────────────────────────────────────────
+// Pricing
 function Pricing() {
   return (
     <section
@@ -2777,7 +2719,7 @@ function Pricing() {
         <div className="max-w-5xl mx-auto mb-10 rounded-xl border border-slate-200 bg-transparent px-5 py-3.5 flex items-start gap-3 dark:border-white/10 dark:bg-white/[0.03]">
           <Clock className="h-4 w-4 text-slate-500 flex-shrink-0 mt-0.5 dark:text-slate-400" />
           <p className="text-sm text-slate-700 dark:text-slate-300">
-            <span className="font-semibold">Manual by default</span> — You
+            <span className="font-semibold">Manual by default</span> - You
             choose which analysis runs during upload, then generate content
             later from the project page so credits only go toward outputs you
             actually want.
@@ -2832,12 +2774,15 @@ function Pricing() {
           No subscriptions. Buy credits, upload when you need to, and trigger
           analysis or content generation only when it adds value.
         </p>
+        <p className="mt-3 text-center text-sm text-slate-500 dark:text-slate-400">
+          {PRICING_MODEL_SUMMARY}
+        </p>
       </div>
     </section>
   );
 }
 
-// ─── Final CTA ────────────────────────────────────────────────────────────────
+// Final CTA
 function FinalCTA() {
   const { resolvedTheme } = useTheme();
   const [mounted, setMounted] = useState(false);
@@ -2909,7 +2854,7 @@ function FinalCTA() {
   );
 }
 
-// ─── Footer ───────────────────────────────────────────────────────────────────
+// Footer
 function Footer() {
   const { resolvedTheme } = useTheme();
   const [mounted, setMounted] = useState(false);
@@ -3024,7 +2969,7 @@ function Footer() {
   );
 }
 
-// ─── Page ─────────────────────────────────────────────────────────────────────
+// Page
 export default function LandingPage() {
   const [mobileOpen, setMobileOpen] = useState(false);
 

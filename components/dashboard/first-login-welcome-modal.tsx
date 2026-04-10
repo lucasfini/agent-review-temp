@@ -1,8 +1,10 @@
 "use client";
 
 import BrandLogo from '@/components/site/BrandLogo';
+import { useAuth } from '@/lib/auth/context';
 import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle } from '@/components/ui/dialog';
 import { ArrowRight, Mic, Sparkles, Wand2 } from 'lucide-react';
+import { useTheme } from 'next-themes';
 
 interface FirstLoginWelcomeModalProps {
   isOpen: boolean;
@@ -33,6 +35,14 @@ export function FirstLoginWelcomeModal({
   onClose,
   onGoToUpload,
 }: FirstLoginWelcomeModalProps) {
+  const { user } = useAuth();
+  const { resolvedTheme } = useTheme();
+  const logoTheme = resolvedTheme === 'dark' ? 'dark' : 'light';
+  const meta = user?.user_metadata as Record<string, unknown> | undefined;
+  const fullName = typeof meta?.full_name === 'string' ? meta.full_name.trim() : '';
+  const firstName = fullName.split(/\s+/)[0] || '';
+  const welcomeName = firstName || user?.email?.split('@')[0] || 'there';
+
   return (
     <Dialog open={isOpen} onOpenChange={(next) => !next && onClose()}>
       <DialogContent className="w-[90vw] sm:w-[700px] lg:w-[740px] max-w-none overflow-hidden border-slate-200/70 bg-white/72 p-0 shadow-2xl backdrop-blur-2xl dark:border-slate-800/70 dark:bg-slate-950/70 [&>button]:bg-transparent [&>button]:text-slate-700 [&>button]:opacity-100 hover:[&>button]:bg-transparent hover:[&>button]:text-slate-950 [&>button]:ring-offset-white dark:[&>button]:text-slate-200 dark:hover:[&>button]:bg-transparent dark:hover:[&>button]:text-white dark:[&>button]:ring-offset-slate-950">
@@ -41,9 +51,7 @@ export function FirstLoginWelcomeModal({
             <div className="absolute inset-0 bg-[radial-gradient(circle_at_top_left,rgba(59,130,246,0.16),transparent_34%),radial-gradient(circle_at_80%_20%,rgba(125,211,252,0.16),transparent_28%)] dark:bg-[radial-gradient(circle_at_top_left,rgba(59,130,246,0.22),transparent_34%),radial-gradient(circle_at_80%_20%,rgba(56,189,248,0.14),transparent_28%)]" />
             <div className="relative">
               <div className="mb-6 flex items-center gap-3">
-                <div className="inline-flex rounded-2xl border border-slate-200/90 bg-white/90 p-2 shadow-sm dark:border-slate-700 dark:bg-slate-900/80">
-                  <BrandLogo showText={false} size="lg" theme="dark" />
-                </div>
+                <BrandLogo showText={false} size="lg" theme={logoTheme} />
                 <div>
                   <p className="text-[11px] font-semibold uppercase tracking-[0.22em] text-slate-500 dark:text-slate-400">
                     Welcome
@@ -54,7 +62,7 @@ export function FirstLoginWelcomeModal({
 
               <DialogHeader className="space-y-2 text-left">
                 <DialogTitle className="max-w-xl text-[1.75rem] font-semibold leading-tight tracking-tight text-slate-950 dark:text-slate-50 sm:text-[2rem]">
-                  Welcome in.
+                  Welcome, {welcomeName}.
                 </DialogTitle>
                 <DialogDescription className="max-w-xl text-sm leading-7 text-slate-600 dark:text-slate-300">
                   AudioRepurpose helps you go from one recording to clean transcripts and publish-ready content without a messy workflow.

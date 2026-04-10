@@ -11,6 +11,8 @@ import { billingErrorResponse, requireCredits } from '@/lib/billing/middleware';
 import { createReservation, failReservation, settleReservation } from '@/lib/billing/credit';
 import { normalizeTier } from '@/lib/tier-config';
 import { isDemoUser } from '@/lib/demo-mode';
+import { aiRatelimit } from '@/lib/rate-limit';
+import { estimateReservationAmount } from '@/lib/billing/reserve-amount';
 
 export const maxDuration = 300;
 
@@ -42,6 +44,14 @@ export async function POST(
       return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
     }
     const userId = user.id;
+
+    const { success } = await aiRatelimit.limit(userId);
+    if (!success) {
+      return NextResponse.json(
+        { error: 'Rate limit exceeded for AI operations. Please wait a moment.' },
+        { status: 429 }
+      );
+    }
 
     const payload = (await request.json().catch(() => ({}))) as RunCoveragePayload;
     const force = Boolean(payload.force);
@@ -114,7 +124,7 @@ export async function POST(
     const estimatedCost = estimateCoverageAnalysisCost({
       estimatedTranscriptLength: project.transcription_text.length,
     });
-    const estimatedHold = Number((estimatedCost * 1.15).toFixed(4));
+    const estimatedHold = estimateReservationAmount(estimatedCost, 'coverage_analysis');
 
     if (estimatedHold > 0) {
       await requireCredits(userId, estimatedHold);

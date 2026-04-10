@@ -19,6 +19,7 @@ export interface ProjectGenerationJob {
   kind: ProjectGenerationJobKind;
   target_key: string;
   theme_id?: string | null;
+  custom_guidance?: string | null;
   status: ProjectGenerationJobStatus;
   error_message?: string | null;
   failure_notified_at?: string | null;
@@ -66,7 +67,7 @@ export function mapAnalysisJobKeyToReconcileTarget(key: AnalysisOptionKey): Reco
   }
 }
 
-export function buildContentBlockForJob(contentTypeId: string, themeId: string): ContentBlock {
+export function buildContentBlockForJob(contentTypeId: string, themeId: string, customGuidance?: string): ContentBlock {
   const contentType = CONTENT_TYPES.find((item) => item.id === contentTypeId);
   if (!contentType) {
     throw new Error(`Unknown content type: ${contentTypeId}`);
@@ -79,6 +80,7 @@ export function buildContentBlockForJob(contentTypeId: string, themeId: string):
     name: contentType.name,
     enabled: true,
     theme: themeId,
+    customGuidance,
   };
 }
 

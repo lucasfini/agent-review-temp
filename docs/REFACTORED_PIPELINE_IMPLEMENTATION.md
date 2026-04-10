@@ -1,5 +1,7 @@
 # Refactored Speaker Attribution Pipeline - Implementation Summary
 
+> Historical implementation note: this document is useful for pipeline context, but it is not the deployment or env-var source of truth for the current app.
+
 ## Overview
 
 The transcription pipeline has been **completely refactored** to eliminate hallucinations and improve speaker attribution accuracy.
@@ -145,7 +147,7 @@ const namedSpeakers = await extractSpeakerNames(
 const { runRefactoredSpeakerPipeline } = await import('@/lib/refactored-speaker-pipeline');
 
 const pipelineResult = await runRefactoredSpeakerPipeline(speakerSegments, {
-  openaiApiKey: process.env.OPENAI_API_KEY,
+  openaiApiKey: process.env.OPENAI_API_KEY_OPTIN,
   anthropicApiKey: process.env.ANTHROPIC_API_KEY,
   userId: existingProject?.user_id,
   projectId

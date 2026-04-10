@@ -45,6 +45,8 @@ import { formatSiteCreditDeltaFromUsd, formatSiteCreditsFromUsd } from '@/lib/bi
 interface Balance {
   balance: number;
   formatted: string;
+  availableBalance?: number;
+  reservedPending?: number;
   lifetimeCreditsAdded: number;
   lifetimeCreditsSpent: number;
 }
@@ -168,6 +170,12 @@ function BalanceBanner({ balance }: { balance: Balance | null }) {
           <span>Low balance — add credits to keep processing projects.</span>
         </div>
       )}
+
+      {!!balance?.reservedPending && balance.reservedPending > 0 && (
+        <div className="mt-4 text-sm text-slate-500 dark:text-slate-400">
+          Temporary reservation holds stay hidden here until the final charge posts.
+        </div>
+      )}
     </div>
   );
 }
@@ -267,6 +275,7 @@ export default function UnifiedSettings({ userEmail, forcedSection }: UnifiedSet
   const [transactionSearch, setTransactionSearch] = useState('');
   const [expandedGroups, setExpandedGroups] = useState<Set<string>>(new Set());
   const [loadingBilling, setLoadingBilling] = useState(true);
+  const [loadingTransactions, setLoadingTransactions] = useState(true);
 
   // Usage tab state
   const [usageEvents, setUsageEvents] = useState<UsageEvent[]>([]);
@@ -293,19 +302,21 @@ export default function UnifiedSettings({ userEmail, forcedSection }: UnifiedSet
     const fetchDashboardSettings = async () => {
       if (!session?.access_token) {
         setLoadingBilling(false);
+        setLoadingTransactions(false);
         setIntegrationsLoading(false);
         setLoadingUsage(false);
         return;
       }
 
       setLoadingBilling(true);
-      setIntegrationsLoading(true);
       setIntegrationsError(null);
+      setLoadingTransactions(true);
+      setIntegrationsLoading(true);
       setLoadingUsage(true);
 
       try {
         const response = await fetch(
-          `/api/dashboard/settings?transactionLimit=${TRANSACTIONS_PER_PAGE}&transactionOffset=${(transactionPage - 1) * TRANSACTIONS_PER_PAGE}&usageLimit=200`,
+          `/api/dashboard/settings?transactionLimit=${TRANSACTIONS_PER_PAGE}&transactionOffset=0&usageLimit=200`,
           {
             headers: { Authorization: `Bearer ${session.access_token}` },
             cache: 'no-store',
@@ -333,12 +344,49 @@ export default function UnifiedSettings({ userEmail, forcedSection }: UnifiedSet
         setIntegrationsError(friendlyError('Failed to load integrations', error));
       } finally {
         setLoadingBilling(false);
+        setLoadingTransactions(false);
         setIntegrationsLoading(false);
         setLoadingUsage(false);
       }
     };
 
     fetchDashboardSettings();
+  }, [session?.access_token]);
+
+  useEffect(() => {
+    const fetchTransactions = async () => {
+      if (!session?.access_token) {
+        setLoadingTransactions(false);
+        return;
+      }
+
+      setLoadingTransactions(true);
+
+      try {
+        const response = await fetch(
+          `/api/billing/transactions/grouped?limit=${TRANSACTIONS_PER_PAGE}&offset=${(transactionPage - 1) * TRANSACTIONS_PER_PAGE}`,
+          {
+            headers: { Authorization: `Bearer ${session.access_token}` },
+            cache: 'no-store',
+          }
+        );
+
+        if (!response.ok) {
+          const payload = await response.json().catch(() => ({ error: 'Failed to load transactions' }));
+          throw new Error(payload.error || 'Failed to load transactions');
+        }
+
+        const data = await response.json();
+        setTransactions(data.transactions || []);
+        setTransactionTotal(data.total || 0);
+      } catch (error) {
+        console.error('Error fetching transactions:', error);
+      } finally {
+        setLoadingTransactions(false);
+      }
+    };
+
+    fetchTransactions();
   }, [session?.access_token, transactionPage]);
 
   useEffect(() => {
@@ -928,25 +976,6 @@ export default function UnifiedSettings({ userEmail, forcedSection }: UnifiedSet
             </Card>
           )}
 
-          {/* Data & AI */}
-          <Card>
-            <CardHeader>
-              <CardTitle>Data & AI</CardTitle>
-              <CardDescription>
-                How AudioRepurpose handles AI processing for your account
-              </CardDescription>
-            </CardHeader>
-            <CardContent className="space-y-4">
-              <p className="text-sm text-slate-600 dark:text-slate-300">
-                AudioRepurpose uses OpenAI-backed processing for supported transcription cleanup, speaker workflows,
-                and content generation features across the platform.
-              </p>
-              <p className="text-xs text-slate-500 dark:text-slate-400">
-                For account-specific issues or AI-related feedback, use the Contact Us page.
-              </p>
-            </CardContent>
-          </Card>
-
           {/* Integrations Section */}
           <Card>
             <CardHeader>
@@ -1162,7 +1191,11 @@ export default function UnifiedSettings({ userEmail, forcedSection }: UnifiedSet
                 </div>
               </CardHeader>
               <CardContent className="p-0">
-                {filteredTransactions.length === 0 ? (
+                {loadingTransactions ? (
+                  <div className="py-12 text-center text-slate-400">
+                    Loading transactions...
+                  </div>
+                ) : filteredTransactions.length === 0 ? (
                   <div className="py-12 text-center text-slate-400">
                     No transactions found
                   </div>
@@ -1183,19 +1216,20 @@ export default function UnifiedSettings({ userEmail, forcedSection }: UnifiedSet
                         <tbody className="divide-y divide-slate-200 dark:divide-slate-800">
                           {filteredTransactions.map((transaction) => {
                             const isGrouped = transaction.type === 'workflow';
-                            const isExpanded = expandedGroups.has(transaction.id);
+                            const hasChildren = (transaction.children?.length || 0) > 0;
+                            const isExpanded = hasChildren && expandedGroups.has(transaction.id);
 
                             return (
                               <Fragment key={transaction.id}>{/* Fragment for group + children */}
                                 <tr
                                   className={cn(
                                     "hover:bg-slate-50 dark:hover:bg-slate-800/30",
-                                    isGrouped && "cursor-pointer"
+                                    hasChildren && "cursor-pointer"
                                   )}
-                                  onClick={isGrouped ? () => toggleGroup(transaction.id) : undefined}
+                                  onClick={hasChildren ? () => toggleGroup(transaction.id) : undefined}
                                 >
                                   <td className="px-3 sm:px-6 py-3 w-8">
-                                    {isGrouped && (
+                                    {hasChildren && (
                                       isExpanded
                                         ? <ChevronUp className="h-4 w-4 text-slate-500" />
                                         : <ChevronDown className="h-4 w-4 text-slate-500" />
@@ -1212,14 +1246,11 @@ export default function UnifiedSettings({ userEmail, forcedSection }: UnifiedSet
                                     <TransactionTypeBadge type={transaction.transactionType} />
                                   </td>
                                   <td className="px-3 sm:px-6 py-3 text-slate-700 dark:text-slate-300 max-w-[140px] sm:max-w-xs truncate">
-                                    {transaction.reason || '-'}
-                                    {isGrouped && typeof transaction.holdAmount === 'number' && (
-                                      <span className="ml-2 text-xs text-slate-400 dark:text-slate-500">
-                                        Hold {formatAmount(-Math.abs(transaction.holdAmount))}
-                                        {typeof transaction.releasedAmount === 'number' && transaction.releasedAmount > 0
-                                          ? ` • Released ${formatAmount(transaction.releasedAmount)}`
-                                          : ''}
-                                      </span>
+                                    <div className="truncate">{transaction.reason || '-'}</div>
+                                    {transaction.projectTitle && (
+                                      <div className="text-xs text-slate-500 dark:text-slate-400 truncate">
+                                        {transaction.projectTitle}
+                                      </div>
                                     )}
                                   </td>
                                   <td className="hidden md:table-cell px-3 sm:px-6 py-3 text-slate-600 dark:text-slate-300">

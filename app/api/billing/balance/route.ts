@@ -5,7 +5,7 @@
 
 import { NextRequest, NextResponse } from 'next/server';
 import { supabaseAdmin } from '@/lib/supabase/server';
-import { getBalance } from '@/lib/billing/credit';
+import { getDisplayBalance } from '@/lib/billing/credit';
 import { formatSiteCreditsFromUsd } from '@/lib/billing/display';
 
 export async function GET(request: NextRequest) {
@@ -27,12 +27,14 @@ export async function GET(request: NextRequest) {
     }
 
     // Get user's credit balance
-    const balance = await getBalance(user.id);
+    const balance = await getDisplayBalance(user.id);
 
     return NextResponse.json({
       success: true,
-      balance: balance.balance,
-      formatted: formatSiteCreditsFromUsd(balance.balance),
+      balance: balance.visibleBalance,
+      availableBalance: balance.availableBalance,
+      reservedPending: balance.reservedPending,
+      formatted: formatSiteCreditsFromUsd(balance.visibleBalance),
       lifetimeCreditsAdded: balance.lifetimeCreditsAdded,
       lifetimeCreditsSpent: balance.lifetimeCreditsSpent,
       lastUpdated: balance.updatedAt,

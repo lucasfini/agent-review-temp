@@ -5,6 +5,7 @@ import { useRouter } from 'next/navigation';
 import Link from 'next/link';
 import { useTheme } from 'next-themes';
 import { useAuth } from '@/lib/auth/context';
+import { isValidEmail, PASSWORD_MIN_LENGTH } from '@/lib/auth/validation';
 import BrandLogo from '@/components/site/BrandLogo';
 import { Eye, EyeOff, Mail, Lock, User, ArrowRight, FileText, Clock, Layers, CheckCircle } from 'lucide-react';
 
@@ -146,19 +147,26 @@ export default function SignupPage() {
     setIsLoading(true);
     setError('');
 
+    const trimmedEmail = email.trim();
+    if (!isValidEmail(trimmedEmail)) {
+      setError('Enter a valid email address');
+      setIsLoading(false);
+      return;
+    }
+
+    if (password.length < PASSWORD_MIN_LENGTH) {
+      setError(`Password must be at least ${PASSWORD_MIN_LENGTH} characters long`);
+      setIsLoading(false);
+      return;
+    }
+
     if (password !== confirmPassword) {
       setError('Passwords do not match');
       setIsLoading(false);
       return;
     }
 
-    if (password.length < 6) {
-      setError('Password must be at least 6 characters long');
-      setIsLoading(false);
-      return;
-    }
-
-    const { data, error } = await signUp(email, password, name.trim() || undefined);
+    const { data, error } = await signUp(trimmedEmail, password, name.trim() || undefined);
 
     if (error) {
       setError(error.message);
@@ -300,6 +308,7 @@ export default function SignupPage() {
                   onChange={(e) => setEmail(e.target.value)}
                   required
                   autoComplete="email"
+                  inputMode="email"
                   className="w-full pl-10 pr-4 py-3 border border-slate-300 dark:border-slate-700 bg-white dark:bg-slate-900 text-slate-900 dark:text-slate-50 rounded-xl text-sm focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-transparent placeholder:text-slate-500 transition-shadow"
                   placeholder="you@example.com"
                 />
@@ -319,6 +328,7 @@ export default function SignupPage() {
                   value={password}
                   onChange={(e) => setPassword(e.target.value)}
                   required
+                  minLength={PASSWORD_MIN_LENGTH}
                   autoComplete="new-password"
                   className="w-full pl-10 pr-11 py-3 border border-slate-300 dark:border-slate-700 bg-white dark:bg-slate-900 text-slate-900 dark:text-slate-50 rounded-xl text-sm focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-transparent placeholder:text-slate-500 transition-shadow"
                   placeholder="Create a password"
@@ -332,7 +342,9 @@ export default function SignupPage() {
                   {showPassword ? <EyeOff className="h-4 w-4" /> : <Eye className="h-4 w-4" />}
                 </button>
               </div>
-              <p className="text-xs text-slate-500 mt-1.5">At least 6 characters</p>
+              <p className="text-xs text-slate-500 mt-1.5">
+                Use at least {PASSWORD_MIN_LENGTH} characters
+              </p>
             </div>
 
             {/* Confirm password */}
@@ -348,6 +360,7 @@ export default function SignupPage() {
                   value={confirmPassword}
                   onChange={(e) => setConfirmPassword(e.target.value)}
                   required
+                  minLength={PASSWORD_MIN_LENGTH}
                   autoComplete="new-password"
                   className="w-full pl-10 pr-11 py-3 border border-slate-300 dark:border-slate-700 bg-white dark:bg-slate-900 text-slate-900 dark:text-slate-50 rounded-xl text-sm focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-transparent placeholder:text-slate-500 transition-shadow"
                   placeholder="Confirm your password"

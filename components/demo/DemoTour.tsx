@@ -2,6 +2,7 @@
 
 import { useEffect, useRef, useCallback } from 'react';
 import { useRouter, useSearchParams } from 'next/navigation';
+import { DEMO_CREDITS_PRICING_COPY } from '@/lib/pricing-config';
 
 export type TourChapter = 'hub' | 'projects' | 'upload' | 'analytics' | 'settings';
 
@@ -544,8 +545,7 @@ function getSettingsSteps(onNavigateToHub: () => void, onNavigateToSignup: () =>
       element: '[data-tour="credit-balance"]',
       popover: {
         title: 'Pay-As-You-Go Credits',
-        description:
-          'No subscriptions. Buy credits and use them as you process audio. Transcript costs $0.49/hr, Content Kit costs $1.49/hr, and Repurpose Pack costs $2.49/hr.',
+        description: DEMO_CREDITS_PRICING_COPY,
         side: 'right' as const,
         align: 'start' as const,
       },

@@ -6,7 +6,6 @@ import { Upload, FileAudio, X, AlertCircle, CheckCircle, Clock, History, Trash2,
 import Link from 'next/link';
 import { supabase } from '@/lib/supabase/client';
 import { useAuth } from '@/lib/auth/context';
-import { DemoTour } from '@/components/demo/DemoTour';
 import { calculateOverallProgress, getStageDisplayName, getUserFacingProcessingMessage, type ProcessingStage } from '@/lib/tier-progress-config';
 import { SpeakerRosterForm, type RosterSpeaker } from '@/components/SpeakerRosterForm';
 import { useAudioExtractor } from '@/lib/hooks/useAudioExtractor';
@@ -14,8 +13,6 @@ import { useActiveProcessingProjects } from '@/lib/hooks/useActiveProcessingProj
 import { emitProjectMutation } from '@/lib/project-events';
 import { normalizeTier, type TierLevel } from '@/lib/tier-config';
 import { ANALYSIS_OPTION_CONFIG, DEFAULT_ANALYSIS_OPTIONS, getProcessingTierForAnalysis, getSelectedAnalysisKeys, normalizeAnalysisOptions, type AnalysisOptions } from '@/lib/analysis-options';
-import { estimateTranscriptionCost } from '@/lib/billing/cost-map';
-import { formatSiteCreditDeltaFromUsd } from '@/lib/billing/display';
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogDescription } from '@/components/ui/dialog';
 import { FeatureHelp } from '@/components/ui/feature-help';
 import { useUploadProgressSync } from '@/lib/context/upload-progress-sync';
@@ -118,6 +115,41 @@ function formatAnalysisSummary(options: AnalysisOptions): string {
     .join(' · ');
 }
 
+async function getMediaDurationSeconds(file: File): Promise<number | undefined> {
+  if (typeof window === 'undefined') return undefined;
+
+  const objectUrl = URL.createObjectURL(file);
+  const media = document.createElement(file.type.startsWith('video/') ? 'video' : 'audio');
+  media.preload = 'metadata';
+  media.src = objectUrl;
+
+  try {
+    const duration = await new Promise<number>((resolve, reject) => {
+      const cleanup = () => {
+        media.removeAttribute('src');
+        media.load();
+        URL.revokeObjectURL(objectUrl);
+      };
+
+      media.onloadedmetadata = () => {
+        const nextDuration = Number.isFinite(media.duration) ? Math.round(media.duration) : 0;
+        cleanup();
+        resolve(nextDuration);
+      };
+
+      media.onerror = () => {
+        cleanup();
+        reject(new Error('Failed to read media metadata'));
+      };
+    });
+
+    return duration > 0 ? duration : undefined;
+  } catch {
+    URL.revokeObjectURL(objectUrl);
+    return undefined;
+  }
+}
+
 const ANALYSIS_HELP_COPY: Record<keyof AnalysisOptions, { description: string; bestFor: string }> = {
   namedSpeakers: {
     description: 'Attempts to replace numbered speaker labels with real names and roles like host or guest.',
@@ -210,23 +242,6 @@ export default function UploadPage() {
     () => formatAnalysisSummary(selectedQueuedFile?.analysisOptions || analysisOptions),
     [analysisOptions, selectedQueuedFile]
   );
-  const selectedQueuedDurationSeconds = useMemo(() => {
-    if (!selectedQueuedFile) return null;
-    if (typeof selectedQueuedFile.estimatedDurationSeconds === 'number' && selectedQueuedFile.estimatedDurationSeconds > 0) {
-      return selectedQueuedFile.estimatedDurationSeconds;
-    }
-    if (!selectedQueuedFile.file) return null;
-    return Math.max(1, Math.round(selectedQueuedFile.file.size / (128000 / 8)));
-  }, [selectedQueuedFile]);
-  const uploadCostEstimate = useMemo(() => {
-    if (!selectedQueuedDurationSeconds || !selectedQueuedFile) return null;
-    return estimateTranscriptionCost({
-      durationSeconds: selectedQueuedDurationSeconds,
-      tier: selectedQueuedFile.processingTier,
-      analysisOptions: selectedQueuedFile.analysisOptions,
-    });
-  }, [selectedQueuedDurationSeconds, selectedQueuedFile]);
-
   useEffect(() => {
     const controllers = uploadControllersRef.current;
     const requests = uploadRequestRef.current;
@@ -513,11 +528,20 @@ export default function UploadPage() {
     }
   };
 
+  const getAccessToken = async () => {
+    if (session?.access_token) {
+      return session.access_token;
+    }
+
+    const { data: { session: currentSession } } = await supabase.auth.getSession();
+    return currentSession?.access_token ?? null;
+  };
+
   const getAuthHeaders = async (contentType: 'json' | 'none' = 'none') => {
-    const { data: { session } } = await supabase.auth.getSession();
+    const accessToken = await getAccessToken();
     return {
       ...(contentType === 'json' ? { 'Content-Type': 'application/json' } : {}),
-      ...(session?.access_token ? { Authorization: `Bearer ${session.access_token}` } : {}),
+      ...(accessToken ? { Authorization: `Bearer ${accessToken}` } : {}),
     };
   };
 
@@ -712,12 +736,12 @@ export default function UploadPage() {
     setIsUrlSubmitting(true);
 
     try {
-      const { data: { session } } = await supabase.auth.getSession();
+      const accessToken = await getAccessToken();
       const res = await fetch('/api/upload/url', {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
-          ...(session?.access_token && { Authorization: `Bearer ${session.access_token}` })
+          ...(accessToken ? { Authorization: `Bearer ${accessToken}` } : {})
         },
         body: JSON.stringify({
           url: trimmed,
@@ -954,6 +978,7 @@ export default function UploadPage() {
       }
       const fileProcessingTier = uploadedFile.processingTier;
       const fileAnalysisOptions = normalizeAnalysisOptions(uploadedFile.analysisOptions);
+      const estimatedDurationSeconds = uploadedFile.estimatedDurationSeconds || await getMediaDurationSeconds(uploadedFile.file);
       setUploadedFiles(prev =>
         prev.map(f => f.id === uploadedFile.id ? {
           ...f,
@@ -972,6 +997,7 @@ export default function UploadPage() {
         title: uploadedFile.file.name.replace(/\.[^/.]+$/, ""),
         performanceLevel: fileProcessingTier,
         analysisOptions: fileAnalysisOptions,
+        ...(estimatedDurationSeconds ? { estimatedDurationSeconds } : {}),
       };
 
       if (rosterSpeakers.length > 0) {
@@ -1273,9 +1299,9 @@ export default function UploadPage() {
     const queuedFile = nextQueued.file;
 
     const isVideo = Boolean(queuedFile) && (
-      queuedFile.type.startsWith('video/') ||
+      queuedFile?.type.startsWith('video/') ||
       ['.mp4', '.mov', '.mkv', '.avi', '.webm'].some(ext =>
-        queuedFile.name.toLowerCase().endsWith(ext)
+        queuedFile?.name.toLowerCase().endsWith(ext)
       )
     );
 
@@ -1376,172 +1402,174 @@ export default function UploadPage() {
               </div>
             </div>
 
-            {activeTab === 'local' && (
-              <div data-tour="upload-zone" className="mb-6">
-                <div
-                  className={`relative border-2 border-dashed rounded-xl transition-all ${isDragActive
-                      ? 'border-blue-400 bg-blue-50 dark:bg-blue-900/20 scale-[1.005]'
-                      : 'border-slate-300 dark:border-slate-600 bg-white dark:bg-slate-900 hover:border-slate-400 dark:hover:border-slate-500 hover:bg-slate-50 dark:hover:bg-slate-800/50'
-                    } ${isDemoMode ? 'pointer-events-none opacity-50' : ''}`}
-                  onDragEnter={onDragEnter}
-                  onDragLeave={onDragLeave}
-                  onDragOver={onDragOver}
-                  onDrop={onDrop}
-                >
-                  <label htmlFor="file-upload" className="flex flex-col items-center justify-center py-8 sm:py-14 px-6 cursor-pointer">
-                    <div className={`w-14 h-14 rounded-full flex items-center justify-center mb-4 transition-colors ${isDragActive ? 'bg-blue-50 dark:bg-blue-900/20' : 'bg-slate-100 dark:bg-slate-800'
-                      }`}>
-                      <Upload className={`w-6 h-6 transition-colors ${isDragActive ? 'text-blue-500' : 'text-slate-500'}`} />
-                    </div>
-                    <p className="text-base font-semibold text-slate-600 dark:text-slate-300">
-                      {isDragActive ? 'Drop to upload' : 'Drop audio or video here'}
-                    </p>
-                    <p className="mt-1 text-sm text-slate-500 dark:text-slate-400">
-                      or <span className="text-blue-600 hover:text-blue-500 font-medium">browse files</span>
-                    </p>
-                    <p className="mt-3 text-xs text-slate-400 dark:text-slate-500 text-center">
-                      MP3, WAV, M4A, FLAC, OGG, MP4, MOV · up to 500 MB · video is converted to audio automatically before transcription
-                    </p>
-                    <input
-                      id="file-upload"
-                      name="file-upload"
-                      type="file"
-                      className="sr-only"
-                      multiple
-                      accept="audio/*,video/*,.mp3,.wav,.m4a,.flac,.ogg,.mp4,.mov,.mkv,.avi,.webm"
-                      onChange={onFileInputChange}
-                    />
-                  </label>
-                </div>
-              </div>
-            )}
-
-            {activeTab === 'url' && (
-              <div className="mb-6 border border-slate-300 dark:border-slate-700 bg-white dark:bg-slate-900 rounded-xl p-5 space-y-4">
-                <div>
-                  <div className="flex items-center gap-2">
-                    <h2 className="text-lg font-semibold text-slate-900 dark:text-slate-50">Import from URL</h2>
-                    <FeatureHelp
-                      title="URL import"
-                      description="Import a hosted recording once, transcribe it, and use the finished project for analysis or content generation later."
-                      bestFor="YouTube links or direct audio or video URLs you do not want to download manually"
-                    />
-                  </div>
-                  <p className="text-sm text-slate-500 dark:text-slate-400">
-                    Paste a YouTube link or direct media URL, then transcribe once and generate whichever outputs you need later.
-                  </p>
-                </div>
-                <div className="grid gap-3">
-                  <div>
-                    <label htmlFor="url-input" className="block text-sm font-medium text-slate-700 dark:text-slate-300">
-                      Media URL
-                    </label>
-                    <input
-                      id="url-input"
-                      type="url"
-                      placeholder="https://www.youtube.com/watch?v=..."
-                      value={urlInput}
-                      onChange={(e) => setUrlInput(e.target.value)}
-                      className="mt-1 w-full rounded-md border border-slate-300 dark:border-slate-600 bg-white dark:bg-slate-800 text-slate-900 dark:text-slate-200 px-3 py-2 text-sm shadow-sm focus:outline-none focus:ring-1 focus:ring-blue-500 focus:border-blue-500 placeholder:text-slate-500"
-                    />
-                  </div>
-                  <div>
-                    <label htmlFor="url-title" className="block text-sm font-medium text-slate-700 dark:text-slate-300">
-                      Title (optional)
-                    </label>
-                    <input
-                      id="url-title"
-                      type="text"
-                      placeholder="Episode title"
-                      value={urlTitle}
-                      onChange={(e) => setUrlTitle(e.target.value)}
-                      className="mt-1 w-full rounded-md border border-slate-300 dark:border-slate-600 bg-white dark:bg-slate-800 text-slate-900 dark:text-slate-200 px-3 py-2 text-sm shadow-sm focus:outline-none focus:ring-1 focus:ring-blue-500 focus:border-blue-500 placeholder:text-slate-500"
-                    />
-                  </div>
-                  {urlError && (
-                    <div className="text-sm text-amber-700 dark:text-amber-300">{urlError}</div>
-                  )}
-                  <div className="flex flex-col sm:flex-row sm:items-center gap-2 sm:gap-3">
-                    <button
-                      type="button"
-                      onClick={handleUrlImport}
-                      disabled={isUrlSubmitting}
-                      className="w-full sm:w-auto px-4 py-2 text-sm font-medium bg-blue-600 text-white rounded-lg hover:bg-blue-700 transition-colors disabled:opacity-60"
-                    >
-                      {isUrlSubmitting ? 'Importing...' : 'Import URL'}
-                    </button>
-                    <p className="text-xs text-slate-500 dark:text-slate-400">
-                      Supports YouTube and direct audio/video links. The finished transcript can be used for all 11 content types.
-                    </p>
-                  </div>
-                </div>
-              </div>
-            )}
-
-            {activeTab === 'integrations' && (
-              <div data-tour="integrations" className="mb-8">
-                <div className="flex items-center justify-between mb-4">
-                  <div>
-                    <div className="flex items-center gap-2">
-                      <h2 className="text-lg font-semibold text-slate-900 dark:text-slate-50">Import from apps</h2>
-                      <FeatureHelp
-                        title="Import from apps"
-                        description="Pull recordings directly from connected tools so you can skip manual exporting and start from the transcript."
-                        bestFor="Zoom or Teams recordings that already live in another app"
-                      />
-                    </div>
-                    <p className="text-sm text-slate-500 dark:text-slate-400">Pull recordings directly from connected tools</p>
-                  </div>
-                </div>
-                <div className="grid gap-4 md:grid-cols-2">
-                  {(['zoom', 'microsoft'] as IntegrationProvider[]).map(provider => {
-                    const status = integrations.find(i => i.provider === provider);
-                    const connected = status?.connected;
-                    return (
-                      <div key={provider} className="border border-slate-300 dark:border-slate-700 bg-white dark:bg-slate-900 rounded-xl p-4">
-                        <div className="flex items-start justify-between">
-                          <div>
-                            <h3 className="text-base font-semibold text-slate-900 dark:text-slate-50">
-                              {provider === 'zoom' ? 'Zoom' : 'Microsoft Teams'}
-                            </h3>
-                            <p className="text-xs text-slate-500 dark:text-slate-400 mt-1">
-                              {connected
-                                ? `Connected${status?.metadata?.email ? ` • ${status.metadata.email}` : ''}`
-                                : 'Not connected'}
-                            </p>
-                          </div>
-                          <span className={`text-xs px-2 py-1 rounded-full ${connected ? 'bg-green-100 dark:bg-green-900/20 text-green-700 dark:text-green-400' : 'bg-slate-100 dark:bg-slate-800 text-slate-500 dark:text-slate-400'}`}>
-                            {connected ? 'Connected' : 'Disconnected'}
-                          </span>
-                        </div>
-                        <div className="mt-4 flex gap-2">
-                          {!connected ? (
-                            <button
-                              type="button"
-                              onClick={() => startOAuth(provider)}
-                              className="px-3 py-2 text-sm font-medium bg-blue-600 text-white rounded-lg hover:bg-blue-700 transition-colors"
-                              disabled={integrationsLoading}
-                            >
-                              Connect
-                            </button>
-                          ) : (
-                            <button
-                              type="button"
-                              onClick={() => openImportDialog(provider)}
-                              className="px-3 py-2 text-sm font-medium bg-slate-200 dark:bg-slate-700 text-slate-900 dark:text-white rounded-lg hover:bg-slate-300 dark:hover:bg-slate-600 transition-colors"
-                            >
-                              Select recording
-                            </button>
-                          )}
-                        </div>
-                      </div>
-                    );
-                  })}
-                </div>
-              </div>
-            )}
-
             <div className="mb-6 rounded-2xl border border-slate-200 dark:border-slate-800 bg-white dark:bg-slate-900">
+              <div className="border-b border-slate-200 dark:border-slate-800 px-5 py-5">
+                {activeTab === 'local' && (
+                  <div data-tour="upload-zone">
+                    <div className="mb-4">
+                      <div className="flex items-center gap-2">
+                        <h2 className="text-lg font-semibold text-slate-900 dark:text-slate-50">Upload audio or video</h2>
+                        <FeatureHelp
+                          title="File upload"
+                          description="Upload audio or video directly, then use the transcript and any selected analysis outputs inside the project."
+                          bestFor="local recordings or exported files you already have on your device"
+                        />
+                      </div>
+                      <p className="mt-1 text-sm text-slate-500 dark:text-slate-400">
+                        Drag in a file or browse from your device. Video is converted to audio automatically before transcription.
+                      </p>
+                    </div>
+                    <div
+                      className={`relative border-2 border-dashed rounded-xl transition-all ${isDragActive
+                          ? 'border-blue-400 bg-blue-50 dark:bg-blue-900/20 scale-[1.005]'
+                          : 'border-slate-300 dark:border-slate-600 bg-white dark:bg-slate-900 hover:border-slate-400 dark:hover:border-slate-500 hover:bg-slate-50 dark:hover:bg-slate-800/50'
+                        } ${isDemoMode ? 'pointer-events-none opacity-50' : ''}`}
+                      onDragEnter={onDragEnter}
+                      onDragLeave={onDragLeave}
+                      onDragOver={onDragOver}
+                      onDrop={onDrop}
+                    >
+                      <label htmlFor="file-upload" className="flex flex-col items-center justify-center py-8 sm:py-14 px-6 cursor-pointer">
+                        <div className={`w-14 h-14 rounded-full flex items-center justify-center mb-4 transition-colors ${isDragActive ? 'bg-blue-50 dark:bg-blue-900/20' : 'bg-slate-100 dark:bg-slate-800'
+                          }`}>
+                          <Upload className={`w-6 h-6 transition-colors ${isDragActive ? 'text-blue-500' : 'text-slate-500'}`} />
+                        </div>
+                        <p className="text-base font-semibold text-slate-600 dark:text-slate-300">
+                          {isDragActive ? 'Drop to upload' : 'Drop audio or video here'}
+                        </p>
+                        <p className="mt-1 text-sm text-slate-500 dark:text-slate-400">
+                          or <span className="text-blue-600 hover:text-blue-500 font-medium">browse files</span>
+                        </p>
+                        <p className="mt-3 text-xs text-slate-400 dark:text-slate-500 text-center">
+                          MP3, WAV, M4A, FLAC, OGG, MP4, MOV · up to 500 MB · video is converted to audio automatically before transcription
+                        </p>
+                        <input
+                          id="file-upload"
+                          name="file-upload"
+                          type="file"
+                          className="sr-only"
+                          multiple
+                          accept="audio/*,video/*,.mp3,.wav,.m4a,.flac,.ogg,.mp4,.mov,.mkv,.avi,.webm"
+                          onChange={onFileInputChange}
+                        />
+                      </label>
+                    </div>
+                  </div>
+                )}
+
+                {activeTab === 'url' && (
+                  <div className="space-y-4">
+                    <div>
+                      <div className="flex items-center gap-2">
+                        <h2 className="text-lg font-semibold text-slate-900 dark:text-slate-50">Import from URL</h2>
+                        <FeatureHelp
+                          title="URL import"
+                          description="Import a hosted recording once, transcribe it, and use the finished project for analysis or content generation later."
+                          bestFor="YouTube links or direct audio or video URLs you do not want to download manually"
+                        />
+                      </div>
+                      <p className="mt-1 text-sm text-slate-500 dark:text-slate-400">
+                        Paste a YouTube link or direct media URL, then transcribe once and generate whichever outputs you need later.
+                      </p>
+                    </div>
+                    <div className="grid gap-3">
+                      <div>
+                        <label htmlFor="url-input" className="block text-sm font-medium text-slate-700 dark:text-slate-300">
+                          Media URL
+                        </label>
+                        <input
+                          id="url-input"
+                          type="url"
+                          placeholder="https://www.youtube.com/watch?v=..."
+                          value={urlInput}
+                          onChange={(e) => setUrlInput(e.target.value)}
+                          className="mt-1 w-full rounded-md border border-slate-300 dark:border-slate-600 bg-white dark:bg-slate-800 text-slate-900 dark:text-slate-200 px-3 py-2 text-sm shadow-sm focus:outline-none focus:ring-1 focus:ring-blue-500 focus:border-blue-500 placeholder:text-slate-500"
+                        />
+                      </div>
+                      <div>
+                        <label htmlFor="url-title" className="block text-sm font-medium text-slate-700 dark:text-slate-300">
+                          Title (optional)
+                        </label>
+                        <input
+                          id="url-title"
+                          type="text"
+                          placeholder="Episode title"
+                          value={urlTitle}
+                          onChange={(e) => setUrlTitle(e.target.value)}
+                          className="mt-1 w-full rounded-md border border-slate-300 dark:border-slate-600 bg-white dark:bg-slate-800 text-slate-900 dark:text-slate-200 px-3 py-2 text-sm shadow-sm focus:outline-none focus:ring-1 focus:ring-blue-500 focus:border-blue-500 placeholder:text-slate-500"
+                        />
+                      </div>
+                      {urlError && (
+                        <div className="text-sm text-amber-700 dark:text-amber-300">{urlError}</div>
+                      )}
+                      <p className="text-xs text-slate-500 dark:text-slate-400">
+                        Supports YouTube and direct audio/video links. The finished transcript can be used for all 11 content types.
+                      </p>
+                    </div>
+                  </div>
+                )}
+
+                {activeTab === 'integrations' && (
+                  <div data-tour="integrations">
+                    <div className="mb-4">
+                      <div className="flex items-center gap-2">
+                        <h2 className="text-lg font-semibold text-slate-900 dark:text-slate-50">Import from apps</h2>
+                        <FeatureHelp
+                          title="Import from apps"
+                          description="Pull recordings directly from connected tools so you can skip manual exporting and start from the transcript."
+                          bestFor="Zoom or Teams recordings that already live in another app"
+                        />
+                      </div>
+                      <p className="mt-1 text-sm text-slate-500 dark:text-slate-400">Pull recordings directly from connected tools</p>
+                    </div>
+                    <div className="grid gap-4 md:grid-cols-2">
+                      {(['zoom', 'microsoft'] as IntegrationProvider[]).map(provider => {
+                        const status = integrations.find(i => i.provider === provider);
+                        const connected = status?.connected;
+                        return (
+                          <div key={provider} className="border border-slate-300 dark:border-slate-700 bg-white dark:bg-slate-900 rounded-xl p-4">
+                            <div className="flex items-start justify-between">
+                              <div>
+                                <h3 className="text-base font-semibold text-slate-900 dark:text-slate-50">
+                                  {provider === 'zoom' ? 'Zoom' : 'Microsoft Teams'}
+                                </h3>
+                                <p className="text-xs text-slate-500 dark:text-slate-400 mt-1">
+                                  {connected
+                                    ? `Connected${status?.metadata?.email ? ` • ${status.metadata.email}` : ''}`
+                                    : 'Not connected'}
+                                </p>
+                              </div>
+                              <span className={`text-xs px-2 py-1 rounded-full ${connected ? 'bg-green-100 dark:bg-green-900/20 text-green-700 dark:text-green-400' : 'bg-slate-100 dark:bg-slate-800 text-slate-500 dark:text-slate-400'}`}>
+                                {connected ? 'Connected' : 'Disconnected'}
+                              </span>
+                            </div>
+                            <div className="mt-4 flex gap-2">
+                              {!connected ? (
+                                <button
+                                  type="button"
+                                  onClick={() => startOAuth(provider)}
+                                  className="px-3 py-2 text-sm font-medium bg-blue-600 text-white rounded-lg hover:bg-blue-700 transition-colors"
+                                  disabled={integrationsLoading}
+                                >
+                                  Connect
+                                </button>
+                              ) : (
+                                <button
+                                  type="button"
+                                  onClick={() => openImportDialog(provider)}
+                                  className="px-3 py-2 text-sm font-medium bg-slate-200 dark:bg-slate-700 text-slate-900 dark:text-white rounded-lg hover:bg-slate-300 dark:hover:bg-slate-600 transition-colors"
+                                >
+                                  Select recording
+                                </button>
+                              )}
+                            </div>
+                          </div>
+                        );
+                      })}
+                    </div>
+                  </div>
+                )}
+              </div>
               <div className="border-b border-slate-200 dark:border-slate-800 px-5 py-4">
                 <div className="flex items-start justify-between gap-4">
                   <div>
@@ -1604,63 +1632,29 @@ export default function UploadPage() {
                 ))}
               </div>
               <div className="border-t border-slate-200 dark:border-slate-800 px-5 py-3">
-                <span className="text-xs text-slate-500 dark:text-slate-400">
-                  Transcription and numbered speaker labels are always included. You can generate any unselected analysis or content later from the project page.
-                </span>
-              </div>
-            </div>
-
-            <div className="mb-6 rounded-2xl border border-slate-200 bg-white dark:border-slate-800 dark:bg-slate-900">
-              <div className="border-b border-slate-200 px-5 py-4 dark:border-slate-800">
-                <div className="flex flex-col gap-2 sm:flex-row sm:items-start sm:justify-between">
-                  <div>
-                    <h2 className="text-base font-semibold text-slate-900 dark:text-slate-50">Estimated cost</h2>
-                    <p className="mt-1 text-sm text-slate-500 dark:text-slate-400">
-                      {selectedQueuedFile
-                        ? `Estimate for ${selectedQueuedFile.displayName || selectedQueuedFile.file?.name || 'Untitled'}`
-                        : 'Select a queued file to review cost and start the upload.'}
-                    </p>
-                  </div>
+                <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
+                  <span className="text-xs text-slate-500 dark:text-slate-400">
+                    Transcription and numbered speaker labels are always included. You can generate any unselected analysis or content later from the project page.
+                  </span>
                   <button
                     type="button"
-                    onClick={startQueuedUploads}
-                    disabled={queuedFiles.length === 0 || isStartingQueuedUploads || isDemoMode}
+                    onClick={activeTab === 'url' ? handleUrlImport : startQueuedUploads}
+                    disabled={
+                      activeTab === 'url'
+                        ? isUrlSubmitting
+                        : queuedFiles.length === 0 || isStartingQueuedUploads || isDemoMode
+                    }
                     className="inline-flex items-center justify-center rounded-lg bg-blue-600 px-4 py-2 text-sm font-medium text-white transition-colors hover:bg-blue-700 disabled:cursor-not-allowed disabled:opacity-60"
                   >
-                    {isStartingQueuedUploads ? 'Starting...' : 'Upload queued files'}
+                    {activeTab === 'url'
+                      ? (isUrlSubmitting ? 'Importing...' : 'Import URL')
+                      : isStartingQueuedUploads
+                        ? 'Starting...'
+                        : queuedFiles.length === 1
+                          ? 'Upload File'
+                          : 'Upload Files'}
                   </button>
                 </div>
-              </div>
-              <div className="p-5">
-                {uploadCostEstimate && selectedQueuedFile ? (
-                  <div className="grid gap-3 md:grid-cols-3">
-                    <div className="rounded-2xl border border-slate-200 bg-slate-50/80 p-4 dark:border-slate-800 dark:bg-slate-950">
-                      <p className="text-[11px] font-semibold uppercase tracking-[0.18em] text-slate-500 dark:text-slate-400">Base</p>
-                      <p className="mt-3 text-2xl font-semibold text-slate-900 dark:text-slate-50">
-                        {formatSiteCreditDeltaFromUsd(uploadCostEstimate.transcription)}
-                      </p>
-                      <p className="mt-1 text-xs text-slate-500 dark:text-slate-400">Transcription only</p>
-                    </div>
-                    <div className="rounded-2xl border border-slate-200 bg-slate-50/80 p-4 dark:border-slate-800 dark:bg-slate-950">
-                      <p className="text-[11px] font-semibold uppercase tracking-[0.18em] text-slate-500 dark:text-slate-400">Add-ons</p>
-                      <p className="mt-3 text-2xl font-semibold text-slate-900 dark:text-slate-50">
-                        {formatSiteCreditDeltaFromUsd(uploadCostEstimate.aiProcessing)}
-                      </p>
-                      <p className="mt-1 text-xs text-slate-500 dark:text-slate-400">{selectedAnalysisSummary}</p>
-                    </div>
-                    <div className="rounded-2xl border border-blue-200 bg-gradient-to-br from-blue-50 to-white p-4 dark:border-blue-800/30 dark:from-blue-950/40 dark:to-slate-950">
-                      <p className="text-[11px] font-semibold uppercase tracking-[0.18em] text-blue-600 dark:text-blue-300">Estimated total</p>
-                      <p className="mt-3 text-3xl font-semibold text-slate-900 dark:text-slate-50">
-                        {formatSiteCreditDeltaFromUsd(uploadCostEstimate.total)}
-                      </p>
-                      <p className="mt-1 text-xs text-slate-600 dark:text-slate-300">Based on this file’s saved options</p>
-                    </div>
-                  </div>
-                ) : (
-                  <div className="rounded-2xl border border-dashed border-slate-300 bg-slate-50/70 px-4 py-5 text-sm text-slate-500 dark:border-slate-700 dark:bg-slate-950 dark:text-slate-400">
-                    Add a file or queue a recording, then select it from the Files list to review the estimate here.
-                  </div>
-                )}
               </div>
             </div>
 
@@ -2395,7 +2389,6 @@ export default function UploadPage() {
         </div>{/* end flex layout */}
 
       </div>
-      {isDemoMode && <DemoTour chapter="upload" />}
     </div>
   );
 }

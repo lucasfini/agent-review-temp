@@ -26,6 +26,12 @@ export interface CreditBalance {
   updatedAt: string;
 }
 
+export interface DisplayCreditBalance extends CreditBalance {
+  availableBalance: number;
+  visibleBalance: number;
+  reservedPending: number;
+}
+
 export interface UsageEvent {
   id: string;
   userId: string;
@@ -190,6 +196,36 @@ export async function getBalance(userId: string): Promise<CreditBalance> {
     lifetimeCreditsSpent: data.lifetime_credits_spent,
     version: data.version,
     updatedAt: data.updated_at,
+  };
+}
+
+export async function getDisplayBalance(userId: string): Promise<DisplayCreditBalance> {
+  const balance = await getBalance(userId);
+
+  const { data: reservations, error } = await supabase
+    .from('billing_reservations')
+    .select('reserved_amount, settled_amount, released_amount')
+    .eq('user_id', userId)
+    .in('status', ['pending', 'active', 'settling']) as { data: any[] | null; error: any };
+
+  if (error) {
+    throw new Error(`Failed to get reserved credit summary: ${error.message}`);
+  }
+
+  const reservedPending = Number(
+    ((reservations || []).reduce((sum, row) => {
+      const reserved = Number(row.reserved_amount || 0);
+      const settled = Number(row.settled_amount || 0);
+      const released = Number(row.released_amount || 0);
+      return sum + Math.max(0, reserved - settled - released);
+    }, 0)).toFixed(4)
+  );
+
+  return {
+    ...balance,
+    availableBalance: balance.balance,
+    visibleBalance: Number((balance.balance + reservedPending).toFixed(4)),
+    reservedPending,
   };
 }
 

@@ -20,13 +20,10 @@ services:
       - SUPABASE_SERVICE_ROLE_KEY=${SUPABASE_SERVICE_ROLE_KEY}
 
       # AI Services (required)
-      - OPENAI_API_KEY=${OPENAI_API_KEY}
+      - OPENAI_API_KEY_OPTIN=${OPENAI_API_KEY_OPTIN}
       - ANTHROPIC_API_KEY=${ANTHROPIC_API_KEY}
 
-      # Hugging Face (required for PyAnnote)
-      - HUGGING_FACE_ACCESS_TOKEN=${HUGGING_FACE_ACCESS_TOKEN}
-
-      # AssemblyAI (optional - alternative transcription)
+      # AssemblyAI
       - ASSEMBLYAI_API_KEY=${ASSEMBLYAI_API_KEY}
 
       # Stripe (required for payments)

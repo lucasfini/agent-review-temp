@@ -8,6 +8,8 @@ import { createReservation, failReservation, settleReservation } from '@/lib/bil
 import { getOpenAIApiKeyForUser } from '@/lib/openai/consent';
 import { RouteAccessError, requireProjectOwner } from '@/lib/api/route-auth';
 import { isDemoUser } from '@/lib/demo-mode';
+import { aiRatelimit } from '@/lib/rate-limit';
+import { estimateReservationAmount } from '@/lib/billing/reserve-amount';
 
 // Force dynamic to prevent caching
 export const dynamic = 'force-dynamic';
@@ -167,6 +169,14 @@ export async function POST(
 
     if (isDemoUser(user)) {
       return NextResponse.json({ error: 'Demo account is read-only' }, { status: 403 });
+    }
+
+    const { success } = await aiRatelimit.limit(user.id);
+    if (!success) {
+      return NextResponse.json(
+        { error: 'Rate limit exceeded for AI operations. Please wait a moment.' },
+        { status: 429 }
+      );
     }
 
     // Fetch current project data
@@ -389,7 +399,7 @@ export async function POST(
       selectedSegmentCount: allSelectedIndices.length,
       averageSegmentChars: avgSelectedChars,
     });
-    const estimatedHold = Number((estimatedCost * 1.15).toFixed(4));
+    const estimatedHold = estimateReservationAmount(estimatedCost, 'segment_touchup');
     if (estimatedHold > 0) {
       await requireCredits(userId, estimatedHold);
       const reservation = await createReservation({
