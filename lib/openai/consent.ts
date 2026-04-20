@@ -2,7 +2,9 @@ import OpenAI from 'openai';
 import { supabaseAdmin } from '@/lib/supabase/server';
 import { decryptToken } from '@/lib/integrations/crypto';
 
-const SHARED_OPENAI_KEY = process.env.OPENAI_API_KEY_OPTIN || null;
+export function getSharedOpenAIApiKey(): string | null {
+  return process.env.OPENAI_API_KEY || process.env.OPENAI_API_KEY_OPTIN || null;
+}
 
 export async function getOpenAIApiKeyForUser(userId?: string): Promise<string | null> {
   if (userId) {
@@ -26,11 +28,13 @@ export async function getOpenAIApiKeyForUser(userId?: string): Promise<string | 
     }
   }
 
-  if (!SHARED_OPENAI_KEY) {
-    console.error('[OPENAI] OPENAI_API_KEY_OPTIN is not configured.');
+  const sharedOpenAIKey = getSharedOpenAIApiKey();
+
+  if (!sharedOpenAIKey) {
+    console.error('[OPENAI] OPENAI_API_KEY is not configured.');
     return null;
   }
-  return SHARED_OPENAI_KEY;
+  return sharedOpenAIKey;
 }
 
 export async function getOpenAIClientForUser(userId?: string): Promise<OpenAI | null> {

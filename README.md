@@ -76,8 +76,7 @@ SUPABASE_SERVICE_ROLE_KEY=
 NEXT_PUBLIC_APP_URL=http://localhost:3000
 
 ASSEMBLYAI_API_KEY=
-ANTHROPIC_API_KEY=
-OPENAI_API_KEY_OPTIN=
+OPENAI_API_KEY=
 
 STRIPE_SECRET_KEY=
 NEXT_PUBLIC_STRIPE_PUBLISHABLE_KEY=
@@ -118,6 +117,7 @@ The current production target is:
 Primary production docs:
 
 - [docs/guides/DIGITALOCEAN_HOSTING_GUIDE.md](docs/guides/DIGITALOCEAN_HOSTING_GUIDE.md)
+- [docs/guides/CLOUDFLARE_DIGITALOCEAN_LAUNCH.md](docs/guides/CLOUDFLARE_DIGITALOCEAN_LAUNCH.md)
 - [docs/DEPLOYMENT.md](docs/DEPLOYMENT.md)
 - [.env.production.example](.env.production.example)
 - [deploy/Caddyfile](deploy/Caddyfile)
@@ -126,6 +126,6 @@ Primary production docs:
 
 ## Notes On OpenAI Keys
 
-Runtime OpenAI-backed features currently resolve through `OPENAI_API_KEY_OPTIN`.
+Runtime OpenAI-backed features now resolve through `OPENAI_API_KEY`.
 
-Some older local scripts still reference `OPENAI_API_KEY`. If you run those scripts, set both variables locally until those scripts are cleaned up.
+Older references may still read `OPENAI_API_KEY_OPTIN`, but the runtime falls back to that name for backward compatibility.

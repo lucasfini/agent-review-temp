@@ -5,8 +5,6 @@ const required = [
   'NEXT_PUBLIC_SUPABASE_URL',
   'NEXT_PUBLIC_SUPABASE_ANON_KEY',
   'SUPABASE_SERVICE_ROLE_KEY',
-  'ANTHROPIC_API_KEY',
-  'OPENAI_API_KEY_OPTIN',
   'STRIPE_SECRET_KEY',
   'NEXT_PUBLIC_STRIPE_PUBLISHABLE_KEY',
   'STRIPE_WEBHOOK_SECRET',
@@ -43,6 +41,8 @@ function validatePair(env, [a, b]) {
 function main() {
   const assemblyAiConfigured =
     isFilled(process.env.ASSEMBLYAI_API_KEY) || isFilled(process.env.ASSEMBLYAI_ACCESS_KEY);
+  const openAiConfigured =
+    isFilled(process.env.OPENAI_API_KEY) || isFilled(process.env.OPENAI_API_KEY_OPTIN);
   const missing = required.filter((key) => !isFilled(process.env[key]));
   const warnings = recommended.filter((key) => !isFilled(process.env[key]));
   const pairErrors = [
@@ -53,6 +53,10 @@ function main() {
 
   if (!assemblyAiConfigured) {
     missing.push('ASSEMBLYAI_API_KEY or ASSEMBLYAI_ACCESS_KEY');
+  }
+
+  if (!openAiConfigured) {
+    missing.push('OPENAI_API_KEY or OPENAI_API_KEY_OPTIN');
   }
 
   if (missing.length || pairErrors.length) {

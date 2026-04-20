@@ -48,7 +48,7 @@ export const MODEL_PROVIDERS: Record<string, ModelProvider> = {
   openai: {
     id: 'openai',
     name: 'OpenAI',
-    apiKeyEnv: 'OPENAI_API_KEY_OPTIN',
+    apiKeyEnv: 'OPENAI_API_KEY',
     supportsStreaming: true,
     rateLimits: {
       requestsPerMinute: 10000,
@@ -367,7 +367,12 @@ export function isProviderAvailable(providerId: string): boolean {
     return true;
   }
   
-  // On the server, fall back to checking for the provider API key
+  // On the server, fall back to checking for the provider API key.
+  // OpenAI still supports the legacy env name for backward compatibility.
+  if (providerId === 'openai') {
+    return !!(process.env.OPENAI_API_KEY || process.env.OPENAI_API_KEY_OPTIN);
+  }
+
   return !!process.env[provider.apiKeyEnv];
 }
 

@@ -13,7 +13,7 @@ This document reflects the current state of the repo and the work still worth do
 
 ## Current Runtime Assumptions
 
-- OpenAI-backed runtime features resolve through `OPENAI_API_KEY_OPTIN`
+- OpenAI-backed runtime features resolve through `OPENAI_API_KEY`
 - AssemblyAI is the main transcription provider
 - Expensive app flows run through API routes and need abuse protection
 - Internal cleanup and maintenance flows rely on shared secrets and cron

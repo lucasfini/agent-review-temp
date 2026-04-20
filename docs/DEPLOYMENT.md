@@ -1,10 +1,12 @@
 # Deployment
 
 This repo is currently set up to deploy on a DigitalOcean Droplet with Docker Compose and Caddy.
+Cloudflare can sit in front of the Droplet as the proxied DNS/TLS edge.
 
 ## Canonical Production Files
 
 - [docs/guides/DIGITALOCEAN_HOSTING_GUIDE.md](./guides/DIGITALOCEAN_HOSTING_GUIDE.md)
+- [docs/guides/CLOUDFLARE_DIGITALOCEAN_LAUNCH.md](./guides/CLOUDFLARE_DIGITALOCEAN_LAUNCH.md)
 - [../docker-compose.prod.yml](../docker-compose.prod.yml)
 - [../deploy/Caddyfile](../deploy/Caddyfile)
 - [../deploy/cron/audiorepurpose.cron.example](../deploy/cron/audiorepurpose.cron.example)
@@ -27,10 +29,13 @@ docker compose -f docker-compose.prod.yml up -d --build
 
 ## Important Notes
 
+- If Cloudflare is enabled, use the orange-cloud proxy with SSL/TLS mode set to `Full (strict)`.
+- Do not add aggressive Cloudflare caching for HTML or `/api/*` routes on day one.
 - Supabase remains the database and auth provider.
 - Cloudflare R2 remains the object store.
 - Stripe remains external.
-- Runtime OpenAI-backed features use `OPENAI_API_KEY_OPTIN`.
+- Runtime OpenAI-backed features use `OPENAI_API_KEY`.
+- `OPENAI_API_KEY_OPTIN` remains a backward-compatible fallback.
 - Some legacy scripts still reference `OPENAI_API_KEY`; that is not the main production runtime path.
 
 Do not treat older Vercel-oriented or PyAnnote-heavy docs as the production source of truth for launch.

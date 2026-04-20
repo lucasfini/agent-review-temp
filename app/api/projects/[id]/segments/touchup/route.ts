@@ -390,7 +390,7 @@ export async function POST(
 
     const apiKey = await getOpenAIApiKeyForUser(userId);
     if (!apiKey) {
-      throw new Error('OPENAI_API_KEY_OPTIN not configured');
+      throw new Error('OPENAI_API_KEY not configured');
     }
     const openai = new OpenAI({ apiKey });
     const allSelectedIndices = (segmentIndices as number[]).filter(idx => idx >= 0 && idx < totalSegments);

@@ -1,6 +1,7 @@
 # DigitalOcean Hosting Guide
 
 This is the current launch guide for running AudioRepurpose on a DigitalOcean Droplet.
+If Cloudflare is enabled in front of the Droplet, use it only as a proxied DNS/TLS edge on day one.
 
 ## Target Architecture
 
@@ -64,8 +65,7 @@ Fill in real values for:
 - `NEXT_PUBLIC_SUPABASE_ANON_KEY`
 - `SUPABASE_SERVICE_ROLE_KEY`
 - `ASSEMBLYAI_API_KEY`
-- `ANTHROPIC_API_KEY`
-- `OPENAI_API_KEY_OPTIN`
+- `OPENAI_API_KEY`
 - `STRIPE_SECRET_KEY`
 - `NEXT_PUBLIC_STRIPE_PUBLISHABLE_KEY`
 - `STRIPE_WEBHOOK_SECRET`
@@ -86,19 +86,22 @@ Optional but recommended:
 
 Notes:
 
-- Runtime OpenAI-backed features currently use `OPENAI_API_KEY_OPTIN`.
-- `OPENAI_API_KEY` is kept only for older local scripts that have not been cleaned up yet.
+- Runtime OpenAI-backed features use `OPENAI_API_KEY`.
+- `OPENAI_API_KEY_OPTIN` is still accepted only for backward compatibility.
+- `ANTHROPIC_API_KEY` is optional if Anthropic-backed features are not in use.
 
 ## 4. DNS And App URL Alignment
 
 Before launch, make sure these match:
 
 - DNS points `APP_DOMAIN` to the Droplet
+- If Cloudflare is enabled, the DNS record stays proxied and Cloudflare SSL/TLS mode is `Full (strict)`
 - `NEXT_PUBLIC_APP_URL` matches the public HTTPS URL
 - Supabase auth redirect URLs include the production domain
 - Google auth redirect URLs include the production domain
 - Zoom / Microsoft redirect URIs match the production domain if integrations are enabled
 - Stripe webhook endpoint points to the production domain
+- Avoid Cloudflare cache rules for HTML and `/api/*` on day one
 
 ## 5. Start The Stack
 
@@ -128,6 +131,7 @@ This app relies on scheduled internal cleanup routes for maintenance tasks. Set 
 Run these checks before treating production as live:
 
 - Home page loads over HTTPS
+- `GET https://APP_DOMAIN/api/health` succeeds through Cloudflare
 - Signup, login, logout, and password reset work on the production domain
 - Google auth works if enabled
 - Local file upload works

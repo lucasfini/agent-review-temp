@@ -76,7 +76,7 @@ export async function mapSegmentsWithLLM(
   const model = options.model || 'gpt-5-nano';
 
   if (!apiKey) {
-    throw new Error('OPENAI_API_KEY_OPTIN required for segment mapping');
+    throw new Error('OPENAI_API_KEY is required for segment mapping');
   }
 
   console.log('[LLM MAPPING] Starting Pass 2');

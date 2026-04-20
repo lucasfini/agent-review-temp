@@ -5,6 +5,7 @@
 
 import OpenAI from 'openai';
 import Anthropic from '@anthropic-ai/sdk';
+import { getSharedOpenAIApiKey } from '@/lib/openai/consent';
 
 export interface AIMessage {
   role: 'system' | 'user' | 'assistant';
@@ -98,9 +99,9 @@ function getProviderFromModel(modelId: string): string {
  * OpenAI completion
  */
 async function getOpenAICompletion(options: AICompletionOptions): Promise<AICompletionResponse> {
-  const apiKey = options.openaiApiKey || process.env.OPENAI_API_KEY_OPTIN;
+  const apiKey = options.openaiApiKey || getSharedOpenAIApiKey();
   if (!apiKey) {
-    throw new Error('OPENAI_API_KEY_OPTIN is not configured');
+    throw new Error('OPENAI_API_KEY is not configured');
   }
   const openai = new OpenAI({ apiKey });
 
