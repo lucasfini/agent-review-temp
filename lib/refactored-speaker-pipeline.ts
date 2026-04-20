@@ -2853,7 +2853,7 @@ export function resolveConversationalHumanNames(
     ((options.showRoster && options.showRoster.length > 0)
       ? options.showRoster
       : recurringAssignments.showIdentity?.roster || [])
-      .filter((entry) => entry.role === 'host' || entry.role === 'co_host' || entry.role === 'panelist')
+      .filter((entry) => entry.role === 'host' || entry.role === 'co_host')
       .map((entry) => normalizeSpeakerName(entry.name))
   );
   const useExtendedIntroWindow = recurringHumanNames.size >= 2;
@@ -3008,7 +3008,7 @@ export function inspectConversationalNamingState(
     ((options.showRoster && options.showRoster.length > 0)
       ? options.showRoster
       : recurringAssignments.showIdentity?.roster || [])
-      .filter((entry) => entry.role === 'host' || entry.role === 'co_host' || entry.role === 'panelist')
+      .filter((entry) => entry.role === 'host' || entry.role === 'co_host')
       .map((entry) => normalizeSpeakerName(entry.name))
   );
   const knownHost = findCorroboratedKnownHost(segments, options);
@@ -3174,7 +3174,7 @@ function repairSpeakerMapWithDirectGuestIntros(
     ((options.showRoster && options.showRoster.length > 0)
       ? options.showRoster
       : showIdentity?.roster || [])
-      .filter((entry) => entry.role === 'host' || entry.role === 'co_host' || entry.role === 'panelist')
+      .filter((entry) => entry.role === 'host' || entry.role === 'co_host')
       .map((entry) => normalizeSpeakerName(entry.name))
   );
   if (recurringHumanNames.size === 0) {
