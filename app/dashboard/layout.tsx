@@ -14,7 +14,13 @@ import CompactFooter from '@/components/site/CompactFooter';
 import { calculateOverallProgress, getUserFacingProcessingMessage } from '@/lib/tier-progress-config';
 import { normalizeTier } from '@/lib/tier-config';
 import { useActiveProcessingProjects, type ActiveProcessingProject } from '@/lib/hooks/useActiveProcessingProjects';
-import { UploadProgressSyncProvider, useUploadProgressSync } from '@/lib/context/upload-progress-sync';
+import { UploadProgressSyncProvider, useUploadProgressSync, type SyncedUploadProgressItem } from '@/lib/context/upload-progress-sync';
+
+function isSyncedUploadProgressItem(
+  upload: ActiveProcessingProject | SyncedUploadProgressItem
+): upload is SyncedUploadProgressItem {
+  return 'processingTier' in upload;
+}
 
 function DashboardLayoutContent({
   children,
@@ -131,8 +137,8 @@ function DashboardLayoutContent({
               <Loader2 className="h-4 w-4 animate-spin flex-shrink-0 text-blue-400" />
               <div className="flex-1 min-w-0">
                 {(() => {
-                  const activeUpload = displayedUploads[0] as ActiveProcessingProject;
-                  const isSyncedUpload = 'processingTier' in activeUpload;
+                  const activeUpload = displayedUploads[0];
+                  const isSyncedUpload = isSyncedUploadProgressItem(activeUpload);
                   const stage = isSyncedUpload
                     ? activeUpload.processingStage || 'pending'
                     : activeUpload.processing_stage || (activeUpload.status === 'uploading' ? 'uploading' : 'transcribing');
