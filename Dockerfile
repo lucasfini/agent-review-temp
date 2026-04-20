@@ -28,6 +28,9 @@ FROM node:20-alpine AS node-builder
 
 WORKDIR /app
 
+# youtube-dl-exec runs a Python availability check during npm install
+RUN apk add --no-cache python3
+
 # Copy package files
 COPY package*.json ./
 
