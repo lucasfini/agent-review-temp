@@ -1,7 +1,7 @@
 type SpeakerDataLike = {
   segments?: any[];
   speakers?: Record<string, any>;
-  detectionMetadata?: {
+  detectionMetadata?: Record<string, unknown> & {
     speakerAssignmentConfidence?: number;
     speakerAssignmentReviewCount?: number;
     confirmedReviewCount?: number;
