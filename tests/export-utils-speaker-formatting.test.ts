@@ -1,0 +1,130 @@
+import { __testUtils } from '@/lib/export-utils';
+
+describe('export speaker formatting', () => {
+  test('surfaces sponsor speakers directly and omits redundant ad tags', () => {
+    const speakerData = {
+      speakers: {
+        speaker_1: {
+          finalName: 'Vanta',
+          role: 'advertiser',
+        },
+        speaker_2: {
+          finalName: 'Josh Brown',
+          role: 'guest',
+        },
+      },
+      segments: [
+        {
+          speakerId: 'speaker_1',
+          finalSpeakerId: 'speaker_1',
+          startTime: 0,
+          endTime: 5,
+          text: 'Support for the show comes from Vanta.',
+          segmentKind: 'ad_read',
+          sponsorName: 'Vanta',
+        },
+        {
+          speakerId: 'speaker_2',
+          finalSpeakerId: 'speaker_2',
+          startTime: 5,
+          endTime: 10,
+          text: 'Thanks for having me.',
+          segmentKind: 'conversation',
+        },
+      ],
+    };
+
+    const orderMap = __testUtils.buildSpeakerOrderMap(speakerData);
+
+    expect(__testUtils.getIdentityFirstSpeakerName(speakerData, 'speaker_1', orderMap)).toBe('Vanta');
+    expect(__testUtils.getIdentityFirstSpeakerName(speakerData, 'speaker_2', orderMap)).toBe('Josh Brown');
+    expect(__testUtils.formatConversationSegmentTag(speakerData.segments[0], 'Vanta')).toBe('');
+  });
+
+  test('markdown conversation export keeps sponsor names visible', () => {
+    const project = {
+      id: 'project_1',
+      title: 'Prof G Markets',
+      outputs: [],
+      speaker_data: {
+        speakers: {
+          speaker_1: {
+            finalName: 'Vanta',
+            role: 'advertiser',
+          },
+          speaker_2: {
+            finalName: 'Josh Brown',
+            role: 'guest',
+          },
+        },
+        segments: [
+          {
+            speakerId: 'speaker_1',
+            finalSpeakerId: 'speaker_1',
+            startTime: 0,
+            endTime: 5,
+            text: 'Support for the show comes from Vanta.',
+            segmentKind: 'ad_read',
+            sponsorName: 'Vanta',
+          },
+          {
+            speakerId: 'speaker_2',
+            finalSpeakerId: 'speaker_2',
+            startTime: 5,
+            endTime: 10,
+            text: 'Thanks for having me.',
+            segmentKind: 'conversation',
+          },
+        ],
+      },
+    };
+
+    const markdown = __testUtils.formatCoreContentAsMarkdown(project as any, 'conversation');
+
+    expect(markdown).toContain('**Vanta**');
+    expect(markdown).toContain('**Josh Brown**');
+    expect(markdown).not.toContain('**Advertiser**');
+  });
+
+  test('json conversation export includes detection metadata diagnostics', () => {
+    const project = {
+      id: 'project_1',
+      title: 'Prof G Markets',
+      outputs: [],
+      speaker_data: {
+        speakers: {
+          speaker_1: {
+            finalName: 'Ed Elson',
+            role: 'host',
+          },
+        },
+        segments: [
+          {
+            speakerId: 'speaker_1',
+            finalSpeakerId: 'speaker_1',
+            startTime: 0,
+            endTime: 5,
+            text: 'Welcome to Prof G Markets.',
+            segmentKind: 'conversation',
+          },
+        ],
+        detectionMetadata: {
+          pipelineDiagnostics: {
+            showIdentity: {
+              id: 'prof_g_markets',
+              displayName: 'Prof G Markets',
+            },
+          },
+        },
+      },
+    };
+
+    const json = __testUtils.formatAsJSON(
+      [project as any],
+      [{ projectId: 'project_1', projectTitle: 'Prof G Markets', selectedBlockIds: [], selectedCoreContent: ['conversation'] }]
+    );
+    const parsed = JSON.parse(json);
+
+    expect(parsed.projects[0].coreContent.conversation.detectionMetadata.pipelineDiagnostics.showIdentity.displayName).toBe('Prof G Markets');
+  });
+});

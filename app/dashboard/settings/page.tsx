@@ -36,7 +36,7 @@ export default function SettingsPage() {
     return (
       <div className="p-6">
         <div className="max-w-5xl mx-auto">
-          <div className="bg-yellow-900/20 border border-yellow-800/30 text-yellow-400 px-4 py-3 rounded-lg">
+          <div className="rounded-lg border border-slate-200 bg-slate-50 px-4 py-3 text-slate-700 dark:border-slate-800 dark:bg-slate-900 dark:text-slate-300">
             Please log in to access settings.
           </div>
         </div>

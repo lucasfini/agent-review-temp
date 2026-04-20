@@ -8,6 +8,11 @@ import { extractSocialQuotes } from '@/lib/content-generators/quotes';
 import { processInsightsForProject } from '@/lib/insight-extraction';
 import { extractSpeakerNames } from '@/lib/name-extraction';
 import { classifySpeakerRoles } from '@/lib/speaker-role-classifier';
+import { resolveConversationalHumanNamesInSpeakerMap } from '@/lib/refactored-speaker-pipeline';
+import {
+  detectShowIdentityFromContext,
+  mergeShowRosterEntries,
+} from '@/lib/show-speaker-memory';
 import { checkIdempotentUsage } from '@/lib/billing/track-usage';
 import { failReservation, settleReservation } from '@/lib/billing/credit';
 import { getOpenAIApiKeyForUser } from '@/lib/openai/consent';
@@ -120,7 +125,7 @@ export async function POST(
     const { data: project, error } = await (supabaseAdmin as any)
       .from('projects')
       .select(
-        'id, status, performance_level, metadata, transcription_text, transcription_segments, speaker_data, preset_speakers, user_id, ai_summary, chapters, key_takeaways, social_quotes'
+        'id, status, performance_level, project_type, title, metadata, transcription_text, transcription_segments, speaker_data, preset_speakers, user_id, ai_summary, chapters, key_takeaways, social_quotes'
       )
       .eq('id', projectId)
       .single();
@@ -202,6 +207,10 @@ export async function POST(
 
     const hasNamedSpeakers = Object.values(project.speaker_data?.speakers || {}).some((speaker: any) => {
       const finalName = String(speaker?.finalName || '').trim();
+      const role = String(speaker?.role || '').trim().toLowerCase();
+      if (role === 'advertiser' || role === 'quoted_audio' || role === 'narrator') {
+        return false;
+      }
       return finalName.length > 0 && !finalName.startsWith('Speaker ');
     });
 
@@ -294,9 +303,31 @@ export async function POST(
               }
             );
 
+            const matchedShowIdentity = detectShowIdentityFromContext({
+              title: project.title || project.metadata?.originalFileName || project.metadata?.fileName,
+              filename: project.metadata?.originalFileName || project.metadata?.fileName,
+              segments,
+            });
+
+            const resolvedHumans = resolveConversationalHumanNamesInSpeakerMap(
+              namedSpeakers,
+              segments,
+              {
+                projectType: project.project_type || project.speaker_data?.projectType,
+                title: project.title || project.metadata?.originalFileName || project.metadata?.fileName,
+                filename: project.metadata?.originalFileName || project.metadata?.fileName,
+                showIdentity: matchedShowIdentity,
+                showRoster: mergeShowRosterEntries(
+                  matchedShowIdentity?.roster,
+                  Array.isArray(project.preset_speakers) ? project.preset_speakers : undefined
+                ),
+              }
+            );
+            const normalizedSpeakers = resolvedHumans.speakers;
+
             const roleAssignments = await classifySpeakerRoles(
               Object.fromEntries(
-                Object.entries(namedSpeakers).map(([speakerId, speaker]: [string, any]) => [
+                Object.entries(normalizedSpeakers).map(([speakerId, speaker]: [string, any]) => [
                   speakerId,
                   {
                     id: speakerId,
@@ -317,7 +348,7 @@ export async function POST(
             );
 
             const mergedSpeakers = Object.fromEntries(
-              Object.entries(namedSpeakers).map(([speakerId, speaker]: [string, any]) => {
+              Object.entries(normalizedSpeakers).map(([speakerId, speaker]: [string, any]) => {
                 const role = roleAssignments[speakerId];
                 return [
                   speakerId,

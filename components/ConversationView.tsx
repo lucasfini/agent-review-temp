@@ -5,6 +5,7 @@ import { getSpeakerColor, getSpeakerDisplayName } from '@/lib/name-extraction';
 import { SpeakerSegment } from '@/lib/types';
 import { formatTime } from '@/lib/time-utils';
 import { useUserPrefs } from '@/lib/hooks/useUserPrefs';
+import { formatReviewReason, getReviewItemsFromSpeakerData, getReviewSegmentIndicesFromSpeakerData } from '@/lib/speaker-review';
 import {
   User,
   MessageCircle,
@@ -184,6 +185,14 @@ export default function ConversationView({
   const [segmentReassigning, setSegmentReassigning] = useState<number | null>(null);
   const [activeInsightId, setActiveInsightId] = useState<string | null>(null);
   const [internalShowInlineInsights, setInternalShowInlineInsights] = useState(false);
+  const reviewSegmentIndexSet = useMemo(
+    () => new Set(getReviewSegmentIndicesFromSpeakerData(speakerData)),
+    [speakerData]
+  );
+  const reviewItemReasonMap = useMemo(
+    () => new Map(getReviewItemsFromSpeakerData(speakerData).map((item) => [item.index, item])),
+    [speakerData]
+  );
 
 
   // Use external control if provided, otherwise internal state
@@ -1144,18 +1153,21 @@ export default function ConversationView({
                       <span className="font-mono">{formatTime(segment.startTime)}</span>
                       <span className="text-slate-500">•</span>
                       <span>{duration.toFixed(1)}s</span>
-                      {segment.status === 'uncertain' && (
-                        segment.confidenceReason === 'acoustic_only' ||
-                        segment.confidenceReason === 'transition_short' ||
-                        segment.confidenceReason === 'role_mismatch') && (
+                      {reviewSegmentIndexSet.has(segmentIndex) && (
                         <span
                           className="text-yellow-600 cursor-help"
                           title={
-                            segment.confidenceReason === 'transition_short'
-                              ? 'Uncertain — very short segment at a speaker-change boundary'
-                              : segment.confidenceReason === 'role_mismatch'
-                              ? "Uncertain — segment duration is inconsistent with this speaker's typical role"
-                              : 'Uncertain — assigned by acoustic similarity only'
+                            (() => {
+                              const item = reviewItemReasonMap.get(segmentIndex);
+                              if (item?.reasons?.length) {
+                                return `Needs review — ${item.reasons.map((reason) => formatReviewReason(reason)).join(', ')}`;
+                              }
+                              return segment.confidenceReason === 'transition_short'
+                                ? 'Needs review — very short segment at a speaker-change boundary'
+                                : segment.confidenceReason === 'role_mismatch'
+                                ? "Needs review — segment duration is inconsistent with this speaker's typical role"
+                                : 'Needs review — speaker assignment confidence is low or contradictory';
+                            })()
                           }
                         >
                           ⚠️

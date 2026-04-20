@@ -256,6 +256,29 @@ export async function DELETE(
       }
     }
 
+    // Delete the full project prefix from R2 before removing the database row.
+    // This avoids reporting success while leaving orphaned audio behind.
+    if (projectForDelete) {
+      try {
+        const result = await deleteProjectStoragePrefix(projectId);
+        if (result.failedCount > 0) {
+          console.error(`[API] R2 cleanup incomplete for project ${projectId}:`, result.errors);
+          return NextResponse.json(
+            { error: 'Failed to fully delete project audio from storage' },
+            { status: 500 }
+          );
+        }
+
+        console.log(`[API] Deleted ${result.deletedCount} storage objects for project ${projectId}`);
+      } catch (r2Error) {
+        console.error(`[API] R2 cleanup failed for project ${projectId}:`, r2Error);
+        return NextResponse.json(
+          { error: 'Failed to delete project audio from storage' },
+          { status: 500 }
+        );
+      }
+    }
+
     // Delete project (cascade will handle related records)
     const { error } = await supabaseAdmin
       .from('projects')
@@ -268,16 +291,6 @@ export async function DELETE(
         { error: 'Failed to delete project', details: error.message },
         { status: 500 }
       );
-    }
-
-    // Clean up project storage (non-fatal)
-    if (projectForDelete) {
-      try {
-        const result = await deleteProjectStoragePrefix(projectId);
-        console.log(`[API] Deleted ${result.deletedCount} storage objects for project ${projectId}`);
-      } catch (r2Error) {
-        console.error(`[API] R2 cleanup failed for project ${projectId}:`, r2Error);
-      }
     }
 
     return NextResponse.json({ success: true });

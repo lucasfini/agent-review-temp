@@ -26,6 +26,7 @@ import { emitProjectMutation } from '@/lib/project-events';
 import { ANALYSIS_OPTION_CONFIG, getProjectAnalysisOptions, normalizeAnalysisOptions, type AnalysisOptionKey } from '@/lib/analysis-options';
 import type { ProjectGenerationJob } from '@/lib/project-generation-jobs';
 import { getDashboardErrorMessage, logDashboardLoad } from '@/lib/dashboard-load-state';
+import { getReviewItemsFromSpeakerData, getReviewSegmentIndicesFromSpeakerData, getSpeakerAssignmentConfidencePercent } from '@/lib/speaker-review';
 
 type ProjectType = 'DEBATE' | 'INTERVIEW' | 'PODCAST' | 'MONOLOGUE' | 'OTHER';
 
@@ -766,31 +767,21 @@ export default function ProjectsPage() {
     return firstCompleted?.id ?? projects[0]?.id ?? null;
   }, [projects]);
 
-  const accuracyPercent = useMemo(() => {
-    if (!parsedSpeakerData) return null;
-    const metaConfidence = parsedSpeakerData?.detectionMetadata?.confidence;
-    if (typeof metaConfidence === 'number' && metaConfidence > 0) {
-      return Math.max(0, Math.min(1, metaConfidence)) * 100;
-    }
-    const segments = parsedSpeakerData?.segments ?? [];
-    const confidences = segments
-      .map((s: any) => s?.confidence)
-      .filter((c: any) => typeof c === 'number');
-    if (confidences.length === 0) return null;
-    const avg = confidences.reduce((sum: number, c: number) => sum + c, 0) / confidences.length;
-    return Math.max(0, Math.min(1, avg)) * 100;
-  }, [parsedSpeakerData]);
-
-  const hasUncertainSegments = useMemo(
-    () => (parsedSpeakerData?.segments ?? []).some((s: any) =>
-      s.status === 'uncertain' && (
-        s.confidenceReason === 'acoustic_only' ||
-        s.confidenceReason === 'transition_short' ||
-        s.confidenceReason === 'role_mismatch'
-      )
-    ),
-    [parsedSpeakerData?.segments]
+  const accuracyPercent = useMemo(
+    () => getSpeakerAssignmentConfidencePercent(parsedSpeakerData),
+    [parsedSpeakerData]
   );
+
+  const reviewSegmentIndices = useMemo(
+    () => getReviewSegmentIndicesFromSpeakerData(parsedSpeakerData),
+    [parsedSpeakerData]
+  );
+  const reviewItems = useMemo(
+    () => getReviewItemsFromSpeakerData(parsedSpeakerData),
+    [parsedSpeakerData]
+  );
+
+  const hasUncertainSegments = reviewSegmentIndices.length > 0;
 
   // Reset segment selection when project changes
   useEffect(() => {
@@ -971,19 +962,8 @@ export default function ProjectsPage() {
 
   // ─── Segment review handlers ───────────────────────────────────────────────
   const handleSelectAllUncertain = useCallback(() => {
-    if (!parsedSpeakerData?.segments) return;
-    const uncertainIndices = (parsedSpeakerData.segments as any[])
-      .map((s, i) => ({ s, i }))
-      .filter(({ s }) =>
-        s.status === 'uncertain' && (
-          s.confidenceReason === 'acoustic_only' ||
-          s.confidenceReason === 'transition_short' ||
-          s.confidenceReason === 'role_mismatch'
-        )
-      )
-      .map(({ i }) => i);
-    setSelectedSegments(new Set(uncertainIndices));
-  }, [parsedSpeakerData?.segments]);
+    setSelectedSegments(new Set(reviewSegmentIndices));
+  }, [reviewSegmentIndices]);
 
   const handleToggleSegmentSelection = useCallback((index: number) => {
     setSelectedSegments(prev => {
@@ -3427,6 +3407,8 @@ export default function ProjectsPage() {
             activeSpeakerId={activeSpeakerId}
             projectId={selectedProject?.id}
             segments={parsedSpeakerData?.segments}
+            reviewItems={reviewItems}
+            reviewSegmentIndices={reviewSegmentIndices}
             selectedSegments={selectedSegments}
             hasUncertainSegments={hasUncertainSegments}
             onSelectAllUncertain={handleSelectAllUncertain}

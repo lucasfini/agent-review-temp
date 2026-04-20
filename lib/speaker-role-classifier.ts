@@ -44,6 +44,12 @@ const ROLE_OPTIONS = [
 ] as const;
 
 const ROLE_HINT = ROLE_OPTIONS.join(', ');
+const AD_LIKE_ROLES = new Set([
+  'ad_reader',
+  'sponsor_voice',
+  'promo_voice',
+  'call_to_action',
+]);
 
 export async function classifySpeakerRoles(
   speakers: Record<string, SpeakerProfile>,
@@ -159,7 +165,10 @@ export async function classifySpeakerRoles(
         if (!item || typeof item !== 'object') return;
         if (!speakerId || !speakers[speakerId]) return;
 
-        const role = normalizeRole(item.role);
+        const role = applyConservativeRoleGuards(
+          normalizeRole(item.role),
+          speakers[speakerId]
+        );
         const displayName = buildFallbackDisplayName(role, speakers[speakerId]);
         const confidence = typeof item.confidence === 'number'
           ? clamp(item.confidence, 0, 1)
@@ -191,7 +200,10 @@ export async function classifySpeakerRoles(
         const speakerId = item.speakerId || item.id;
         if (!speakerId || !speakers[speakerId]) return;
 
-        const role = normalizeRole(item.role);
+        const role = applyConservativeRoleGuards(
+          normalizeRole(item.role),
+          speakers[speakerId]
+        );
         const displayName = buildFallbackDisplayName(role, speakers[speakerId]);
         const confidence = typeof item.confidence === 'number'
           ? clamp(item.confidence, 0, 1)
@@ -263,15 +275,39 @@ function normalizeRole(role: string | undefined): string {
 
 function buildFallbackDisplayName(role: string, speaker: SpeakerProfile): string {
   const base = speaker.fallbackName || `Speaker ${speaker.id}`;
-  if (!role || role === 'unknown') {
-    return base;
+  return base;
+}
+
+function applyConservativeRoleGuards(role: string, speaker: SpeakerProfile): string {
+  if (!AD_LIKE_ROLES.has(role)) {
+    return role;
   }
 
-  const roleLabel = role
-    .replace(/_/g, ' ')
-    .replace(/\b\w/g, (c) => c.toUpperCase());
+  if (!speaker?.segments?.length) {
+    return role;
+  }
 
-  return `${roleLabel}`;
+  if (speakerHasConversationalTurns(speaker)) {
+    return 'unknown';
+  }
+
+  return role;
+}
+
+function speakerHasConversationalTurns(speaker: SpeakerProfile): boolean {
+  return speaker.segments.some((segment) => !isAdLikeSegment(segment));
+}
+
+function isAdLikeSegment(segment: SpeakerSegment): boolean {
+  if (!segment) return false;
+  if (segment.segmentKind === 'ad_read' || segment.segmentKind === 'promo') {
+    return true;
+  }
+
+  const text = (segment.text || '').trim();
+  if (!text) return false;
+
+  return /\b(?:support\s+for\s+(?:this|the)\s+(?:show|podcast|episode)\s+comes?\s+from|this\s+(?:show|episode)\s+is\s+brought\s+to\s+you\s+by|use\s+code\b|promo\s+code\b|visit\s+\S+\.(?:com|org|net|io|co)\b|terms\s+and\s+conditions\s+apply)\b/i.test(text);
 }
 
 function clamp(value: number, min: number, max: number): number {
@@ -326,3 +362,10 @@ function safeParseResponse(content: string): ParsedRoleResponse {
 
   return { speakers: [] };
 }
+
+export const __testUtils = {
+  applyConservativeRoleGuards,
+  buildFallbackDisplayName,
+  isAdLikeSegment,
+  speakerHasConversationalTurns,
+};

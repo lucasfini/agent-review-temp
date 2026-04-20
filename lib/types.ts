@@ -32,6 +32,11 @@ export interface SpeakerSegment {
   confidence?: number;
   status?: 'confirmed' | 'tentative' | 'uncertain';
   confidenceReason?: string;
+  reviewStatus?: 'pending' | 'confirmed' | 'dismissed';
+  reviewConfirmedAt?: string;
+  segmentKind?: 'conversation' | 'ad_read' | 'promo' | 'quoted_audio';
+  sponsorName?: string | null;
+  attributionEvidence?: 'raw_diarization' | 'self_id' | 'handoff' | 'dirty_cluster' | 'manual' | 'heuristic';
   // Optional embedding for acoustic profiling (if provider supports it)
   embedding?: number[];
 }

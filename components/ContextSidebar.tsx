@@ -38,6 +38,7 @@ import type { SpeakerSegment, SpeakerRole } from '@/lib/types';
 import { SPEAKER_ROLE_LABELS, SPEAKER_ROLES } from '@/lib/types';
 import { cn } from '@/lib/utils';
 import { getSpeakerDisplayName, getSpeakerColor } from '@/lib/name-extraction';
+import { formatReviewReason } from '@/lib/speaker-review';
 import { InsightsSidebar, type Insight } from '@/components/insights';
 import InlineContentStudio from '@/components/project/InlineContentStudio';
 import { ANALYSIS_OPTION_CONFIG, type AnalysisOptionKey } from '@/lib/analysis-options';
@@ -260,6 +261,14 @@ interface ContextSidebarProps {
 
   // Review tab — segment review workflow
   segments?: SpeakerSegment[];
+  reviewItems?: Array<{
+    index: number;
+    speakerId: string;
+    reasons?: string[];
+    primaryReason?: string;
+    label?: string;
+  }>;
+  reviewSegmentIndices?: number[];
   selectedSegments?: Set<number>;
   hasUncertainSegments?: boolean;
   onSelectAllUncertain?: () => void;
@@ -348,6 +357,8 @@ export function ContextSidebar({
   isOpen = true,
   onClose,
   segments = [],
+  reviewItems = [],
+  reviewSegmentIndices = [],
   selectedSegments,
   hasUncertainSegments = false,
   onSelectAllUncertain,
@@ -530,6 +541,27 @@ export function ContextSidebar({
   }, [speakers]);
 
   const selectedCount = selectedSegments?.size ?? 0;
+  const reviewSegmentIndexSet = useMemo(
+    () => new Set(reviewSegmentIndices),
+    [reviewSegmentIndices]
+  );
+  const openReviewCount = reviewItems.length;
+  const resolvedReviewCount = useMemo(
+    () => reviewItems.filter((item) => !reviewSegmentIndexSet.has(item.index)).length,
+    [reviewItems, reviewSegmentIndexSet]
+  );
+  const reviewItemsBySpeaker = useMemo(() => {
+    const groups = new Map<string, typeof reviewItems>();
+    for (const item of reviewItems) {
+      const key = item.speakerId || 'unknown';
+      if (!groups.has(key)) groups.set(key, []);
+      groups.get(key)!.push(item);
+    }
+    return Array.from(groups.entries()).map(([speakerId, items]) => ({
+      speakerId,
+      items: items.sort((a, b) => a.index - b.index),
+    }));
+  }, [reviewItems]);
 
   // Auto-select uncertain segments when the Review tab is opened with nothing selected
   useEffect(() => {
@@ -560,7 +592,7 @@ export function ContextSidebar({
         id: 'review' as const,
         label: 'Review',
         icon: <ListChecks className="w-4 h-4" />,
-        count: selectedCount > 0 ? selectedCount : undefined,
+        count: openReviewCount > 0 ? openReviewCount : undefined,
       },
       {
         id: 'generate' as const,
@@ -577,7 +609,7 @@ export function ContextSidebar({
         count: outputs.length + (summary ? 1 : 0) + (insights.length ? 1 : 0) + (chapters.length ? 1 : 0) + (takeaways.length ? 1 : 0) + (quotes.length ? 1 : 0) || undefined,
       },
     ],
-    [speakerList.length, selectedCount, analysisStates, generatingContentTypes.size, outputs.length, summary, insights.length, chapters.length, takeaways.length, quotes.length]
+    [speakerList.length, openReviewCount, analysisStates, generatingContentTypes.size, outputs.length, summary, insights.length, chapters.length, takeaways.length, quotes.length]
   );
 
   const availableAnalysisViews = useMemo(() => {
@@ -1174,7 +1206,25 @@ export function ContextSidebar({
         {/* Review Tab */}
         {activeTab === 'review' && (
           <div className="border-t border-slate-200 dark:border-slate-800 p-3 space-y-3" data-tour="review-panel">
-            <p className="text-xs font-medium uppercase tracking-wide text-slate-500 dark:text-slate-400">Segment Review</p>
+            <div className="space-y-1">
+              <p className="text-xs font-medium uppercase tracking-wide text-slate-500 dark:text-slate-400">Segment Review</p>
+              <div className="rounded-xl border border-slate-200 dark:border-slate-800 bg-white dark:bg-slate-900 p-3 space-y-2">
+                <div className="flex items-center justify-between text-xs">
+                  <span className="font-medium text-slate-700 dark:text-slate-200">Open review items</span>
+                  <span className="text-slate-500 dark:text-slate-400">{openReviewCount}</span>
+                </div>
+                <div className="flex items-center justify-between text-xs">
+                  <span className="font-medium text-slate-700 dark:text-slate-200">Resolved this session</span>
+                  <span className="text-slate-500 dark:text-slate-400">{resolvedReviewCount}</span>
+                </div>
+                <div className="h-2 rounded-full bg-slate-100 dark:bg-slate-800 overflow-hidden">
+                  <div
+                    className="h-full bg-emerald-500 transition-all"
+                    style={{ width: `${openReviewCount > 0 ? Math.min(100, (resolvedReviewCount / openReviewCount) * 100) : 0}%` }}
+                  />
+                </div>
+              </div>
+            </div>
           </div>
         )}
 
@@ -1538,85 +1588,118 @@ export function ContextSidebar({
             {selectedCount > 0 ? (
               <div className="space-y-2">
                 <p className="text-xs font-medium text-slate-500 dark:text-slate-400 uppercase tracking-wide">Segments to review</p>
-                {segments
-                  .map((segment, idx) => ({ segment, idx }))
-                  .filter(({ idx }) => selectedSegments?.has(idx))
-                  .map(({ segment, idx }) => {
-                    const segmentSpeakerId = segment.finalSpeakerId || segment.speakerId;
-                    const speaker = (speakers as Record<string, any>)[segmentSpeakerId];
-                    const speakerName = getSpeakerDisplayName(speaker) || segmentSpeakerId;
-                    const colorClasses = getSpeakerColor(segmentSpeakerId);
-                    const colorParts = colorClasses.split(' ');
-                    const textColor = colorParts.find((c: string) => c.startsWith('text-')) || 'text-slate-400';
-                    const bgColor = colorParts.find((c: string) => c.startsWith('bg-')) || 'bg-slate-800/50';
-                    const dotColor = bgColor.replace('-50', '-500').replace('-100', '-500');
-                    const isUncertain = segment.status === 'uncertain' && (
-                      segment.confidenceReason === 'acoustic_only' ||
-                      segment.confidenceReason === 'transition_short' ||
-                      segment.confidenceReason === 'role_mismatch'
-                    );
-                    const mins = Math.floor(segment.startTime / 60);
-                    const secs = Math.floor(segment.startTime % 60);
-                    const timestamp = `${mins}:${secs.toString().padStart(2, '0')}`;
+                {reviewItemsBySpeaker
+                  .filter(({ items }) => items.some((item) => selectedSegments?.has(item.index)))
+                  .map(({ speakerId, items }) => {
+                    const speaker = (speakers as Record<string, any>)[speakerId];
+                    const speakerName = getSpeakerDisplayName(speaker) || speakerId;
+                    const groupedItems = items.filter((item) => selectedSegments?.has(item.index));
 
                     return (
-                      <div
-                        key={idx}
-                        className="p-2.5 bg-white dark:bg-slate-900 rounded-xl border border-slate-200 dark:border-slate-800 hover:border-blue-300 dark:hover:border-blue-800/30 transition-colors space-y-2"
-                      >
-                        {/* Speaker + timestamp row */}
-                        <div className="flex items-center gap-2">
-                          <span className={`w-2 h-2 rounded-full flex-shrink-0 ${dotColor}`} />
-                          <button
-                            onClick={() => onScrollToSegment?.(idx)}
-                            className={`text-xs font-semibold ${textColor} hover:underline truncate`}
-                          >
-                            {speakerName}
-                          </button>
-                          <span className="ml-auto text-[11px] text-slate-500 font-mono flex-shrink-0">{timestamp}</span>
-                          {isUncertain && (
-                            <span className="text-yellow-500 text-[11px]" title="Uncertain attribution">⚠️</span>
-                          )}
-                          <button
-                            onClick={() => onToggleSegmentSelection?.(idx)}
-                            title="Remove from review"
-                            className="flex-shrink-0 p-0.5 text-slate-500 hover:text-slate-400 transition-colors"
-                          >
-                            <X className="h-3 w-3" />
-                          </button>
+                      <div key={speakerId} className="space-y-2">
+                        <div className="flex items-center justify-between px-1">
+                          <p className="text-[11px] font-semibold text-slate-700 dark:text-slate-200">{speakerName}</p>
+                          <p className="text-[11px] text-slate-500 dark:text-slate-400">
+                            {groupedItems.length} item{groupedItems.length !== 1 ? 's' : ''}
+                          </p>
                         </div>
-                        {/* Text snippet */}
-                        <p
-                          onClick={() => onScrollToSegment?.(idx)}
-                          className="text-xs text-slate-500 dark:text-slate-400 leading-relaxed line-clamp-2 cursor-pointer hover:text-slate-900 dark:hover:text-slate-50"
-                        >
-                          {segment.text?.slice(0, 100)}{(segment.text?.length ?? 0) > 100 ? '…' : ''}
-                        </p>
-                        {/* Action row */}
-                        <div className="flex items-center gap-2">
-                          <select
-                            value={segmentSpeakerId}
-                            onChange={(e) => {
-                              if (e.target.value !== segmentSpeakerId) {
-                                onSegmentReassign?.(idx, e.target.value);
-                              }
-                            }}
-                            className="flex-1 text-[11px] border border-slate-300 dark:border-slate-700 rounded-md px-2 py-1 bg-white dark:bg-slate-900 text-slate-600 dark:text-slate-300 focus:outline-none focus:border-blue-400 dark:focus:border-blue-300"
-                          >
-                            {Object.entries(speakers).map(([speakerId, spk]) => (
-                              <option key={speakerId} value={speakerId}>
-                                {getSpeakerDisplayName(spk as any)}
-                              </option>
-                            ))}
-                          </select>
-                          <button
-                            onClick={() => onConfirmSegment?.(idx)}
-                            title="Confirm attribution"
-                            className="flex-shrink-0 p-1.5 rounded-lg bg-green-50 dark:bg-green-900/20 text-green-600 hover:bg-green-100 dark:hover:bg-green-100 hover:text-green-700 dark:hover:text-green-300 transition-colors border border-green-200 dark:border-green-100"
-                          >
-                            <Check className="h-3.5 w-3.5" />
-                          </button>
-                        </div>
+
+                        {groupedItems.map((item) => {
+                          const idx = item.index;
+                          const segment = segments[idx];
+                          if (!segment) return null;
+
+                          const segmentSpeakerId = segment.finalSpeakerId || segment.speakerId;
+                          const segmentSpeaker = (speakers as Record<string, any>)[segmentSpeakerId];
+                          const segmentSpeakerName = getSpeakerDisplayName(segmentSpeaker) || segmentSpeakerId;
+                          const colorClasses = getSpeakerColor(segmentSpeakerId);
+                          const colorParts = colorClasses.split(' ');
+                          const textColor = colorParts.find((c: string) => c.startsWith('text-')) || 'text-slate-400';
+                          const bgColor = colorParts.find((c: string) => c.startsWith('bg-')) || 'bg-slate-800/50';
+                          const dotColor = bgColor.replace('-50', '-500').replace('-100', '-500');
+                          const isUncertain = reviewSegmentIndexSet.has(idx);
+                          const mins = Math.floor(segment.startTime / 60);
+                          const secs = Math.floor(segment.startTime % 60);
+                          const timestamp = `${mins}:${secs.toString().padStart(2, '0')}`;
+
+                          return (
+                            <div
+                              key={idx}
+                              className="p-2.5 bg-white dark:bg-slate-900 rounded-xl border border-slate-200 dark:border-slate-800 hover:border-blue-300 dark:hover:border-blue-800/30 transition-colors space-y-2"
+                            >
+                              <div className="flex items-center gap-2">
+                                <span className={`w-2 h-2 rounded-full flex-shrink-0 ${dotColor}`} />
+                                <button
+                                  onClick={() => onScrollToSegment?.(idx)}
+                                  className={`text-xs font-semibold ${textColor} hover:underline truncate`}
+                                >
+                                  {segmentSpeakerName}
+                                </button>
+                                <span className="ml-auto text-[11px] text-slate-500 font-mono flex-shrink-0">{timestamp}</span>
+                                {isUncertain && (
+                                  <span className="text-yellow-500 text-[11px]" title="Uncertain attribution">⚠️</span>
+                                )}
+                                <button
+                                  onClick={() => onToggleSegmentSelection?.(idx)}
+                                  title="Remove from review"
+                                  className="flex-shrink-0 p-0.5 text-slate-500 hover:text-slate-400 transition-colors"
+                                >
+                                  <X className="h-3 w-3" />
+                                </button>
+                              </div>
+
+                              <p
+                                onClick={() => onScrollToSegment?.(idx)}
+                                className="text-xs text-slate-500 dark:text-slate-400 leading-relaxed line-clamp-2 cursor-pointer hover:text-slate-900 dark:hover:text-slate-50"
+                              >
+                                {segment.text?.slice(0, 100)}
+                                {(segment.text?.length ?? 0) > 100 ? '…' : ''}
+                              </p>
+
+                              <div className="flex items-center gap-1 flex-wrap">
+                                {(item.reasons || []).length > 0 ? (
+                                  (item.reasons || []).map((reason) => (
+                                    <span
+                                      key={`${idx}-${reason}`}
+                                      className="inline-flex items-center rounded-full border border-amber-200 dark:border-amber-800/30 bg-amber-50 dark:bg-amber-900/20 px-2 py-0.5 text-[10px] font-medium text-amber-700 dark:text-amber-300"
+                                    >
+                                      {formatReviewReason(reason)}
+                                    </span>
+                                  ))
+                                ) : (
+                                  <span className="inline-flex items-center rounded-full border border-slate-200 dark:border-slate-700 bg-slate-100 dark:bg-slate-800 px-2 py-0.5 text-[10px] font-medium text-slate-600 dark:text-slate-300">
+                                    Needs review
+                                  </span>
+                                )}
+                              </div>
+
+                              <div className="flex items-center gap-2">
+                                <select
+                                  value={segmentSpeakerId}
+                                  onChange={(e) => {
+                                    if (e.target.value !== segmentSpeakerId) {
+                                      onSegmentReassign?.(idx, e.target.value);
+                                    }
+                                  }}
+                                  className="flex-1 text-[11px] border border-slate-300 dark:border-slate-700 rounded-md px-2 py-1 bg-white dark:bg-slate-900 text-slate-600 dark:text-slate-300 focus:outline-none focus:border-blue-400 dark:focus:border-blue-300"
+                                >
+                                  {Object.entries(speakers).map(([speakerId, spk]) => (
+                                    <option key={speakerId} value={speakerId}>
+                                      {getSpeakerDisplayName(spk as any)}
+                                    </option>
+                                  ))}
+                                </select>
+                                <button
+                                  onClick={() => onConfirmSegment?.(idx)}
+                                  title="Confirm attribution"
+                                  className="flex-shrink-0 p-1.5 rounded-lg bg-green-50 dark:bg-green-900/20 text-green-600 hover:bg-green-100 dark:hover:bg-green-100 hover:text-green-700 dark:hover:text-green-300 transition-colors border border-green-200 dark:border-green-100"
+                                >
+                                  <Check className="h-3.5 w-3.5" />
+                                </button>
+                              </div>
+                            </div>
+                          );
+                        })}
                       </div>
                     );
                   })}
@@ -1626,9 +1709,11 @@ export function ContextSidebar({
                 <div className="w-12 h-12 rounded-full bg-slate-100 dark:bg-slate-800/50 flex items-center justify-center mb-3">
                   <ListChecks className="w-6 h-6 text-slate-500" />
                 </div>
-                <p className="text-sm font-medium text-slate-600 dark:text-slate-300 mb-1">No segments selected</p>
+                <p className="text-sm font-medium text-slate-600 dark:text-slate-300 mb-1">{openReviewCount === 0 ? 'No review needed' : 'No segments selected'}</p>
                 <p className="text-xs text-slate-500 max-w-[200px]">
-                  Check the boxes next to segments in the transcript to review them here.
+                  {openReviewCount === 0
+                    ? 'Speaker assignment looks clean. Only outliers will appear here.'
+                    : 'Review items are auto-selected here so you can confirm or reassign them quickly.'}
                 </p>
               </div>
             )}

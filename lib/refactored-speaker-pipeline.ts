@@ -7,7 +7,7 @@
 // Pass 2: GPT-4o-mini maps raw diarization labels to roster speakers
 // Pass 2c: GPT-4o-mini resolves dirty clusters (segments with multiple speakers)
 
-import { SpeakerSegment } from './types';
+import { SpeakerRole, SpeakerSegment } from './types';
 import {
   identifySpeakersWithGPT,
   GPTSpeaker,
@@ -23,6 +23,13 @@ import {
   STRONG_SELF_ID_PATTERNS,
   INTRO_HANDOFF_PATTERNS as SHARED_INTRO_HANDOFF_PATTERNS,
 } from './self-id-patterns';
+import { extractValidatedSelfIdName } from './name-interference';
+import {
+  detectShowIdentityFromContext,
+  isLikelyNonHumanConversationalNameCandidate,
+  type ShowIdentityMatch,
+  type ShowRosterEntry,
+} from './show-speaker-memory';
 
 // Invalid names that should never be extracted (adjectives, possessives, common words)
 const INVALID_NAME_PATTERNS = [
@@ -271,7 +278,7 @@ export async function runRefactoredSpeakerPipeline(
     projectType?: string;
     mappingMode?: 'csp' | 'llm';
     hasPresetRoster?: boolean;
-    presetRoster?: Array<{ name: string; role?: string | null }>;
+    presetRoster?: Array<{ name: string; role?: string | null; aliases?: string[] }>;
   } = {}
 ): Promise<RefactoredPipelineResult> {
   console.log('\n========================================');
@@ -625,11 +632,25 @@ export async function runRefactoredSpeakerPipeline(
     }
   }
 
+  const allowFilenameIdentityHeuristics = false;
+  if (!allowFilenameIdentityHeuristics && (options.filename || options.title)) {
+    console.log('[HEURISTIC] Conservative mode: filename/title identity overrides disabled');
+  }
+
+  const dirtyClusterIds = new Set<string>(dirtyClustersResolved);
+  if (mappingResult.diagnostics?.dirtyCluster) {
+    dirtyClusterIds.add(mappingResult.diagnostics.dirtyCluster);
+  }
+  const cleanClusterBaseline = captureCleanClusterBaselineAssignments(
+    mappingResult.segments,
+    dirtyClusterIds
+  );
+
   // ============================================
   // HEURISTIC FALLBACK (Task 1)
   // Fix "Unknown" labels using filename context
   // ============================================
-  if (options.filename || options.title) {
+  if (allowFilenameIdentityHeuristics && (options.filename || options.title)) {
   try {
     const { guest: filenameGuest, host: filenameHost } = extractNamesFromFilename(options.title || options.filename || '');
 
@@ -780,7 +801,7 @@ export async function runRefactoredSpeakerPipeline(
   // ============================================
   // TITLE-BASED HOST LOCK (Prof G + common patterns)
   // ============================================
-  if (!options.hasPresetRoster && (options.title || options.filename)) {
+  if (allowFilenameIdentityHeuristics && !options.hasPresetRoster && (options.title || options.filename)) {
   try {
     const { host: titleHost, guest: titleGuest } = extractNamesFromFilename(options.title || options.filename || '');
     const roster = gptResult.speakers;
@@ -910,58 +931,73 @@ export async function runRefactoredSpeakerPipeline(
   // ============================================
   // POST-PROCESS: TEMPORAL HANDOFF RESOLUTION
   // ============================================
-  console.log('\n--- POST-PROCESS: TEMPORAL HANDOFF RESOLUTION ---\n');
-  try {
-    const temporalResult = resolveByTemporalHandoff(mappingResult.segments, gptResult.speakers);
-    if (temporalResult.reassignments > 0) {
-      mappingResult.segments = temporalResult.segments;
-      console.log(`[TEMPORAL] Reassigned ${temporalResult.reassignments} segment(s) via temporal context`);
-    } else {
-      console.log('[TEMPORAL] No temporal handoff reassignments made');
+  if (options.projectType === 'DEBATE') {
+    console.log('\n--- POST-PROCESS: TEMPORAL HANDOFF RESOLUTION ---\n');
+    try {
+      const temporalResult = resolveByTemporalHandoff(mappingResult.segments, gptResult.speakers);
+      if (temporalResult.reassignments > 0) {
+        mappingResult.segments = temporalResult.segments;
+        console.log(`[TEMPORAL] Reassigned ${temporalResult.reassignments} segment(s) via temporal context`);
+      } else {
+        console.log('[TEMPORAL] No temporal handoff reassignments made');
+      }
+      for (const line of temporalResult.info) {
+        console.log(line);
+      }
+    } catch (err: any) {
+      console.error('[TEMPORAL] failed (non-fatal), skipping:', err.message);
     }
-    for (const line of temporalResult.info) {
-      console.log(line);
-    }
-  } catch (err: any) {
-    console.error('[TEMPORAL] failed (non-fatal), skipping:', err.message);
+  } else {
+    console.log('\n--- POST-PROCESS: TEMPORAL HANDOFF RESOLUTION ---\n');
+    console.log('[TEMPORAL] Skipped outside DEBATE mode');
   }
 
   // ============================================
   // POST-PROCESS: HANDOFF RESPONSE REASSIGNMENT
   // ============================================
-  console.log('\n--- POST-PROCESS: HANDOFF RESPONSE REASSIGNMENT ---\n');
-  try {
-    const handoffReassignResult = reassignHandoffResponses(mappingResult.segments, gptResult.speakers);
-    if (handoffReassignResult.reassignments > 0) {
-      mappingResult.segments = handoffReassignResult.segments;
-      console.log(`[HANDOFF REASSIGN] Reassigned ${handoffReassignResult.reassignments} segment(s) via handoff patterns`);
-    } else {
-      console.log('[HANDOFF REASSIGN] No handoff response reassignments made');
+  if (options.projectType === 'DEBATE') {
+    console.log('\n--- POST-PROCESS: HANDOFF RESPONSE REASSIGNMENT ---\n');
+    try {
+      const handoffReassignResult = reassignHandoffResponses(mappingResult.segments, gptResult.speakers);
+      if (handoffReassignResult.reassignments > 0) {
+        mappingResult.segments = handoffReassignResult.segments;
+        console.log(`[HANDOFF REASSIGN] Reassigned ${handoffReassignResult.reassignments} segment(s) via handoff patterns`);
+      } else {
+        console.log('[HANDOFF REASSIGN] No handoff response reassignments made');
+      }
+      for (const line of handoffReassignResult.info) {
+        console.log(line);
+      }
+    } catch (err: any) {
+      console.error('[HANDOFF REASSIGN] failed (non-fatal), skipping:', err.message);
     }
-    for (const line of handoffReassignResult.info) {
-      console.log(line);
-    }
-  } catch (err: any) {
-    console.error('[HANDOFF REASSIGN] failed (non-fatal), skipping:', err.message);
+  } else {
+    console.log('\n--- POST-PROCESS: HANDOFF RESPONSE REASSIGNMENT ---\n');
+    console.log('[HANDOFF REASSIGN] Skipped outside DEBATE mode');
   }
 
   // ============================================
   // POST-PROCESS: HANDOFF CLUSTER COHERENCE
   // ============================================
-  console.log('\n--- POST-PROCESS: HANDOFF CLUSTER COHERENCE ---\n');
-  try {
-    const coherenceResult = claimHandoffClusters(mappingResult.segments, gptResult.speakers);
-    if (coherenceResult.claims > 0) {
-      mappingResult.segments = coherenceResult.segments;
-      console.log(`[CLUSTER COHERENCE] Claimed ${coherenceResult.claims} segment(s) via handoff cluster ownership`);
-    } else {
-      console.log('[CLUSTER COHERENCE] No cluster coherence claims made');
+  if (options.projectType === 'DEBATE') {
+    console.log('\n--- POST-PROCESS: HANDOFF CLUSTER COHERENCE ---\n');
+    try {
+      const coherenceResult = claimHandoffClusters(mappingResult.segments, gptResult.speakers);
+      if (coherenceResult.claims > 0) {
+        mappingResult.segments = coherenceResult.segments;
+        console.log(`[CLUSTER COHERENCE] Claimed ${coherenceResult.claims} segment(s) via handoff cluster ownership`);
+      } else {
+        console.log('[CLUSTER COHERENCE] No cluster coherence claims made');
+      }
+      for (const line of coherenceResult.info) {
+        console.log(line);
+      }
+    } catch (err: any) {
+      console.error('[CLUSTER COHERENCE] failed (non-fatal), skipping:', err.message);
     }
-    for (const line of coherenceResult.info) {
-      console.log(line);
-    }
-  } catch (err: any) {
-    console.error('[CLUSTER COHERENCE] failed (non-fatal), skipping:', err.message);
+  } else {
+    console.log('\n--- POST-PROCESS: HANDOFF CLUSTER COHERENCE ---\n');
+    console.log('[CLUSTER COHERENCE] Skipped outside DEBATE mode');
   }
 
   // ============================================
@@ -1172,6 +1208,51 @@ export async function runRefactoredSpeakerPipeline(
     console.log('[SELF-ID ENFORCE] All self-ID segments correctly assigned');
   }
 
+  console.log('\n--- POST-PROCESS: CLEAN CLUSTER CONSISTENCY ---\n');
+  const clusterConsistencyResult = enforceCleanClusterConsistency(
+    mappingResult.segments,
+    cleanClusterBaseline,
+    dirtyClusterIds
+  );
+  if (clusterConsistencyResult.revertedSegments > 0) {
+    mappingResult.segments = clusterConsistencyResult.segments;
+    console.log(
+      `[CLUSTER CONSISTENCY] Reverted ${clusterConsistencyResult.revertedSegments} segment(s) across ${clusterConsistencyResult.revertedClusters.length} clean cluster(s)`
+    );
+  } else {
+    console.log('[CLUSTER CONSISTENCY] All clean clusters remained 1:1');
+  }
+
+  // ============================================
+  // POST-PROCESS: CONVERSATIONAL HUMAN NAMING
+  // ============================================
+  const normalizedProjectType = (options.projectType || '').toUpperCase();
+  if (normalizedProjectType !== 'DEBATE') {
+    console.log('\n--- POST-PROCESS: CONVERSATIONAL HUMAN NAMING ---\n');
+    try {
+      const conversationalNamingResult = resolveConversationalHumanNames(
+        gptResult.speakers,
+        mappingResult.segments,
+        {
+          projectType: normalizedProjectType || 'PODCAST',
+          title: options.title,
+          filename: options.filename,
+        }
+      );
+      gptResult.speakers = conversationalNamingResult.roster;
+      if (conversationalNamingResult.assigned > 0) {
+        console.log(`[CONVERSATIONAL NAMING] Assigned ${conversationalNamingResult.assigned} speaker name(s)`);
+        for (const line of conversationalNamingResult.info) {
+          console.log(line);
+        }
+      } else {
+        console.log('[CONVERSATIONAL NAMING] No conversational naming changes applied');
+      }
+    } catch (err: any) {
+      console.error('[CONVERSATIONAL NAMING] failed (non-fatal), skipping:', err.message);
+    }
+  }
+
   // ============================================
   // POST-PROCESS: SEGMENT BALANCE VALIDATION (Debates)
   // ============================================
@@ -1259,6 +1340,28 @@ export async function runRefactoredSpeakerPipeline(
   }
 
   // ============================================
+  // POST-PROCESS: MIXED-CONTENT ROLE SANITIZATION
+  // ============================================
+  console.log('\n--- POST-PROCESS: MIXED-CONTENT ROLE SANITIZATION ---\n');
+  try {
+    const sanitizationResult = sanitizeSpeakerRosterForTaggedContent(
+      gptResult.speakers,
+      mappingResult.segments
+    );
+    gptResult.speakers = sanitizationResult.roster;
+    if (sanitizationResult.demotedAdvertisers > 0 || sanitizationResult.strippedAdOnlyNames > 0) {
+      console.log(
+        `[CONTENT SANITIZE] Demoted ${sanitizationResult.demotedAdvertisers} mixed-content advertiser role(s); ` +
+        `stripped ${sanitizationResult.strippedAdOnlyNames} ad-only human name(s)`
+      );
+    } else {
+      console.log('[CONTENT SANITIZE] No mixed-content role or ad-only name corrections needed');
+    }
+  } catch (err: any) {
+    console.error('[CONTENT SANITIZE] failed (non-fatal), skipping:', err.message);
+  }
+
+  // ============================================
   // POST-PROCESS: INTRO-HANDOFF CONFIDENCE CORRECTION
   // ============================================
   console.log('\n--- POST-PROCESS: INTRO-HANDOFF CONFIDENCE CORRECTION ---\n');
@@ -1277,7 +1380,7 @@ export async function runRefactoredSpeakerPipeline(
   // ============================================
   // POST-PROCESS: FINAL KNOWN-HOST RECOVERY
   // ============================================
-  if (!options.hasPresetRoster && (options.title || options.filename)) {
+  if (allowFilenameIdentityHeuristics && !options.hasPresetRoster && (options.title || options.filename)) {
     try {
       const { host: titleHost } = extractNamesFromFilename(options.title || options.filename || '');
       if (titleHost && recoverMissingKnownHostFromInvalidCluster(gptResult.speakers, mappingResult.segments, titleHost)) {
@@ -1389,22 +1492,43 @@ export async function runRefactoredSpeakerPipeline(
  * Known show name → host name mappings.
  * Used to reliably identify the host when GPT doesn't extract it from the filename.
  */
-const KNOWN_SHOW_HOSTS: Array<{ pattern: RegExp; host: string }> = [
-  { pattern: /\bprof\.?\s*g\b/i,              host: 'Scott Galloway' },
-  { pattern: /\blex\s+fridman\b/i,             host: 'Lex Fridman' },
-  { pattern: /\btim\s+ferriss\b/i,             host: 'Tim Ferriss' },
-  { pattern: /\bhuberman\s+lab\b/i,            host: 'Andrew Huberman' },
-  { pattern: /\bsam\s+harris\b/i,              host: 'Sam Harris' },
-  { pattern: /\bjoe\s+rogan\b/i,               host: 'Joe Rogan' },
-  { pattern: /\bconan\s+o['']?brien\b/i,       host: 'Conan O\'Brien' },
-  { pattern: /\bsmartless\b/i,                 host: 'Jason Bateman' },
-  { pattern: /\bfreakonomics\b/i,              host: 'Stephen Dubner' },
-  { pattern: /\bhow\s+i\s+built\s+this\b/i,   host: 'Guy Raz' },
-  { pattern: /\bthe\s+daily\s+show\b/i,        host: 'Jon Stewart' },
-  { pattern: /\barmchair\s+expert\b/i,         host: 'Dax Shepard' },
-  { pattern: /\ball-in\s+podcast\b/i,          host: 'Chamath Palihapitiya' },
-  { pattern: /\bmasters\s+of\s+scale\b/i,      host: 'Reid Hoffman' },
-  { pattern: /\bhidden\s+brain\b/i,            host: 'Shankar Vedantam' },
+const KNOWN_SHOW_HOSTS: Array<{
+  pattern: RegExp;
+  host: string;
+  firstName?: string;
+  corroborationPatterns?: RegExp[];
+}> = [
+  {
+    pattern: /\bprof\.?\s*g\s+markets\b/i,
+    host: 'Ed Elson',
+    firstName: 'Ed',
+    corroborationPatterns: [
+      /\bScott\s+is\s+(?:still\s+)?(?:off|out)\b/i,
+    ],
+  },
+  {
+    pattern: /\bprof\.?\s*g(?:\s+podcast)?\b/i,
+    host: 'Scott Galloway',
+    firstName: 'Scott',
+    corroborationPatterns: [
+      /\bScott[,.\s]/i,
+      /\bwith\s+Scott\b/i,
+    ],
+  },
+  { pattern: /\blex\s+fridman\b/i,             host: 'Lex Fridman', firstName: 'Lex' },
+  { pattern: /\btim\s+ferriss\b/i,             host: 'Tim Ferriss', firstName: 'Tim' },
+  { pattern: /\bhuberman\s+lab\b/i,            host: 'Andrew Huberman', firstName: 'Andrew' },
+  { pattern: /\bsam\s+harris\b/i,              host: 'Sam Harris', firstName: 'Sam' },
+  { pattern: /\bjoe\s+rogan\b/i,               host: 'Joe Rogan', firstName: 'Joe' },
+  { pattern: /\bconan\s+o['']?brien\b/i,       host: 'Conan O\'Brien', firstName: 'Conan' },
+  { pattern: /\bsmartless\b/i,                 host: 'Jason Bateman', firstName: 'Jason' },
+  { pattern: /\bfreakonomics\b/i,              host: 'Stephen Dubner', firstName: 'Stephen' },
+  { pattern: /\bhow\s+i\s+built\s+this\b/i,    host: 'Guy Raz', firstName: 'Guy' },
+  { pattern: /\bthe\s+daily\s+show\b/i,        host: 'Jon Stewart', firstName: 'Jon' },
+  { pattern: /\barmchair\s+expert\b/i,         host: 'Dax Shepard', firstName: 'Dax' },
+  { pattern: /\ball-in\s+podcast\b/i,          host: 'Chamath Palihapitiya', firstName: 'Chamath' },
+  { pattern: /\bmasters\s+of\s+scale\b/i,      host: 'Reid Hoffman', firstName: 'Reid' },
+  { pattern: /\bhidden\s+brain\b/i,            host: 'Shankar Vedantam', firstName: 'Shankar' },
 ];
 
 /**
@@ -1439,6 +1563,1914 @@ function extractNamesFromFilename(filename: string): { host?: string; guest?: st
   if (onMatch) return { host, guest: onMatch[1] };
 
   return { host };
+}
+
+type ConversationalNamingOptions = {
+  projectType?: string;
+  title?: string;
+  filename?: string;
+  showIdentity?: ShowIdentityMatch | null;
+  showRoster?: ShowRosterEntry[];
+};
+
+type KnownHostEvidence = {
+  fullName: string;
+  firstName: string;
+  reason: string;
+};
+
+type IntroAnchoredNamingCandidate = {
+  hostSpeakerId: string;
+  guestSpeakerId: string | null;
+  introducedName: string;
+  segmentIndex: number;
+};
+
+export type ConversationalNamingInspection = {
+  showIdentity: string | null;
+  knownHostName: string | null;
+  knownHostReason: string | null;
+  introAnchorFound: boolean;
+  introSegmentIndex: number | null;
+  introducedName: string | null;
+  hostSpeakerId: string | null;
+  guestSpeakerId: string | null;
+  recurringAnchors: Array<{ name: string; role?: SpeakerRole; speakerId: string; evidence: string[] }>;
+  rejectedHumanNameCandidates: string[];
+  rejectedIntroducedNames: string[];
+  rejectedGuestMemoryCarryovers: string[];
+  guestCandidateRankings: Array<{
+    speakerId: string;
+    score: number;
+    totalDuration: number;
+    substantiveTurns: number;
+    longAnswerTurns: number;
+    rejectedReasons: string[];
+    chosenReason: string | null;
+    selected: boolean;
+  }>;
+  suppressedGuestFirstNames: string[];
+  clusterOwnershipCandidates: Array<{
+    name: string;
+    role?: SpeakerRole;
+    chosenSpeakerId: string | null;
+    assignmentConfidence: number;
+    requiresReview: boolean;
+    swapDetected: boolean;
+    swapApplied: boolean;
+    positiveEvidence: string[];
+    negativeEvidence: string[];
+    candidates: Array<{
+      speakerId: string;
+      score: number;
+      currentMatch: boolean;
+      positiveEvidence: string[];
+      negativeEvidence: string[];
+    }>;
+  }>;
+  swapDetected: boolean;
+  swapApplied: boolean;
+};
+
+type GuestReplyCandidateRanking = {
+  speakerId: string;
+  score: number;
+  totalDuration: number;
+  substantiveTurns: number;
+  longAnswerTurns: number;
+  shortTurns: number;
+  sponsorHeavyTurns: number;
+  rejectedReasons: string[];
+  chosenReason: string | null;
+};
+
+type RecurringOwnershipCandidate = {
+  speakerId: string;
+  score: number;
+  currentMatch: boolean;
+  positiveEvidence: string[];
+  negativeEvidence: string[];
+};
+
+type RecurringOwnershipInspectionEntry = {
+  name: string;
+  role?: SpeakerRole;
+  chosenSpeakerId: string | null;
+  assignmentConfidence: number;
+  requiresReview: boolean;
+  swapDetected: boolean;
+  swapApplied: boolean;
+  positiveEvidence: string[];
+  negativeEvidence: string[];
+  candidates: RecurringOwnershipCandidate[];
+};
+
+function countWords(text: string): number {
+  return text.split(/\s+/).filter(Boolean).length;
+}
+
+function countQuestionMarks(text: string): number {
+  return (text.match(/\?/g) || []).length;
+}
+
+function getSegmentDuration(segment: SpeakerSegment): number {
+  return Math.max(0, (segment.endTime || 0) - (segment.startTime || 0));
+}
+
+function countDirectAddressMentions(name: string, segments: SpeakerSegment[]): number {
+  const escaped = escapeRegExp(name);
+  const pattern = new RegExp(`\\b${escaped}[,.]?\\b`, 'g');
+  let count = 0;
+
+  for (const segment of segments) {
+    if (!isConversationalSegment(segment)) continue;
+    const matches = segment.text.match(pattern);
+    count += matches?.length || 0;
+  }
+
+  return count;
+}
+
+function findCorroboratedKnownHost(
+  segments: SpeakerSegment[],
+  options: ConversationalNamingOptions
+): KnownHostEvidence | null {
+  const conversationalSegments = segments.filter(isConversationalSegment);
+  const earlyContext = conversationalSegments
+    .slice(0, 12)
+    .map((segment) => segment.text)
+    .join(' ');
+  const combinedContext = [options.title, options.filename, earlyContext]
+    .filter(Boolean)
+    .join(' ');
+  const distinctConversationalSpeakers = new Set(
+    conversationalSegments
+      .map((segment) => segment.finalSpeakerId || segment.speakerId)
+      .filter(Boolean)
+  );
+  const showIdentity = options.showIdentity || detectShowIdentityFromContext({
+    title: options.title,
+    filename: options.filename,
+    segments,
+  });
+
+  if (showIdentity) {
+    const showHost = (options.showRoster || showIdentity.roster || []).find((entry) => entry.role === 'host');
+    if (showHost?.name) {
+      const aliases = buildRecurringAliasSet(showHost);
+      const directAddressCount = conversationalSegments.reduce((count, segment) => {
+        const text = segment.text || '';
+        return count + (containsVocativeAlias(text, aliases) ? 1 : 0);
+      }, 0);
+
+      if (directAddressCount > 0 && distinctConversationalSpeakers.size >= 2) {
+        return {
+          fullName: showHost.name,
+          firstName: aliases[0] || showHost.name.split(/\s+/)[0] || showHost.name,
+          reason: `show_identity:${showIdentity.id}`,
+        };
+      }
+    }
+  }
+
+  for (const entry of KNOWN_SHOW_HOSTS) {
+    if (!entry.pattern.test(combinedContext)) continue;
+
+    const firstName = entry.firstName || entry.host.split(/\s+/)[0];
+    const directAddressCount = countDirectAddressMentions(firstName, conversationalSegments);
+    const corroborationHit = (entry.corroborationPatterns || []).find((pattern) => pattern.test(combinedContext));
+
+    if (corroborationHit || (directAddressCount > 0 && distinctConversationalSpeakers.size >= 2)) {
+      return {
+        fullName: entry.host,
+        firstName,
+        reason: corroborationHit
+          ? `show_context:${entry.host}`
+          : `show_context_direct_address:${firstName}`,
+      };
+    }
+  }
+
+  return null;
+}
+
+function buildRecurringAliasSet(entry: ShowRosterEntry): string[] {
+  const parts = entry.name.split(/\s+/).filter(Boolean);
+  const aliases = new Set<string>([
+    entry.name,
+    parts[0] || '',
+    ...(entry.aliases || []),
+  ]);
+  return [...aliases].map((alias) => alias.trim()).filter(Boolean);
+}
+
+function containsVocativeAlias(text: string, aliases: string[]): boolean {
+  return aliases.some((alias) => {
+    const escaped = escapeRegExp(alias);
+    return [
+      new RegExp(`\\b${escaped},\\s+(?:how|what|why|where|when|thank|good|great|welcome|let|tell|do|does|did|are|can|could|would|should)\\b`, 'i'),
+      new RegExp(`\\b(?:thank\\s+you|thanks),\\s+${escaped}\\b`, 'i'),
+      new RegExp(`\\b(?:hey|hi),\\s+${escaped}\\b`, 'i'),
+    ].some((pattern) => pattern.test(text));
+  });
+}
+
+function getRecurringHumanRosterEntries(
+  options: ConversationalNamingOptions,
+  segments: SpeakerSegment[]
+): { entries: ShowRosterEntry[]; showIdentity: ShowIdentityMatch | null } {
+  const showIdentity = options.showIdentity || detectShowIdentityFromContext({
+    title: options.title,
+    filename: options.filename,
+    segments,
+  });
+  const roster = (options.showRoster && options.showRoster.length > 0)
+    ? options.showRoster
+    : showIdentity?.roster || [];
+
+  return {
+    entries: roster.filter((entry) => entry.role === 'host' || entry.role === 'co_host'),
+    showIdentity,
+  };
+}
+
+function getConversationalSpeakerSegmentsById(segments: SpeakerSegment[]): Map<string, SpeakerSegment[]> {
+  const bySpeakerId = new Map<string, SpeakerSegment[]>();
+  for (const segment of segments) {
+    if (!isConversationalSegment(segment)) continue;
+    const speakerId = segment.finalSpeakerId || segment.speakerId;
+    if (!speakerId) continue;
+    if (!bySpeakerId.has(speakerId)) {
+      bySpeakerId.set(speakerId, []);
+    }
+    bySpeakerId.get(speakerId)!.push(segment);
+  }
+  return bySpeakerId;
+}
+
+function countVocativeAliasMatches(text: string, aliases: string[]): number {
+  return aliases.reduce((count, alias) => {
+    const escaped = escapeRegExp(alias);
+    const patterns = [
+      new RegExp(`\\b${escaped},\\s+(?:how|what|why|where|when|thank|good|great|welcome|let|tell|do|does|did|are|can|could|would|should)\\b`, 'ig'),
+      new RegExp(`\\b(?:thank\\s+you|thanks),\\s+${escaped}\\b`, 'ig'),
+      new RegExp(`\\b(?:hey|hi),\\s+${escaped}\\b`, 'ig'),
+    ];
+    return count + patterns.reduce((sum, pattern) => sum + ((text.match(pattern) || []).length), 0);
+  }, 0);
+}
+
+function scoreRecurringOwnershipCandidate(
+  entry: ShowRosterEntry,
+  speaker: GPTSpeaker,
+  segments: SpeakerSegment[],
+  speakerSegments: Map<string, SpeakerSegment[]>
+): RecurringOwnershipCandidate {
+  const ownedSegments = speakerSegments.get(speaker.id) || [];
+  const aliases = buildRecurringAliasSet(entry);
+  const normalizedEntryName = normalizeSpeakerName(entry.name);
+  const firstName = aliases[0] || entry.name.split(/\s+/)[0] || entry.name;
+  let score = 0;
+  const positiveEvidence: string[] = [];
+  const negativeEvidence: string[] = [];
+
+  const currentName = speaker.name?.trim() || '';
+  if (currentName && normalizeSpeakerName(currentName) === normalizedEntryName) {
+    score += 6;
+    positiveEvidence.push('current_name_match');
+  }
+  if (speaker.role && entry.role && speaker.role === entry.role) {
+    score += 2;
+    positiveEvidence.push('current_role_match');
+  }
+
+  if (entry.role === 'host') {
+    const hostScore = Math.min(8, Math.max(0, scoreConversationalHostCandidate(speaker, segments)));
+    if (hostScore > 0) {
+      score += hostScore;
+      positiveEvidence.push('host_behavior');
+    }
+  }
+
+  const firstStart = ownedSegments[0]?.startTime ?? Number.POSITIVE_INFINITY;
+  if (firstStart <= 180) {
+    score += 2;
+    positiveEvidence.push('early_participant');
+  }
+
+  for (const segment of ownedSegments) {
+    const text = getSegText(segment);
+    if (!text) continue;
+    const selfId = extractValidatedSelfIdName(text, STRONG_SELF_ID_PATTERNS);
+    if (selfId) {
+      const normalizedSelfId = normalizeSpeakerName(selfId);
+      if (normalizedSelfId === normalizedEntryName) {
+        score += 40;
+        positiveEvidence.push('self_id_full_name');
+      } else if (normalizedSelfId === normalizeSpeakerName(firstName)) {
+        score += 22;
+        positiveEvidence.push('self_id_first_name');
+      }
+    }
+
+    const vocativeMatches = countVocativeAliasMatches(text, aliases);
+    if (vocativeMatches > 0) {
+      score -= vocativeMatches * 14;
+      negativeEvidence.push(`addresses_${firstName}:${vocativeMatches}`);
+    }
+  }
+
+  for (let i = 0; i < segments.length; i++) {
+    const segment = segments[i];
+    if (!isConversationalSegment(segment)) continue;
+    const sourceSpeakerId = segment.finalSpeakerId || segment.speakerId;
+    if (!sourceSpeakerId || sourceSpeakerId === speaker.id) continue;
+    const text = getSegText(segment);
+    if (!containsVocativeAlias(text, aliases)) continue;
+
+    const replySpeakerId = findNextSubstantiveReplySpeakerId(segments, i, sourceSpeakerId);
+    if (replySpeakerId === speaker.id) {
+      score += 12;
+      positiveEvidence.push(`reply_after_vocative:${firstName}`);
+    }
+  }
+
+  return {
+    speakerId: speaker.id,
+    score: Number(score.toFixed(2)),
+    currentMatch: Boolean(currentName && normalizeSpeakerName(currentName) === normalizedEntryName),
+    positiveEvidence,
+    negativeEvidence,
+  };
+}
+
+function inspectRecurringShowClusterOwnership(
+  roster: GPTSpeaker[],
+  segments: SpeakerSegment[],
+  options: ConversationalNamingOptions = {},
+  appliedAssignments: Record<string, string> = {}
+): {
+  entries: RecurringOwnershipInspectionEntry[];
+  swapDetected: boolean;
+  swapApplied: boolean;
+} {
+  const { entries: recurringEntries } = getRecurringHumanRosterEntries(options, segments);
+  if (!recurringEntries.length) {
+    return { entries: [], swapDetected: false, swapApplied: false };
+  }
+
+  const speakerSegments = getConversationalSpeakerSegmentsById(segments);
+  const candidateSpeakers = roster
+    .filter((speaker) => {
+      if (isAdvertiserLikeSpeaker(speaker) || speaker.role === 'guest' || speaker.role === 'quoted_audio' || speaker.role === 'narrator') {
+        return false;
+      }
+      const owned = speakerSegments.get(speaker.id) || [];
+      const firstStart = owned[0]?.startTime ?? Number.POSITIVE_INFINITY;
+      const currentRecurringName = recurringEntries.some((entry) => normalizeSpeakerName(entry.name) === normalizeSpeakerName(speaker.name || ''));
+      return owned.length > 0 && (firstStart <= 240 || currentRecurringName);
+    });
+
+  if (!candidateSpeakers.length) {
+    return { entries: [], swapDetected: false, swapApplied: false };
+  }
+
+  const scoreMatrix = recurringEntries.map((entry) =>
+    candidateSpeakers.map((speaker) => scoreRecurringOwnershipCandidate(entry, speaker, segments, speakerSegments))
+  );
+
+  let bestAssignment: number[] = new Array(recurringEntries.length).fill(-1);
+  let bestScore = -Infinity;
+  const currentAssignmentIndices = recurringEntries.map((entry) =>
+    candidateSpeakers.findIndex((speaker) => normalizeSpeakerName(speaker.name || '') === normalizeSpeakerName(entry.name))
+  );
+
+  function search(entryIndex: number, usedCandidates: Set<number>, runningScore: number, assignment: number[]) {
+    if (entryIndex >= recurringEntries.length) {
+      if (runningScore > bestScore) {
+        bestScore = runningScore;
+        bestAssignment = [...assignment];
+      }
+      return;
+    }
+
+    search(entryIndex + 1, usedCandidates, runningScore, [...assignment, -1]);
+
+    for (let candidateIndex = 0; candidateIndex < candidateSpeakers.length; candidateIndex++) {
+      if (usedCandidates.has(candidateIndex)) continue;
+      const candidate = scoreMatrix[entryIndex][candidateIndex];
+      usedCandidates.add(candidateIndex);
+      search(entryIndex + 1, usedCandidates, runningScore + candidate.score, [...assignment, candidateIndex]);
+      usedCandidates.delete(candidateIndex);
+    }
+  }
+
+  search(0, new Set<number>(), 0, []);
+
+  let swapDetected = false;
+  let swapApplied = false;
+  const entries = recurringEntries.map((entry, entryIndex) => {
+    const chosenIndex = bestAssignment[entryIndex];
+    const chosenCandidate = chosenIndex >= 0 ? scoreMatrix[entryIndex][chosenIndex] : null;
+    const ranked = scoreMatrix[entryIndex]
+      .slice()
+      .sort((a, b) => b.score - a.score);
+    const runnerUp = ranked[1];
+    const topChoice = ranked[0] || null;
+    const currentIndex = currentAssignmentIndices[entryIndex];
+    const currentSpeakerId = currentIndex >= 0 ? candidateSpeakers[currentIndex]?.id : null;
+    const positiveEvidence = chosenCandidate?.positiveEvidence || [];
+    const negativeEvidence = chosenCandidate?.negativeEvidence || [];
+    const scoreGap = chosenCandidate ? chosenCandidate.score - (runnerUp?.score ?? 0) : 0;
+    const replyAfterVocativeCount = positiveEvidence.filter((evidence) => evidence.startsWith('reply_after_vocative:')).length;
+    const strongPositive = positiveEvidence.includes('self_id_full_name') ||
+      positiveEvidence.includes('self_id_first_name') ||
+      replyAfterVocativeCount >= 2 ||
+      (positiveEvidence.includes('current_name_match') && negativeEvidence.length === 0);
+    const forcedByExclusion = Boolean(
+      chosenCandidate &&
+      negativeEvidence.length === 0 &&
+      topChoice &&
+      topChoice.speakerId !== chosenCandidate.speakerId &&
+      recurringEntries.some((otherEntry, otherIndex) => {
+        if (otherIndex === entryIndex) return false;
+        const otherChosenIndex = bestAssignment[otherIndex];
+        if (otherChosenIndex < 0) return false;
+        const otherChosen = scoreMatrix[otherIndex][otherChosenIndex];
+        if (!otherChosen || otherChosen.speakerId !== topChoice.speakerId) return false;
+        const competingScore = scoreMatrix[otherIndex].find((candidate) => candidate.speakerId === topChoice.speakerId)?.score ?? -Infinity;
+        return competingScore - topChoice.score >= 8;
+      })
+    );
+    const baseAssignmentConfidence = chosenCandidate
+      ? Number(Math.max(0, Math.min(1, (chosenCandidate.score + Math.min(12, scoreGap * 2)) / 40)).toFixed(2))
+      : 0;
+    const requiresReview = !chosenCandidate ||
+      ((chosenCandidate.score < 10 || scoreGap < 4) && !forcedByExclusion && !strongPositive) ||
+      ((negativeEvidence.length > 0 && !positiveEvidence.includes('self_id_full_name') && !positiveEvidence.includes('self_id_first_name'))) ||
+      (!strongPositive && !forcedByExclusion);
+    const chosenSpeakerId = requiresReview ? null : chosenCandidate.speakerId;
+    const entrySwapDetected = Boolean(chosenSpeakerId && currentSpeakerId && chosenSpeakerId !== currentSpeakerId);
+    const entrySwapApplied = entrySwapDetected && appliedAssignments[entry.name] === chosenSpeakerId;
+    const resolvedCurrentMatch = Boolean(chosenCandidate?.currentMatch && negativeEvidence.length === 0);
+    let assignmentConfidence = baseAssignmentConfidence;
+    if (strongPositive && negativeEvidence.length === 0) {
+      assignmentConfidence = Math.max(
+        assignmentConfidence,
+        positiveEvidence.includes('self_id_full_name')
+          ? 0.98
+          : positiveEvidence.includes('self_id_first_name')
+            ? 0.9
+            : 0.84
+      );
+    }
+    if (forcedByExclusion && negativeEvidence.length === 0) {
+      assignmentConfidence = Math.max(assignmentConfidence, 0.82);
+    }
+    if (resolvedCurrentMatch) {
+      assignmentConfidence = Math.max(
+        assignmentConfidence,
+        entrySwapApplied || positiveEvidence.includes('current_role_match') ? 0.88 : 0.82
+      );
+    }
+    assignmentConfidence = Number(Math.max(0, Math.min(1, assignmentConfidence)).toFixed(2));
+    if (entrySwapDetected) swapDetected = true;
+    if (entrySwapApplied) swapApplied = true;
+
+    return {
+      name: entry.name,
+      role: entry.role,
+      chosenSpeakerId,
+      assignmentConfidence,
+      requiresReview,
+      swapDetected: entrySwapDetected,
+      swapApplied: entrySwapApplied,
+      positiveEvidence,
+      negativeEvidence,
+      candidates: scoreMatrix[entryIndex]
+        .slice()
+        .sort((a, b) => b.score - a.score),
+    };
+  });
+
+  return { entries, swapDetected, swapApplied };
+}
+
+function getConversationalSpeakerStats(segments: SpeakerSegment[]): Map<string, {
+  segmentCount: number;
+  totalDuration: number;
+  firstStart: number;
+}> {
+  const stats = new Map<string, { segmentCount: number; totalDuration: number; firstStart: number }>();
+
+  for (const segment of segments) {
+    if (!isConversationalSegment(segment)) continue;
+    const speakerId = segment.finalSpeakerId || segment.speakerId;
+    if (!speakerId) continue;
+    if (!stats.has(speakerId)) {
+      stats.set(speakerId, {
+        segmentCount: 0,
+        totalDuration: 0,
+        firstStart: segment.startTime,
+      });
+    }
+    const current = stats.get(speakerId)!;
+    current.segmentCount += 1;
+    current.totalDuration += getSegmentDuration(segment);
+    current.firstStart = Math.min(current.firstStart, segment.startTime);
+  }
+
+  return stats;
+}
+
+function findNextSubstantiveReplySpeakerId(
+  segments: SpeakerSegment[],
+  startIndex: number,
+  currentSpeakerId: string
+): string | null {
+  const originEnd = segments[startIndex]?.endTime || 0;
+  for (let i = startIndex + 1; i < segments.length && i <= startIndex + 4; i++) {
+    const segment = segments[i];
+    if (!isConversationalSegment(segment)) continue;
+    if (isSponsorHeavyText(getSegText(segment))) continue;
+    if ((segment.startTime || 0) - originEnd > 90) break;
+    const speakerId = segment.finalSpeakerId || segment.speakerId;
+    if (!speakerId || speakerId === currentSpeakerId) continue;
+    if (!isSubstantiveGuestReplySegment(segment) && countWords(segment.text || '') < 3) continue;
+    return speakerId;
+  }
+  return null;
+}
+
+function assignRecurringShowRosterNames(
+  roster: GPTSpeaker[],
+  segments: SpeakerSegment[],
+  options: ConversationalNamingOptions
+): {
+  roster: GPTSpeaker[];
+  assigned: number;
+  info: string[];
+  anchors: Array<{ name: string; role?: SpeakerRole; speakerId: string; evidence: string[] }>;
+  showIdentity: ShowIdentityMatch | null;
+  rejectedCandidates: string[];
+  rejectedGuestCarryovers: string[];
+} {
+  const showIdentity = options.showIdentity || detectShowIdentityFromContext({
+    title: options.title,
+    filename: options.filename,
+    segments,
+  });
+  const rawRecurringRoster = options.showRoster && options.showRoster.length > 0
+    ? options.showRoster
+    : showIdentity?.roster || [];
+  const rejectedGuestCarryovers = rawRecurringRoster
+    .filter((entry) => entry.role === 'guest' || entry.role === 'panelist')
+    .map((entry) => entry.name);
+  const recurringRoster = rawRecurringRoster.filter((entry) => entry.role === 'host' || entry.role === 'co_host');
+
+  if (!recurringRoster.length) {
+    return {
+      roster: [...roster],
+      assigned: 0,
+      info: [],
+      anchors: [],
+      showIdentity,
+      rejectedCandidates: [],
+      rejectedGuestCarryovers,
+    };
+  }
+
+  const updatedRoster = roster.map((speaker) => ({ ...speaker }));
+  const info: string[] = [];
+  const rejectedCandidates: string[] = [];
+  let assigned = 0;
+  const stats = getConversationalSpeakerStats(segments);
+  const introWindow = detectIntroWindowEndTime(segments, false);
+  const warmupSegments = segments.filter((segment) =>
+    isConversationalSegment(segment) &&
+    (segment.startTime || 0) < Math.min(introWindow.endTimeSeconds, 240)
+  );
+  const distinctConversationalSpeakerIds = new Set(
+    segments
+      .filter(isConversationalSegment)
+      .map((segment) => segment.finalSpeakerId || segment.speakerId)
+      .filter(Boolean)
+  );
+  const warmupSpeakerCounts = new Map<string, number>();
+  for (const segment of warmupSegments) {
+    const speakerId = segment.finalSpeakerId || segment.speakerId;
+    if (!speakerId) continue;
+    warmupSpeakerCounts.set(speakerId, (warmupSpeakerCounts.get(speakerId) || 0) + 1);
+  }
+  const multiHostWarmup =
+    Array.from(warmupSpeakerCounts.values()).filter((count) => count >= 2).length >= 2 &&
+    warmupSegments.length >= 6;
+  const earlySpeakerIds = Array.from(stats.entries())
+    .sort((a, b) => {
+      if (a[1].firstStart !== b[1].firstStart) return a[1].firstStart - b[1].firstStart;
+      return b[1].totalDuration - a[1].totalDuration;
+    })
+    .map(([speakerId]) => speakerId);
+
+  const entryScores = new Map<string, Map<string, { score: number; evidence: string[] }>>();
+  for (const entry of recurringRoster) {
+    entryScores.set(entry.name, new Map<string, { score: number; evidence: string[] }>());
+  }
+
+  for (let i = 0; i < segments.length; i++) {
+    const segment = segments[i];
+    if (!isConversationalSegment(segment)) continue;
+    const speakerId = segment.finalSpeakerId || segment.speakerId;
+    if (!speakerId) continue;
+    const text = segment.text || '';
+
+    for (const entry of recurringRoster) {
+      const aliases = buildRecurringAliasSet(entry);
+      if (!containsVocativeAlias(text, aliases)) continue;
+
+      const replySpeakerId = findNextSubstantiveReplySpeakerId(segments, i, speakerId);
+      if (replySpeakerId) {
+        const targetScores = entryScores.get(entry.name)!;
+        const current = targetScores.get(replySpeakerId) || { score: 0, evidence: [] };
+        current.score += 10;
+        current.evidence.push(`reply_after_vocative:${aliases[0]}`);
+        targetScores.set(replySpeakerId, current);
+      }
+    }
+  }
+
+  const assignedSpeakerIds = new Set<string>();
+  const anchors: Array<{ name: string; role?: SpeakerRole; speakerId: string; evidence: string[] }> = [];
+  const recurringEntries = [...recurringRoster].sort((a, b) => {
+    const aPriority = a.role === 'host' ? 0 : a.role === 'co_host' ? 1 : 2;
+    const bPriority = b.role === 'host' ? 0 : b.role === 'co_host' ? 1 : 2;
+    return aPriority - bPriority;
+  });
+
+  for (const entry of recurringEntries) {
+    if (isLikelyNonHumanConversationalNameCandidate(entry.name, {
+      showIdentity,
+      title: options.title,
+      filename: options.filename,
+    })) {
+      rejectedCandidates.push(entry.name);
+      continue;
+    }
+
+    const candidateScores = entryScores.get(entry.name) || new Map<string, { score: number; evidence: string[] }>();
+
+    if (entry.role === 'co_host') {
+      const hostEntry = recurringRoster.find((candidate) => candidate.role === 'host');
+      const hostAnchor = hostEntry
+        ? anchors.find((anchor) => normalizeSpeakerName(anchor.name) === normalizeSpeakerName(hostEntry.name))
+        : null;
+
+      if (hostEntry && hostAnchor?.speakerId) {
+        const hostAliases = buildRecurringAliasSet(hostEntry);
+        const coHostAnchorWindowEnd = Math.min(introWindow.endTimeSeconds, 180);
+        for (let i = 0; i < segments.length; i++) {
+          const segment = segments[i];
+          if (!isConversationalSegment(segment)) continue;
+          if ((segment.startTime || 0) > coHostAnchorWindowEnd) break;
+          const sourceSpeakerId = segment.finalSpeakerId || segment.speakerId;
+          if (!sourceSpeakerId || sourceSpeakerId === hostAnchor.speakerId) continue;
+          if (!containsVocativeAlias(segment.text || '', hostAliases)) continue;
+
+          const replySpeakerId = findNextSubstantiveReplySpeakerId(segments, i, sourceSpeakerId);
+          if (replySpeakerId !== hostAnchor.speakerId) continue;
+
+          const bucket = candidateScores.get(sourceSpeakerId) || { score: 0, evidence: [] };
+          bucket.score += 8;
+          bucket.evidence.push(`addresses_host:${hostEntry.name}`);
+          candidateScores.set(sourceSpeakerId, bucket);
+        }
+      }
+    }
+
+    for (const speakerId of earlySpeakerIds) {
+      if (assignedSpeakerIds.has(speakerId)) continue;
+      const bucket = candidateScores.get(speakerId) || { score: 0, evidence: [] };
+      const rosterSpeaker = updatedRoster.find((speaker) => speaker.id === speakerId);
+      if (entry.role === 'host' && rosterSpeaker) {
+        bucket.score += scoreConversationalHostCandidate(rosterSpeaker, segments);
+        bucket.evidence.push('host_behavior');
+      } else if (entry.role === 'co_host' && multiHostWarmup) {
+        const stat = stats.get(speakerId);
+        if (stat && stat.firstStart <= 180) {
+          bucket.score += 4;
+          bucket.evidence.push('early_participant');
+        }
+      } else if (entry.role === 'guest') {
+        const stat = stats.get(speakerId);
+        if (stat) {
+          bucket.score += Math.min(stat.totalDuration / 30, 6);
+          bucket.evidence.push('conversation_duration');
+        }
+      }
+      candidateScores.set(speakerId, bucket);
+    }
+
+    const entriesWithDirectEvidence = Array.from(candidateScores.entries())
+      .filter(([, bucket]) => bucket.evidence.some((evidence) => evidence.startsWith('reply_after_vocative:')));
+    const ranked = (entriesWithDirectEvidence.length > 0
+      ? entriesWithDirectEvidence
+      : Array.from(candidateScores.entries()).filter(([, bucket]) => bucket.score > 0))
+      .filter(([speakerId]) => !assignedSpeakerIds.has(speakerId))
+      .sort((a, b) => b[1].score - a[1].score);
+
+    let chosenSpeakerId = ranked[0]?.[0] || null;
+    let chosenEvidence = ranked[0]?.[1].evidence || [];
+
+    if (
+      entry.role === 'host' &&
+      distinctConversationalSpeakerIds.size < 2 &&
+      !chosenEvidence.some((evidence) => evidence.startsWith('reply_after_vocative:'))
+    ) {
+      chosenSpeakerId = null;
+      chosenEvidence = [];
+    }
+
+    if (!chosenSpeakerId && recurringEntries.length === 2 && earlySpeakerIds.length >= 2 && multiHostWarmup) {
+      chosenSpeakerId = earlySpeakerIds.find((speakerId) => !assignedSpeakerIds.has(speakerId)) || null;
+      chosenEvidence = ['fallback_remaining_early_speaker'];
+    }
+
+    if (!chosenSpeakerId) continue;
+
+    const targetSpeaker = updatedRoster.find((speaker) => speaker.id === chosenSpeakerId);
+    if (!targetSpeaker) continue;
+
+    const currentName = targetSpeaker.name?.trim() || null;
+    if (
+      currentName &&
+      isValidFinalHumanSpeakerName(currentName) &&
+      !isLikelyNonHumanConversationalNameCandidate(currentName, {
+        showIdentity,
+        title: options.title,
+        filename: options.filename,
+      }) &&
+      !isWeakShortSpeakerName(currentName) &&
+      !isFirstNameShadowedByFullGuestIntro(currentName, segments, multiHostWarmup) &&
+      normalizeSpeakerName(currentName) !== normalizeSpeakerName(entry.name)
+    ) {
+      continue;
+    }
+
+    targetSpeaker.name = entry.name;
+    if (entry.role) {
+      targetSpeaker.role = entry.role;
+    }
+    targetSpeaker.confidence = Math.max(targetSpeaker.confidence, 0.9);
+    targetSpeaker.source = entry.confidenceSource === 'manual' ? 'preset_roster' : 'heuristic';
+    assignedSpeakerIds.add(chosenSpeakerId);
+    anchors.push({
+      name: entry.name,
+      role: entry.role,
+      speakerId: chosenSpeakerId,
+      evidence: chosenEvidence,
+    });
+    assigned++;
+    info.push(`[SHOW MEMORY] ${chosenSpeakerId}: "${currentName || '(unnamed)'}" → "${entry.name}" (${chosenEvidence.join(', ')})`);
+  }
+
+  return {
+    roster: updatedRoster,
+    assigned,
+    info,
+    anchors,
+    showIdentity,
+    rejectedCandidates,
+    rejectedGuestCarryovers,
+  };
+}
+
+function clearNonHumanConversationalNames(
+  roster: GPTSpeaker[],
+  segments: SpeakerSegment[],
+  options: ConversationalNamingOptions
+): { roster: GPTSpeaker[]; cleared: number; info: string[]; rejectedCandidates: string[] } {
+  const updatedRoster = roster.map((speaker) => ({ ...speaker }));
+  const info: string[] = [];
+  const rejectedCandidates: string[] = [];
+  let cleared = 0;
+
+  const showIdentity = options.showIdentity || detectShowIdentityFromContext({
+    title: options.title,
+    filename: options.filename,
+    segments,
+  });
+
+  for (const speaker of updatedRoster) {
+    if (!speaker.name) continue;
+    if (speaker.role === 'advertiser' || speaker.role === 'quoted_audio' || speaker.role === 'narrator') continue;
+    if (!isLikelyNonHumanConversationalNameCandidate(speaker.name, {
+      showIdentity,
+      title: options.title,
+      filename: options.filename,
+    })) continue;
+
+    rejectedCandidates.push(speaker.name);
+    info.push(`[CONVERSATIONAL NAMING] Cleared non-human candidate "${speaker.name}" from ${speaker.id}`);
+    speaker.name = null;
+    if (speaker.role === 'guest' || speaker.role === 'host' || speaker.role === 'co_host') {
+      speaker.role = 'unknown';
+    }
+    cleared++;
+  }
+
+  return { roster: updatedRoster, cleared, info, rejectedCandidates };
+}
+
+function scoreConversationalHostCandidate(
+  speaker: GPTSpeaker,
+  segments: SpeakerSegment[]
+): number {
+  const speakerSegments = segments.filter((segment) =>
+    isConversationalSegment(segment) &&
+    (segment.finalSpeakerId || segment.speakerId) === speaker.id
+  );
+
+  if (speakerSegments.length === 0) return -Infinity;
+
+  let score = 0;
+  if (speaker.role === 'host') score += 2;
+  if (speaker.role === 'co_host') score += 1;
+  if (speaker.role === 'guest') score -= 0.5;
+
+  const firstSegment = speakerSegments[0];
+  if (firstSegment && firstSegment.startTime <= 120 && countWords(firstSegment.text) >= 20) {
+    score += 4;
+  }
+
+  const introPattern = /\b(?:welcome\s+(?:to|back)|joined\s+by|good\s+to\s+have\s+you|glad\s+to\s+have\s+you|thank\s+you\s+for\s+joining\s+us|our\s+guest|let'?s\s+get\s+right\s+into\s+it|we'?ll\s+be\s+right\s+back|we'?re\s+back\s+with)\b/i;
+  const addressPattern = /\b([A-Z][a-z]+),\s+(?:thank|good|great|what|how|why|welcome|let|we|all\s+right)\b/i;
+
+  let introHits = 0;
+  let addressHits = 0;
+  let questions = 0;
+
+  for (const segment of speakerSegments) {
+    const text = segment.text || '';
+    if (introPattern.test(text)) introHits++;
+    if (addressPattern.test(text)) addressHits++;
+    questions += countQuestionMarks(text);
+  }
+
+  score += Math.min(introHits, 3) * 3;
+  score += Math.min(addressHits, 3) * 1.5;
+  score += Math.min(questions, 8) * 0.6;
+
+  return score;
+}
+
+function isSubstantiveGuestReplySegment(segment: SpeakerSegment): boolean {
+  if (!isConversationalSegment(segment)) return false;
+
+  const duration = getSegmentDuration(segment);
+  const wordCount = countWords(segment.text || '');
+  if (segment.confidenceReason === 'transition_short' && duration < 10) {
+    return false;
+  }
+
+  return duration >= 8 || wordCount >= 12;
+}
+
+function buildGuestReplyCandidateRankings(
+  segments: SpeakerSegment[],
+  introSegmentIndex: number,
+  hostSpeakerId: string
+): GuestReplyCandidateRanking[] {
+  const candidateStats = new Map<string, {
+    score: number;
+    totalDuration: number;
+    substantiveTurns: number;
+    longAnswerTurns: number;
+    shortTurns: number;
+    sponsorHeavyTurns: number;
+    firstSubstantiveDistance: number;
+  }>();
+  const introSegment = segments[introSegmentIndex];
+  const introEndTime = introSegment?.endTime || 0;
+
+  for (let i = introSegmentIndex + 1; i < segments.length; i++) {
+    const segment = segments[i];
+    if ((segment.startTime || 0) - introEndTime > 240) break;
+
+    const speakerId = segment.finalSpeakerId || segment.speakerId;
+    if (!speakerId || speakerId === hostSpeakerId) continue;
+    if (!isConversationalSegment(segment)) continue;
+
+    const text = getSegText(segment);
+    const duration = getSegmentDuration(segment);
+    const wordCount = countWords(text);
+    const substantive = isSubstantiveGuestReplySegment(segment);
+    const longAnswer = duration >= 20 || wordCount >= 40;
+    const sponsorHeavy = isSponsorHeavyText(text);
+    const shortTurn = !substantive && (duration < 6 || wordCount < 8);
+    const distance = i - introSegmentIndex;
+
+    const bucket = candidateStats.get(speakerId) || {
+      score: 0,
+      totalDuration: 0,
+      substantiveTurns: 0,
+      longAnswerTurns: 0,
+      shortTurns: 0,
+      sponsorHeavyTurns: 0,
+      firstSubstantiveDistance: Number.POSITIVE_INFINITY,
+    };
+
+    bucket.totalDuration += duration;
+    if (substantive) {
+      bucket.substantiveTurns += 1;
+      bucket.score += Math.min(duration, 120) * 1.15;
+      bucket.score += Math.min(wordCount, 280) * 0.42;
+      bucket.score += Math.max(0, 18 - distance * 2.5);
+      bucket.firstSubstantiveDistance = Math.min(bucket.firstSubstantiveDistance, distance);
+    }
+    if (longAnswer) {
+      bucket.longAnswerTurns += 1;
+      bucket.score += 14;
+    }
+    if (shortTurn) {
+      bucket.shortTurns += 1;
+      bucket.score -= 7;
+    }
+    if (sponsorHeavy) {
+      bucket.sponsorHeavyTurns += 1;
+      bucket.score -= 18;
+    }
+
+    candidateStats.set(speakerId, bucket);
+  }
+
+  const strongest = Array.from(candidateStats.values()).reduce((best, current) => ({
+    substantiveTurns: Math.max(best.substantiveTurns, current.substantiveTurns),
+    longAnswerTurns: Math.max(best.longAnswerTurns, current.longAnswerTurns),
+    totalDuration: Math.max(best.totalDuration, current.totalDuration),
+  }), {
+    substantiveTurns: 0,
+    longAnswerTurns: 0,
+    totalDuration: 0,
+  });
+
+  return Array.from(candidateStats.entries())
+    .map(([speakerId, stats]) => {
+      const rejectedReasons: string[] = [];
+      const chosenReasons: string[] = [];
+
+      if (stats.substantiveTurns === 0) {
+        rejectedReasons.push('insufficient_substantive_turns');
+      }
+      if (stats.longAnswerTurns === 0 && stats.totalDuration < 18) {
+        rejectedReasons.push('fragment_cluster');
+      }
+      if (stats.shortTurns >= Math.max(2, stats.substantiveTurns + 1)) {
+        rejectedReasons.push('mostly_short_interjections');
+      }
+      if (stats.sponsorHeavyTurns >= Math.max(1, Math.ceil((stats.substantiveTurns + stats.shortTurns) / 2))) {
+        rejectedReasons.push('sponsor_heavy');
+      }
+      if (
+        strongest.longAnswerTurns >= Math.max(1, stats.longAnswerTurns + 1) &&
+        strongest.totalDuration >= Math.max(45, stats.totalDuration * 1.8) &&
+        stats.substantiveTurns <= 2
+      ) {
+        rejectedReasons.push('dominated_by_long_answer_cluster');
+      }
+
+      if (stats.longAnswerTurns > 0) chosenReasons.push('owns_long_answer_turns');
+      if (stats.substantiveTurns >= 2) chosenReasons.push('multiple_substantive_turns');
+      if (stats.firstSubstantiveDistance <= 2) chosenReasons.push('nearest_substantive_reply');
+      if (stats.totalDuration >= 45) chosenReasons.push('sustained_conversational_ownership');
+
+      return {
+        speakerId,
+        score: Number(stats.score.toFixed(2)),
+        totalDuration: Number(stats.totalDuration.toFixed(2)),
+        substantiveTurns: stats.substantiveTurns,
+        longAnswerTurns: stats.longAnswerTurns,
+        shortTurns: stats.shortTurns,
+        sponsorHeavyTurns: stats.sponsorHeavyTurns,
+        rejectedReasons,
+        chosenReason: chosenReasons[0] || null,
+      };
+    })
+    .sort((a, b) => {
+      if (a.rejectedReasons.length !== b.rejectedReasons.length) {
+        return a.rejectedReasons.length - b.rejectedReasons.length;
+      }
+      if (a.longAnswerTurns !== b.longAnswerTurns) {
+        return b.longAnswerTurns - a.longAnswerTurns;
+      }
+      if (a.substantiveTurns !== b.substantiveTurns) {
+        return b.substantiveTurns - a.substantiveTurns;
+      }
+      if (a.totalDuration !== b.totalDuration) {
+        return b.totalDuration - a.totalDuration;
+      }
+      return b.score - a.score;
+    });
+}
+
+function findStrongInterviewGuestNames(
+  segments: SpeakerSegment[],
+  skipIntroWindowCap?: boolean
+): Array<{ fullName: string; firstName: string; segmentIndex: number }> {
+  const introWindow = detectIntroWindowEndTime(segments, skipIntroWindowCap);
+  const names = new Map<string, { fullName: string; firstName: string; segmentIndex: number }>();
+
+  for (const candidate of extractStrongInterviewIntroNames(segments, introWindow.endTimeSeconds)) {
+    const parts = candidate.name.trim().split(/\s+/).filter(Boolean);
+    if (parts.length < 2) continue;
+    const normalized = normalizeSpeakerName(candidate.name);
+    if (!names.has(normalized)) {
+      names.set(normalized, {
+        fullName: candidate.name,
+        firstName: parts[0],
+        segmentIndex: candidate.segmentIndex,
+      });
+    }
+  }
+
+  const directAddressed = findDirectAddressedFullNameIntroCandidate(segments, introWindow.endTimeSeconds);
+  if (directAddressed) {
+    const parts = directAddressed.name.trim().split(/\s+/).filter(Boolean);
+    if (parts.length >= 2) {
+      const normalized = normalizeSpeakerName(directAddressed.name);
+      if (!names.has(normalized)) {
+        names.set(normalized, {
+          fullName: directAddressed.name,
+          firstName: parts[0],
+          segmentIndex: directAddressed.segmentIndex,
+        });
+      }
+    }
+  }
+
+  return Array.from(names.values()).sort((a, b) => a.segmentIndex - b.segmentIndex);
+}
+
+function findDominantReplySpeakerAfterIntro(
+  segments: SpeakerSegment[],
+  introSegmentIndex: number,
+  hostSpeakerId: string
+): string | null {
+  const ranked = buildGuestReplyCandidateRankings(segments, introSegmentIndex, hostSpeakerId);
+  return ranked.find((candidate) => candidate.rejectedReasons.length === 0)?.speakerId || null;
+}
+
+function findIntroAnchoredNamingCandidate(
+  roster: GPTSpeaker[],
+  segments: SpeakerSegment[],
+  projectType?: string,
+  skipIntroWindowCap?: boolean
+): IntroAnchoredNamingCandidate | null {
+  const normalizedProjectType = (projectType || '').toUpperCase();
+  if (normalizedProjectType === 'DEBATE') return null;
+
+  const introWindow = detectIntroWindowEndTime(segments, skipIntroWindowCap);
+  const introCandidates = extractStrongInterviewIntroNames(segments, introWindow.endTimeSeconds);
+
+  for (const candidate of introCandidates) {
+    if (isLikelyNonHumanConversationalNameCandidate(candidate.name)) continue;
+    const introSegment = segments[candidate.segmentIndex];
+    if (!introSegment || !isHumanIntroEligibleSegment(introSegment)) continue;
+    const hostSpeakerId = introSegment?.finalSpeakerId || introSegment?.speakerId;
+    if (!hostSpeakerId) continue;
+
+    const introSpeaker = roster.find((speaker) => speaker.id === hostSpeakerId);
+    if (introSpeaker && isAdvertiserLikeSpeaker(introSpeaker)) continue;
+
+    const contradictorySelfId = extractValidatedSelfIdName(introSegment.text || '', STRONG_SELF_ID_PATTERNS);
+    if (
+      contradictorySelfId &&
+      normalizeSpeakerName(contradictorySelfId) === normalizeSpeakerName(candidate.name)
+    ) {
+      continue;
+    }
+
+    const guestSpeakerId = findDominantReplySpeakerAfterIntro(
+      segments,
+      candidate.segmentIndex,
+      hostSpeakerId
+    );
+
+    return {
+      hostSpeakerId,
+      guestSpeakerId,
+      introducedName: candidate.name,
+      segmentIndex: candidate.segmentIndex,
+    };
+  }
+
+  const fallbackCandidate = findDirectAddressedFullNameIntroCandidate(segments, introWindow.endTimeSeconds);
+  if (fallbackCandidate) {
+    const introSegment = segments[fallbackCandidate.segmentIndex];
+    if (!introSegment || !isHumanIntroEligibleSegment(introSegment)) return null;
+    const hostSpeakerId = introSegment?.finalSpeakerId || introSegment?.speakerId;
+    if (hostSpeakerId) {
+      const guestSpeakerId = findDominantReplySpeakerAfterIntro(
+        segments,
+        fallbackCandidate.segmentIndex,
+        hostSpeakerId
+      );
+
+      return {
+        hostSpeakerId,
+        guestSpeakerId,
+        introducedName: fallbackCandidate.name,
+        segmentIndex: fallbackCandidate.segmentIndex,
+      };
+    }
+  }
+
+  return null;
+}
+
+function findLikelyConversationalHostSpeakerId(
+  roster: GPTSpeaker[],
+  segments: SpeakerSegment[]
+): string | null {
+  const candidates = roster
+    .filter((speaker) =>
+      !isAdvertiserLikeSpeaker(speaker) &&
+      speaker.role !== 'quoted_audio' &&
+      speaker.role !== 'narrator'
+    )
+    .map((speaker) => ({
+      id: speaker.id,
+      score: scoreConversationalHostCandidate(speaker, segments),
+    }))
+    .filter((candidate) => Number.isFinite(candidate.score))
+    .sort((a, b) => b.score - a.score);
+
+  if (candidates.length === 0) return null;
+  if (candidates[0].score < 4) return null;
+  return candidates[0].id;
+}
+
+function findLikelyGuestTargetSpeakerId(
+  segments: SpeakerSegment[],
+  startIndex: number,
+  excludedSpeakerIds: Set<string>,
+  fallbackSpeakerIds: string[]
+): string | null {
+  const candidateScores = new Map<string, number>();
+
+  for (let i = startIndex + 1; i < segments.length; i++) {
+    const segment = segments[i];
+    if (!isConversationalSegment(segment)) continue;
+    if (isSponsorHeavyText(getSegText(segment))) continue;
+    const speakerId = segment.finalSpeakerId || segment.speakerId;
+    if (!speakerId || excludedSpeakerIds.has(speakerId)) continue;
+
+    const distance = i - startIndex;
+    const score = Math.max(0, 18 - distance * 2) + Math.min(40, (segment.endTime - segment.startTime) / 6);
+    candidateScores.set(speakerId, (candidateScores.get(speakerId) || 0) + score);
+
+    if (distance <= 4) {
+      candidateScores.set(speakerId, (candidateScores.get(speakerId) || 0) + 8);
+    }
+  }
+
+  const ranked = Array.from(candidateScores.entries()).sort((a, b) => b[1] - a[1]);
+  if (ranked.length > 0) {
+    return ranked[0][0];
+  }
+
+  if (fallbackSpeakerIds.length === 1) {
+    return fallbackSpeakerIds[0];
+  }
+
+  return null;
+}
+
+function stripWeakConversationalNames(
+  roster: GPTSpeaker[],
+  segments: SpeakerSegment[],
+  protectedNames: Set<string> = new Set()
+): { roster: GPTSpeaker[]; stripped: number; info: string[] } {
+  const updatedRoster = roster.map((speaker) => ({ ...speaker }));
+  const info: string[] = [];
+  let stripped = 0;
+
+  for (const speaker of updatedRoster) {
+    if (isAdvertiserLikeSpeaker(speaker) || speaker.role === 'quoted_audio' || speaker.role === 'narrator') {
+      continue;
+    }
+    if (!speaker.name || !isWeakShortSpeakerName(speaker.name)) continue;
+    if (protectedNames.has(normalizeSpeakerName(speaker.name))) continue;
+
+    const speakerSegments = segments.filter((segment) =>
+      isConversationalSegment(segment) &&
+      (segment.finalSpeakerId || segment.speakerId) === speaker.id
+    );
+    if (hasStrongShortNameEvidence(speaker.name, speakerSegments)) continue;
+
+    info.push(`[CONVERSATIONAL NAMING] Cleared weak short name "${speaker.name}" from ${speaker.id}`);
+    speaker.name = null;
+    stripped++;
+  }
+
+  return { roster: updatedRoster, stripped, info };
+}
+
+function suppressFirstNameOnlyGuestLabels(
+  roster: GPTSpeaker[],
+  segments: SpeakerSegment[],
+  skipIntroWindowCap?: boolean
+): { roster: GPTSpeaker[]; suppressed: string[]; info: string[] } {
+  const updatedRoster = roster.map((speaker) => ({ ...speaker }));
+  const info: string[] = [];
+  const suppressed = new Set<string>();
+  const knownGuestNames = findStrongInterviewGuestNames(segments, skipIntroWindowCap);
+
+  for (const guestName of knownGuestNames) {
+    const normalizedFullName = normalizeSpeakerName(guestName.fullName);
+    const normalizedFirstName = normalizeSpeakerName(guestName.firstName);
+
+    for (const speaker of updatedRoster) {
+      if (!speaker.name) continue;
+      const normalizedCurrentName = normalizeSpeakerName(speaker.name);
+      if (normalizedCurrentName !== normalizedFirstName) continue;
+      if (normalizedCurrentName === normalizedFullName) continue;
+      if (speaker.source === 'preset_roster') continue;
+
+      info.push(`[CONVERSATIONAL NAMING] Cleared first-name-only guest label "${speaker.name}" from ${speaker.id} in favor of "${guestName.fullName}"`);
+      suppressed.add(speaker.name);
+      speaker.name = null;
+      if (speaker.role === 'guest') {
+        speaker.role = 'unknown';
+      }
+    }
+  }
+
+  return {
+    roster: updatedRoster,
+    suppressed: Array.from(suppressed),
+    info,
+  };
+}
+
+function isFirstNameShadowedByFullGuestIntro(
+  name: string | null | undefined,
+  segments: SpeakerSegment[],
+  skipIntroWindowCap?: boolean
+): boolean {
+  if (!name) return false;
+  const normalizedName = normalizeSpeakerName(name);
+  const parts = normalizedName.split(/\s+/).filter(Boolean);
+  if (parts.length !== 1) return false;
+
+  return findStrongInterviewGuestNames(segments, skipIntroWindowCap).some((candidate) => (
+    normalizeSpeakerName(candidate.firstName) === normalizedName &&
+    normalizeSpeakerName(candidate.fullName) !== normalizedName
+  ));
+}
+
+export function resolveConversationalHumanNames(
+  roster: GPTSpeaker[],
+  segments: SpeakerSegment[],
+  options: ConversationalNamingOptions = {}
+): {
+  roster: GPTSpeaker[];
+  assigned: number;
+  info: string[];
+} {
+  const normalizedProjectType = (options.projectType || '').toUpperCase();
+  if (normalizedProjectType === 'DEBATE') {
+    return { roster: [...roster], assigned: 0, info: [] };
+  }
+
+  const info: string[] = [];
+  let assigned = 0;
+  let updatedRoster = roster.map((speaker) => ({ ...speaker }));
+  const recurringAssignments = assignRecurringShowRosterNames(updatedRoster, segments, options);
+  updatedRoster = recurringAssignments.roster;
+  assigned += recurringAssignments.assigned;
+  info.push(...recurringAssignments.info);
+
+  const knownHost = findCorroboratedKnownHost(segments, options);
+  const recurringHumanNames = new Set(
+    ((options.showRoster && options.showRoster.length > 0)
+      ? options.showRoster
+      : recurringAssignments.showIdentity?.roster || [])
+      .filter((entry) => entry.role === 'host' || entry.role === 'co_host' || entry.role === 'panelist')
+      .map((entry) => normalizeSpeakerName(entry.name))
+  );
+  const useExtendedIntroWindow = recurringHumanNames.size >= 2;
+  const protectedNames = new Set<string>();
+  if (knownHost?.firstName) {
+    protectedNames.add(normalizeSpeakerName(knownHost.firstName));
+  }
+
+  const strippedNames = stripWeakConversationalNames(updatedRoster, segments, protectedNames);
+  updatedRoster = strippedNames.roster;
+  info.push(...strippedNames.info);
+
+  const directAddressedIntroNaming = applyDirectAddressedGuestIntroNaming(
+    updatedRoster,
+    segments,
+    recurringHumanNames,
+    useExtendedIntroWindow
+  );
+  updatedRoster = directAddressedIntroNaming.roster;
+  assigned += directAddressedIntroNaming.assigned;
+  info.push(...directAddressedIntroNaming.info);
+
+  const introAnchoredCandidate = findIntroAnchoredNamingCandidate(
+    updatedRoster,
+    segments,
+    normalizedProjectType || 'PODCAST',
+    useExtendedIntroWindow
+  );
+  const hostSpeakerId =
+    introAnchoredCandidate?.hostSpeakerId ||
+    findLikelyConversationalHostSpeakerId(updatedRoster, segments);
+
+  if (knownHost && hostSpeakerId) {
+    const hostSpeaker = updatedRoster.find((speaker) => speaker.id === hostSpeakerId);
+    if (hostSpeaker) {
+      const currentName = hostSpeaker.name?.trim() || null;
+      const canReplace =
+        !currentName ||
+        !isValidFinalHumanSpeakerName(currentName) ||
+        isLikelyNonHumanConversationalNameCandidate(currentName, {
+          showIdentity: recurringAssignments.showIdentity || options.showIdentity,
+          title: options.title,
+          filename: options.filename,
+        }) ||
+        isWeakShortSpeakerName(currentName) ||
+        normalizeSpeakerName(currentName) === normalizeSpeakerName(knownHost.firstName);
+
+      if (canReplace && normalizeSpeakerName(currentName || '') !== normalizeSpeakerName(knownHost.fullName)) {
+        hostSpeaker.name = knownHost.fullName;
+        hostSpeaker.role = 'host';
+        hostSpeaker.confidence = Math.max(hostSpeaker.confidence, 0.88);
+        hostSpeaker.source = hostSpeaker.source === 'preset_roster' ? hostSpeaker.source : 'heuristic';
+        assigned++;
+        info.push(`[CONVERSATIONAL NAMING] ${hostSpeaker.id}: "${currentName || '(unnamed)'}" → "${knownHost.fullName}" (${knownHost.reason})`);
+      }
+    }
+  }
+
+  if (introAnchoredCandidate?.guestSpeakerId) {
+    const guestSpeaker = updatedRoster.find((speaker) => speaker.id === introAnchoredCandidate.guestSpeakerId);
+    if (guestSpeaker) {
+      const currentName = guestSpeaker.name?.trim() || null;
+      const introducedName = introAnchoredCandidate.introducedName;
+      const anchoredHostName = hostSpeakerId
+        ? updatedRoster.find((speaker) => speaker.id === hostSpeakerId)?.name?.trim() || null
+        : null;
+      const canAssign =
+        !currentName ||
+        !isValidFinalHumanSpeakerName(currentName) ||
+        isWeakShortSpeakerName(currentName) ||
+        recurringHumanNames.has(normalizeSpeakerName(currentName || '')) ||
+        (anchoredHostName != null && normalizeSpeakerName(currentName) === normalizeSpeakerName(anchoredHostName)) ||
+        (knownHost != null && normalizeSpeakerName(currentName) === normalizeSpeakerName(knownHost.fullName));
+
+      if (
+        canAssign &&
+        normalizeSpeakerName(currentName || '') !== normalizeSpeakerName(introducedName)
+      ) {
+        guestSpeaker.name = introducedName;
+        if (!(guestSpeaker.source === 'preset_roster' && guestSpeaker.role && guestSpeaker.role !== 'unknown')) {
+          guestSpeaker.role = 'guest';
+        }
+        guestSpeaker.confidence = Math.max(guestSpeaker.confidence, 0.9);
+        guestSpeaker.source = guestSpeaker.source === 'preset_roster' ? guestSpeaker.source : 'intro_handoff';
+        assigned++;
+        info.push(
+          `[CONVERSATIONAL NAMING] ${guestSpeaker.id}: "${currentName || '(unnamed)'}" → "${introducedName}" (intro_anchor)`
+        );
+      }
+    }
+  }
+
+  const introNamingResult = applyInterviewIntroBasedNaming(
+    updatedRoster,
+    segments,
+    normalizedProjectType || 'PODCAST',
+    hostSpeakerId,
+    useExtendedIntroWindow
+  );
+  updatedRoster = introNamingResult.roster;
+  assigned += introNamingResult.assigned;
+  info.push(...introNamingResult.info);
+
+  const suppressedFirstNames = suppressFirstNameOnlyGuestLabels(
+    updatedRoster,
+    segments,
+    useExtendedIntroWindow
+  );
+  updatedRoster = suppressedFirstNames.roster;
+  info.push(...suppressedFirstNames.info);
+
+  const clearedNonHuman = clearNonHumanConversationalNames(updatedRoster, segments, {
+    ...options,
+    showIdentity: recurringAssignments.showIdentity || options.showIdentity,
+  });
+  updatedRoster = clearedNonHuman.roster;
+  info.push(...clearedNonHuman.info);
+
+  return { roster: updatedRoster, assigned, info };
+}
+
+export function inspectConversationalNamingState(
+  roster: GPTSpeaker[],
+  segments: SpeakerSegment[],
+  options: ConversationalNamingOptions = {}
+): ConversationalNamingInspection {
+  const normalizedProjectType = (options.projectType || '').toUpperCase();
+  if (normalizedProjectType === 'DEBATE') {
+    return {
+      showIdentity: null,
+      knownHostName: null,
+      knownHostReason: null,
+      introAnchorFound: false,
+      introSegmentIndex: null,
+      introducedName: null,
+      hostSpeakerId: null,
+      guestSpeakerId: null,
+      recurringAnchors: [],
+      rejectedHumanNameCandidates: [],
+      rejectedIntroducedNames: [],
+      rejectedGuestMemoryCarryovers: [],
+      guestCandidateRankings: [],
+      suppressedGuestFirstNames: [],
+      clusterOwnershipCandidates: [],
+      swapDetected: false,
+      swapApplied: false,
+    };
+  }
+
+  const recurringAssignments = assignRecurringShowRosterNames(roster, segments, options);
+  const recurringHumanNames = new Set(
+    ((options.showRoster && options.showRoster.length > 0)
+      ? options.showRoster
+      : recurringAssignments.showIdentity?.roster || [])
+      .filter((entry) => entry.role === 'host' || entry.role === 'co_host' || entry.role === 'panelist')
+      .map((entry) => normalizeSpeakerName(entry.name))
+  );
+  const knownHost = findCorroboratedKnownHost(segments, options);
+  const introAnchoredCandidate = findIntroAnchoredNamingCandidate(
+    recurringAssignments.roster,
+    segments,
+    normalizedProjectType || 'PODCAST',
+    recurringHumanNames.size >= 2
+  );
+  const hostSpeakerId =
+    introAnchoredCandidate?.hostSpeakerId ||
+    findLikelyConversationalHostSpeakerId(recurringAssignments.roster, segments);
+  const clearedNonHuman = clearNonHumanConversationalNames(recurringAssignments.roster, segments, {
+    ...options,
+    showIdentity: recurringAssignments.showIdentity || options.showIdentity,
+  });
+  const guestCandidateRankings = introAnchoredCandidate?.hostSpeakerId != null
+    ? buildGuestReplyCandidateRankings(
+        segments,
+        introAnchoredCandidate.segmentIndex,
+        introAnchoredCandidate.hostSpeakerId
+      ).map((candidate) => ({
+        speakerId: candidate.speakerId,
+        score: candidate.score,
+        totalDuration: candidate.totalDuration,
+        substantiveTurns: candidate.substantiveTurns,
+        longAnswerTurns: candidate.longAnswerTurns,
+        rejectedReasons: candidate.rejectedReasons,
+        chosenReason: candidate.chosenReason,
+        selected: candidate.speakerId === introAnchoredCandidate.guestSpeakerId,
+      }))
+    : [];
+  const suppressedGuestFirstNames = findStrongInterviewGuestNames(segments, recurringHumanNames.size >= 2)
+    .map((candidate) => candidate.firstName)
+    .filter((firstName, index, all) => all.indexOf(firstName) === index);
+  const recurringOwnership = inspectRecurringShowClusterOwnership(recurringAssignments.roster, segments, options);
+
+  return {
+    showIdentity: recurringAssignments.showIdentity?.displayName || null,
+    knownHostName: knownHost?.fullName || null,
+    knownHostReason: knownHost?.reason || null,
+    introAnchorFound: Boolean(introAnchoredCandidate),
+    introSegmentIndex: introAnchoredCandidate?.segmentIndex ?? null,
+    introducedName: introAnchoredCandidate?.introducedName ?? null,
+    hostSpeakerId: hostSpeakerId || null,
+    guestSpeakerId: introAnchoredCandidate?.guestSpeakerId || null,
+    recurringAnchors: recurringAssignments.anchors,
+    rejectedHumanNameCandidates: [
+      ...recurringAssignments.rejectedCandidates,
+      ...clearedNonHuman.rejectedCandidates,
+    ],
+    rejectedIntroducedNames: collectRejectedIntroducedNames(segments),
+    rejectedGuestMemoryCarryovers: recurringAssignments.rejectedGuestCarryovers,
+    guestCandidateRankings,
+    suppressedGuestFirstNames,
+    clusterOwnershipCandidates: recurringOwnership.entries,
+    swapDetected: recurringOwnership.swapDetected,
+    swapApplied: recurringOwnership.swapApplied,
+  };
+}
+
+export function resolveConversationalHumanNamesInSpeakerMap(
+  speakers: Record<string, any>,
+  segments: SpeakerSegment[],
+  options: ConversationalNamingOptions = {}
+): {
+  speakers: Record<string, any>;
+  assigned: number;
+  info: string[];
+} {
+  const orderedIds = Object.keys(speakers);
+  const roster: GPTSpeaker[] = orderedIds.map((id) => {
+    const speaker = speakers[id] || {};
+    const rawName = typeof speaker.finalName === 'string'
+      ? speaker.finalName
+      : typeof speaker.name === 'string'
+        ? speaker.name
+        : null;
+    const resolvedName = rawName && !/^Speaker\s+\d+$/i.test(rawName) ? rawName : null;
+    return {
+      id,
+      name: resolvedName,
+      role: speaker.role || 'unknown',
+      confidence: speaker.roleConfidence || speaker.confidence || 0.5,
+      source: speaker.source,
+      profile: speaker.profile,
+    };
+  });
+
+  const resolved = resolveConversationalHumanNames(roster, segments, options);
+  const rosterById = new Map(resolved.roster.map((speaker) => [speaker.id, speaker]));
+
+  const updatedSpeakers = Object.fromEntries(
+    orderedIds.map((id) => {
+      const original = speakers[id] || {};
+      const resolvedSpeaker = rosterById.get(id);
+      const numericMatch = /speaker_(\d+)/i.exec(id);
+      const numberedFallback = numericMatch ? `Speaker ${numericMatch[1]}` : id;
+      const originalFinalName = typeof original.finalName === 'string' ? original.finalName.trim() : '';
+      const originalCanSurvive =
+        originalFinalName.length > 0 &&
+        !/^Speaker\s+\d+$/i.test(originalFinalName) &&
+        !isFirstNameShadowedByFullGuestIntro(originalFinalName, segments, Boolean(options.showRoster?.length)) &&
+        !isLikelyNonHumanConversationalNameCandidate(originalFinalName, {
+          showIdentity: options.showIdentity,
+          title: options.title,
+          filename: options.filename,
+        });
+      const nextFinalName = resolvedSpeaker?.name
+        ? resolvedSpeaker.name
+        : originalCanSurvive
+          ? originalFinalName
+          : original.fallbackName || numberedFallback;
+
+      return [id, {
+        ...original,
+        finalName: nextFinalName,
+        role: resolvedSpeaker?.role || original.role,
+        roleConfidence: resolvedSpeaker?.confidence || original.roleConfidence,
+        source: resolvedSpeaker?.source || original.source,
+        extractedName: resolvedSpeaker?.name
+          ? {
+              ...(original.extractedName || {}),
+              name: resolvedSpeaker.name,
+              confidence: resolvedSpeaker.confidence,
+              context: original.extractedName?.context || 'Conversational name resolution',
+            }
+          : original.extractedName,
+      }];
+    })
+  );
+
+  const repairedSpeakers = repairSpeakerMapWithDirectGuestIntros(updatedSpeakers, segments, options);
+  const guestValidatedSpeakers = repairSpeakerMapWithDominantGuestClusters(
+    repairedSpeakers,
+    segments,
+    options
+  );
+  const verifiedRecurringOwnership = verifyRecurringShowOwnershipInSpeakerMap(
+    guestValidatedSpeakers,
+    segments,
+    options
+  );
+
+  return {
+    speakers: verifiedRecurringOwnership.speakers,
+    assigned: resolved.assigned,
+    info: [...resolved.info, ...verifiedRecurringOwnership.info],
+  };
+}
+
+function repairSpeakerMapWithDirectGuestIntros(
+  speakers: Record<string, any>,
+  segments: SpeakerSegment[],
+  options: ConversationalNamingOptions
+): Record<string, any> {
+  const showIdentity = options.showIdentity || detectShowIdentityFromContext({
+    title: options.title,
+    filename: options.filename,
+    segments,
+  });
+  const recurringHumanNames = new Set(
+    ((options.showRoster && options.showRoster.length > 0)
+      ? options.showRoster
+      : showIdentity?.roster || [])
+      .filter((entry) => entry.role === 'host' || entry.role === 'co_host' || entry.role === 'panelist')
+      .map((entry) => normalizeSpeakerName(entry.name))
+  );
+  if (recurringHumanNames.size === 0) {
+    return speakers;
+  }
+
+  const updatedSpeakers = Object.fromEntries(
+    Object.entries(speakers).map(([id, speaker]) => [id, { ...speaker }])
+  );
+
+  for (let i = 0; i < segments.length; i++) {
+    const segment = segments[i];
+    if (!isHumanIntroEligibleSegment(segment)) continue;
+    const text = getSegText(segment);
+    const directAddressMatch = text.match(/\b([A-Z][a-z]+),\s+[^.]{0,80}\b(?:it'?s|its|good|great|glad|thank|thanks|welcome)\b/);
+    const addressedFirstName = directAddressMatch?.[1]?.trim().toLowerCase() || null;
+    if (!addressedFirstName) continue;
+
+    const fullName = Array.from(text.matchAll(/\b([A-Z][a-z]+(?:\s+[A-Z][a-z]+){1,2})\b/g))
+      .map((match) => match[1]?.trim())
+      .filter((value): value is string => (
+        Boolean(value) &&
+        isValidIntroNameCandidate(value) &&
+        !isLikelyNonHumanConversationalNameCandidate(value, {
+          showIdentity,
+          title: options.title,
+          filename: options.filename,
+        }) &&
+        value.split(/\s+/)[0]?.toLowerCase() === addressedFirstName
+      ))
+      .sort((a, b) => b.split(/\s+/).length - a.split(/\s+/).length)[0];
+    if (!fullName) continue;
+
+    const hostSpeakerId = segment.finalSpeakerId || segment.speakerId;
+    if (!hostSpeakerId) continue;
+    const guestSpeakerId = findDominantReplySpeakerAfterIntro(segments, i, hostSpeakerId);
+    if (!guestSpeakerId || !updatedSpeakers[guestSpeakerId]) continue;
+
+    const currentSpeaker = updatedSpeakers[guestSpeakerId];
+    const currentName = typeof currentSpeaker.finalName === 'string' ? currentSpeaker.finalName.trim() : '';
+    const normalizedCurrent = normalizeSpeakerName(currentName || '');
+    const duplicateNameElsewhere = currentName.length > 0 && Object.entries(updatedSpeakers).some(([id, speaker]) => (
+      id !== guestSpeakerId &&
+      typeof speaker.finalName === 'string' &&
+      normalizeSpeakerName(speaker.finalName) === normalizedCurrent
+    ));
+    const canReplace =
+      currentName.length === 0 ||
+      /^Speaker\s+\d+$/i.test(currentName) ||
+      !isValidFinalHumanSpeakerName(currentName) ||
+      isWeakShortSpeakerName(currentName) ||
+      recurringHumanNames.has(normalizedCurrent) ||
+      duplicateNameElsewhere;
+
+    if (!canReplace || normalizeSpeakerName(fullName) === normalizedCurrent) {
+      continue;
+    }
+
+    updatedSpeakers[guestSpeakerId] = {
+      ...currentSpeaker,
+      finalName: fullName,
+      role: 'guest',
+      roleConfidence: Math.max(currentSpeaker.roleConfidence || 0, 0.88),
+      source: currentSpeaker.source === 'preset_roster' ? currentSpeaker.source : 'intro_handoff',
+      extractedName: {
+        ...(currentSpeaker.extractedName || {}),
+        name: fullName,
+        confidence: Math.max(currentSpeaker.roleConfidence || 0, 0.88),
+        context: 'Direct guest intro repair',
+      },
+    };
+    break;
+  }
+
+  return updatedSpeakers;
+}
+
+function repairSpeakerMapWithDominantGuestClusters(
+  speakers: Record<string, any>,
+  segments: SpeakerSegment[],
+  options: ConversationalNamingOptions
+): Record<string, any> {
+  const updatedSpeakers = Object.fromEntries(
+    Object.entries(speakers).map(([id, speaker]) => [id, { ...speaker }])
+  );
+  const knownGuestNames = findStrongInterviewGuestNames(segments, Boolean(options.showRoster?.length));
+
+  for (const guestName of knownGuestNames) {
+    const introSegment = segments[guestName.segmentIndex];
+    if (!introSegment || !isHumanIntroEligibleSegment(introSegment)) continue;
+
+    const hostSpeakerId = introSegment.finalSpeakerId || introSegment.speakerId;
+    if (!hostSpeakerId) continue;
+
+    const rankedCandidates = buildGuestReplyCandidateRankings(
+      segments,
+      guestName.segmentIndex,
+      hostSpeakerId
+    );
+    const targetCandidate = rankedCandidates.find((candidate) => candidate.rejectedReasons.length === 0);
+    if (!targetCandidate || !updatedSpeakers[targetCandidate.speakerId]) continue;
+
+    const targetSpeaker = updatedSpeakers[targetCandidate.speakerId];
+    const currentTargetName = typeof targetSpeaker.finalName === 'string' ? targetSpeaker.finalName.trim() : '';
+    const normalizedFullName = normalizeSpeakerName(guestName.fullName);
+    const normalizedFirstName = normalizeSpeakerName(guestName.firstName);
+
+    if (
+      normalizeSpeakerName(currentTargetName || '') !== normalizedFullName &&
+      (
+        currentTargetName.length === 0 ||
+        /^Speaker\s+\d+$/i.test(currentTargetName) ||
+        !isValidFinalHumanSpeakerName(currentTargetName) ||
+        isWeakShortSpeakerName(currentTargetName)
+      )
+    ) {
+      updatedSpeakers[targetCandidate.speakerId] = {
+        ...targetSpeaker,
+        finalName: guestName.fullName,
+        role: 'guest',
+        roleConfidence: Math.max(targetSpeaker.roleConfidence || 0, 0.9),
+        source: targetSpeaker.source === 'preset_roster' ? targetSpeaker.source : 'intro_handoff',
+        extractedName: {
+          ...(targetSpeaker.extractedName || {}),
+          name: guestName.fullName,
+          confidence: Math.max(targetSpeaker.roleConfidence || 0, 0.9),
+          context: 'Dominant guest cluster repair',
+        },
+      };
+    }
+
+    for (const [speakerId, speaker] of Object.entries(updatedSpeakers)) {
+      if (speakerId === targetCandidate.speakerId) continue;
+      const currentName = typeof speaker.finalName === 'string' ? speaker.finalName.trim() : '';
+      if (!currentName) continue;
+      const normalizedCurrentName = normalizeSpeakerName(currentName);
+      if (
+        normalizedCurrentName !== normalizedFullName &&
+        normalizedCurrentName !== normalizedFirstName
+      ) {
+        continue;
+      }
+      if (speaker.source === 'preset_roster') continue;
+
+      updatedSpeakers[speakerId] = {
+        ...speaker,
+        finalName: speaker.fallbackName || (/speaker_(\d+)/i.exec(speakerId)?.[1] ? `Speaker ${/speaker_(\d+)/i.exec(speakerId)![1]}` : currentName),
+        role: speaker.role === 'guest' ? 'unknown' : speaker.role,
+        extractedName: normalizedCurrentName === normalizedFullName || normalizedCurrentName === normalizedFirstName
+          ? undefined
+          : speaker.extractedName,
+      };
+    }
+  }
+
+  return updatedSpeakers;
+}
+
+function getNumberedSpeakerFallbackName(speakerId: string, speaker: Record<string, any>): string {
+  if (typeof speaker.fallbackName === 'string' && speaker.fallbackName.trim()) {
+    return speaker.fallbackName.trim();
+  }
+  const numericMatch = /speaker_(\d+)/i.exec(speakerId);
+  return numericMatch ? `Speaker ${numericMatch[1]}` : speakerId;
+}
+
+function verifyRecurringShowOwnershipInSpeakerMap(
+  speakers: Record<string, any>,
+  segments: SpeakerSegment[],
+  options: ConversationalNamingOptions
+): { speakers: Record<string, any>; info: string[] } {
+  const roster: GPTSpeaker[] = Object.keys(speakers).map((id) => {
+    const speaker = speakers[id] || {};
+    const rawName = typeof speaker.finalName === 'string'
+      ? speaker.finalName
+      : typeof speaker.name === 'string'
+        ? speaker.name
+        : null;
+    return {
+      id,
+      name: rawName && !/^Speaker\s+\d+$/i.test(rawName) ? rawName : null,
+      role: speaker.role || 'unknown',
+      confidence: speaker.roleConfidence || speaker.confidence || 0.5,
+      source: speaker.source,
+      profile: speaker.profile,
+    };
+  });
+
+  const inspection = inspectRecurringShowClusterOwnership(roster, segments, options);
+  if (!inspection.entries.length) {
+    return { speakers, info: [] };
+  }
+
+  const updatedSpeakers = Object.fromEntries(
+    Object.entries(speakers).map(([id, speaker]) => [id, { ...speaker }])
+  );
+  const info: string[] = [];
+  const appliedAssignments: Record<string, string> = {};
+
+  for (const entry of inspection.entries) {
+    const namedSpeakerIds = Object.entries(updatedSpeakers)
+      .filter(([, speaker]) => normalizeSpeakerName(speaker.finalName || speaker.name || '') === normalizeSpeakerName(entry.name))
+      .map(([speakerId]) => speakerId);
+
+    if (entry.chosenSpeakerId && !entry.requiresReview) {
+      const targetSpeaker = updatedSpeakers[entry.chosenSpeakerId];
+      const previousName = targetSpeaker?.finalName || targetSpeaker?.name || null;
+      if (targetSpeaker) {
+        updatedSpeakers[entry.chosenSpeakerId] = {
+          ...targetSpeaker,
+          finalName: entry.name,
+          role: entry.role || targetSpeaker.role || 'unknown',
+          roleConfidence: Math.max(targetSpeaker.roleConfidence || 0, entry.assignmentConfidence || 0.85),
+          source: targetSpeaker.source === 'preset_roster' ? targetSpeaker.source : 'heuristic',
+          extractedName: {
+            ...(targetSpeaker.extractedName || {}),
+            name: entry.name,
+            confidence: Math.max(targetSpeaker.roleConfidence || 0, entry.assignmentConfidence || 0.85),
+            context: 'Recurring show ownership verification',
+          },
+          assignmentConfidence: entry.assignmentConfidence,
+          assignmentContradictions: entry.negativeEvidence,
+          requiresReview: false,
+        };
+        appliedAssignments[entry.name] = entry.chosenSpeakerId;
+        if (normalizeSpeakerName(previousName || '') !== normalizeSpeakerName(entry.name)) {
+          info.push(`[RECURRING OWNERSHIP] ${entry.chosenSpeakerId}: "${previousName || '(unnamed)'}" → "${entry.name}"`);
+        }
+      }
+    }
+
+    for (const speakerId of namedSpeakerIds) {
+      if (speakerId === entry.chosenSpeakerId && !entry.requiresReview) continue;
+      const speaker = updatedSpeakers[speakerId];
+      if (!speaker) continue;
+      updatedSpeakers[speakerId] = {
+        ...speaker,
+        finalName: getNumberedSpeakerFallbackName(speakerId, speaker),
+        role: speaker.role === entry.role ? 'unknown' : speaker.role,
+        extractedName: undefined,
+        assignmentConfidence: entry.assignmentConfidence,
+        assignmentContradictions: entry.negativeEvidence,
+        requiresReview: true,
+      };
+      info.push(`[RECURRING OWNERSHIP] Cleared "${entry.name}" from ${speakerId} due to ownership contradiction`);
+    }
+
+    if (entry.requiresReview) {
+      const reviewTargetIds = new Set<string>([
+        ...namedSpeakerIds,
+        ...(entry.chosenSpeakerId ? [entry.chosenSpeakerId] : []),
+      ]);
+      for (const speakerId of reviewTargetIds) {
+        const speaker = updatedSpeakers[speakerId];
+        if (!speaker) continue;
+        updatedSpeakers[speakerId] = {
+          ...speaker,
+          assignmentConfidence: entry.assignmentConfidence,
+          assignmentContradictions: entry.negativeEvidence,
+          requiresReview: true,
+        };
+      }
+    }
+  }
+
+  const finalInspection = inspectRecurringShowClusterOwnership(
+    Object.keys(updatedSpeakers).map((id) => ({
+      id,
+      name: updatedSpeakers[id]?.finalName && !/^Speaker\s+\d+$/i.test(updatedSpeakers[id].finalName)
+        ? updatedSpeakers[id].finalName
+        : null,
+      role: updatedSpeakers[id]?.role || 'unknown',
+      confidence: updatedSpeakers[id]?.roleConfidence || 0.5,
+      source: updatedSpeakers[id]?.source,
+      profile: updatedSpeakers[id]?.profile,
+    })),
+    segments,
+    options,
+    appliedAssignments
+  );
+
+  for (const entry of finalInspection.entries) {
+    if (entry.swapApplied && entry.chosenSpeakerId) {
+      const speaker = updatedSpeakers[entry.chosenSpeakerId];
+      updatedSpeakers[entry.chosenSpeakerId] = {
+        ...speaker,
+        assignmentConfidence: entry.assignmentConfidence,
+        assignmentContradictions: entry.negativeEvidence,
+        requiresReview: entry.requiresReview,
+      };
+    }
+  }
+
+  return { speakers: updatedSpeakers, info };
 }
 
 // ============================================
@@ -1478,7 +3510,12 @@ function detectIntroWindowEndTime(
   segments: SpeakerSegment[],
   skipTimeCap?: boolean
 ): { endTimeSeconds: number; reason: string } {
-  const maxWindow = skipTimeCap ? Infinity : 300; // debates: no cap; podcasts: 5 min
+  const maxWindow = skipTimeCap ? Infinity : 600; // allow longer host banter before formal guest intro
+  if (skipTimeCap) {
+    const lastSeg = segments.length ? segments[segments.length - 1] : null;
+    const lastEnd = lastSeg ? (lastSeg as any).endTime ?? maxWindow : maxWindow;
+    return { endTimeSeconds: lastEnd || maxWindow, reason: 'uncapped' };
+  }
   let questionStart = Infinity;
   let markerMatched = false;
 
@@ -1486,6 +3523,13 @@ function detectIntroWindowEndTime(
     const text = getSegText(seg);
     if (INTRO_QUESTION_PATTERNS.some(p => p.test(text))) {
       const startSeconds = getSegStartSeconds(seg) ?? 0;
+      const shortEarlyBanterQuestion =
+        startSeconds <= 90 &&
+        countWords(text) <= 20 &&
+        /\b[A-Z][a-z]+,\s+(?:how|what|why|where|when)\b/.test(text);
+      if (shortEarlyBanterQuestion) {
+        continue;
+      }
       questionStart = Math.min(questionStart, startSeconds);
       markerMatched = true;
       break;
@@ -1523,8 +3567,8 @@ function isLockedPresetName(candidate: string, lockedPresetNames: Set<string>): 
 }
 
 function normalizePresetRosterEntries(
-  presetRoster?: Array<{ name: string; role?: string | null }>
-): Array<{ name: string; role?: GPTSpeaker['role'] }> {
+  presetRoster?: Array<{ name: string; role?: string | null; aliases?: string[] }>
+): Array<{ name: string; role?: GPTSpeaker['role']; aliases?: string[] }> {
   if (!presetRoster || presetRoster.length === 0) {
     return [];
   }
@@ -1533,7 +3577,7 @@ function normalizePresetRosterEntries(
     'host', 'co_host', 'candidate', 'guest', 'advertiser', 'narrator', 'quoted_audio', 'unknown'
   ]);
   const seen = new Set<string>();
-  const normalized: Array<{ name: string; role?: GPTSpeaker['role'] }> = [];
+  const normalized: Array<{ name: string; role?: GPTSpeaker['role']; aliases?: string[] }> = [];
 
   for (const entry of presetRoster) {
     const name = (entry?.name || '').trim();
@@ -1544,7 +3588,13 @@ function normalizePresetRosterEntries(
     const role = entry.role && validRoles.has(entry.role as GPTSpeaker['role'])
       ? (entry.role as GPTSpeaker['role'])
       : undefined;
-    normalized.push({ name, role });
+    normalized.push({
+      name,
+      role,
+      aliases: Array.isArray(entry.aliases)
+        ? [...new Set(entry.aliases.map((alias) => alias.trim()).filter(Boolean))]
+        : undefined,
+    });
   }
 
   return normalized;
@@ -1640,6 +3690,7 @@ function extractIntroHandoffNames(
     const seg = segments[i];
     const startSeconds = getSegStartSeconds(seg);
     if (startSeconds != null && startSeconds > endTimeSeconds) break;
+    if (!isHumanIntroEligibleSegment(seg)) continue;
     const text = getSegText(seg);
 
     for (const pattern of INTRO_HANDOFF_PATTERNS) {
@@ -2376,6 +4427,89 @@ function isAdvertiserLikeSpeaker(speaker: Pick<GPTSpeaker, 'role' | 'source' | '
     (!!speaker.name && /^(advertiser|sponsor)$/i.test(speaker.name));
 }
 
+function getClusterId(segment: SpeakerSegment): string | null {
+  return segment.initialSpeakerId || (segment as any).rawClusterId || segment.speakerId || null;
+}
+
+function captureCleanClusterBaselineAssignments(
+  segments: SpeakerSegment[],
+  dirtyClusterIds: Set<string>
+): Map<string, string> {
+  const baseline = new Map<string, string>();
+
+  for (const segment of segments) {
+    const clusterId = getClusterId(segment);
+    const finalId = segment.finalSpeakerId || segment.speakerId;
+    if (!clusterId || !finalId || dirtyClusterIds.has(clusterId)) continue;
+    if (!baseline.has(clusterId)) {
+      baseline.set(clusterId, finalId);
+    }
+  }
+
+  return baseline;
+}
+
+export function enforceCleanClusterConsistency(
+  segments: SpeakerSegment[],
+  baselineAssignments: Map<string, string>,
+  dirtyClusterIds: Set<string>
+): {
+  segments: SpeakerSegment[];
+  revertedClusters: string[];
+  revertedSegments: number;
+} {
+  const clusterMembers = new Map<string, number[]>();
+
+  for (let i = 0; i < segments.length; i++) {
+    const clusterId = getClusterId(segments[i]);
+    if (!clusterId || dirtyClusterIds.has(clusterId)) continue;
+    if (segments[i].segmentKind === 'ad_read' || segments[i].segmentKind === 'promo') continue;
+    if (!clusterMembers.has(clusterId)) clusterMembers.set(clusterId, []);
+    clusterMembers.get(clusterId)!.push(i);
+  }
+
+  const updatedSegments = [...segments];
+  const revertedClusters: string[] = [];
+  let revertedSegments = 0;
+
+  for (const [clusterId, indices] of clusterMembers) {
+    const finalIds = new Set(
+      indices
+        .map((index) => updatedSegments[index].finalSpeakerId || updatedSegments[index].speakerId)
+        .filter(Boolean)
+    );
+
+    if (finalIds.size <= 1) continue;
+
+    const baselineId = baselineAssignments.get(clusterId);
+    if (!baselineId) continue;
+
+    for (const index of indices) {
+      const segment = updatedSegments[index];
+      if (segment.segmentKind === 'ad_read' || segment.segmentKind === 'promo') continue;
+      const currentId = segment.finalSpeakerId || segment.speakerId;
+      if (currentId === baselineId) continue;
+
+      updatedSegments[index] = {
+        ...segment,
+        speakerId: baselineId,
+        finalSpeakerId: baselineId,
+        attributionEvidence: 'raw_diarization',
+        confidenceReason: 'clean_cluster_consistency',
+      };
+      revertedSegments++;
+    }
+
+    revertedClusters.push(clusterId);
+  }
+
+  return {
+    segments: updatedSegments,
+    revertedClusters,
+    revertedSegments,
+  };
+}
+
 function recoverMissingKnownHostFromInvalidCluster(
   roster: GPTSpeaker[],
   segments: SpeakerSegment[],
@@ -2550,6 +4684,7 @@ function verifySpeakerIntegrity(
     confidence: Math.min(segment.confidence ?? 1, confidence),
     status: segment.status ?? 'tentative',
     confidenceReason: (segment as any).confidenceReason || 'posthoc_repair',
+    attributionEvidence: 'self_id',
   });
 
   const correctedSegments = segments.map(segment => {
@@ -2699,13 +4834,64 @@ function verifySpeakerIntegrity(
 }
 
 /**
- * Detect sponsor/ad read segments and re-attribute them to sponsor roster entries.
- *
- * Host-read ads (e.g. "support for this show comes from Delete Me…") are currently
- * attributed to the host because it's the host's voice. This function detects those
- * ad blocks by text patterns, extracts the sponsor name, creates a roster entry with
- * role 'advertiser', and remaps the segments.
+ * Detect sponsor/ad read segments, split merged sponsor blocks, and remap them to
+ * sponsor identities for downstream exports.
  */
+function splitSegmentByAdTransitions(
+  segment: SpeakerSegment,
+  anchorPattern: RegExp
+): SpeakerSegment[] {
+  const text = segment.text || '';
+  const matches = Array.from(text.matchAll(anchorPattern));
+  if (matches.length <= 1) return [segment];
+
+  const anchors = matches
+    .map((match) => match.index ?? -1)
+    .filter((index) => index >= 0)
+    .sort((a, b) => a - b);
+  if (anchors.length <= 1) return [segment];
+
+  const splitPoints = [...anchors.slice(1), text.length];
+  const fragments: SpeakerSegment[] = [];
+  let previousCharIndex = 0;
+  let previousTime = segment.startTime;
+  const totalChars = Math.max(text.length, 1);
+  const duration = Math.max(segment.endTime - segment.startTime, 0);
+
+  for (const splitPoint of splitPoints) {
+    const chunkText = text.slice(previousCharIndex, splitPoint).trim();
+    if (!chunkText) {
+      previousCharIndex = splitPoint;
+      continue;
+    }
+
+    const startRatio = previousCharIndex / totalChars;
+    const endRatio = splitPoint / totalChars;
+    const startTime = segment.startTime + duration * startRatio;
+    const endTime = splitPoint === text.length
+      ? segment.endTime
+      : segment.startTime + duration * endRatio;
+
+    fragments.push({
+      ...segment,
+      startTime: fragments.length === 0 ? segment.startTime : previousTime,
+      endTime: splitPoint === text.length ? segment.endTime : Math.max(endTime, previousTime + 0.01),
+      text: chunkText,
+    });
+
+    previousTime = fragments[fragments.length - 1].endTime;
+    previousCharIndex = splitPoint;
+  }
+
+  return fragments.length > 0 ? fragments : [segment];
+}
+
+function splitSegmentsForSponsorDetection(segments: SpeakerSegment[]): SpeakerSegment[] {
+  const adAnchorPattern = /\b(?:support\s+for\s+(?:this|the)\s+(?:show|podcast|episode)\s+comes?\s+from|(?:this|the)\s+(?:show|podcast|episode)\s+is\s+(?:brought\s+to\s+you|sponsored)\s+by|this\s+is\s+advertiser\s+content\s+brought\s+to\s+you\s+by|brought\s+to\s+you\s+by|today'?s\s+sponsor\s+is)\b/ig;
+
+  return segments.flatMap((segment) => splitSegmentByAdTransitions(segment, adAnchorPattern));
+}
+
 export function detectSponsorSegments(
   segments: SpeakerSegment[],
   roster: GPTSpeaker[]
@@ -2737,17 +4923,9 @@ export function detectSponsorSegments(
     /\blet'?s\s+(?:get\s+)?back\b/i,
   ];
 
-  // Track sponsor roster entries by normalized name to reuse across duplicate mentions
-  const sponsorMap = new Map<string, GPTSpeaker>();
-  const updatedSegments = [...segments];
+  const sponsorNames = new Set<string>();
+  const updatedSegments = splitSegmentsForSponsorDetection(segments);
   const updatedRoster = [...roster];
-
-  // Find the highest existing speaker ID number to generate new unique IDs
-  let maxSpeakerId = 0;
-  for (const s of roster) {
-    const match = s.id.match(/^speaker_(\d+)$/);
-    if (match) maxSpeakerId = Math.max(maxSpeakerId, parseInt(match[1], 10));
-  }
 
   let totalRetagged = 0;
   const processedIndices = new Set<number>();
@@ -2760,11 +4938,19 @@ export function detectSponsorSegments(
 
     // Try each ad start pattern
     let sponsorName: string | null = null;
+    let sponsorSegmentKind: 'ad_read' | 'promo' = 'ad_read';
     for (const pattern of AD_START_PATTERNS) {
       const m = text.match(pattern);
       if (m && m[1]) {
         sponsorName = sanitizeSponsorName(m[1]);
         break;
+      }
+    }
+
+    if (!sponsorName) {
+      sponsorName = extractPromoSponsorName(text);
+      if (sponsorName) {
+        sponsorSegmentKind = 'promo';
       }
     }
 
@@ -2783,6 +4969,9 @@ export function detectSponsorSegments(
 
       // Stop if speaker changes
       if (nextSpeakerId !== hostSpeakerId) break;
+
+      const nextSponsorLead = AD_START_PATTERNS.some((pattern) => pattern.test(nextSeg.text)) || Boolean(extractPromoSponsorName(nextSeg.text));
+      if (nextSponsorLead) break;
 
       // Check end pattern first — a segment with a URL/promo code is ad content
       let hasEndPattern = false;
@@ -2827,50 +5016,40 @@ export function detectSponsorSegments(
       continue;
     }
 
-    if (hasStrongSponsorLead && totalWords < 20) {
+    const hasShortLeadCta = /\b(?:visit|head to|go to|use code|promo code)\b/i.test(text) || /\b[a-z0-9-]+\.(?:com|org|net|io|co)\b/i.test(text);
+    if (hasStrongSponsorLead && totalWords < 8 && !hasShortLeadCta) {
       console.log(`[SPONSOR] Skipping short ad mention: "${sponsorName}" (${adIndices.length} seg, ${totalWords} words)`);
       continue;
     }
 
-    // Get or create sponsor roster entry
-    const normalizedName = sponsorName.toLowerCase().trim();
-    let sponsorEntry = sponsorMap.get(normalizedName);
+    sponsorNames.add(sponsorName);
 
-    if (!sponsorEntry) {
-      maxSpeakerId++;
-      sponsorEntry = {
-        id: `speaker_${maxSpeakerId}`,
-        name: sponsorName,
-        role: 'advertiser',
-        confidence: 0.9,
-        source: 'sponsor-detection',
-      };
-      sponsorMap.set(normalizedName, sponsorEntry);
-      updatedRoster.push(sponsorEntry);
-      console.log(`[SPONSOR] Created roster entry: ${sponsorEntry.id} → "${sponsorName}" (advertiser)`);
-    }
+    const sponsorSpeakerId = ensureSponsorSpeaker(updatedRoster, sponsorName);
 
-    // Remap all ad segments to the sponsor
+    // Tag all ad segments and remap them to the sponsor speaker identity.
     for (const idx of adIndices) {
       processedIndices.add(idx);
       updatedSegments[idx] = {
         ...updatedSegments[idx],
-        speakerId: sponsorEntry.id,
-        finalSpeakerId: sponsorEntry.id,
+        speakerId: sponsorSpeakerId,
+        finalSpeakerId: sponsorSpeakerId,
+        segmentKind: sponsorSegmentKind,
+        sponsorName,
+        attributionEvidence: updatedSegments[idx].attributionEvidence || 'heuristic',
         confidence: 0.85,
         status: 'confirmed' as const,
-        confidenceReason: `sponsor-ad-read:${sponsorName}`,
+        confidenceReason: `sponsor-${sponsorSegmentKind}:${sponsorName}`,
       };
     }
 
     totalRetagged += adIndices.length;
-    console.log(`[SPONSOR] Tagged ${adIndices.length} segment(s) for "${sponsorName}" (indices ${adIndices[0]}–${adIndices[adIndices.length - 1]})`);
+    console.log(`[SPONSOR] Tagged ${adIndices.length} segment(s) for "${sponsorName}" and remapped them to ${sponsorSpeakerId} (indices ${adIndices[0]}–${adIndices[adIndices.length - 1]})`);
   }
 
   return {
     segments: updatedSegments,
     roster: updatedRoster,
-    sponsorsFound: sponsorMap.size,
+    sponsorsFound: sponsorNames.size,
     segmentsRetagged: totalRetagged,
   };
 }
@@ -2911,6 +5090,50 @@ function sanitizeSponsorName(raw: string): string {
   return name || 'Unknown Sponsor';
 }
 
+function ensureSponsorSpeaker(roster: GPTSpeaker[], sponsorName: string): string {
+  const normalizedSponsor = normalizeSpeakerName(sponsorName);
+  const existing = roster.find((speaker) =>
+    speaker.role === 'advertiser' &&
+    speaker.name &&
+    normalizeSpeakerName(speaker.name) === normalizedSponsor
+  );
+
+  if (existing) {
+    return existing.id;
+  }
+
+  const nextNumericId = roster.reduce((max, speaker) => {
+    const match = /speaker_(\d+)/i.exec(speaker.id);
+    return match ? Math.max(max, Number(match[1])) : max;
+  }, 0) + 1;
+
+  const nextSpeaker: GPTSpeaker = {
+    id: `speaker_${nextNumericId}`,
+    name: sponsorName,
+    role: 'advertiser',
+    confidence: 0.92,
+    source: 'sponsor_detection',
+  };
+
+  roster.push(nextSpeaker);
+  return nextSpeaker.id;
+}
+
+function extractPromoSponsorName(text: string): string | null {
+  const domainMatch = text.match(/\b(?:head\s+to|visit|go\s+to|check\s+out)\s+([a-z][a-z0-9-]{2,})\.(?:com|org|net|io|co)\b/i)
+    || text.match(/\b([a-z][a-z0-9-]{2,})\.(?:com|org|net|io|co)\b/i);
+  if (!domainMatch?.[1]) return null;
+
+  const promoCue = /\b(?:book a demo|learn more|get started|maximize impact|no impact to your credit score|loan options|today)\b/i.test(text);
+  if (!promoCue) return null;
+
+  const domainToken = domainMatch[1];
+  const brandRegex = new RegExp(`\\b${escapeRegExp(domainToken)}\\b`, 'i');
+  const casePreservingMatch = text.match(brandRegex)?.[0];
+
+  return sanitizeSponsorName(casePreservingMatch || domainToken);
+}
+
 // ============================================
 // POST-PROCESS: INTRO-HANDOFF CONFIDENCE CORRECTION
 // ============================================
@@ -2948,6 +5171,411 @@ function correctIntroHandoffConfidence(
   });
 
   return { segments: updated, corrected };
+}
+
+function applyInterviewIntroBasedNaming(
+  roster: GPTSpeaker[],
+  segments: SpeakerSegment[],
+  projectType: string,
+  hostSpeakerId?: string | null,
+  skipIntroWindowCap?: boolean
+): {
+  roster: GPTSpeaker[];
+  assigned: number;
+  info: string[];
+} {
+  const updatedRoster = [...roster];
+  const info: string[] = [];
+  let assigned = 0;
+
+  const introWindow = detectIntroWindowEndTime(segments, skipIntroWindowCap);
+  const introCandidates = extractStrongInterviewIntroNames(segments, introWindow.endTimeSeconds);
+  if (introCandidates.length === 0) {
+    return { roster: updatedRoster, assigned, info };
+  }
+
+  const existingNames = new Set(
+    updatedRoster
+      .map((speaker) => speaker.name ? normalizeSpeakerName(speaker.name) : null)
+      .filter(Boolean) as string[]
+  );
+
+  for (const candidate of introCandidates) {
+    if (isLikelyNonHumanConversationalNameCandidate(candidate.name)) continue;
+    const normalizedCandidate = normalizeSpeakerName(candidate.name);
+    if (existingNames.has(normalizedCandidate)) continue;
+
+    const introSegment = segments[candidate.segmentIndex];
+    if (!introSegment || !isHumanIntroEligibleSegment(introSegment)) continue;
+    const introSpeakerId = introSegment?.finalSpeakerId || introSegment?.speakerId;
+    const excludedSpeakerIds = new Set<string>(
+      [hostSpeakerId, introSpeakerId].filter(Boolean) as string[]
+    );
+    const conversationalSpeakerIds = Array.from(new Set(
+      segments
+        .filter(isConversationalSegment)
+        .map((segment) => segment.finalSpeakerId || segment.speakerId)
+        .filter((value): value is string => Boolean(value) && !excludedSpeakerIds.has(value))
+    ));
+    const targetSpeakerId = findLikelyGuestTargetSpeakerId(
+      segments,
+      candidate.segmentIndex,
+      excludedSpeakerIds,
+      conversationalSpeakerIds
+    );
+
+    if (!targetSpeakerId) continue;
+
+    const targetSpeaker = updatedRoster.find((speaker) => speaker.id === targetSpeakerId);
+    if (!targetSpeaker) continue;
+    const targetSpeakerName = targetSpeaker.name ? normalizeSpeakerName(targetSpeaker.name) : null;
+    const duplicateHumanNameAssignedElsewhere = targetSpeakerName
+      ? updatedRoster.some((speaker) =>
+          speaker.id !== targetSpeakerId &&
+          speaker.name &&
+          normalizeSpeakerName(speaker.name) === targetSpeakerName
+        )
+      : false;
+    if (
+      targetSpeaker.name &&
+      isValidFinalHumanSpeakerName(targetSpeaker.name) &&
+      !isWeakShortSpeakerName(targetSpeaker.name) &&
+      !duplicateHumanNameAssignedElsewhere
+    ) {
+      continue;
+    }
+
+    const previousName = targetSpeaker.name;
+    targetSpeaker.name = candidate.name;
+    if (!(targetSpeaker.source === 'preset_roster' && targetSpeaker.role && targetSpeaker.role !== 'unknown')) {
+      targetSpeaker.role = 'guest';
+    }
+    targetSpeaker.confidence = Math.max(targetSpeaker.confidence, 0.86);
+    targetSpeaker.source = targetSpeaker.source === 'preset_roster' ? targetSpeaker.source : 'intro_handoff';
+
+    existingNames.add(normalizedCandidate);
+    assigned++;
+    info.push(`[INTRO NAMING] ${targetSpeakerId}: "${previousName || '(unnamed)'}" → "${candidate.name}" (${projectType})`);
+  }
+
+  return { roster: updatedRoster, assigned, info };
+}
+
+function applyDirectAddressedGuestIntroNaming(
+  roster: GPTSpeaker[],
+  segments: SpeakerSegment[],
+  recurringHumanNames: Set<string>,
+  skipIntroWindowCap?: boolean
+): {
+  roster: GPTSpeaker[];
+  assigned: number;
+  info: string[];
+} {
+  const updatedRoster = [...roster];
+  const info: string[] = [];
+  let assigned = 0;
+  const introWindow = detectIntroWindowEndTime(segments, skipIntroWindowCap);
+
+  for (let i = 0; i < segments.length; i++) {
+    const segment = segments[i];
+    const startSeconds = getSegStartSeconds(segment);
+    if (startSeconds != null && startSeconds > introWindow.endTimeSeconds) break;
+    if (!isHumanIntroEligibleSegment(segment)) continue;
+
+    const text = getSegText(segment);
+    const directAddressMatch = text.match(/\b([A-Z][a-z]+),\s+[^.]{0,80}\b(?:it'?s|its|good|great|glad|thank|thanks|welcome)\b/);
+    const addressedFirstName = directAddressMatch?.[1]?.trim().toLowerCase() || null;
+    if (!addressedFirstName) continue;
+
+    const fullName = Array.from(text.matchAll(/\b([A-Z][a-z]+(?:\s+[A-Z][a-z]+){1,2})\b/g))
+      .map((match) => match[1]?.trim())
+      .filter((value): value is string => (
+        Boolean(value) &&
+        isValidIntroNameCandidate(value) &&
+        !isLikelyNonHumanConversationalNameCandidate(value) &&
+        value.split(/\s+/)[0]?.toLowerCase() === addressedFirstName
+      ))
+      .sort((a, b) => b.split(/\s+/).length - a.split(/\s+/).length)[0];
+    if (!fullName) continue;
+
+    const hostSpeakerId = segment.finalSpeakerId || segment.speakerId;
+    if (!hostSpeakerId) continue;
+
+    const guestSpeakerId = findDominantReplySpeakerAfterIntro(segments, i, hostSpeakerId);
+    if (!guestSpeakerId) continue;
+
+    const targetSpeaker = updatedRoster.find((speaker) => speaker.id === guestSpeakerId);
+    if (!targetSpeaker) continue;
+
+    const currentName = targetSpeaker.name?.trim() || null;
+    const duplicateHumanNameAssignedElsewhere = currentName
+      ? updatedRoster.some((speaker) =>
+          speaker.id !== guestSpeakerId &&
+          speaker.name &&
+          normalizeSpeakerName(speaker.name) === normalizeSpeakerName(currentName)
+        )
+      : false;
+    const canReplace =
+      !currentName ||
+      !isValidFinalHumanSpeakerName(currentName) ||
+      isWeakShortSpeakerName(currentName) ||
+      duplicateHumanNameAssignedElsewhere ||
+      recurringHumanNames.has(normalizeSpeakerName(currentName));
+
+    if (!canReplace || normalizeSpeakerName(currentName || '') === normalizeSpeakerName(fullName)) {
+      continue;
+    }
+
+    targetSpeaker.name = fullName;
+    targetSpeaker.role = 'guest';
+    targetSpeaker.confidence = Math.max(targetSpeaker.confidence, 0.88);
+    targetSpeaker.source = targetSpeaker.source === 'preset_roster' ? targetSpeaker.source : 'intro_handoff';
+    assigned++;
+    info.push(`[DIRECT INTRO] ${guestSpeakerId}: "${currentName || '(unnamed)'}" → "${fullName}"`);
+    break;
+  }
+
+  return { roster: updatedRoster, assigned, info };
+}
+
+function extractStrongInterviewIntroNames(
+  segments: SpeakerSegment[],
+  endTimeSeconds: number
+): Array<{ name: string; segmentIndex: number; phrase: string }> {
+  const existing = extractIntroHandoffNames(segments, endTimeSeconds);
+  const seen = new Set(existing.map((candidate) => normalizeSpeakerName(candidate.name)));
+  const candidates = [...existing];
+
+  for (let i = 0; i < segments.length; i++) {
+    const seg = segments[i];
+    const startSeconds = getSegStartSeconds(seg);
+    if (startSeconds != null && startSeconds > endTimeSeconds) break;
+    if (!isHumanIntroEligibleSegment(seg)) continue;
+    const text = getSegText(seg);
+    if (!/\b(?:joined by|good to have you|glad to have you|good to see you|great to see you|welcome|bring in)\b/i.test(text)) continue;
+
+    const matches = Array.from(text.matchAll(/\b([A-Z][a-z]+(?:\s+[A-Z][a-z]+)+)\b/g));
+    const validNames = matches
+      .map((match) => match[1]?.trim())
+      .filter((value): value is string => (
+        Boolean(value) &&
+        isValidIntroNameCandidate(value) &&
+        !isLikelyNonHumanConversationalNameCandidate(value)
+      ));
+
+    if (validNames.length === 0) continue;
+    const directAddressMatch = text.match(/\b([A-Z][a-z]+),\s+(?:it'?s|its|good|great|glad|thank|thanks|welcome)\b/);
+    const addressedFirstName = directAddressMatch?.[1]?.trim().toLowerCase() || null;
+    const addressedCandidate = addressedFirstName
+      ? validNames.find((value) => value.split(/\s+/)[0]?.toLowerCase() === addressedFirstName)
+      : null;
+    const chosen = addressedCandidate || [...validNames].sort((a, b) => b.split(/\s+/).length - a.split(/\s+/).length)[0];
+    const normalized = normalizeSpeakerName(chosen);
+    if (seen.has(normalized)) continue;
+
+    seen.add(normalized);
+    candidates.push({
+      name: chosen,
+      segmentIndex: i,
+      phrase: 'strong_interview_intro',
+    });
+  }
+
+  return candidates;
+}
+
+function findDirectAddressedFullNameIntroCandidate(
+  segments: SpeakerSegment[],
+  endTimeSeconds: number
+): { name: string; segmentIndex: number } | null {
+  for (let i = 0; i < segments.length; i++) {
+    const seg = segments[i];
+    const startSeconds = getSegStartSeconds(seg);
+    if (startSeconds != null && startSeconds > endTimeSeconds) break;
+    if (!isHumanIntroEligibleSegment(seg)) continue;
+    const text = getSegText(seg);
+    if (!/\b(?:bring in|joined by|our guest|here with|good to see you|good to have you|glad to have you)\b/i.test(text)) {
+      continue;
+    }
+
+    const directAddressMatch = text.match(/\b([A-Z][a-z]+),\s+(?:it'?s|its|good|great|glad|thank|thanks|welcome)\b/);
+    const addressedFirstName = directAddressMatch?.[1]?.trim().toLowerCase() || null;
+    if (!addressedFirstName) continue;
+
+    const fullNameMatches = Array.from(text.matchAll(/\b([A-Z][a-z]+(?:\s+[A-Z][a-z]+){1,2})\b/g))
+      .map((match) => match[1]?.trim())
+      .filter((value): value is string => (
+        Boolean(value) &&
+        isValidIntroNameCandidate(value) &&
+        !isLikelyNonHumanConversationalNameCandidate(value)
+      ));
+
+    const chosen = fullNameMatches.find((value) => value.split(/\s+/)[0]?.toLowerCase() === addressedFirstName);
+    if (!chosen) continue;
+
+    return {
+      name: chosen,
+      segmentIndex: i,
+    };
+  }
+
+  return null;
+}
+
+function collectRejectedIntroducedNames(segments: SpeakerSegment[]): string[] {
+  const introWindow = detectIntroWindowEndTime(segments, true);
+  const rejected = new Set<string>();
+
+  for (let i = 0; i < segments.length; i++) {
+    const segment = segments[i];
+    const startSeconds = getSegStartSeconds(segment);
+    if (startSeconds != null && startSeconds > introWindow.endTimeSeconds) break;
+    if (isHumanIntroEligibleSegment(segment)) continue;
+
+    if (segment.sponsorName) {
+      rejected.add(segment.sponsorName);
+    }
+
+    const text = getSegText(segment);
+    if (!isSponsorHeavyText(text)) continue;
+
+    const brandedMatches = Array.from(text.matchAll(/\b([A-Z][A-Z0-9]+|[A-Z][a-z]+(?:\s+[A-Z][a-z]+)+)\b/g))
+      .map((match) => match[1]?.trim())
+      .filter((value): value is string => Boolean(value) && isLikelyNonHumanConversationalNameCandidate(value));
+
+    for (const match of brandedMatches) {
+      rejected.add(match);
+    }
+  }
+
+  return Array.from(rejected);
+}
+
+function sanitizeSpeakerRosterForTaggedContent(
+  roster: GPTSpeaker[],
+  segments: SpeakerSegment[]
+): {
+  roster: GPTSpeaker[];
+  demotedAdvertisers: number;
+  strippedAdOnlyNames: number;
+} {
+  const segmentsBySpeaker = new Map<string, SpeakerSegment[]>();
+
+  for (const segment of segments) {
+    const speakerId = (segment as any).finalSpeakerId || segment.speakerId;
+    if (!speakerId) continue;
+    if (!segmentsBySpeaker.has(speakerId)) {
+      segmentsBySpeaker.set(speakerId, []);
+    }
+    segmentsBySpeaker.get(speakerId)!.push(segment);
+  }
+
+  let demotedAdvertisers = 0;
+  let strippedAdOnlyNames = 0;
+
+  const updatedRoster = roster.map((speaker) => {
+    const ownedSegments = segmentsBySpeaker.get(speaker.id) || [];
+    if (!ownedSegments.length) return speaker;
+
+    const hasConversation = ownedSegments.some((segment) => isConversationalSegment(segment));
+    const allAdLike = ownedSegments.every((segment) => isAdLikeSegment(segment));
+
+    let nextSpeaker = speaker;
+
+    if (speaker.role === 'advertiser' && hasConversation) {
+      nextSpeaker = { ...nextSpeaker, role: 'unknown' };
+      demotedAdvertisers++;
+    }
+
+    if (nextSpeaker.name && allAdLike && nextSpeaker.role !== 'advertiser') {
+      nextSpeaker = {
+        ...nextSpeaker,
+        name: null,
+        role: nextSpeaker.role === 'quoted_audio' ? nextSpeaker.role : 'advertiser',
+      };
+      strippedAdOnlyNames++;
+    }
+
+    if (nextSpeaker.name && isWeakShortSpeakerName(nextSpeaker.name) && !hasStrongShortNameEvidence(nextSpeaker.name, ownedSegments)) {
+      nextSpeaker = {
+        ...nextSpeaker,
+        name: null,
+        role: nextSpeaker.role === 'host' && hasConversation ? 'unknown' : nextSpeaker.role,
+      };
+      strippedAdOnlyNames++;
+    }
+
+    return nextSpeaker;
+  });
+
+  return {
+    roster: updatedRoster,
+    demotedAdvertisers,
+    strippedAdOnlyNames,
+  };
+}
+
+function isAdLikeSegment(segment: SpeakerSegment): boolean {
+  if (!segment) return false;
+  if (segment.segmentKind === 'ad_read' || segment.segmentKind === 'promo') {
+    return true;
+  }
+
+  const text = (segment.text || '').trim();
+  if (!text) return false;
+
+  return /\b(?:support\s+for\s+(?:this|the)\s+(?:show|podcast|episode)\s+comes?\s+from|this\s+(?:show|episode)\s+is\s+brought\s+to\s+you\s+by|use\s+code\b|promo\s+code\b|visit\s+\S+\.(?:com|org|net|io|co)\b|terms\s+and\s+conditions\s+apply)\b/i.test(text);
+}
+
+function isSponsorHeavyText(text: string): boolean {
+  return /\b(?:support\s+for\s+(?:this|the)\s+(?:show|podcast|episode)\s+comes?\s+from|this\s+(?:show|episode)\s+is\s+brought\s+to\s+you\s+by|paid\s+sponsorship|advertiser\s+content|public\s+ticker\s+for\s+private\s+tech|student\s+loans|refinanc(?:e|ing)|visit\s+\S+\.(?:com|org|net|io|co)\b|getvcx\.com|sofi\.com|virginatlantic\.com)\b/i.test(text);
+}
+
+function isConversationalSegment(segment: SpeakerSegment): boolean {
+  if (!segment) return false;
+  if (segment.segmentKind === 'quoted_audio') {
+    return false;
+  }
+  return !isAdLikeSegment(segment);
+}
+
+function isHumanIntroEligibleSegment(segment: SpeakerSegment): boolean {
+  if (!isConversationalSegment(segment)) return false;
+  if (segment.sponsorName) return false;
+  const text = (segment.text || '').trim();
+  if (!text) return false;
+  return !isSponsorHeavyText(text);
+}
+
+function isWeakShortSpeakerName(name: string | null | undefined): boolean {
+  if (!name) return false;
+  const cleaned = name.trim();
+  const words = cleaned.split(/\s+/).filter(Boolean);
+  if (words.length !== 1) return false;
+  if (/^[A-Z]{2,3}$/.test(cleaned)) return false;
+  return cleaned.length <= 3;
+}
+
+function hasStrongShortNameEvidence(name: string, segments: SpeakerSegment[]): boolean {
+  const escaped = escapeRegExp(name.trim());
+  const selfIdPattern = new RegExp(`\\b(?:i'm|i am|my name is|this is)\\s+${escaped}\\b`, 'i');
+  const directAddressPattern = new RegExp(`\\b${escaped},\\b`, 'i');
+  let directAddressCount = 0;
+
+  for (const segment of segments) {
+    const text = getSegText(segment);
+    if (!text) continue;
+    if (selfIdPattern.test(text)) return true;
+    if (directAddressPattern.test(text)) {
+      directAddressCount++;
+    }
+  }
+
+  return directAddressCount >= 2;
+}
+
+function escapeRegExp(value: string): string {
+  return value.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
 }
 
 /**
@@ -3214,6 +5842,7 @@ function enforceClusterLoyalty(
         finalSpeakerId: matchedSpeaker.id,
         confidence: Math.max(seg.confidence || 0, 0.80),
         confidenceReason: 'cluster_loyalty',
+        attributionEvidence: 'self_id',
       } as SpeakerSegment;
       clusterReassignments++;
     }
@@ -3282,6 +5911,7 @@ function enforceSelfIdSegments(
             finalSpeakerId: matchedSpeaker.id,
             confidence: Math.max(seg.confidence || 0, 0.95),
             confidenceReason: 'final_self_id_enforcement',
+            attributionEvidence: 'self_id',
           } as SpeakerSegment;
           corrections++;
         }
@@ -3763,6 +6393,7 @@ function reassignHandoffResponses(
       candidate.speakerId = recipientSpeaker.id;
       candidate.confidenceReason = 'handoff_reassignment';
       candidate.confidence = Math.max(candidate.confidence ?? 0, 0.70);
+      candidate.attributionEvidence = 'handoff';
       reassigned++;
       reassignments++;
     }
@@ -3868,6 +6499,7 @@ function claimHandoffClusters(
     seg.speakerId = ownerId;
     seg.confidenceReason = 'cluster_coherence_handoff';
     seg.confidence = Math.max(seg.confidence ?? 0, 0.65);
+    seg.attributionEvidence = 'handoff';
     claims++;
     info.push(`[CLUSTER COHERENCE] t=${seg.startTime.toFixed(1)}s: ${oldOwner} → ${ownerId} (${speaker?.name || 'unnamed'}) [was ${oldReason}]`);
   }
@@ -4298,28 +6930,37 @@ function convertToLegacyFormat(
 } {
   const speakers: Record<string, any> = {};
 
-  const roleFallbackName = (speaker: GPTSpeaker): string => {
-    if (speaker.name) return speaker.name;
-    const role = speaker.role || 'unknown';
-    const roleLabel = role
-      .split('_')
-      .map(word => word.charAt(0).toUpperCase() + word.slice(1))
-      .join(' ');
-    if (role === 'host' || role === 'co_host' || role === 'narrator' || role === 'advertiser' || role === 'quoted_audio') {
-      return roleLabel;
+  const numericSpeakerLabel = (speakerId: string, index: number): string => {
+    const idMatch = /speaker_(\d+)/i.exec(speakerId);
+    if (idMatch) return `Speaker ${idMatch[1]}`;
+    return `Speaker ${index + 1}`;
+  };
+
+  const legacyFinalName = (speaker: GPTSpeaker, index: number): string => {
+    if (speaker.role === 'advertiser' && speaker.name) {
+      return speaker.name;
     }
-    const idMatch = /speaker_(\d+)/.exec(speaker.id);
-    const suffix = idMatch ? idMatch[1] : speaker.id;
-    return role === 'guest' ? `Guest ${suffix}` : `Speaker ${suffix}`;
+
+    if (
+      speaker.name &&
+      isValidFinalHumanSpeakerName(speaker.name) &&
+      speaker.role !== 'advertiser' &&
+      speaker.role !== 'quoted_audio' &&
+      speaker.role !== 'narrator'
+    ) {
+      return speaker.name;
+    }
+
+    return numericSpeakerLabel(speaker.id, index);
   };
 
   // Build speaker records
-  for (const gptSpeaker of gptSpeakers) {
+  for (const [index, gptSpeaker] of gptSpeakers.entries()) {
     const speakerSegments = reassignedSegments.filter(s => (s.finalSpeakerId || s.speakerId) === gptSpeaker.id);
 
     speakers[gptSpeaker.id] = {
       id: gptSpeaker.id,
-      finalName: roleFallbackName(gptSpeaker),
+      finalName: legacyFinalName(gptSpeaker, index),
       role: gptSpeaker.role,
       roleConfidence: gptSpeaker.confidence,
       source: gptSpeaker.source,
@@ -4338,6 +6979,9 @@ function convertToLegacyFormat(
         text: s.text,
         confidence: s.confidence,
         status: s.status,
+        segmentKind: s.segmentKind || (gptSpeaker.role === 'advertiser' ? 'ad_read' : gptSpeaker.role === 'quoted_audio' ? 'quoted_audio' : 'conversation'),
+        sponsorName: s.sponsorName ?? null,
+        attributionEvidence: s.attributionEvidence || 'raw_diarization',
       })),
       totalDuration: speakerSegments.reduce((sum, s) => sum + (s.endTime - s.startTime), 0),
       segmentCount: speakerSegments.length,
@@ -4354,6 +6998,9 @@ function convertToLegacyFormat(
     text: s.text,
     confidence: s.confidence,
     status: s.status,
+    segmentKind: s.segmentKind || 'conversation',
+    sponsorName: s.sponsorName ?? null,
+    attributionEvidence: s.attributionEvidence || 'raw_diarization',
   }));
 
   return {
@@ -4437,3 +7084,9 @@ export async function testRefactoredPipeline() {
     throw error;
   }
 }
+
+export const __testUtils = {
+  inspectConversationalNamingState,
+  resolveConversationalHumanNames,
+  resolveConversationalHumanNamesInSpeakerMap,
+};

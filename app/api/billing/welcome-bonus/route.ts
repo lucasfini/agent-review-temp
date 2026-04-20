@@ -4,7 +4,7 @@ import { formatSiteCreditDeltaFromUsd } from '@/lib/billing/display';
 import { isDemoUser } from '@/lib/demo-mode';
 import { supabaseAdmin } from '@/lib/supabase/server';
 
-const SIGNUP_BONUS_USD = 3;
+const SIGNUP_BONUS_USD = 2;
 const SIGNUP_BONUS_REASON = 'Welcome signup bonus';
 
 async function getAuthedUser(request: NextRequest) {

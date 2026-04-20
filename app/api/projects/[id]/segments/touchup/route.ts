@@ -10,6 +10,7 @@ import { RouteAccessError, requireProjectOwner } from '@/lib/api/route-auth';
 import { isDemoUser } from '@/lib/demo-mode';
 import { aiRatelimit } from '@/lib/rate-limit';
 import { estimateReservationAmount } from '@/lib/billing/reserve-amount';
+import { attachSpeakerAssignmentMetadata } from '@/lib/speaker-finalization';
 
 // Force dynamic to prevent caching
 export const dynamic = 'force-dynamic';
@@ -226,12 +227,14 @@ export async function POST(
           speakerId: newSpeakerId,
           finalSpeakerId: newSpeakerId,
           confidenceReason: 'ai_touchup',
-          confidence: 0.85
+          confidence: 0.85,
+          reviewStatus: 'pending' as const,
+          reviewConfirmedAt: undefined,
         };
         applied.push({ index, oldSpeakerId, newSpeakerId, reason: reason || '' });
       }
 
-      const updatedSpeakerData = {
+      const updatedSpeakerData = attachSpeakerAssignmentMetadata({
         ...speakerData,
         segments: updatedSegments,
         speakers: recomputeSpeakerCounts(speakers, updatedSegments),
@@ -240,7 +243,7 @@ export async function POST(
           lastModified: new Date().toISOString(),
           lastModificationType: 'ai_touchup'
         }
-      };
+      });
 
       const { data: savedApproved, error: updateError } = await supabaseAdmin
         .from('projects')
@@ -305,10 +308,12 @@ export async function POST(
           speakerId: newSpeakerId,
           finalSpeakerId: newSpeakerId,
           confidenceReason: 'ai_touchup',
-          confidence: 1.0
+          confidence: 1.0,
+          reviewStatus: 'pending' as const,
+          reviewConfirmedAt: undefined,
         };
       }
-      const updatedSpeakerData = {
+      const updatedSpeakerData = attachSpeakerAssignmentMetadata({
         ...speakerData,
         segments: updatedSegments,
         speakers: recomputeSpeakerCounts(speakers, updatedSegments),
@@ -317,7 +322,7 @@ export async function POST(
           lastModified: new Date().toISOString(),
           lastModificationType: 'ai_touchup'
         }
-      };
+      });
       const { data: savedSwap, error: updateError } = await supabaseAdmin
         .from('projects')
         // @ts-ignore - Supabase types issue
@@ -522,12 +527,14 @@ export async function POST(
         speakerId: newSpeakerId,
         finalSpeakerId: newSpeakerId,
         confidenceReason: 'ai_touchup',
-        confidence: 0.85
+        confidence: 0.85,
+        reviewStatus: 'pending' as const,
+        reviewConfirmedAt: undefined,
       };
     }
 
     // Build updated speaker data
-    const updatedSpeakerData = {
+    const updatedSpeakerData = attachSpeakerAssignmentMetadata({
       ...speakerData,
       segments: updatedSegments,
       speakers: recomputeSpeakerCounts(speakers, updatedSegments),
@@ -536,7 +543,7 @@ export async function POST(
         lastModified: new Date().toISOString(),
         lastModificationType: 'ai_touchup'
       }
-    };
+    });
 
     // Save to database
     const { data: savedAI, error: updateError } = await supabaseAdmin

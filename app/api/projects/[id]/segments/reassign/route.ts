@@ -2,6 +2,7 @@ import { NextRequest, NextResponse } from 'next/server';
 import { supabaseAdmin } from '@/lib/supabase/server';
 import { RouteAccessError, requireProjectOwner } from '@/lib/api/route-auth';
 import { isDemoUser } from '@/lib/demo-mode';
+import { attachSpeakerAssignmentMetadata } from '@/lib/speaker-finalization';
 
 // Force dynamic to prevent caching
 export const dynamic = 'force-dynamic';
@@ -68,12 +69,14 @@ export async function PATCH(
             ...updatedSegments[index],
             status: 'confirmed' as const,
             confidence: 1.0,
+            reviewStatus: 'confirmed' as const,
+            reviewConfirmedAt: new Date().toISOString(),
           };
           confirmedCount++;
         }
       }
 
-      const updatedSpeakerData = {
+      const updatedSpeakerData = attachSpeakerAssignmentMetadata({
         ...speakerData,
         segments: updatedSegments,
         detectionMetadata: {
@@ -81,7 +84,7 @@ export async function PATCH(
           lastModified: new Date().toISOString(),
           lastModificationType: 'segment_confirm',
         }
-      };
+      });
 
       const { data: savedConfirm, error: updateError } = await supabaseAdmin
         .from('projects')
@@ -118,7 +121,9 @@ export async function PATCH(
           updatedSegments[index] = {
             ...updatedSegments[index],
             speakerId: newSpeakerId,
-            finalSpeakerId: newSpeakerId
+            finalSpeakerId: newSpeakerId,
+            reviewStatus: 'pending' as const,
+            reviewConfirmedAt: undefined,
           };
           reassignedCount++;
         }
@@ -154,7 +159,7 @@ export async function PATCH(
     }
 
     // Update the speaker data with the modified segments
-    const updatedSpeakerData = {
+    const updatedSpeakerData = attachSpeakerAssignmentMetadata({
       ...speakerData,
       segments: updatedSegments,
       speakers: cleanedSpeakers,
@@ -164,7 +169,7 @@ export async function PATCH(
         lastModified: new Date().toISOString(),
         lastModificationType: 'segment_reassignment'
       }
-    };
+    });
 
     // Save to database
     const { data: saved, error: updateError } = await supabaseAdmin

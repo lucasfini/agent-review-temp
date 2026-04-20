@@ -99,6 +99,8 @@ interface SpeakerRosterEntry {
   totalDuration: number;
 }
 
+const ROLE_LIKE_SPEAKER_NAMES = /^(advertiser|advertisor|host|co[- ]host|narrator|quoted audio|unknown|guest \d+|speaker)$/i;
+
 /**
  * Sanitize filename for filesystem
  */
@@ -196,10 +198,86 @@ function parseSpeakerData(project: ExportProject): any | null {
   return project.speaker_data;
 }
 
+function buildSpeakerOrderMap(speakerData: any): Map<string, number> {
+  const orderMap = new Map<string, number>();
+  const segments = Array.isArray(speakerData?.segments) ? speakerData.segments : [];
+
+  for (const seg of segments) {
+    const speakerId = seg.finalSpeakerId || seg.speakerId;
+    if (!speakerId || orderMap.has(speakerId)) continue;
+    orderMap.set(speakerId, orderMap.size + 1);
+  }
+
+  if (orderMap.size === 0 && speakerData?.speakers) {
+    Object.keys(speakerData.speakers)
+      .sort((a, b) => a.localeCompare(b))
+      .forEach((speakerId) => {
+        if (!orderMap.has(speakerId)) {
+          orderMap.set(speakerId, orderMap.size + 1);
+        }
+      });
+  }
+
+  return orderMap;
+}
+
+function fallbackSpeakerLabel(speakerId: string, orderMap: Map<string, number>): string {
+  const numericMatch = /speaker_(\d+)/i.exec(speakerId);
+  if (numericMatch) return `Speaker ${numericMatch[1]}`;
+
+  const order = orderMap.get(speakerId);
+  if (order) return `Speaker ${order}`;
+
+  return 'Speaker';
+}
+
+function getIdentityFirstSpeakerName(
+  speakerData: any,
+  speakerId: string,
+  orderMap: Map<string, number>
+): string {
+  const speaker = speakerData?.speakers?.[speakerId];
+  if (!speaker) return fallbackSpeakerLabel(speakerId, orderMap);
+
+  const displayName = getSpeakerDisplayName({ ...speaker, id: speakerId }).trim();
+  if (
+    displayName &&
+    !ROLE_LIKE_SPEAKER_NAMES.test(displayName)
+  ) {
+    return displayName;
+  }
+
+  return fallbackSpeakerLabel(speakerId, orderMap);
+}
+
+function formatConversationSegmentTag(segment: any, speakerName?: string): string {
+  if (segment?.segmentKind === 'ad_read') {
+    if (speakerName && segment?.sponsorName && speakerName.trim().toLowerCase() === String(segment.sponsorName).trim().toLowerCase()) {
+      return '';
+    }
+    return segment?.sponsorName
+      ? ` [Ad read: ${segment.sponsorName}]`
+      : ' [Ad read]';
+  }
+  if (segment?.segmentKind === 'promo') {
+    if (speakerName && segment?.sponsorName && speakerName.trim().toLowerCase() === String(segment.sponsorName).trim().toLowerCase()) {
+      return '';
+    }
+    return segment?.sponsorName
+      ? ` [Promo: ${segment.sponsorName}]`
+      : ' [Promo]';
+  }
+  if (segment?.segmentKind === 'quoted_audio') {
+    return ' [Quoted audio]';
+  }
+  return '';
+}
+
 function buildSpeakerRoster(speakerData: any): SpeakerRosterEntry[] {
   if (!speakerData?.speakers) return [];
   const segments = Array.isArray(speakerData.segments) ? speakerData.segments : [];
   const totals: Record<string, { duration: number; count: number }> = {};
+  const orderMap = buildSpeakerOrderMap(speakerData);
 
   for (const seg of segments) {
     const speakerId = seg.finalSpeakerId || seg.speakerId;
@@ -216,7 +294,7 @@ function buildSpeakerRoster(speakerData: any): SpeakerRosterEntry[] {
 
   const roster = Object.entries(speakerData.speakers).map(([id, speaker]: [string, any]) => ({
     id,
-    name: getSpeakerDisplayName({ ...speaker, id }),
+    name: getIdentityFirstSpeakerName(speakerData, id, orderMap),
     role: speaker?.role || null,
     segmentCount: totals[id]?.count || 0,
     totalDuration: totals[id]?.duration || 0,
@@ -302,14 +380,14 @@ ${project.transcription_text}
 
       let conversationText = '';
       if (speakerData.segments) {
+        const orderMap = buildSpeakerOrderMap(speakerData);
         conversationText = speakerData.segments
           .map((seg: any) => {
             const segmentSpeakerId = seg.finalSpeakerId || seg.speakerId;
-            const speakerName = speakerData.speakers?.[segmentSpeakerId]
-              ? getSpeakerDisplayName({ ...speakerData.speakers[segmentSpeakerId], id: segmentSpeakerId })
-              : segmentSpeakerId;
+            const speakerName = getIdentityFirstSpeakerName(speakerData, segmentSpeakerId, orderMap);
             const timestamp = formatConversationTimestamp(seg.startTime, seg.endTime);
-            return `**${speakerName}** ${timestamp}: ${seg.text}`;
+            const tag = formatConversationSegmentTag(seg, speakerName);
+            return `**${speakerName}**${tag} ${timestamp}: ${seg.text}`;
           })
           .join('\n\n');
       }
@@ -476,14 +554,14 @@ Exported from AudioRepurpose
 
       let conversationText = '';
       if (speakerData.segments) {
+        const orderMap = buildSpeakerOrderMap(speakerData);
         conversationText = speakerData.segments
           .map((seg: any) => {
             const segmentSpeakerId = seg.finalSpeakerId || seg.speakerId;
-            const speakerName = speakerData.speakers?.[segmentSpeakerId]
-              ? getSpeakerDisplayName({ ...speakerData.speakers[segmentSpeakerId], id: segmentSpeakerId })
-              : segmentSpeakerId;
+            const speakerName = getIdentityFirstSpeakerName(speakerData, segmentSpeakerId, orderMap);
             const timestamp = formatConversationTimestamp(seg.startTime, seg.endTime);
-            return `${timestamp} ${speakerName}: ${seg.text}`;
+            const tag = formatConversationSegmentTag(seg, speakerName);
+            return `${timestamp} ${speakerName}${tag}: ${seg.text}`;
           })
           .join('\n\n');
       }
@@ -650,6 +728,7 @@ function formatAsJSON(projects: ExportProject[], manifest: ExportManifestItem[])
         coreContent.conversation = {
           speakers: speakerData?.speakers,
           segments: speakerData?.segments,
+          detectionMetadata: speakerData?.detectionMetadata,
           speakerRoster: roster.length > 0 ? roster.map((speaker) => ({
             id: speaker.id,
             name: speaker.name,
@@ -1073,13 +1152,13 @@ async function exportAsPDF(
           if (project.speaker_data) {
             const sd = parseSpeakerData(project);
             if (sd.segments) {
+              const orderMap = buildSpeakerOrderMap(sd);
               content = sd.segments.map((seg: any) => {
                 const segmentSpeakerId = seg.finalSpeakerId || seg.speakerId;
-                const name = sd.speakers?.[segmentSpeakerId]
-                  ? getSpeakerDisplayName({ ...sd.speakers[segmentSpeakerId], id: segmentSpeakerId })
-                  : segmentSpeakerId;
+                const name = getIdentityFirstSpeakerName(sd, segmentSpeakerId, orderMap);
                 const timestamp = formatConversationTimestamp(seg.startTime, seg.endTime);
-                return `${timestamp} ${name}: ${seg.text}`;
+                const tag = formatConversationSegmentTag(seg);
+                return `${timestamp} ${name}${tag}: ${seg.text}`;
               }).join('\n\n');
             }
           }
@@ -1324,3 +1403,13 @@ export async function exportContent(
     };
   }
 }
+
+export const __testUtils = {
+  buildSpeakerOrderMap,
+  buildSpeakerRoster,
+  formatAsJSON,
+  getIdentityFirstSpeakerName,
+  formatConversationSegmentTag,
+  formatCoreContentAsMarkdown,
+  formatCoreContentAsPlainText,
+};
