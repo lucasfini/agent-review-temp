@@ -2123,9 +2123,7 @@ function assignRecurringShowRosterNames(
   const rawRecurringRoster = options.showRoster && options.showRoster.length > 0
     ? options.showRoster
     : showIdentity?.roster || [];
-  const rejectedGuestCarryovers = rawRecurringRoster
-    .filter((entry) => entry.role === 'guest' || entry.role === 'panelist')
-    .map((entry) => entry.name);
+  const rejectedGuestCarryovers: string[] = [];
   const recurringRoster = rawRecurringRoster.filter((entry) => entry.role === 'host' || entry.role === 'co_host');
 
   if (!recurringRoster.length) {
