@@ -260,7 +260,7 @@ export default function UploadPage() {
         id: file.id,
         projectId: file.projectId,
         title: file.displayName || file.file?.name || 'Untitled',
-        status: file.status,
+        status: file.status as 'queued' | 'pending' | 'extracting' | 'uploading' | 'processing',
         progress: file.status === 'extracting'
           ? (file.extractionProgress || 0)
           : file.progress,
