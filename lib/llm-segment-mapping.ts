@@ -261,6 +261,13 @@ function applyMappings(
       initialSpeakerId: seg.speakerId,
       confidence: 0.85,  // LLM-assigned base confidence
       status: 'confirmed' as const,
+      segmentKind: speaker?.role === 'advertiser'
+        ? 'ad_read'
+        : speaker?.role === 'quoted_audio'
+          ? 'quoted_audio'
+          : seg.segmentKind || 'conversation',
+      sponsorName: seg.sponsorName ?? null,
+      attributionEvidence: seg.attributionEvidence || 'raw_diarization',
     };
   });
 }

@@ -2,6 +2,7 @@ import { NextRequest, NextResponse } from 'next/server';
 import { supabaseAdmin } from '@/lib/supabase/server';
 import { RouteAccessError, requireProjectOwner } from '@/lib/api/route-auth';
 import { isDemoUser } from '@/lib/demo-mode';
+import { attachSpeakerAssignmentMetadata } from '@/lib/speaker-finalization';
 
 export const dynamic = 'force-dynamic';
 export const revalidate = 0;
@@ -71,7 +72,13 @@ export async function PATCH(
       const updatedSegments = (speakerData.segments || []).map((seg: any) => {
         const segSpeakerId = seg.finalSpeakerId || seg.speakerId;
         if (segSpeakerId === speakerId) {
-          return { ...seg, speakerId: reassignToSpeakerId, finalSpeakerId: reassignToSpeakerId };
+          return {
+            ...seg,
+            speakerId: reassignToSpeakerId,
+            finalSpeakerId: reassignToSpeakerId,
+            reviewStatus: 'pending' as const,
+            reviewConfirmedAt: undefined,
+          };
         }
         return seg;
       });
@@ -101,11 +108,12 @@ export async function PATCH(
       lastModified: new Date().toISOString(),
       lastModificationType: `speaker_${action}`,
     };
+    const updatedSpeakerData = attachSpeakerAssignmentMetadata(speakerData);
 
     const { data: saved, error: updateError } = await supabaseAdmin
       .from('projects')
       // @ts-ignore - Supabase types issue with update
-      .update({ speaker_data: speakerData })
+      .update({ speaker_data: updatedSpeakerData })
       .eq('id', projectId)
       .select('speaker_data')
       .single();
@@ -173,7 +181,13 @@ export async function DELETE(
       updatedSegments = updatedSegments.map((seg: any) => {
         const segSpeakerId = seg.finalSpeakerId || seg.speakerId;
         if (segSpeakerId === speakerId) {
-          return { ...seg, speakerId: reassignToSpeakerId, finalSpeakerId: reassignToSpeakerId };
+          return {
+            ...seg,
+            speakerId: reassignToSpeakerId,
+            finalSpeakerId: reassignToSpeakerId,
+            reviewStatus: 'pending' as const,
+            reviewConfirmedAt: undefined,
+          };
         }
         return seg;
       });
@@ -200,7 +214,7 @@ export async function DELETE(
       };
     }
 
-    const updatedSpeakerData = {
+    const updatedSpeakerData = attachSpeakerAssignmentMetadata({
       ...speakerData,
       segments: updatedSegments,
       speakers: updatedSpeakers,
@@ -210,7 +224,7 @@ export async function DELETE(
         lastModified: new Date().toISOString(),
         lastModificationType: 'speaker_delete',
       },
-    };
+    });
 
     const { data: savedDelete, error: updateError } = await supabaseAdmin
       .from('projects')

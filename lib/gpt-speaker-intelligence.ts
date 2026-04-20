@@ -67,10 +67,10 @@ Many podcast hosts read a biographical summary of the guest near the END of the 
 The READER of this bio is the HOST — NOT the bio's subject. A person cannot narrate their own third-person biography.
 When you see a long biographical passage about a speaker who also speaks in first person elsewhere, the passage is being READ BY SOMEONE ELSE (the host). Do not assign the bio's subject as the speaker reading it.
 
-PODCAST SHOW NAME → HOST IDENTIFICATION:
-If the filename contains a recognizable podcast/show name, use your knowledge to identify that show's host as a speaker.
-Examples: "The Prof G Pod" → host is Scott Galloway; "Lex Fridman Podcast" → host is Lex Fridman; "The Tim Ferriss Show" → host is Tim Ferriss; "SmartLess" → hosts are Jason Bateman, Sean Hayes, Will Arnett.
-The show name itself is not a speaker, but the known host of that show IS a speaker in this recording.
+FILENAME / SHOW NAME HINTS:
+Filename or show-name context is only a weak hint about format or likely roles.
+Do NOT assign a real speaker name from filename/show knowledge alone.
+If the transcript does not explicitly support a speaker name, set name to null.
 
 DIARIZATION NOISE:
 Speaker diarization software occasionally misattributes 1-2 segments to the wrong speaker. Judge each speaker's identity from the OVERALL PATTERN across all their segments — not from isolated outliers that seem inconsistent with the rest.
@@ -91,7 +91,7 @@ Output valid JSON only.`;
 const GPT_USER_PROMPT_TEMPLATE = `Analyze this transcript to identify WHO IS SPEAKING (not who is mentioned).
 
 FILENAME: "{{FILENAME}}"
-(Filenames often contain guest names like "with Sam Harris" or "John Doe Interview". If the filename contains a recognizable podcast show name, use your knowledge to identify that show's host as a speaker.)
+(Filenames may contain guest names or show names. Treat this as weak context only. Do NOT assign a real speaker name unless the transcript itself supports it.)
 
 TASK: Identify the unique HUMAN speakers whose voices appear in this recording.
 
@@ -100,7 +100,7 @@ KEY RULES:
    - "As John said last week..." → John is mentioned, not speaking
    - "I'm John, thanks for having me" → John IS speaking
 
-2. AD READS: The first 1-2 minutes often contain sponsor reads. If a voice ONLY appears reading ads and never in the main conversation, classify as role=advertiser.
+2. AD READS: The first 1-2 minutes often contain sponsor reads. Only use role=advertiser when a voice appears exclusively in ads/promotional content and does NOT participate in the main conversation.
 
 3. CONSOLIDATION: One person = one speaker ID. If "Jessica" and "Jess" are the same person, merge them.
 
@@ -285,11 +285,17 @@ export async function identifySpeakersWithGPT(
       console.warn('[GPT SPEAKER INTELLIGENCE] Validation errors:', validationErrors);
     }
 
-    // Sanitize invalid names
+    // Sanitize invalid or brand-like names
     const sanitizedErrors: string[] = [];
     speakers = speakers.map(speaker => {
       if (!speaker.name) return speaker;
-      if (isValidSpeakerName(speaker.name)) return speaker;
+      if (
+        isValidSpeakerName(speaker.name) &&
+        !looksLikeBrandOrSponsorName(speaker.name) &&
+        hasStrongSingleTokenNameEvidence(speaker.name, segments, options.presetRoster)
+      ) {
+        return speaker;
+      }
       sanitizedErrors.push(`Sanitized invalid name "${speaker.name}" for ${speaker.id}`);
       return { ...speaker, name: null };
     });
@@ -298,6 +304,28 @@ export async function identifySpeakersWithGPT(
       console.warn('[GPT SPEAKER INTELLIGENCE] Sanitized names:', sanitizedErrors);
       validationErrors.push(...sanitizedErrors);
     }
+
+    speakers = speakers.map((speaker) => {
+      if (speaker.role !== 'advertiser') return speaker;
+
+      const clusterSegments = segments.filter((segment) => segment.speakerId === speaker.id);
+      if (!clusterSegments.length) return speaker;
+
+      const hasConversationalTurn = clusterSegments.some((segment) =>
+        !/\b(?:support for (?:this|the) (?:show|podcast|episode)|this (?:show|episode) is brought to you by|we'?ll be right back|use code\b|promo code\b|visit\s+\S+\.(?:com|org|net|io|co)\b)\b/i.test(segment.text || '')
+      );
+
+      if (!hasConversationalTurn) return speaker;
+
+      console.log(
+        `[GPT SPEAKER INTELLIGENCE] Conservative role correction: demoting ${speaker.id} from advertiser to unknown because it has conversational turns`
+      );
+
+      return {
+        ...speaker,
+        role: 'unknown' as SpeakerRole,
+      };
+    });
 
     // ── Post-process fallback: ensure at least one host is identified ──
     // If GPT returned `role=unknown` for a speaker and no host exists, promote the
@@ -635,6 +663,67 @@ function isValidSpeakerName(name: string): boolean {
   }
 
   return true;
+}
+
+function looksLikeBrandOrSponsorName(name: string): boolean {
+  const cleaned = name.trim();
+  if (!cleaned) return false;
+
+  if (/[./]/.test(cleaned)) return true;
+
+  const lowered = cleaned.toLowerCase();
+  const brandTerms = [
+    'analytics',
+    'markets',
+    'capital',
+    'ventures',
+    'fund',
+    'bank',
+    'labs',
+    'biotics',
+    'vanta',
+    'delete.me',
+    'sofi',
+    'vcx',
+    'zbiotics',
+  ];
+
+  return brandTerms.some((term) => lowered === term || lowered.includes(term));
+}
+
+function hasStrongSingleTokenNameEvidence(
+  name: string,
+  segments: SpeakerSegment[],
+  presetRoster?: Array<{ name: string; role?: string | null }>
+): boolean {
+  const cleaned = name.trim();
+  const words = cleaned.split(/\s+/).filter(Boolean);
+  if (words.length !== 1) return true;
+  if (/^[A-Z]{2,3}$/.test(cleaned)) return true;
+
+  const normalized = cleaned.toLowerCase();
+  if (presetRoster?.some((speaker) => speaker.name?.trim().toLowerCase() === normalized)) {
+    return true;
+  }
+
+  const escaped = cleaned.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+  const selfIdPattern = new RegExp(`\\b(?:i'm|i am|my name is|this is)\\s+${escaped}\\b`, 'i');
+  const introPattern = new RegExp(`\\b(?:welcome|joined by|here with|good to have you|our guest is|speaking with)\\s+${escaped}\\b`, 'i');
+  const directAddressPattern = new RegExp(`\\b${escaped},\\b`, 'i');
+  let directAddressCount = 0;
+
+  for (const segment of segments) {
+    const text = segment.text || '';
+    if (!text) continue;
+    if (selfIdPattern.test(text) || introPattern.test(text)) {
+      return true;
+    }
+    if (directAddressPattern.test(text)) {
+      directAddressCount++;
+    }
+  }
+
+  return directAddressCount >= 2;
 }
 
 /**

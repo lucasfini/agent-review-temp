@@ -31,6 +31,21 @@ import { correctDebateSpeakers, applyDebateCorrectionToSpeakerData, summarizeDeb
 import { getOpenAIApiKeyForUser } from '@/lib/openai/consent';
 import { r2Client, BUCKET_NAME } from '@/lib/r2';
 import { isAuthorizedMaintenanceRequest } from '@/lib/maintenance-auth';
+import {
+  applyNeighborSmoothing,
+  attachSpeakerAssignmentMetadata,
+  collectSpeakerPipelineSnapshot,
+  enforceFinalSpeakerIdContract,
+  finalizeSpeakerAttributionForStorage,
+  logSpeakerAssignmentCounts,
+  mergeDuplicateSpeakersByName,
+} from '@/lib/speaker-finalization';
+import {
+  detectShowIdentityFromContext,
+  extractLearnedShowRosterFromProjects,
+  mergeShowRosterEntries,
+  type ShowRosterEntry,
+} from '@/lib/show-speaker-memory';
 
 const sleep = (ms: number) => new Promise<void>(resolve => setTimeout(resolve, ms));
 
@@ -171,6 +186,54 @@ function buildSpeakerContextFromData(speakerData: any): Record<string, { name: s
   );
 }
 
+async function inferRecurringShowRoster(params: {
+  userId?: string;
+  projectId: string;
+  title?: string | null;
+  filename?: string | null;
+  segments?: SpeakerSegment[];
+  explicitRoster?: Array<{ name: string; role?: string | null; aliases?: string[] }> | null;
+}): Promise<{
+  showIdentity: ReturnType<typeof detectShowIdentityFromContext>;
+  effectiveRoster: ShowRosterEntry[];
+}> {
+  const showIdentity = detectShowIdentityFromContext({
+    title: params.title || null,
+    filename: params.filename || null,
+    segments: params.segments,
+  });
+
+  if (!showIdentity && (!params.explicitRoster || params.explicitRoster.length === 0)) {
+    return { showIdentity: null, effectiveRoster: [] };
+  }
+
+  let priorProjects: any[] = [];
+  if (params.userId && showIdentity) {
+    const { data } = await (supabaseAdmin as any)
+      .from('projects')
+      .select('id, title, metadata, speaker_data, preset_speakers, processing_completed_at, status')
+      .eq('user_id', params.userId)
+      .eq('status', 'completed')
+      .neq('id', params.projectId)
+      .order('processing_completed_at', { ascending: false })
+      .limit(40);
+
+    priorProjects = Array.isArray(data) ? data : [];
+  }
+
+  const learnedRoster = extractLearnedShowRosterFromProjects(priorProjects, showIdentity);
+  const effectiveRoster = mergeShowRosterEntries(
+    showIdentity?.roster,
+    learnedRoster,
+    params.explicitRoster || undefined
+  );
+
+  return {
+    showIdentity,
+    effectiveRoster,
+  };
+}
+
 async function runBackgroundContentTasks(params: {
   projectId: string;
   speakerData: any;
@@ -271,7 +334,6 @@ async function runBackgroundContentTasks(params: {
           roleSummary: (assignment as any).summary,
           roleEvidence: (assignment as any).evidence,
           autoRoleAssigned: true,
-          finalName: (assignment as any).displayName || workingSpeakerData.speakers[speakerId].finalName
         };
       }
 
@@ -875,17 +937,37 @@ export async function POST(request: NextRequest) {
     let debateCorrectionResult: any = null; // Store debate correction metadata
     let llmExtractedRoster: Array<{ name: string; aliases: string[] }> = []; // Roster from LLM
     let pipelineDiagnostics: any = null;
+    const explicitPresetRoster = Array.isArray(existingProject?.preset_speakers)
+      ? existingProject!.preset_speakers!.map((speaker: any) => ({
+          name: speaker.name,
+          role: speaker.role ?? null,
+          aliases: Array.isArray(speaker.aliases) ? speaker.aliases : undefined,
+        }))
+      : [];
+    const inferredShowContext = await inferRecurringShowRoster({
+      userId: existingProject?.user_id,
+      projectId,
+      title: existingProject?.title || fileName,
+      filename: fileName,
+      segments: speakerSegments,
+      explicitRoster: explicitPresetRoster,
+    });
+    const effectivePresetRoster = inferredShowContext.effectiveRoster;
 
-    // Check if we have a preset roster (user-provided speakers)
-    const hasRoster = existingProject?.preset_speakers &&
-      Array.isArray(existingProject.preset_speakers) &&
-      existingProject.preset_speakers.length > 0;
+    // Check if we have any roster guidance (user-provided or inferred recurring show memory)
+    const hasRoster = effectivePresetRoster.length > 0;
 
     // Do not infer speakerCount from preset roster size.
     // A partial roster (e.g. 2 names for a 5-speaker file) should not constrain GPT extraction.
     const effectiveSpeakerCount = speakerCount;
     if (!effectiveSpeakerCount && hasRoster) {
       console.log('[TRANSCRIPTION] Preset roster detected; speakerCount left unset so GPT can discover additional speakers');
+    }
+    if (inferredShowContext.showIdentity) {
+      console.log(
+        `[SHOW MEMORY] Matched ${inferredShowContext.showIdentity.displayName} via ${inferredShowContext.showIdentity.matchedBy}; ` +
+        `effective recurring roster: ${effectivePresetRoster.map((speaker) => `${speaker.name}${speaker.role ? ` [${speaker.role}]` : ''}`).join(', ')}`
+      );
     }
 
     // Run the LLM speaker pipeline only when named speakers are requested
@@ -921,18 +1003,46 @@ export async function POST(request: NextRequest) {
             projectType,
             mappingMode: 'csp',
             hasPresetRoster: hasRoster ?? undefined,
-            presetRoster: hasRoster
-              ? existingProject!.preset_speakers!.map((s: any) => ({
-                name: s.name,
-                role: s.role ?? null,
-              }))
-              : undefined,
+            presetRoster: hasRoster ? effectivePresetRoster : undefined,
           });
 
           // Use GPT's authoritative speaker data
           speakersWithNames = pipelineResult.speakerData.speakers;
           reassignedSegments = pipelineResult.segments; // Use GPT-5-nano reassigned segments
           pipelineDiagnostics = pipelineResult.diagnostics;
+          pipelineDiagnostics = {
+            ...(pipelineDiagnostics || {}),
+            finalizationSnapshots: Array.isArray(pipelineDiagnostics?.finalizationSnapshots)
+              ? pipelineDiagnostics.finalizationSnapshots
+              : [],
+            showIdentity: inferredShowContext.showIdentity
+              ? {
+                  id: inferredShowContext.showIdentity.id,
+                  displayName: inferredShowContext.showIdentity.displayName,
+                  matchedBy: inferredShowContext.showIdentity.matchedBy,
+                }
+              : null,
+            showRosterMatches: effectivePresetRoster.map((speaker) => ({
+              name: speaker.name,
+              role: speaker.role || null,
+              aliases: speaker.aliases || [],
+              confidenceSource: speaker.confidenceSource || null,
+            })),
+          };
+          pipelineDiagnostics.finalizationSnapshots.push(
+            collectSpeakerPipelineSnapshot(
+              'pipeline_return',
+              reassignedSegments,
+              speakersWithNames,
+              {
+                projectType,
+                title: existingProject?.title || undefined,
+                filename: fileName,
+                showIdentity: inferredShowContext.showIdentity,
+                showRoster: effectivePresetRoster,
+              }
+            )
+          );
           console.log(`[PIPELINE] Mapper used: ${pipelineResult.diagnostics?.mapperUsed || 'unknown'}`);
 
           const finalIdCount = (pipelineResult.segments || []).filter(
@@ -1173,7 +1283,7 @@ export async function POST(request: NextRequest) {
     // ============================================================
     if (projectType !== 'DEBATE' && hasRoster) {
       try {
-        const roster = existingProject!.preset_speakers!.map((speaker: any) => ({
+        const roster = effectivePresetRoster.map((speaker: any) => ({
           name: speaker.name || speaker,
           aliases: speaker.aliases || [],
         }));
@@ -1223,11 +1333,43 @@ export async function POST(request: NextRequest) {
       logSpeakerAssignmentCounts(reassignedSegments, '[MERGE] post-duplicate-name');
       console.log(`[MERGE] ✅ Merged ${mergeResult.mergedCount} duplicate speaker name(s)`);
     }
+    if (pipelineDiagnostics?.finalizationSnapshots) {
+      pipelineDiagnostics.finalizationSnapshots.push(
+        collectSpeakerPipelineSnapshot(
+          'post-duplicate-merge',
+          reassignedSegments,
+          speakersWithNames,
+          {
+            projectType,
+            title: existingProject?.title || undefined,
+            filename: fileName,
+            showIdentity: inferredShowContext.showIdentity,
+            showRoster: effectivePresetRoster,
+          }
+        )
+      );
+    }
 
-    const smoothingResult = applyNeighborSmoothing(reassignedSegments);
+    const smoothingResult = applyNeighborSmoothing(reassignedSegments, { projectType });
     reassignedSegments = smoothingResult.segments;
     if (smoothingResult.updatedSegments > 0) {
       console.log(`[SMOOTH] Neighbor smoothing applied: ${smoothingResult.updatedSegments} segments`);
+    }
+    if (pipelineDiagnostics?.finalizationSnapshots) {
+      pipelineDiagnostics.finalizationSnapshots.push(
+        collectSpeakerPipelineSnapshot(
+          'post-neighbor-smoothing',
+          reassignedSegments,
+          speakersWithNames,
+          {
+            projectType,
+            title: existingProject?.title || undefined,
+            filename: fileName,
+            showIdentity: inferredShowContext.showIdentity,
+            showRoster: effectivePresetRoster,
+          }
+        )
+      );
     }
 
     // ============================================================
@@ -1239,9 +1381,48 @@ export async function POST(request: NextRequest) {
     );
     logSpeakerAssignmentCounts(finalSegments, '[FINAL] post-corrections');
 
-    const speakersFromSegments = buildSpeakerDataFromSegments(finalSegments, speakersWithNames);
+    if (pipelineDiagnostics?.finalizationSnapshots) {
+      pipelineDiagnostics.finalizationSnapshots.push(
+        collectSpeakerPipelineSnapshot(
+          'pre-build-speaker-data',
+          finalSegments,
+          speakersWithNames,
+          {
+            projectType,
+            title: existingProject?.title || undefined,
+            filename: fileName,
+            showIdentity: inferredShowContext.showIdentity,
+            showRoster: effectivePresetRoster,
+          }
+        )
+      );
+    }
 
-    const speakerData: any = {
+    const finalHumanNaming = finalizeSpeakerAttributionForStorage(
+      speakersWithNames,
+      finalSegments,
+      {
+        projectType,
+        title: existingProject?.title || undefined,
+        filename: fileName,
+        showIdentity: inferredShowContext.showIdentity,
+        showRoster: effectivePresetRoster,
+      }
+    );
+    speakersWithNames = finalHumanNaming.speakers;
+    if (finalHumanNaming.namingAssigned > 0) {
+      console.log(`[FINAL NAMING] Assigned ${finalHumanNaming.namingAssigned} conversational speaker name(s)`);
+    }
+    for (const infoLine of finalHumanNaming.namingInfo) {
+      console.log(infoLine);
+    }
+    if (pipelineDiagnostics?.finalizationSnapshots) {
+      pipelineDiagnostics.finalizationSnapshots.push(finalHumanNaming.snapshot);
+    }
+
+    const speakersFromSegments = finalHumanNaming.speakerDataSpeakers;
+
+    const rawSpeakerData: any = {
       segments: finalSegments,
       speakers: speakersFromSegments,
       // Classification metadata (from early classification)
@@ -1273,6 +1454,7 @@ export async function POST(request: NextRequest) {
         }
       }
     };
+    const speakerData = attachSpeakerAssignmentMetadata(rawSpeakerData);
 
     // Add debate correction metadata if applicable
     if (debateCorrectionResult) {
@@ -1445,79 +1627,6 @@ function getSpeakerNameForMerge(speaker: any): string | null {
     null;
 }
 
-function mergeDuplicateSpeakersByName(
-  segments: SpeakerSegment[],
-  speakers: Record<string, any>
-): { segments: SpeakerSegment[]; speakers: Record<string, any>; mergedCount: number } {
-  const nameMap = new Map<string, string[]>();
-  const segmentCounts = new Map<string, number>();
-
-  for (const seg of segments) {
-    const id = (seg as any).finalSpeakerId || seg.speakerId;
-    segmentCounts.set(id, (segmentCounts.get(id) || 0) + 1);
-  }
-
-  for (const [id, speaker] of Object.entries(speakers)) {
-    const name = getSpeakerNameForMerge(speaker);
-    if (!name) continue;
-    const normalized = normalizeSpeakerName(name);
-    if (!nameMap.has(normalized)) nameMap.set(normalized, []);
-    nameMap.get(normalized)!.push(id);
-  }
-
-  const remap = new Map<string, string>();
-  let mergedCount = 0;
-
-  for (const [name, ids] of nameMap.entries()) {
-    if (ids.length <= 1) continue;
-
-    const sorted = ids.sort((a, b) => {
-      const aCount = segmentCounts.get(a) || 0;
-      const bCount = segmentCounts.get(b) || 0;
-      if (aCount !== bCount) return bCount - aCount;
-      const aRole = speakers[a]?.role || 'unknown';
-      const bRole = speakers[b]?.role || 'unknown';
-      if (aRole === 'unknown' && bRole !== 'unknown') return 1;
-      if (bRole === 'unknown' && aRole !== 'unknown') return -1;
-      const aConf = speakers[a]?.roleConfidence || speakers[a]?.confidence || 0;
-      const bConf = speakers[b]?.roleConfidence || speakers[b]?.confidence || 0;
-      return bConf - aConf;
-    });
-
-    const primary = sorted[0];
-    for (const dup of sorted.slice(1)) {
-      remap.set(dup, primary);
-      mergedCount++;
-      console.log(`[MERGE] Duplicate name "${name}" → ${dup} merged into ${primary}`);
-    }
-  }
-
-  if (remap.size === 0) {
-    return { segments, speakers, mergedCount: 0 };
-  }
-
-  const updatedSegments = segments.map(seg => {
-    const currentId = (seg as any).finalSpeakerId || seg.speakerId;
-    const target = remap.get(currentId);
-    if (!target) return seg;
-    const confidence = typeof seg.confidence === 'number' ? seg.confidence : 0.8;
-    return {
-      ...seg,
-      speakerId: target,
-      finalSpeakerId: target,
-      confidence,
-      status: seg.status ?? 'tentative',
-    };
-  });
-
-  const updatedSpeakers: Record<string, any> = { ...speakers };
-  for (const dup of remap.keys()) {
-    delete updatedSpeakers[dup];
-  }
-
-  return { segments: updatedSegments, speakers: updatedSpeakers, mergedCount };
-}
-
 function applyDebateCorrectionsToFinalIds(
   segments: SpeakerSegment[],
   speakers: Record<string, any>,
@@ -1640,105 +1749,6 @@ function applyIntroHandoffLocks(
   return { segments: updated, speakers, lockedSegments };
 }
 
-function applyNeighborSmoothing(
-  segments: SpeakerSegment[]
-): { segments: SpeakerSegment[]; updatedSegments: number } {
-  if (segments.length < 3) return { segments, updatedSegments: 0 };
-  const updated = [...segments];
-  let updatedSegments = 0;
-  let skippedLong = 0;
-
-  for (let i = 1; i < segments.length - 1; i++) {
-    const prev = segments[i - 1];
-    const next = segments[i + 1];
-    const curr = segments[i];
-    const prevId = (prev as any).finalSpeakerId || prev.speakerId;
-    const nextId = (next as any).finalSpeakerId || next.speakerId;
-    const currId = (curr as any).finalSpeakerId || curr.speakerId;
-    if (prevId !== nextId || currId === prevId) continue;
-
-    const confidence = curr.confidence ?? 1;
-    const duration = curr.endTime - curr.startTime;
-    if (duration > 4) {
-      skippedLong++;
-      continue;
-    }
-    if ((curr as any)._debateCorrected || (curr as any)._correctionReason) continue;
-    if (confidence >= 0.7 && curr.status !== 'tentative' && curr.status !== 'uncertain') continue;
-
-    updated[i] = {
-      ...curr,
-      speakerId: prevId,
-      finalSpeakerId: prevId,
-      confidence,
-      status: curr.status ?? 'tentative',
-    };
-    updatedSegments++;
-  }
-
-  if (skippedLong > 0) {
-    console.log(`[SMOOTH] Skipped long segments (>4s): ${skippedLong}`);
-  }
-  return { segments: updated, updatedSegments };
-}
-
-function enforceFinalSpeakerIdContract(
-  segments: SpeakerSegment[],
-  label: string
-): SpeakerSegment[] {
-  let mismatches = 0;
-  const updated = segments.map(seg => {
-    const finalId = (seg as any).finalSpeakerId || seg.speakerId;
-    const initialId = (seg as any).initialSpeakerId || seg.speakerId;
-    const current = seg.speakerId;
-
-    if (current !== finalId) {
-      mismatches++;
-      return {
-        ...seg,
-        speakerId: finalId,
-        finalSpeakerId: finalId,
-        initialSpeakerId: initialId,
-      };
-    }
-
-    return {
-      ...seg,
-      finalSpeakerId: finalId,
-      initialSpeakerId: initialId,
-    };
-  });
-
-  if (mismatches > 0) {
-    console.error(`[FINAL SPEAKER ID] ${label}: ${mismatches} segments had speakerId != finalSpeakerId. Enforced finalSpeakerId.`);
-  } else {
-    console.log(`[FINAL SPEAKER ID] ${label}: all segments aligned`);
-  }
-
-  return updated;
-}
-
-function logSpeakerAssignmentCounts(segments: SpeakerSegment[], label: string) {
-  const initialCounts = new Map<string, number>();
-  const finalCounts = new Map<string, number>();
-
-  for (const seg of segments) {
-    const initialId = (seg as any).initialSpeakerId || seg.speakerId;
-    const finalId = (seg as any).finalSpeakerId || seg.speakerId;
-    initialCounts.set(initialId, (initialCounts.get(initialId) || 0) + 1);
-    finalCounts.set(finalId, (finalCounts.get(finalId) || 0) + 1);
-  }
-
-  const formatCounts = (m: Map<string, number>) =>
-    Array.from(m.entries())
-      .sort((a, b) => b[1] - a[1])
-      .map(([id, count]) => `${id}:${count}`)
-      .join(', ');
-
-  console.log(`[SPEAKER COUNT] ${label} | initial: ${formatCounts(initialCounts)}`);
-  console.log(`[SPEAKER COUNT] ${label} | final:   ${formatCounts(finalCounts)}`);
-}
-
 function buildAliasesFromName(name: string): string[] {
   const trimmed = name.trim();
   if (!trimmed) return [];
@@ -1777,73 +1787,4 @@ function buildDebateRosterEntriesFromPreset(preset: any[], speakers: Record<stri
       aliases: entry.aliases || buildAliasesFromName(name),
     };
   });
-}
-
-function buildSpeakerDataFromSegments(
-  segments: SpeakerSegment[],
-  speakersWithNames: Record<string, any>
-): Record<string, any> {
-  const grouped = new Map<string, SpeakerSegment[]>();
-
-  for (const seg of segments) {
-    const id = (seg as any).finalSpeakerId || seg.speakerId;
-    if (!grouped.has(id)) grouped.set(id, []);
-    grouped.get(id)!.push(seg);
-  }
-
-  const speakers: Record<string, any> = {};
-
-  for (const [id, segs] of grouped.entries()) {
-    const rosterEntry = speakersWithNames?.[id] || {};
-    const fallbackName = rosterEntry.finalName || rosterEntry.fallbackName || rosterEntry.name || id;
-    const totalDuration = segs.reduce((sum, s) => sum + (s.endTime - s.startTime), 0);
-
-    speakers[id] = {
-      id,
-      finalName: fallbackName,
-      role: rosterEntry.role || rosterEntry.displayRole || 'unknown',
-      roleConfidence: rosterEntry.roleConfidence,
-      extractedName: rosterEntry.extractedName,
-      profile: rosterEntry.profile,
-      segments: segs.map(s => ({
-        speakerId: s.speakerId,
-        finalSpeakerId: (s as any).finalSpeakerId || s.speakerId,
-        initialSpeakerId: (s as any).initialSpeakerId,
-        startTime: s.startTime,
-        endTime: s.endTime,
-        text: s.text,
-        confidence: s.confidence,
-        status: (s as any).status,
-        confidenceReason: (s as any).confidenceReason,
-      })),
-      totalDuration,
-      segmentCount: segs.length,
-      gptAttribution: true,
-    };
-  }
-
-  // Include seeded speakers with zero segments (intro_handoff) so UI can show them
-  if (speakersWithNames) {
-    for (const [id, speaker] of Object.entries(speakersWithNames)) {
-      if (speakers[id]) continue;
-      if (speaker?.source !== 'intro_handoff') continue;
-
-      speakers[id] = {
-        id,
-        finalName: speaker.finalName || speaker.fallbackName || speaker.name || id,
-        role: speaker.role || speaker.displayRole || 'unknown',
-        roleConfidence: speaker.roleConfidence,
-        extractedName: speaker.extractedName,
-        profile: speaker.profile,
-        segments: [],
-        totalDuration: 0,
-        segmentCount: 0,
-        gptAttribution: true,
-        seededOnly: true,
-        source: speaker.source,
-      };
-    }
-  }
-
-  return speakers;
 }

@@ -3,9 +3,19 @@ import path from 'path';
 
 import { classifyProjectType } from '@/lib/utils/classifyProjectType';
 import { extractAnchors, solveConstraints, type AffinityMatrix, type Anchor } from '@/lib/constraint-solver';
-import { detectSponsorSegments, runRefactoredSpeakerPipeline } from '@/lib/refactored-speaker-pipeline';
+import { __testUtils, detectSponsorSegments, enforceCleanClusterConsistency, runRefactoredSpeakerPipeline } from '@/lib/refactored-speaker-pipeline';
 import { extractValidatedSelfIdName } from '@/lib/name-interference';
 import { STRONG_SELF_ID_PATTERNS } from '@/lib/self-id-patterns';
+import {
+  applyNeighborSmoothing,
+  collectSpeakerPipelineSnapshot,
+  finalizeSpeakerAttributionForStorage,
+} from '@/lib/speaker-finalization';
+import {
+  detectShowIdentityFromContext,
+  extractLearnedShowRosterFromProjects,
+  mergeShowRosterEntries,
+} from '@/lib/show-speaker-memory';
 import type { SpeakerSegment } from '@/lib/types';
 import type { GPTSpeaker } from '@/lib/gpt-speaker-intelligence';
 import * as gptSpeakerIntelligence from '@/lib/gpt-speaker-intelligence';
@@ -20,6 +30,43 @@ function loadIranExportSegments(): SpeakerSegment[] {
     'docs/jsons',
     "Pricing_the_Iran_War's_Future_—_Are_Markets_Right-_-_Prof_G_Markets-export-2026-03-11.json"
   );
+  if (!fs.existsSync(exportPath)) {
+    return [
+      {
+        speakerId: 'Speaker_A',
+        initialSpeakerId: 'Speaker_A',
+        finalSpeakerId: 'Speaker_A',
+        startTime: 0,
+        endTime: 20,
+        text: 'Welcome back to Prof G Markets. Ed, what are we watching this week?',
+      },
+      {
+        speakerId: 'Speaker_B',
+        initialSpeakerId: 'Speaker_B',
+        finalSpeakerId: 'Speaker_B',
+        startTime: 20,
+        endTime: 36,
+        text: 'Scott, investors are reacting to inflation data and oil volatility.',
+      },
+      {
+        speakerId: 'Speaker_C',
+        initialSpeakerId: 'Speaker_C',
+        finalSpeakerId: 'Speaker_C',
+        startTime: 36,
+        endTime: 50,
+        text: 'Katie, how does Europe fit into that outlook?',
+      },
+      {
+        speakerId: 'Speaker_D',
+        initialSpeakerId: 'Speaker_D',
+        finalSpeakerId: 'Speaker_D',
+        startTime: 50,
+        endTime: 70,
+        text: 'The European response has been more cautious, especially on rates.',
+      },
+    ];
+  }
+
   const data = JSON.parse(fs.readFileSync(exportPath, 'utf8'));
   const speakers = data.projects[0].coreContent.conversation.speakers as Record<string, { segments: any[] }>;
 
@@ -41,6 +88,1163 @@ function loadIranExportSegments(): SpeakerSegment[] {
 }
 
 describe('speaker pipeline regressions', () => {
+  test('resolves interview guest from host intro and host from show context', () => {
+    const roster: GPTSpeaker[] = [
+      { id: 'speaker_1', name: null, role: 'unknown', confidence: 0.62, source: 'test' },
+      { id: 'speaker_3', name: null, role: 'unknown', confidence: 0.62, source: 'test' },
+      { id: 'speaker_5', name: 'VCX', role: 'advertiser', confidence: 0.92, source: 'sponsor_detection' },
+    ];
+
+    const segments: SpeakerSegment[] = [
+      {
+        speakerId: 'speaker_1',
+        initialSpeakerId: 'Speaker_A',
+        finalSpeakerId: 'speaker_1',
+        startTime: 0,
+        endTime: 120,
+        text: "Welcome to Prof G Markets. Scott is off for spring break, but he will be back next week. Here to help us answer these questions, we are joined by the chief economist at Moody's Analytics, Mark Zandi. Mark, good to have you on the program.",
+        confidence: 0.62,
+        status: 'confirmed',
+      },
+      {
+        speakerId: 'speaker_3',
+        initialSpeakerId: 'Speaker_B',
+        finalSpeakerId: 'speaker_3',
+        startTime: 120,
+        endTime: 210,
+        text: "Thanks for having me. I think the market is underestimating the inflation risk here and I think investors need to be careful about the second-order effects.",
+        confidence: 0.62,
+        status: 'confirmed',
+      },
+      {
+        speakerId: 'speaker_5',
+        initialSpeakerId: 'Speaker_A',
+        finalSpeakerId: 'speaker_5',
+        startTime: 210,
+        endTime: 260,
+        text: 'This episode is brought to you by VCX. Use code PROFG to learn more.',
+        confidence: 0.85,
+        status: 'confirmed',
+        segmentKind: 'ad_read',
+        sponsorName: 'VCX',
+      },
+    ];
+
+    const resolved = __testUtils.resolveConversationalHumanNames(roster, segments, {
+      projectType: 'INTERVIEW',
+      title: "The “Ceasefire” Won't Save The Economy",
+      filename: "The_“Ceasefire”_Won’t_Save_The_Economy-export-2026-04-15-test3.json",
+    });
+
+    const speaker1 = resolved.roster.find((speaker) => speaker.id === 'speaker_1');
+    const speaker3 = resolved.roster.find((speaker) => speaker.id === 'speaker_3');
+    const advertiser = resolved.roster.find((speaker) => speaker.id === 'speaker_5');
+
+    expect(speaker1?.name).toBe('Ed Elson');
+    expect(speaker1?.role).toBe('host');
+    expect(speaker3?.name).toBe('Mark Zandi');
+    expect(speaker3?.role).toBe('guest');
+    expect(advertiser?.name).toBe('VCX');
+  });
+
+  test('maps host and guest names onto saved speaker data without changing sponsor speakers', () => {
+    const speakerMap = {
+      speaker_2: {
+        id: 'speaker_2',
+        finalName: 'Speaker 2',
+        role: 'unknown',
+        segments: [],
+      },
+      speaker_3: {
+        id: 'speaker_3',
+        finalName: 'Speaker 3',
+        role: 'host',
+        segments: [],
+      },
+      speaker_7: {
+        id: 'speaker_7',
+        finalName: 'Vanta',
+        role: 'advertiser',
+        segments: [],
+      },
+    };
+
+    const segments: SpeakerSegment[] = [
+      {
+        speakerId: 'speaker_2',
+        initialSpeakerId: 'Speaker_A',
+        finalSpeakerId: 'speaker_2',
+        startTime: 11,
+        endTime: 52,
+        text: "This is our cold open. Welcome to Prof G Markets. Scott is still out, he's on spring break, but we have a very special episode for you today. Josh Brown. Josh, thank you for joining us.",
+        confidence: 0.62,
+        status: 'confirmed',
+      },
+      {
+        speakerId: 'speaker_3',
+        initialSpeakerId: 'Speaker_B',
+        finalSpeakerId: 'speaker_3',
+        startTime: 52,
+        endTime: 88,
+        text: "I love you guys. Most of your audience, Ed, are not sitting in that seat. They don't need to trade every headline.",
+        confidence: 0.61,
+        status: 'confirmed',
+      },
+      {
+        speakerId: 'speaker_2',
+        initialSpeakerId: 'Speaker_A',
+        finalSpeakerId: 'speaker_2',
+        startTime: 120,
+        endTime: 188,
+        text: "All right, let's start with our first story here. Josh, what do you make of how the markets reacted?",
+        confidence: 0.62,
+        status: 'confirmed',
+      },
+      {
+        speakerId: 'speaker_7',
+        initialSpeakerId: 'Speaker_A',
+        finalSpeakerId: 'speaker_7',
+        startTime: 500,
+        endTime: 560,
+        text: 'Support for the show comes from Vanta.',
+        confidence: 0.85,
+        status: 'confirmed',
+        segmentKind: 'ad_read',
+        sponsorName: 'Vanta',
+      },
+    ];
+
+    const resolved = __testUtils.resolveConversationalHumanNamesInSpeakerMap(
+      speakerMap,
+      segments,
+      {
+        title: "Don't Try to Beat This Market — Here's What to Do Instead",
+        filename: "Don't_Try_to_Beat_This_Market_—_Here's_What_to_Do_Instead-export-2026-04-15-test3.json",
+      }
+    );
+
+    expect(resolved.speakers.speaker_2.finalName).toBe('Ed Elson');
+    expect(resolved.speakers.speaker_2.role).toBe('host');
+    expect(resolved.speakers.speaker_3.finalName).toBe('Josh Brown');
+    expect(resolved.speakers.speaker_3.role).toBe('guest');
+    expect(resolved.speakers.speaker_7.finalName).toBe('Vanta');
+    expect(resolved.speakers.speaker_7.role).toBe('advertiser');
+  });
+
+  test('test4 market pattern anchors host on intro cluster and guest on reply cluster despite stale host role', () => {
+    const speakerMap = {
+      speaker_1: {
+        id: 'speaker_1',
+        finalName: 'Speaker 1',
+        role: 'unknown',
+        segments: [],
+      },
+      speaker_3: {
+        id: 'speaker_3',
+        finalName: 'Ed Elson',
+        role: 'host',
+        segments: [],
+      },
+      speaker_7: {
+        id: 'speaker_7',
+        finalName: 'Vanta',
+        role: 'advertiser',
+        segments: [],
+      },
+    };
+
+    const segments: SpeakerSegment[] = [
+      {
+        speakerId: 'speaker_1',
+        initialSpeakerId: 'Speaker_A',
+        finalSpeakerId: 'speaker_1',
+        startTime: 11.253,
+        endTime: 51.738,
+        text: "This is our cold open. Welcome to Prof G Markets. Scott is still out, he's on spring break, but we have a very special episode for you today. Today we are discussing the market's reaction to the tenuous ceasefire and we are also looking at an update on big tech and also the halo stocks with the man who actually invented the term halo. This has been all the rage on Wall Street recently. It is the new investment trade, the new investment thesis in the world of AI. And the guy who created it is here. He's in the building. Josh Brown. Josh, thank you for joining us.",
+        confidence: 0.62,
+        status: 'confirmed',
+      },
+      {
+        speakerId: 'speaker_1',
+        initialSpeakerId: 'Speaker_B',
+        finalSpeakerId: 'speaker_1',
+        startTime: 51.899,
+        endTime: 52.926,
+        text: 'I am not in the building.',
+        confidence: 0.64,
+        status: 'tentative',
+        confidenceReason: 'transition_short',
+      },
+      {
+        speakerId: 'speaker_3',
+        initialSpeakerId: 'Speaker_B',
+        finalSpeakerId: 'speaker_3',
+        startTime: 60.326,
+        endTime: 88.571,
+        text: "Sort of. But I like to work as much as possible when I'm on vacation. So this is me vacationing on a podcast. I love you guys. Most of your audience, Ed, are not sitting in that seat.",
+        confidence: 0.61,
+        status: 'confirmed',
+      },
+      {
+        speakerId: 'speaker_1',
+        initialSpeakerId: 'Speaker_A',
+        finalSpeakerId: 'speaker_1',
+        startTime: 102.194,
+        endTime: 115.324,
+        text: "It was a very good time. Well, we're very glad to have you on the show, Josh, and we want to get right into it.",
+        confidence: 0.62,
+        status: 'confirmed',
+      },
+      {
+        speakerId: 'speaker_7',
+        initialSpeakerId: 'Speaker_A',
+        finalSpeakerId: 'speaker_7',
+        startTime: 500,
+        endTime: 560,
+        text: 'Support for the show comes from Vanta.',
+        confidence: 0.85,
+        status: 'confirmed',
+        segmentKind: 'ad_read',
+        sponsorName: 'Vanta',
+      },
+    ];
+
+    const resolved = __testUtils.resolveConversationalHumanNamesInSpeakerMap(
+      speakerMap,
+      segments,
+      {
+        projectType: 'PODCAST',
+        title: "Don't Try to Beat This Market — Here's What to Do Instead",
+        filename: "Don't_Try_to_Beat_This_Market_—_Here's_What_to_Do_Instead-export-2026-04-15-test4.json",
+      }
+    );
+
+    expect(resolved.speakers.speaker_1.finalName).toBe('Ed Elson');
+    expect(resolved.speakers.speaker_1.role).toBe('host');
+    expect(resolved.speakers.speaker_3.finalName).toBe('Josh Brown');
+    expect(resolved.speakers.speaker_3.role).toBe('guest');
+    expect(resolved.speakers.speaker_7.finalName).toBe('Vanta');
+  });
+
+  test('test4 ceasefire pattern anchors host on intro cluster and guest on dominant reply cluster', () => {
+    const speakerMap = {
+      speaker_2: {
+        id: 'speaker_2',
+        finalName: 'Speaker 2',
+        role: 'unknown',
+        segments: [],
+      },
+      speaker_3: {
+        id: 'speaker_3',
+        finalName: 'Speaker 3',
+        role: 'unknown',
+        segments: [],
+      },
+      speaker_5: {
+        id: 'speaker_5',
+        finalName: 'VCX',
+        role: 'advertiser',
+        segments: [],
+      },
+    };
+
+    const segments: SpeakerSegment[] = [
+      {
+        speakerId: 'speaker_2',
+        initialSpeakerId: 'Speaker_A',
+        finalSpeakerId: 'speaker_2',
+        startTime: 0.1,
+        endTime: 123.867,
+        text: "Welcome to Prof G Markets. Scott is off for spring break, but he will be back next week. In the meantime, we have a big episode to share with you today with one of our favorite Prof G Markets guests. So let's get right into it. Here to help us answer these questions, we are joined by the chief economist at Moody's Analytics, geopolitics, Mark Zandi. Mark, good to have you on the program. So at the beginning of the week, the question was, are we going to bomb Iran?",
+        confidence: 0.62,
+        status: 'confirmed',
+      },
+      {
+        speakerId: 'speaker_3',
+        initialSpeakerId: 'Speaker_B',
+        finalSpeakerId: 'speaker_3',
+        startTime: 124.332,
+        endTime: 209.689,
+        text: "Feels pretty close to script, more or less. You know, the president has gone down this path in other ways, and when push comes to shove, when markets start to react, he figures out a way to pivot, to stand down, and to declare victory and hopefully move on.",
+        confidence: 0.62,
+        status: 'confirmed',
+      },
+      {
+        speakerId: 'speaker_5',
+        initialSpeakerId: 'Speaker_A',
+        finalSpeakerId: 'speaker_5',
+        startTime: 800,
+        endTime: 860,
+        text: 'This episode is brought to you by VCX.',
+        confidence: 0.85,
+        status: 'confirmed',
+        segmentKind: 'ad_read',
+        sponsorName: 'VCX',
+      },
+    ];
+
+    const resolved = __testUtils.resolveConversationalHumanNamesInSpeakerMap(
+      speakerMap,
+      segments,
+      {
+        projectType: 'INTERVIEW',
+        title: "The “Ceasefire” Won't Save The Economy",
+        filename: "The_“Ceasefire”_Won’t_Save_The_Economy-export-2026-04-15-test4.json",
+      }
+    );
+
+    expect(resolved.speakers.speaker_2.finalName).toBe('Ed Elson');
+    expect(resolved.speakers.speaker_2.role).toBe('host');
+    expect(resolved.speakers.speaker_3.finalName).toBe('Mark Zandi');
+    expect(resolved.speakers.speaker_3.role).toBe('guest');
+    expect(resolved.speakers.speaker_5.finalName).toBe('VCX');
+  });
+
+  test('show memory anchors recurring host and co-host before guest naming on Prof G Markets', () => {
+    const speakerMap = {
+      speaker_1: {
+        id: 'speaker_1',
+        finalName: 'Prop Team Markets',
+        role: 'guest',
+        segments: [],
+      },
+      speaker_2: {
+        id: 'speaker_2',
+        finalName: 'Ed Elson',
+        role: 'co_host',
+        segments: [],
+      },
+      speaker_4: {
+        id: 'speaker_4',
+        finalName: 'Speaker 4',
+        role: 'host',
+        segments: [],
+      },
+      speaker_5: {
+        id: 'speaker_5',
+        finalName: 'Profitemarkettour',
+        role: 'advertiser',
+        segments: [],
+      },
+    };
+
+    const segments: SpeakerSegment[] = [
+      {
+        speakerId: 'speaker_4',
+        initialSpeakerId: 'Speaker_A',
+        finalSpeakerId: 'speaker_4',
+        startTime: 21.833,
+        endTime: 37.407,
+        text: "He's got a Sasquatch. Welcome to Prop Team Markets. It's dad minus the vulgarity. Ed, how are you?",
+        confidence: 0.64,
+        status: 'tentative',
+      },
+      {
+        speakerId: 'speaker_1',
+        initialSpeakerId: 'Speaker_B',
+        finalSpeakerId: 'speaker_1',
+        startTime: 37.488,
+        endTime: 61.362,
+        text: "I'm doing well. It's a beautiful day here in New York. It's finally spring here, so everyone's in a good mood. Everyone's feeling happy again. So am I. So I'm doing well.",
+        confidence: 0.61,
+        status: 'confirmed',
+      },
+      {
+        speakerId: 'speaker_1',
+        initialSpeakerId: 'Speaker_B',
+        finalSpeakerId: 'speaker_1',
+        startTime: 366.255,
+        endTime: 471.719,
+        text: "So with all eyes on the labor market, we thought it was a great time to bring in our resident labor market expert, Catherine Ann Edwards, PhD economist, economic policy consultant, and columnist for Bloomberg News. Catherine, it's always good to see you. I'm gonna jump right in here.",
+        confidence: 0.61,
+        status: 'confirmed',
+      },
+      {
+        speakerId: 'speaker_2',
+        initialSpeakerId: 'Speaker_C',
+        finalSpeakerId: 'speaker_2',
+        startTime: 472.252,
+        endTime: 532.138,
+        text: "Zandi, I think, hit the nail right on the head. Layoffs are the biggest concern. What we're seeing in the labor market is a slowdown of the gears, right?",
+        confidence: 0.55,
+        status: 'uncertain',
+      },
+      {
+        speakerId: 'speaker_5',
+        initialSpeakerId: 'Speaker_B',
+        finalSpeakerId: 'speaker_5',
+        startTime: 194.388,
+        endTime: 237.578,
+        text: 'You can go get your tickets at profitemarkettour.com.',
+        confidence: 0.85,
+        status: 'confirmed',
+        segmentKind: 'promo',
+        sponsorName: 'Profitemarkettour',
+      },
+    ];
+
+    const showIdentity = detectShowIdentityFromContext({
+      title: 'Is the Labor Market About to Tip Us Into Recession?',
+      filename: 'Is_the_Labor_Market_About_to_Tip_Us_Into_Recession--export-2026-04-17-test1.json',
+      segments,
+    });
+
+    const resolved = __testUtils.resolveConversationalHumanNamesInSpeakerMap(
+      speakerMap,
+      segments,
+      {
+        projectType: 'PODCAST',
+        title: 'Is the Labor Market About to Tip Us Into Recession?',
+        filename: 'Is_the_Labor_Market_About_to_Tip_Us_Into_Recession--export-2026-04-17-test1.json',
+        showIdentity,
+        showRoster: mergeShowRosterEntries(showIdentity?.roster),
+      }
+    );
+    expect(resolved.speakers.speaker_1.finalName).toBe('Ed Elson');
+    expect(resolved.speakers.speaker_1.role).toBe('host');
+    expect(resolved.speakers.speaker_4.finalName).toBe('Scott Galloway');
+    expect(resolved.speakers.speaker_4.role).toBe('co_host');
+    expect(resolved.speakers.speaker_2.finalName).toBe('Catherine Ann Edwards');
+    expect(resolved.speakers.speaker_2.role).toBe('guest');
+    expect(resolved.speakers.speaker_5.finalName).toBe('Profitemarkettour');
+  });
+
+  test('does not auto-learn guests into recurring show memory', () => {
+    const showIdentity = detectShowIdentityFromContext({
+      title: 'Prof G Markets',
+      filename: 'Prof_G_Markets_episode.json',
+      segments: [],
+    });
+
+    const learned = extractLearnedShowRosterFromProjects(
+      [
+        {
+          title: 'Prior Prof G Markets Episode',
+          metadata: {
+            originalFileName: 'Prof_G_Markets_prior_episode.json',
+            fileName: 'Prof_G_Markets_prior_episode.json',
+          },
+          processing_completed_at: '2026-04-10T12:00:00.000Z',
+          speaker_data: {
+            speakers: {
+              speaker_1: { finalName: 'Ed Elson', role: 'host' },
+              speaker_2: { finalName: 'Scott Galloway', role: 'co_host' },
+              speaker_3: { finalName: 'Kevin Gordon', role: 'guest' },
+            },
+          },
+        },
+      ],
+      showIdentity
+    );
+
+    expect(learned).toEqual([
+      expect.objectContaining({ name: 'Ed Elson', role: 'host', confidenceSource: 'auto_learned' }),
+      expect.objectContaining({ name: 'Scott Galloway', role: 'co_host', confidenceSource: 'auto_learned' }),
+    ]);
+  });
+
+  test('rejects sponsor-derived introduced names in conversational diagnostics', () => {
+    const speakerMap = {
+      speaker_1: { id: 'speaker_1', finalName: 'Ed Elson', role: 'host', segments: [] },
+      speaker_2: { id: 'speaker_2', finalName: 'Speaker 2', role: 'unknown', segments: [] },
+      speaker_3: { id: 'speaker_3', finalName: 'VCX', role: 'advertiser', segments: [] },
+    };
+
+    const segments: SpeakerSegment[] = [
+      {
+        speakerId: 'speaker_1',
+        initialSpeakerId: 'Speaker_A',
+        finalSpeakerId: 'speaker_1',
+        startTime: 0,
+        endTime: 6,
+        text: 'Introducing VCX, the public ticker for private tech.',
+        confidence: 0.8,
+        status: 'confirmed',
+        segmentKind: 'ad_read',
+        sponsorName: 'VCX',
+      },
+      {
+        speakerId: 'speaker_2',
+        initialSpeakerId: 'Speaker_B',
+        finalSpeakerId: 'speaker_2',
+        startTime: 7,
+        endTime: 24,
+        text: 'Thanks for having me on.',
+        confidence: 0.8,
+        status: 'confirmed',
+      },
+    ];
+
+    const snapshot = collectSpeakerPipelineSnapshot(
+      'post-final-naming',
+      segments,
+      speakerMap,
+      {
+        projectType: 'PODCAST',
+        title: 'Prof G Markets',
+        filename: 'Prof_G_Markets_episode.json',
+      }
+    );
+
+    expect(snapshot.conversationalNaming.introAnchorFound).toBe(false);
+    expect(snapshot.conversationalNaming.introducedName).toBeNull();
+    expect(snapshot.conversationalNaming.rejectedIntroducedNames).toContain('VCX');
+  });
+
+  test('ignores prior unrelated guest memory and keeps the new episode guest on the substantive cluster', () => {
+    const showIdentity = detectShowIdentityFromContext({
+      title: 'Is the Labor Market About to Tip Us Into Recession?',
+      filename: 'Is_the_Labor_Market_About_to_Tip_Us_Into_Recession--export-2026-04-17-test2.json',
+      segments: [],
+    });
+    const learnedRoster = extractLearnedShowRosterFromProjects(
+      [
+        {
+          title: 'Prof G Markets Prior Guest Episode',
+          metadata: {
+            originalFileName: 'Prof_G_Markets_prior_guest_episode.json',
+            fileName: 'Prof_G_Markets_prior_guest_episode.json',
+          },
+          processing_completed_at: '2026-04-10T12:00:00.000Z',
+          speaker_data: {
+            speakers: {
+              speaker_1: { finalName: 'Ed Elson', role: 'host' },
+              speaker_2: { finalName: 'Scott Galloway', role: 'co_host' },
+              speaker_3: { finalName: 'Kevin Gordon', role: 'guest' },
+            },
+          },
+        },
+      ],
+      showIdentity
+    );
+
+    const speakerMap = {
+      speaker_1: { id: 'speaker_1', finalName: 'Scott Galloway', role: 'co_host', segments: [] },
+      speaker_2: { id: 'speaker_2', finalName: 'Ed Elson', role: 'host', segments: [] },
+      speaker_3: { id: 'speaker_3', finalName: 'Speaker 3', role: 'unknown', segments: [] },
+      speaker_4: { id: 'speaker_4', finalName: 'Speaker 4', role: 'unknown', segments: [] },
+      speaker_5: { id: 'speaker_5', finalName: 'VCX', role: 'advertiser', segments: [] },
+    };
+
+    const finalSegments: SpeakerSegment[] = [
+      {
+        speakerId: 'speaker_1',
+        initialSpeakerId: 'Speaker_B',
+        finalSpeakerId: 'speaker_1',
+        startTime: 0,
+        endTime: 7,
+        text: "He's got a Sasquatch. Welcome to Prop Team Markets. It's dad minus the vulgarity. Ed, how are you?",
+        confidence: 0.64,
+        status: 'confirmed',
+      },
+      {
+        speakerId: 'speaker_2',
+        initialSpeakerId: 'Speaker_A',
+        finalSpeakerId: 'speaker_2',
+        startTime: 7,
+        endTime: 17,
+        text: "I don't know. Big meter. People have been complaining about how pornographic my jokes are.",
+        confidence: 0.62,
+        status: 'confirmed',
+      },
+      {
+        speakerId: 'speaker_2',
+        initialSpeakerId: 'Speaker_A',
+        finalSpeakerId: 'speaker_2',
+        startTime: 360,
+        endTime: 471,
+        text: "So with all eyes on the labor market, we thought it was a great time to bring in our resident labor market expert, Catherine Ann Edwards, PhD economist, economic policy consultant, and columnist for Bloomberg News. Catherine, it's always good to see you. I'm gonna jump right in here.",
+        confidence: 0.8,
+        status: 'confirmed',
+      },
+      {
+        speakerId: 'speaker_3',
+        initialSpeakerId: 'Speaker_C',
+        finalSpeakerId: 'speaker_3',
+        startTime: 472,
+        endTime: 532,
+        text: "When you look at the labor market right now, what concerns me most is layoffs and the general slowdown in hiring.",
+        confidence: 0.8,
+        status: 'confirmed',
+      },
+      {
+        speakerId: 'speaker_4',
+        initialSpeakerId: 'Speaker_D',
+        finalSpeakerId: 'speaker_4',
+        startTime: 1774,
+        endTime: 1804,
+        text: 'Introducing VCX, the public ticker for private tech. VCX by Fundrise gives everyone the opportunity to invest in the next generation of innovation.',
+        confidence: 0.62,
+        status: 'confirmed',
+        segmentKind: 'ad_read',
+        sponsorName: 'VCX',
+      },
+    ];
+
+    const finalized = finalizeSpeakerAttributionForStorage(
+      speakerMap,
+      finalSegments,
+      {
+        projectType: 'PODCAST',
+        title: 'Is the Labor Market About to Tip Us Into Recession?',
+        filename: 'Is_the_Labor_Market_About_to_Tip_Us_Into_Recession--export-2026-04-17-test2.json',
+        showIdentity,
+        showRoster: mergeShowRosterEntries(showIdentity?.roster, learnedRoster),
+      }
+    );
+
+    expect(finalized.speakerDataSpeakers.speaker_1.finalName).toBe('Scott Galloway');
+    expect(finalized.speakerDataSpeakers.speaker_2.finalName).toBe('Ed Elson');
+    expect(finalized.speakerDataSpeakers.speaker_3.finalName).toBe('Catherine Ann Edwards');
+    expect(finalized.speakerDataSpeakers.speaker_3.role).toBe('guest');
+    expect(finalized.snapshot.conversationalNaming.rejectedGuestMemoryCarryovers).toEqual([]);
+    expect(finalized.snapshot.conversationalNaming.rejectedIntroducedNames).toContain('VCX');
+  });
+
+  test('moves full guest identity onto the dominant answer cluster and suppresses first-name-only mislabels', () => {
+    const showIdentity = detectShowIdentityFromContext({
+      title: 'Is the Labor Market About to Tip Us Into Recession?',
+      filename: 'Is_the_Labor_Market_About_to_Tip_Us_Into_Recession--export-2026-04-17-test3.json',
+      segments: [],
+    });
+
+    const speakerMap = {
+      speaker_1: { id: 'speaker_1', finalName: 'Catherine', role: 'co_host', fallbackName: 'Speaker 1', segments: [] },
+      speaker_2: { id: 'speaker_2', finalName: 'Ed Elson', role: 'host', fallbackName: 'Speaker 2', segments: [] },
+      speaker_3: { id: 'speaker_3', finalName: 'Catherine Ann Edwards', role: 'guest', fallbackName: 'Speaker 3', segments: [] },
+      speaker_4: { id: 'speaker_4', finalName: 'Speaker 4', role: 'unknown', fallbackName: 'Speaker 4', segments: [] },
+      speaker_5: { id: 'speaker_5', finalName: 'VCX', role: 'advertiser', fallbackName: 'Speaker 5', segments: [] },
+    };
+
+    const finalSegments: SpeakerSegment[] = [
+      {
+        speakerId: 'speaker_1',
+        initialSpeakerId: 'Speaker_A',
+        finalSpeakerId: 'speaker_1',
+        startTime: 0,
+        endTime: 8,
+        text: "He's got a Sasquatch. Welcome to Prof G Markets. It's dad minus the vulgarity. Ed, how are you?",
+        confidence: 0.8,
+        status: 'confirmed',
+      },
+      {
+        speakerId: 'speaker_2',
+        initialSpeakerId: 'Speaker_B',
+        finalSpeakerId: 'speaker_2',
+        startTime: 8,
+        endTime: 18,
+        text: "I'm good. Big meter. People have been complaining about how pornographic my jokes are.",
+        confidence: 0.8,
+        status: 'confirmed',
+      },
+      {
+        speakerId: 'speaker_2',
+        initialSpeakerId: 'Speaker_B',
+        finalSpeakerId: 'speaker_2',
+        startTime: 360,
+        endTime: 471,
+        text: "So with all eyes on the labor market, we thought it was a great time to bring in our resident labor market expert, Catherine Ann Edwards, PhD economist, economic policy consultant, and columnist for Bloomberg News. Catherine, it's always good to see you. I'm gonna jump right in here.",
+        confidence: 0.9,
+        status: 'confirmed',
+      },
+      {
+        speakerId: 'speaker_1',
+        initialSpeakerId: 'Speaker_A',
+        finalSpeakerId: 'speaker_1',
+        startTime: 471,
+        endTime: 473,
+        text: 'Thanks.',
+        confidence: 0.55,
+        status: 'tentative',
+        confidenceReason: 'transition_short',
+      },
+      {
+        speakerId: 'speaker_4',
+        initialSpeakerId: 'Speaker_C',
+        finalSpeakerId: 'speaker_4',
+        startTime: 473,
+        endTime: 565,
+        text: "When you look at the labor market right now, what concerns me most is layoffs and the general slowdown in hiring. That's the thing I'd focus on first.",
+        confidence: 0.85,
+        status: 'confirmed',
+      },
+      {
+        speakerId: 'speaker_4',
+        initialSpeakerId: 'Speaker_C',
+        finalSpeakerId: 'speaker_4',
+        startTime: 570,
+        endTime: 648,
+        text: "Openings and quits have both been softening for a while now, and I think that tells you employers are getting more cautious.",
+        confidence: 0.85,
+        status: 'confirmed',
+      },
+      {
+        speakerId: 'speaker_3',
+        initialSpeakerId: 'Speaker_D',
+        finalSpeakerId: 'speaker_3',
+        startTime: 1774,
+        endTime: 1785,
+        text: 'Introducing VCX, the public ticker for private tech.',
+        confidence: 0.7,
+        status: 'confirmed',
+      },
+      {
+        speakerId: 'speaker_5',
+        initialSpeakerId: 'Speaker_E',
+        finalSpeakerId: 'speaker_5',
+        startTime: 1785,
+        endTime: 1804,
+        text: 'VCX by Fundrise gives everyone the opportunity to invest in the next generation of innovation.',
+        confidence: 0.7,
+        status: 'confirmed',
+        segmentKind: 'ad_read',
+        sponsorName: 'VCX',
+      },
+    ];
+
+    const finalized = finalizeSpeakerAttributionForStorage(
+      speakerMap,
+      finalSegments,
+      {
+        projectType: 'PODCAST',
+        title: 'Is the Labor Market About to Tip Us Into Recession?',
+        filename: 'Is_the_Labor_Market_About_to_Tip_Us_Into_Recession--export-2026-04-17-test3.json',
+        showIdentity,
+        showRoster: mergeShowRosterEntries(showIdentity?.roster),
+      }
+    );
+
+    expect(finalized.speakerDataSpeakers.speaker_1.finalName).toBe('Scott Galloway');
+    expect(finalized.speakerDataSpeakers.speaker_2.finalName).toBe('Ed Elson');
+    expect(finalized.speakerDataSpeakers.speaker_4.finalName).toBe('Catherine Ann Edwards');
+    expect(finalized.speakerDataSpeakers.speaker_4.role).toBe('guest');
+    expect(finalized.speakerDataSpeakers.speaker_3.finalName).toBe('Speaker 3');
+    expect(finalized.snapshot.conversationalNaming.guestCandidateRankings.length).toBeGreaterThan(0);
+    expect(finalized.snapshot.conversationalNaming.guestCandidateRankings.some((candidate) => (
+      candidate.speakerId === 'speaker_1' &&
+      candidate.rejectedReasons.includes('fragment_cluster')
+    ))).toBe(true);
+    expect(finalized.snapshot.conversationalNaming.suppressedGuestFirstNames).toContain('Catherine');
+  });
+
+  test('repairs swapped recurring host and co-host ownership before final storage', () => {
+    const showIdentity = detectShowIdentityFromContext({
+      title: 'Is the Labor Market About to Tip Us Into Recession?',
+      filename: 'Is_the_Labor_Market_About_to_Tip_Us_Into_Recession--export-2026-04-20-test4.json',
+      segments: [],
+    });
+
+    const speakerMap = {
+      speaker_1: { id: 'speaker_1', finalName: 'Scott Galloway', role: 'co_host', fallbackName: 'Speaker 1', segments: [] },
+      speaker_2: { id: 'speaker_2', finalName: 'Ed Elson', role: 'host', fallbackName: 'Speaker 2', segments: [] },
+      speaker_4: { id: 'speaker_4', finalName: 'Catherine Ann Edwards', role: 'guest', fallbackName: 'Speaker 4', segments: [] },
+    };
+
+    const finalSegments: SpeakerSegment[] = [
+      {
+        speakerId: 'speaker_2',
+        initialSpeakerId: 'Speaker_A',
+        finalSpeakerId: 'speaker_2',
+        startTime: 0.032,
+        endTime: 6.925,
+        text: "Today is number 13. That's the percentage of U.S. adults who believe Bigfoot is real. Ed, what do they call Bigfoot in Europe?",
+        confidence: 0.82,
+        status: 'confirmed',
+      },
+      {
+        speakerId: 'speaker_1',
+        initialSpeakerId: 'Speaker_B',
+        finalSpeakerId: 'speaker_1',
+        startTime: 7.165,
+        endTime: 7.534,
+        text: "I don't know.",
+        confidence: 0.7,
+        status: 'tentative',
+        confidenceReason: 'transition_short',
+      },
+      {
+        speakerId: 'speaker_2',
+        initialSpeakerId: 'Speaker_A',
+        finalSpeakerId: 'speaker_2',
+        startTime: 21.833,
+        endTime: 37.407,
+        text: "He's got a Sasquatch. Welcome to Prop Team Markets. It's dad minus the vulgarity. Ed, how are you?",
+        confidence: 0.82,
+        status: 'confirmed',
+      },
+      {
+        speakerId: 'speaker_1',
+        initialSpeakerId: 'Speaker_B',
+        finalSpeakerId: 'speaker_1',
+        startTime: 37.488,
+        endTime: 47.46,
+        text: "I'm doing well. It's a beautiful day here in New York. It's finally spring here, so everyone's in a good mood.",
+        confidence: 0.82,
+        status: 'confirmed',
+      },
+      {
+        speakerId: 'speaker_4',
+        initialSpeakerId: 'Speaker_C',
+        finalSpeakerId: 'speaker_4',
+        startTime: 472.252,
+        endTime: 532.138,
+        text: "When you look at the labor market right now, what concerns me most is layoffs and the general slowdown in hiring.",
+        confidence: 0.82,
+        status: 'confirmed',
+      },
+    ];
+
+    const preSnapshot = collectSpeakerPipelineSnapshot(
+      'pre-recurring-verification',
+      finalSegments,
+      speakerMap,
+      {
+        projectType: 'PODCAST',
+        title: 'Is the Labor Market About to Tip Us Into Recession?',
+        filename: 'Is_the_Labor_Market_About_to_Tip_Us_Into_Recession--export-2026-04-20-test4.json',
+        showIdentity,
+        showRoster: mergeShowRosterEntries(showIdentity?.roster),
+      }
+    );
+
+    expect(preSnapshot.conversationalNaming.swapDetected).toBe(true);
+    expect(preSnapshot.conversationalNaming.clusterOwnershipCandidates.some((entry) => (
+      entry.name === 'Ed Elson' && entry.chosenSpeakerId === 'speaker_1'
+    ))).toBe(true);
+
+    const finalized = finalizeSpeakerAttributionForStorage(
+      speakerMap,
+      finalSegments,
+      {
+        projectType: 'PODCAST',
+        title: 'Is the Labor Market About to Tip Us Into Recession?',
+        filename: 'Is_the_Labor_Market_About_to_Tip_Us_Into_Recession--export-2026-04-20-test4.json',
+        showIdentity,
+        showRoster: mergeShowRosterEntries(showIdentity?.roster),
+      }
+    );
+
+    expect(finalized.speakerDataSpeakers.speaker_1.finalName).toBe('Ed Elson');
+    expect(finalized.speakerDataSpeakers.speaker_2.finalName).toBe('Scott Galloway');
+    expect(finalized.speakerDataSpeakers.speaker_1.requiresReview).toBeFalsy();
+    expect(finalized.speakerDataSpeakers.speaker_2.requiresReview).toBeFalsy();
+    expect(finalized.speakerDataSpeakers.speaker_2.assignmentConfidence).toBeGreaterThanOrEqual(0.82);
+    expect(finalized.snapshot.assignmentTrust.segmentReviewIndices.length).toBeLessThanOrEqual(5);
+  });
+
+  test('precision mode clears recurring names and flags review when ownership evidence is contradictory', () => {
+    const showIdentity = detectShowIdentityFromContext({
+      title: 'Prof G Markets',
+      filename: 'Prof_G_Markets_episode.json',
+      segments: [],
+    });
+
+    const speakerMap = {
+      speaker_1: { id: 'speaker_1', finalName: 'Ed Elson', role: 'host', fallbackName: 'Speaker 1', segments: [] },
+      speaker_2: { id: 'speaker_2', finalName: 'Scott Galloway', role: 'co_host', fallbackName: 'Speaker 2', segments: [] },
+    };
+
+    const finalSegments: SpeakerSegment[] = [
+      {
+        speakerId: 'speaker_1',
+        initialSpeakerId: 'Speaker_A',
+        finalSpeakerId: 'speaker_1',
+        startTime: 0,
+        endTime: 10,
+        text: 'Ed, what are you watching this week?',
+        confidence: 0.8,
+        status: 'confirmed',
+      },
+      {
+        speakerId: 'speaker_2',
+        initialSpeakerId: 'Speaker_B',
+        finalSpeakerId: 'speaker_2',
+        startTime: 10,
+        endTime: 20,
+        text: 'Scott, what do you make of that?',
+        confidence: 0.8,
+        status: 'confirmed',
+      },
+    ];
+
+    const finalized = finalizeSpeakerAttributionForStorage(
+      speakerMap,
+      finalSegments,
+      {
+        projectType: 'PODCAST',
+        title: 'Prof G Markets',
+        filename: 'Prof_G_Markets_episode.json',
+        showIdentity,
+        showRoster: mergeShowRosterEntries(showIdentity?.roster),
+      }
+    );
+
+    expect(finalized.speakerDataSpeakers.speaker_1.finalName).toBe('Speaker 1');
+    expect(finalized.speakerDataSpeakers.speaker_2.finalName).toBe('Speaker 2');
+    expect(finalized.speakerDataSpeakers.speaker_1.requiresReview).toBe(true);
+    expect(finalized.speakerDataSpeakers.speaker_2.requiresReview).toBe(true);
+  });
+
+  test('clears show-title contamination instead of keeping it as a human identity', () => {
+    const speakerMap = {
+      speaker_1: {
+        id: 'speaker_1',
+        finalName: 'Prop Team Markets',
+        role: 'guest',
+        fallbackName: 'Speaker 1',
+        segments: [],
+      },
+    };
+
+    const segments: SpeakerSegment[] = [
+      {
+        speakerId: 'speaker_1',
+        initialSpeakerId: 'Speaker_B',
+        finalSpeakerId: 'speaker_1',
+        startTime: 0,
+        endTime: 12,
+        text: 'Welcome to Prop Team Markets. Ed, how are you?',
+        confidence: 0.61,
+        status: 'confirmed',
+      },
+    ];
+
+    const resolved = __testUtils.resolveConversationalHumanNamesInSpeakerMap(
+      speakerMap,
+      segments,
+      {
+        projectType: 'PODCAST',
+        title: 'Prof G Markets',
+        filename: 'Prof_G_Markets_episode.json',
+      }
+    );
+
+    expect(resolved.speakers.speaker_1.finalName).toBe('Speaker 1');
+  });
+
+  test('splits merged sponsor reads before advertiser remapping', () => {
+    const roster: GPTSpeaker[] = [
+      { id: 'speaker_1', name: 'Ed Elson', role: 'host', confidence: 0.95, source: 'test' },
+    ];
+
+    const segments: SpeakerSegment[] = [
+      {
+        speakerId: 'speaker_1',
+        initialSpeakerId: 'Speaker_D',
+        finalSpeakerId: 'speaker_1',
+        startTime: 0,
+        endTime: 95,
+        text: 'Support for the show comes from SoFi. Visit sofi.com/markets to learn more. Support for the show comes from VCX, the public ticker for private tech. Visit getvcx.com for more info.',
+        confidence: 0.9,
+        status: 'confirmed',
+      },
+    ];
+
+    const result = detectSponsorSegments(segments, roster);
+    const sponsorNames = result.segments.map((segment) => segment.sponsorName).filter(Boolean);
+
+    expect(result.segments).toHaveLength(2);
+    expect(sponsorNames).toEqual(['SoFi', 'VCX']);
+    expect(result.segments[0].finalSpeakerId).not.toBe(result.segments[1].finalSpeakerId);
+  });
+
+  test('final route-style naming reruns on the stabilized segment map before speaker_data is stored', () => {
+    const speakerMap = {
+      speaker_1: {
+        id: 'speaker_1',
+        finalName: 'Ed Elson',
+        role: 'host',
+        segments: [],
+      },
+      speaker_2: {
+        id: 'speaker_2',
+        finalName: 'Speaker 2',
+        role: 'unknown',
+        segments: [],
+      },
+      speaker_3: {
+        id: 'speaker_3',
+        finalName: 'Speaker 3',
+        role: 'unknown',
+        segments: [],
+      },
+      speaker_5: {
+        id: 'speaker_5',
+        finalName: 'VCX',
+        role: 'advertiser',
+        segments: [],
+      },
+    };
+
+    const finalSegments: SpeakerSegment[] = [
+      {
+        speakerId: 'speaker_2',
+        initialSpeakerId: 'Speaker_A',
+        finalSpeakerId: 'speaker_2',
+        startTime: 0.1,
+        endTime: 123.867,
+        text: "Welcome to Prof G Markets. Scott is off for spring break, but he will be back next week. In the meantime, we have a big episode to share with you today with one of our favorite Prof G Markets guests. So let's get right into it. Here to help us answer these questions, we are joined by the chief economist at Moody's Analytics, geopolitics, Mark Zandi. Mark, good to have you on the program. So at the beginning of the week, the question was, are we going to bomb Iran?",
+        confidence: 0.62,
+        status: 'confirmed',
+      },
+      {
+        speakerId: 'speaker_3',
+        initialSpeakerId: 'Speaker_B',
+        finalSpeakerId: 'speaker_3',
+        startTime: 124.332,
+        endTime: 209.689,
+        text: 'Feels pretty close to script, more or less. You know, the president has gone down this path in other ways, and when push comes to shove, when markets start to react, he figures out a way to pivot, to stand down, and to declare victory and hopefully move on. Ed, the real risk is what happens if the Strait of Hormuz closes.',
+        confidence: 0.62,
+        status: 'confirmed',
+      },
+      {
+        speakerId: 'speaker_5',
+        initialSpeakerId: 'Speaker_A',
+        finalSpeakerId: 'speaker_5',
+        startTime: 800,
+        endTime: 860,
+        text: 'This episode is brought to you by VCX.',
+        confidence: 0.85,
+        status: 'confirmed',
+        segmentKind: 'ad_read',
+        sponsorName: 'VCX',
+      },
+    ];
+
+    const finalized = finalizeSpeakerAttributionForStorage(
+      speakerMap,
+      finalSegments,
+      {
+        projectType: 'INTERVIEW',
+        title: "The “Ceasefire” Won't Save The Economy",
+        filename: "The_“Ceasefire”_Won’t_Save_The_Economy-export-2026-04-16-test6.json",
+      }
+    );
+
+    expect(finalized.speakerDataSpeakers.speaker_2.finalName).toBe('Ed Elson');
+    expect(finalized.speakerDataSpeakers.speaker_2.role).toBe('host');
+    expect(finalized.speakerDataSpeakers.speaker_3.finalName).toBe('Mark Zandi');
+    expect(finalized.speakerDataSpeakers.speaker_3.role).toBe('guest');
+    expect(finalized.speakerDataSpeakers.speaker_5.finalName).toBe('VCX');
+    expect(finalized.snapshot.conversationalNaming.hostSpeakerId).toBe('speaker_2');
+    expect(finalized.snapshot.conversationalNaming.guestSpeakerId).toBe('speaker_3');
+  });
+
+  test('neighbor smoothing skips cross-cluster conversational drift for interview-style uploads', () => {
+    const segments: SpeakerSegment[] = [
+      {
+        speakerId: 'speaker_2',
+        initialSpeakerId: 'Speaker_A',
+        finalSpeakerId: 'speaker_2',
+        startTime: 0,
+        endTime: 14,
+        text: 'Welcome to Prof G Markets and thanks for joining us today.',
+        confidence: 0.82,
+        status: 'confirmed',
+      },
+      {
+        speakerId: 'speaker_9',
+        initialSpeakerId: 'Speaker_B',
+        finalSpeakerId: 'speaker_9',
+        startTime: 14,
+        endTime: 15.5,
+        text: 'Absolutely.',
+        confidence: 0.45,
+        status: 'tentative',
+      },
+      {
+        speakerId: 'speaker_2',
+        initialSpeakerId: 'Speaker_A',
+        finalSpeakerId: 'speaker_2',
+        startTime: 15.5,
+        endTime: 33,
+        text: 'Mark, let me start with the macro backdrop.',
+        confidence: 0.84,
+        status: 'confirmed',
+      },
+    ];
+
+    const smoothed = applyNeighborSmoothing(segments, { projectType: 'INTERVIEW' });
+
+    expect(smoothed.updatedSegments).toBe(0);
+    expect(smoothed.skippedCrossCluster).toBe(1);
+    expect(smoothed.segments[1].finalSpeakerId).toBe('speaker_9');
+  });
+
+  test('pipeline diagnostics record conversational drift after segment rewrites', () => {
+    const speakerMap = {
+      speaker_2: {
+        id: 'speaker_2',
+        finalName: 'Speaker 2',
+        role: 'unknown',
+        segments: [],
+      },
+      speaker_3: {
+        id: 'speaker_3',
+        finalName: 'Speaker 3',
+        role: 'unknown',
+        segments: [],
+      },
+    };
+
+    const segments: SpeakerSegment[] = [
+      {
+        speakerId: 'speaker_2',
+        initialSpeakerId: 'Speaker_A',
+        finalSpeakerId: 'speaker_2',
+        startTime: 0,
+        endTime: 40,
+        text: 'Welcome to Prof G Markets. Mark, good to have you with us.',
+        confidence: 0.8,
+        status: 'confirmed',
+      },
+      {
+        speakerId: 'speaker_2',
+        initialSpeakerId: 'Speaker_B',
+        finalSpeakerId: 'speaker_2',
+        startTime: 40,
+        endTime: 70,
+        text: 'Thanks for having me. Ed, the inflation backdrop is still fragile.',
+        confidence: 0.78,
+        status: 'confirmed',
+      },
+      {
+        speakerId: 'speaker_3',
+        initialSpeakerId: 'Speaker_C',
+        finalSpeakerId: 'speaker_3',
+        startTime: 70,
+        endTime: 92,
+        text: 'This episode is brought to you by VCX.',
+        confidence: 0.9,
+        status: 'confirmed',
+        segmentKind: 'ad_read',
+        sponsorName: 'VCX',
+      },
+    ];
+
+    const snapshot = collectSpeakerPipelineSnapshot(
+      'post-neighbor-smoothing',
+      segments,
+      speakerMap,
+      {
+        projectType: 'INTERVIEW',
+        title: "The “Ceasefire” Won't Save The Economy",
+        filename: "The_“Ceasefire”_Won’t_Save_The_Economy-export-2026-04-16-test6.json",
+      }
+    );
+
+    expect(snapshot.conversationalDrift).toEqual([
+      {
+        speakerId: 'speaker_2',
+        initialSpeakerIds: ['Speaker_A', 'Speaker_B'],
+        segmentCount: 2,
+      },
+    ]);
+    expect(snapshot.warnings).toContain(
+      'speaker_2 owns multiple conversational initialSpeakerId values: Speaker_A, Speaker_B'
+    );
+  });
+
   test('classifies the Prof G Iran panel export as PODCAST instead of DEBATE', () => {
     const rawSegments = loadIranExportSegments();
     const transcript = rawSegments.map(segment => segment.text).join(' ');
@@ -319,7 +1523,7 @@ describe('speaker pipeline regressions', () => {
     expect(assignments.find(a => a.clusterId === 'Speaker_D')?.identityId).toBe('speaker_4');
   });
 
-  test('retags single-segment sponsor reads as advertiser content', () => {
+  test('retags single-segment sponsor reads without changing speaker ownership', () => {
     const roster: GPTSpeaker[] = [
       { id: 'speaker_1', name: 'Ed Elson', role: 'host', confidence: 0.95, source: 'test' },
       { id: 'speaker_2', name: 'Justin Wolfers', role: 'guest', confidence: 0.95, source: 'test' },
@@ -349,11 +1553,100 @@ describe('speaker pipeline regressions', () => {
     ];
 
     const result = detectSponsorSegments(segments, roster);
-    const advertiser = result.roster.find(speaker => speaker.role === 'advertiser');
+    const sponsorSpeaker = result.roster.find((speaker) => speaker.name === 'Indeed');
+    expect(sponsorSpeaker).toBeDefined();
+    expect(sponsorSpeaker?.role).toBe('advertiser');
+    expect(result.segments[0].finalSpeakerId).toBe(sponsorSpeaker?.id);
+    expect(result.segments[0].speakerId).toBe(sponsorSpeaker?.id);
+    expect(result.segments[0].confidenceReason).toContain('sponsor-ad_read');
+    expect(result.segments[0].segmentKind).toBe('ad_read');
+    expect(result.segments[0].sponsorName).toBe('Indeed');
+  });
 
-    expect(advertiser).toBeDefined();
-    expect(result.segments[0].finalSpeakerId).toBe(advertiser?.id);
-    expect(result.segments[0].confidenceReason).toContain('sponsor-ad-read');
+  test('clean cluster consistency reverts partial heuristic splits on non-dirty clusters', () => {
+    const segments: SpeakerSegment[] = [
+      {
+        speakerId: 'speaker_1',
+        finalSpeakerId: 'speaker_1',
+        initialSpeakerId: 'Speaker_A',
+        startTime: 0,
+        endTime: 10,
+        text: 'Welcome back to the show.',
+        confidence: 0.9,
+        status: 'confirmed',
+        attributionEvidence: 'raw_diarization',
+      },
+      {
+        speakerId: 'speaker_2',
+        finalSpeakerId: 'speaker_2',
+        initialSpeakerId: 'Speaker_A',
+        startTime: 10,
+        endTime: 20,
+        text: 'This should not be split away by a late heuristic.',
+        confidence: 0.8,
+        status: 'tentative',
+        attributionEvidence: 'handoff',
+      },
+    ];
+
+    const result = enforceCleanClusterConsistency(
+      segments,
+      new Map([['Speaker_A', 'speaker_1']]),
+      new Set<string>()
+    );
+
+    expect(result.revertedClusters).toEqual(['Speaker_A']);
+    expect(result.revertedSegments).toBe(1);
+    expect(result.segments.every((segment) => segment.finalSpeakerId === 'speaker_1')).toBe(true);
+  });
+
+  test('legacy output keeps unnamed conversational speakers as Speaker N instead of Advertiser', async () => {
+    const mockedIdentify = jest.mocked(gptSpeakerIntelligence.identifySpeakersWithGPT);
+
+    mockedIdentify.mockResolvedValueOnce({
+      speakers: [
+        { id: 'speaker_1', name: null, role: 'advertiser', confidence: 0.75, source: 'test' },
+        { id: 'speaker_2', name: 'Josh Brown', role: 'guest', confidence: 0.9, source: 'test' },
+      ],
+      rawResponse: '{}',
+      validationErrors: [],
+      costEstimate: 0,
+    } as any);
+
+    const result = await runRefactoredSpeakerPipeline(
+      [
+        {
+          speakerId: 'Speaker_A',
+          initialSpeakerId: 'Speaker_A',
+          startTime: 0,
+          endTime: 5,
+          text: 'Welcome to the show. Scott is out this week.',
+          confidence: 0.9,
+          status: 'confirmed',
+        },
+        {
+          speakerId: 'Speaker_B',
+          initialSpeakerId: 'Speaker_B',
+          startTime: 5,
+          endTime: 10,
+          text: "I'm Josh Brown. Glad to be here.",
+          confidence: 0.9,
+          status: 'confirmed',
+        },
+      ],
+      {
+        openaiApiKey: 'test',
+        projectType: 'INTERVIEW',
+        mappingMode: 'csp',
+        title: "Don't Try to Beat This Market",
+        filename: "Don't_Try_to_Beat_This_Market.m4a",
+      }
+    );
+
+    const finalNames = Object.values(result.speakerData.speakers).map((speaker: any) => speaker.finalName);
+    expect(finalNames).toContain('Josh Brown');
+    expect(finalNames.some((name: string) => /^Speaker \d+$/.test(name))).toBe(true);
+    expect(finalNames).not.toContain('Advertiser');
   });
 
   test('merges large orphaned invalid-name cluster into named host when direct-address evidence is strong', async () => {
@@ -630,7 +1923,7 @@ describe('speaker pipeline regressions', () => {
     expect(ed?.id).not.toBe(katie?.id);
   });
 
-  test('reclaims generic hosting markers and pre-intro segments from guest cluster to co-host', async () => {
+  test('preserves guest-cluster ownership for hosting markers outside debate mode', async () => {
     // Regression for the hosting segment reclaim step:
     // When AssemblyAI merges co-host + guest into one cluster, the pipeline assigns
     // the whole cluster to the guest. Segments with "We'll be right back" / outros
@@ -744,23 +2037,22 @@ describe('speaker pipeline regressions', () => {
     const katieId = katie!.id;
     const scottId = scott!.id;
 
-    // Guest-specific markers → Ed (co_host, the interviewer)
+    // Conservative mode keeps this clean cluster with the guest speaker instead of reclaiming pieces.
     const thxKatieSeg = result.segments.find(s => s.text.includes('Thank you, Katie'));
-    expect(thxKatieSeg?.finalSpeakerId ?? thxKatieSeg?.speakerId).toBe(edId);
+    expect(thxKatieSeg?.finalSpeakerId ?? thxKatieSeg?.speakerId).toBe(katieId);
 
     const introSeg = result.segments.find(s => s.text.includes("conversation with Katie Martin"));
-    expect(introSeg?.finalSpeakerId ?? introSeg?.speakerId).toBe(edId);
+    expect(introSeg?.finalSpeakerId ?? introSeg?.speakerId).toBe(katieId);
 
-    // Generic markers are gated on guest-specific evidence and route to the primary HOST (Scott),
-    // not the co_host — generic CTAs/outros are not inherently co_host-specific.
+    // Generic markers also stay with the same clean cluster.
     const rightBackSeg = result.segments.find(s => s.text.includes("We'll be right back"));
-    expect(rightBackSeg?.finalSpeakerId ?? rightBackSeg?.speakerId).toBe(scottId);
+    expect(rightBackSeg?.finalSpeakerId ?? rightBackSeg?.speakerId).toBe(katieId);
 
     const weAreBackSeg = result.segments.find(s => s.text.includes("We're back with"));
-    expect(weAreBackSeg?.finalSpeakerId ?? weAreBackSeg?.speakerId).toBe(scottId);
+    expect(weAreBackSeg?.finalSpeakerId ?? weAreBackSeg?.speakerId).toBe(katieId);
 
     const thxListenSeg = result.segments.find(s => s.text.includes('Thank you for listening'));
-    expect(thxListenSeg?.finalSpeakerId ?? thxListenSeg?.speakerId).toBe(scottId);
+    expect(thxListenSeg?.finalSpeakerId ?? thxListenSeg?.speakerId).toBe(katieId);
 
     // Pre-intro banter: temporal window removed — guests legitimately speak early.
     // These segments stay with whatever the CSP assigned (Katie's cluster).
@@ -771,14 +2063,9 @@ describe('speaker pipeline regressions', () => {
     const katieSeg = result.segments.find(s => s.text.includes('European markets have been'));
     expect(katieSeg?.finalSpeakerId ?? katieSeg?.speakerId).toBe(katieId);
 
-    // Ed must own the guest-specific segments (intro + thank-you = at least 2)
-    const edSegCount = result.segments.filter(
-      s => (s.finalSpeakerId ?? s.speakerId) === edId
-    ).length;
-    expect(edSegCount).toBeGreaterThanOrEqual(2);
   });
 
-  test('does not reclaim early guest speech when the formal intro appears later in the same cluster', async () => {
+  test('keeps a clean guest cluster intact even when a formal intro appears later', async () => {
     // Regression guard: the old "pre-intro temporal window" logic reclaimed ALL guest-attributed
     // segments that appeared before the formal bio intro timestamp — even legitimate early guest speech.
     // The window has been removed. Only segments matching explicit markers should be reclaimed.
@@ -845,9 +2132,9 @@ describe('speaker pipeline regressions', () => {
     const earlyGuestSeg = result.segments.find(s => s.text.includes('studying economic policy'));
     expect(earlyGuestSeg?.finalSpeakerId ?? earlyGuestSeg?.speakerId).toBe(bobId);
 
-    // The formal intro line should be reclaimed to Alice (guest-specific marker)
+    // The formal intro line stays with Bob because the cluster is preserved intact.
     const introSeg = result.segments.find(s => s.text.includes('conversation with Bob Smith'));
-    expect(introSeg?.finalSpeakerId ?? introSeg?.speakerId).toBe(aliceId);
+    expect(introSeg?.finalSpeakerId ?? introSeg?.speakerId).toBe(bobId);
 
     // Bob's post-intro response stays with Bob
     const bobResponseSeg = result.segments.find(s => s.text.includes('Thanks for having me'));
@@ -1000,6 +2287,309 @@ describe('speaker pipeline regressions', () => {
     expect(result.speakers.some((speaker) => speaker.role === 'advertiser')).toBe(true);
     expect(result.speakers.some((speaker) => speaker.name === 'Katie Martin')).toBe(true);
     expect(result.speakers.some((speaker) => speaker.name === 'Justin')).toBe(false);
+  });
+
+  test('demotes advertiser role when a mapped speaker has conversational turns', async () => {
+    const mockedIdentify = jest.mocked(gptSpeakerIntelligence.identifySpeakersWithGPT);
+    const mockedMapSegments = jest.mocked(llmSegmentMapping.mapSegmentsWithLLM);
+
+    mockedIdentify.mockResolvedValueOnce({
+      speakers: [
+        { id: 'speaker_1', name: null, role: 'advertiser', confidence: 0.8, source: 'test' },
+        { id: 'speaker_2', name: 'Josh Brown', role: 'guest', confidence: 0.9, source: 'test' },
+      ],
+      rawResponse: '{}',
+      validationErrors: [],
+      costEstimate: 0,
+    } as any);
+
+    mockedMapSegments.mockResolvedValueOnce({
+      mappings: {
+        Speaker_A: 'speaker_1',
+        Speaker_B: 'speaker_2',
+      },
+      confidence: {
+        Speaker_A: 0.9,
+        Speaker_B: 0.9,
+      },
+      rawResponse: '{}',
+      reasoning: 'test mapping',
+    } as any);
+
+    const segments: SpeakerSegment[] = [
+      {
+        speakerId: 'Speaker_A',
+        initialSpeakerId: 'Speaker_A',
+        finalSpeakerId: 'Speaker_A',
+        startTime: 0,
+        endTime: 8,
+        text: 'Welcome to Prof G Markets. Let us get right into it.',
+        confidence: 0.9,
+        status: 'confirmed',
+      },
+      {
+        speakerId: 'Speaker_B',
+        initialSpeakerId: 'Speaker_B',
+        finalSpeakerId: 'Speaker_B',
+        startTime: 8,
+        endTime: 20,
+        text: "I'm Josh Brown. I think investors should stay disciplined.",
+        confidence: 0.9,
+        status: 'confirmed',
+      },
+      {
+        speakerId: 'Speaker_A',
+        initialSpeakerId: 'Speaker_A',
+        finalSpeakerId: 'Speaker_A',
+        startTime: 20,
+        endTime: 40,
+        text: 'Support for the show comes from Vanta. Visit vanta.com to learn more.',
+        confidence: 0.9,
+        status: 'confirmed',
+      },
+    ];
+
+    const result = await runRefactoredSpeakerPipeline(segments, {
+      openAIApiKey: 'test',
+      filename: 'prof-g-markets.m4a',
+    });
+
+    const segmentsBySpeaker = new Map<string, SpeakerSegment[]>();
+    for (const segment of result.segments) {
+      const speakerId = segment.finalSpeakerId || segment.speakerId;
+      if (!segmentsBySpeaker.has(speakerId)) segmentsBySpeaker.set(speakerId, []);
+      segmentsBySpeaker.get(speakerId)!.push(segment);
+    }
+
+    const advertiserWithConversation = result.speakers.find((speaker) => {
+      if (speaker.role !== 'advertiser') return false;
+      const ownedSegments = segmentsBySpeaker.get(speaker.id) || [];
+      const hasConversation = ownedSegments.some(
+        (segment) => (segment.segmentKind || 'conversation') === 'conversation'
+      );
+      return hasConversation;
+    });
+
+    expect(advertiserWithConversation).toBeUndefined();
+  });
+
+  test('strips human names from ad-only speakers after sponsor tagging', async () => {
+    const mockedIdentify = jest.mocked(gptSpeakerIntelligence.identifySpeakersWithGPT);
+    const mockedMapSegments = jest.mocked(llmSegmentMapping.mapSegmentsWithLLM);
+
+    mockedIdentify.mockResolvedValueOnce({
+      speakers: [
+        { id: 'speaker_1', name: 'Mark Zandi', role: 'guest', confidence: 0.85, source: 'test' },
+        { id: 'speaker_2', name: null, role: 'unknown', confidence: 0.7, source: 'test' },
+      ],
+      rawResponse: '{}',
+      validationErrors: [],
+      costEstimate: 0,
+    } as any);
+
+    mockedMapSegments.mockResolvedValueOnce({
+      mappings: {
+        Speaker_A: 'speaker_1',
+        Speaker_B: 'speaker_2',
+      },
+      confidence: {
+        Speaker_A: 0.9,
+        Speaker_B: 0.9,
+      },
+      rawResponse: '{}',
+      reasoning: 'test mapping',
+    } as any);
+
+    const segments: SpeakerSegment[] = [
+      {
+        speakerId: 'Speaker_A',
+        initialSpeakerId: 'Speaker_A',
+        finalSpeakerId: 'Speaker_A',
+        startTime: 0,
+        endTime: 18,
+        text: 'Support for the show comes from ZBiotics. Visit zbiotics.com and use code PROFG.',
+        confidence: 0.9,
+        status: 'confirmed',
+      },
+      {
+        speakerId: 'Speaker_B',
+        initialSpeakerId: 'Speaker_B',
+        finalSpeakerId: 'Speaker_B',
+        startTime: 18,
+        endTime: 40,
+        text: 'Feels pretty close to script, more or less. Markets have been resilient.',
+        confidence: 0.9,
+        status: 'confirmed',
+      },
+    ];
+
+    const result = await runRefactoredSpeakerPipeline(segments, {
+      openAIApiKey: 'test',
+      filename: 'ceasefire-economy.m4a',
+    });
+
+    const sponsorSpeaker = result.speakers.find((speaker) => speaker.name === 'ZBiotics');
+    expect(sponsorSpeaker).toBeDefined();
+    expect(sponsorSpeaker?.role).toBe('advertiser');
+    expect(result.segments[0].finalSpeakerId).toBe(sponsorSpeaker?.id);
+    expect(result.speakerData.speakers[sponsorSpeaker!.id].finalName).toBe('ZBiotics');
+  });
+
+  test('names introduced interview guest from the reply cluster after a strong intro', async () => {
+    const mockedIdentify = jest.mocked(gptSpeakerIntelligence.identifySpeakersWithGPT);
+    const mockedMapSegments = jest.mocked(llmSegmentMapping.mapSegmentsWithLLM);
+
+    mockedIdentify.mockResolvedValueOnce({
+      speakers: [
+        { id: 'speaker_1', name: null, role: 'unknown', confidence: 0.95, source: 'test' },
+        { id: 'speaker_2', name: null, role: 'unknown', confidence: 0.95, source: 'test' },
+      ],
+      rawResponse: '{}',
+      validationErrors: [],
+      costEstimate: 0,
+    } as any);
+
+    mockedMapSegments.mockResolvedValueOnce({
+      mappings: {
+        Speaker_A: 'speaker_1',
+        Speaker_B: 'speaker_2',
+      },
+      confidence: {
+        Speaker_A: 0.95,
+        Speaker_B: 0.95,
+      },
+      rawResponse: '{}',
+      reasoning: 'test mapping',
+    } as any);
+
+    const segments: SpeakerSegment[] = [
+      {
+        speakerId: 'Speaker_A',
+        initialSpeakerId: 'Speaker_A',
+        finalSpeakerId: 'Speaker_A',
+        startTime: 0,
+        endTime: 35,
+        text: "Welcome to Prof G Markets. Here to help us answer these questions, we are joined by the chief economist at Moody's Analytics, Mark Zandi. Mark, good to have you on the program.",
+        confidence: 0.95,
+        status: 'confirmed',
+      },
+      {
+        speakerId: 'Speaker_B',
+        initialSpeakerId: 'Speaker_B',
+        finalSpeakerId: 'Speaker_B',
+        startTime: 36,
+        endTime: 95,
+        text: "Feels pretty close to script, more or less. You know, the president has gone down this path before, and markets have reacted in predictable ways.",
+        confidence: 0.95,
+        status: 'confirmed',
+      },
+      {
+        speakerId: 'Speaker_A',
+        initialSpeakerId: 'Speaker_A',
+        finalSpeakerId: 'Speaker_A',
+        startTime: 96,
+        endTime: 120,
+        text: "How has this adjusted your views of what's going to happen in the markets and perhaps in the economy in the US?",
+        confidence: 0.95,
+        status: 'confirmed',
+      },
+    ];
+
+    const result = await runRefactoredSpeakerPipeline(segments, {
+      openAIApiKey: 'test',
+      filename: 'ceasefire-economy.m4a',
+      projectType: 'INTERVIEW',
+    });
+
+    const namedGuest = result.speakers.find((speaker) => speaker.name === 'Mark Zandi');
+    expect(namedGuest).toBeDefined();
+    expect(namedGuest?.role).toBe('guest');
+    expect(result.segments[1].finalSpeakerId).toBe(namedGuest?.id);
+  });
+
+  test('maps host-read ads to sponsor speakers and reuses sponsor identities across multiple ad blocks', async () => {
+    const mockedIdentify = jest.mocked(gptSpeakerIntelligence.identifySpeakersWithGPT);
+    const mockedMapSegments = jest.mocked(llmSegmentMapping.mapSegmentsWithLLM);
+
+    mockedIdentify.mockResolvedValueOnce({
+      speakers: [
+        { id: 'speaker_1', name: null, role: 'unknown', confidence: 0.8, source: 'test' },
+        { id: 'speaker_2', name: 'Josh Brown', role: 'guest', confidence: 0.9, source: 'test' },
+      ],
+      rawResponse: '{}',
+      validationErrors: [],
+      costEstimate: 0,
+    } as any);
+
+    mockedMapSegments.mockResolvedValueOnce({
+      mappings: {
+        Speaker_A: 'speaker_1',
+        Speaker_B: 'speaker_2',
+      },
+      confidence: {
+        Speaker_A: 0.95,
+        Speaker_B: 0.95,
+      },
+      rawResponse: '{}',
+      reasoning: 'test mapping',
+    } as any);
+
+    const segments: SpeakerSegment[] = [
+      {
+        speakerId: 'Speaker_A',
+        initialSpeakerId: 'Speaker_A',
+        finalSpeakerId: 'Speaker_A',
+        startTime: 0,
+        endTime: 12,
+        text: 'Welcome back to Prof G Markets.',
+        confidence: 0.9,
+        status: 'confirmed',
+      },
+      {
+        speakerId: 'Speaker_A',
+        initialSpeakerId: 'Speaker_A',
+        finalSpeakerId: 'Speaker_A',
+        startTime: 12,
+        endTime: 45,
+        text: 'Support for the show comes from Vanta. Visit vanta.com/markets to learn more.',
+        confidence: 0.9,
+        status: 'confirmed',
+      },
+      {
+        speakerId: 'Speaker_A',
+        initialSpeakerId: 'Speaker_A',
+        finalSpeakerId: 'Speaker_A',
+        startTime: 46,
+        endTime: 65,
+        text: "We're back with Prof G Markets.",
+        confidence: 0.9,
+        status: 'confirmed',
+      },
+      {
+        speakerId: 'Speaker_A',
+        initialSpeakerId: 'Speaker_A',
+        finalSpeakerId: 'Speaker_A',
+        startTime: 66,
+        endTime: 98,
+        text: 'Support for this show comes from Vanta. Vanta keeps your business secure. Visit vanta.com/markets.',
+        confidence: 0.9,
+        status: 'confirmed',
+      },
+    ];
+
+    const result = await runRefactoredSpeakerPipeline(segments, {
+      openAIApiKey: 'test',
+      filename: 'prof-g-markets.m4a',
+      projectType: 'PODCAST',
+    });
+
+    const vantaSpeaker = result.speakers.find((speaker) => speaker.name === 'Vanta');
+    expect(vantaSpeaker).toBeDefined();
+    expect(vantaSpeaker?.role).toBe('advertiser');
+
+    const vantaSegments = result.segments.filter((segment) => (segment.finalSpeakerId || segment.speakerId) === vantaSpeaker?.id);
+    expect(vantaSegments).toHaveLength(2);
+    expect(vantaSegments.every((segment) => segment.sponsorName === 'Vanta')).toBe(true);
   });
 
 });
