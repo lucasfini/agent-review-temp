@@ -2040,24 +2040,6 @@ export default function ProjectsPage() {
     }
   }, [isMobileViewport, router, session?.access_token, showToast, syncProjectListEntry]);
 
-  const selectProject = useCallback(async (projectId: string) => {
-    selectedProjectRef.current = projectId;
-    setProjectsSidebarOpen(false);
-    setSelectedProjectLoading(true);
-    setInsightsData([]);
-    setInsightsStatus({ count: 0, loading: true, generating: false, refreshing: false });
-    setShowFullTranscription(false);
-    setInsightsSidebarOpen(false);
-    setTriggerInsightGeneration(0);
-    setTriggerInsightRefresh(0);
-
-    await Promise.all([
-      fetchSelectedProject(projectId),
-      fetchProjectOutputs(projectId),
-      fetchGenerationJobs(projectId),
-    ]);
-  }, [fetchGenerationJobs, fetchProjectOutputs, fetchSelectedProject]);
-
   const fetchProjects = useCallback(async (
     options: { markLoading?: boolean; surfaceError?: boolean; source?: string } = {}
   ) => {
@@ -2132,6 +2114,49 @@ export default function ProjectsPage() {
     }
   }, [session?.access_token, user?.id]);
 
+  const fetchProjectOutputs = useCallback(async (projectId: string) => {
+    try {
+      console.log('Fetching outputs for project:', projectId);
+
+      const response = await fetch(`/api/projects/${projectId}/outputs`, {
+        cache: 'no-store',
+        headers: session?.access_token ? { Authorization: `Bearer ${session.access_token}` } : {},
+      });
+
+      if (!response.ok) {
+        const payload = await response.json().catch(() => ({ error: 'Failed to load outputs' }));
+        throw new Error(payload.error || 'Failed to load outputs');
+      }
+
+      const payload = await response.json() as { outputs?: Output[] };
+      const outputsData = payload.outputs || [];
+      console.log('Fetched outputs:', outputsData);
+      if (selectedProjectRef.current === projectId) {
+        setOutputs(outputsData);
+      }
+    } catch (error) {
+      console.error('Failed to fetch outputs:', error);
+    }
+  }, [session?.access_token]);
+
+  const selectProject = useCallback(async (projectId: string) => {
+    selectedProjectRef.current = projectId;
+    setProjectsSidebarOpen(false);
+    setSelectedProjectLoading(true);
+    setInsightsData([]);
+    setInsightsStatus({ count: 0, loading: true, generating: false, refreshing: false });
+    setShowFullTranscription(false);
+    setInsightsSidebarOpen(false);
+    setTriggerInsightGeneration(0);
+    setTriggerInsightRefresh(0);
+
+    await Promise.all([
+      fetchSelectedProject(projectId),
+      fetchProjectOutputs(projectId),
+      fetchGenerationJobs(projectId),
+    ]);
+  }, [fetchGenerationJobs, fetchProjectOutputs, fetchSelectedProject]);
+
   // Auto-select project from URL query parameter or default to the newest project
   useEffect(() => {
     if (loading || projects.length === 0) return;
@@ -2163,31 +2188,6 @@ export default function ProjectsPage() {
       void selectProject(nextProjectId);
     }
   }, [isMobileViewport, loading, projects, requestedProjectId, resetSelectedProject, router, selectProject, selectedProject?.id]);
-
-  const fetchProjectOutputs = useCallback(async (projectId: string) => {
-    try {
-      console.log('Fetching outputs for project:', projectId);
-
-      const response = await fetch(`/api/projects/${projectId}/outputs`, {
-        cache: 'no-store',
-        headers: session?.access_token ? { Authorization: `Bearer ${session.access_token}` } : {},
-      });
-
-      if (!response.ok) {
-        const payload = await response.json().catch(() => ({ error: 'Failed to load outputs' }));
-        throw new Error(payload.error || 'Failed to load outputs');
-      }
-
-      const payload = await response.json() as { outputs?: Output[] };
-      const outputsData = payload.outputs || [];
-      console.log('Fetched outputs:', outputsData);
-      if (selectedProjectRef.current === projectId) {
-        setOutputs(outputsData);
-      }
-    } catch (error) {
-      console.error('Failed to fetch outputs:', error);
-    }
-  }, [session?.access_token]);
 
   const refreshSelectedProjectArtifacts = useCallback(async (projectId: string, source: string) => {
     if (selectedProjectRef.current !== projectId) {
