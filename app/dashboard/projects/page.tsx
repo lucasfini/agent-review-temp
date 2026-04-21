@@ -29,6 +29,7 @@ import { getDashboardErrorMessage, logDashboardLoad } from '@/lib/dashboard-load
 import { getReviewItemsFromSpeakerData, getReviewSegmentIndicesFromSpeakerData, getSpeakerAssignmentConfidencePercent } from '@/lib/speaker-review';
 
 type ProjectType = 'DEBATE' | 'INTERVIEW' | 'PODCAST' | 'MONOLOGUE' | 'OTHER';
+type MobileStudioTab = 'projects' | 'conversation' | 'content';
 
 interface Project {
   id: string;
@@ -231,6 +232,7 @@ export default function ProjectsPage() {
   const [expandedFeatures, setExpandedFeatures] = useState<Set<string>>(new Set());
   const [isMobileViewport, setIsMobileViewport] = useState(false);
   const [isDesktopViewport, setIsDesktopViewport] = useState(false);
+  const [mobileStudioTab, setMobileStudioTab] = useState<MobileStudioTab>('projects');
 
   // Insights control state
   const [insightsSidebarOpen, setInsightsSidebarOpen] = useState(false);
@@ -300,8 +302,11 @@ export default function ProjectsPage() {
   const selectedProjectAudioExpired = isProjectAudioExpired(selectedProject);
   const selectedProjectAudioExpiryLabel = formatAudioExpiry(selectedProject?.audio_expires_at, prefs.locale, prefs.timezone);
   const mobileRequestedProjectId = isMobileViewport ? requestedProjectId : null;
-  const showMobileList = isMobileViewport && !mobileRequestedProjectId;
-  const showMainStage = !isMobileViewport || !!mobileRequestedProjectId || selectedProjectLoading;
+  const mobileHasProjectStage = Boolean(mobileRequestedProjectId || selectedProjectLoading || selectedProject);
+  const showMobileList = isMobileViewport && mobileStudioTab === 'projects';
+  const showMobileConversation = isMobileViewport && mobileStudioTab === 'conversation' && mobileHasProjectStage;
+  const showMobileContent = isMobileViewport && mobileStudioTab === 'content' && mobileHasProjectStage;
+  const showMainStage = !isMobileViewport || showMobileConversation;
 
   useEffect(() => {
     if (typeof window === 'undefined') return;
@@ -695,9 +700,23 @@ export default function ProjectsPage() {
   }, [isDesktopViewport, selectedProject?.id]);
 
   useEffect(() => {
+    if (!isMobileViewport) return;
+
+    if (!mobileRequestedProjectId) {
+      setMobileStudioTab('projects');
+      return;
+    }
+
+    setMobileStudioTab((prev) => (prev === 'projects' ? 'conversation' : prev));
+  }, [isMobileViewport, mobileRequestedProjectId]);
+
+  useEffect(() => {
     if (!selectedProject && !selectedProjectLoading) {
       setProjectsSidebarOpen(true);
       setContextSidebarOpen(false);
+      if (isMobileViewport) {
+        setMobileStudioTab('projects');
+      }
       return;
     }
 
@@ -779,6 +798,7 @@ export default function ProjectsPage() {
     setSelectedProject(null);
     setProjectsSidebarOpen(true);
     setContextSidebarOpen(false);
+    setMobileStudioTab('projects');
     setSelectedProjectLoading(false);
     setOutputs([]);
     setInsightsData([]);
@@ -1198,7 +1218,11 @@ export default function ProjectsPage() {
 
   const handleRedoInsights = () => {
     if (!selectedProject?.id) return;
-    setContextSidebarOpen(true);
+    if (isMobileViewport) {
+      setMobileStudioTab('content');
+    } else {
+      setContextSidebarOpen(true);
+    }
     setTriggerInsightRefresh((prev) => prev + 1);
   };
 
@@ -1979,6 +2003,7 @@ export default function ProjectsPage() {
           setOutputs([]);
           setContextSidebarOpen(false);
           if (isMobileViewport) {
+            setMobileStudioTab('projects');
             showToast('That project could not be found.', 'error');
             router.replace('/dashboard/projects');
           }
@@ -2026,6 +2051,7 @@ export default function ProjectsPage() {
         setOutputs([]);
         setContextSidebarOpen(false);
         if (isMobileViewport) {
+          setMobileStudioTab('projects');
           showToast('We could not open that project right now.', 'error');
           router.replace('/dashboard/projects');
         }
@@ -2142,6 +2168,10 @@ export default function ProjectsPage() {
   const selectProject = useCallback(async (projectId: string) => {
     selectedProjectRef.current = projectId;
     setProjectsSidebarOpen(false);
+    setContextSidebarOpen(false);
+    if (isMobileViewport) {
+      setMobileStudioTab('conversation');
+    }
     setSelectedProjectLoading(true);
     setInsightsData([]);
     setInsightsStatus({ count: 0, loading: true, generating: false, refreshing: false });
@@ -2155,7 +2185,7 @@ export default function ProjectsPage() {
       fetchProjectOutputs(projectId),
       fetchGenerationJobs(projectId),
     ]);
-  }, [fetchGenerationJobs, fetchProjectOutputs, fetchSelectedProject]);
+  }, [fetchGenerationJobs, fetchProjectOutputs, fetchSelectedProject, isMobileViewport]);
 
   // Auto-select project from URL query parameter or default to the newest project
   useEffect(() => {
@@ -2784,7 +2814,7 @@ export default function ProjectsPage() {
             data-tour="project-sidebar"
             className={`flex-shrink-0 border-r border-slate-200 bg-slate-50 transition-all duration-300 ease-in-out dark:border-slate-800 dark:bg-slate-900 ${isMobileViewport
               ? showMobileList
-                ? 'flex w-full flex-col overflow-hidden border-r-0'
+                ? 'flex w-full flex-col overflow-hidden border-r-0 pb-40'
                 : 'hidden'
               : projectsSidebarOpen
                 ? 'fixed inset-y-0 left-0 z-30 flex w-[88vw] max-w-sm flex-col overflow-hidden shadow-2xl md:w-[26rem] lg:static lg:inset-auto lg:z-auto lg:w-[520px] lg:min-w-[460px] lg:flex-shrink-0 lg:shadow-none'
@@ -2923,7 +2953,7 @@ export default function ProjectsPage() {
             </div>
 
             {/* Scrollable Projects List */}
-            <div className="flex-1 overflow-y-auto px-5 pb-5 space-y-3">
+            <div className={`flex-1 overflow-y-auto px-5 space-y-3 ${isMobileViewport ? 'pb-40' : 'pb-5'}`}>
               {filteredAndSortedProjects.length === 0 ? (
                 <div className="text-center py-8 text-slate-500 dark:text-slate-400">
                   <FileText className="mx-auto h-8 w-8 text-slate-400 dark:text-slate-500 mb-2" />
@@ -3113,14 +3143,6 @@ export default function ProjectsPage() {
                         )}
                       </div>
                     </div>
-
-                    <button
-                      type="button"
-                      onClick={() => setContextSidebarOpen(true)}
-                      className="rounded-lg border border-slate-200 bg-white px-3 py-2 text-xs font-semibold text-slate-700 transition-colors hover:bg-slate-50 dark:border-slate-700 dark:bg-slate-900 dark:text-slate-200 dark:hover:bg-slate-800"
-                    >
-                      Tools
-                    </button>
                   </div>
                 </div>
 
@@ -3395,7 +3417,7 @@ export default function ProjectsPage() {
                     )}
 
                     {/* Transcript Body */}
-                    <div ref={readerScrollRef} className="flex-1 min-h-0 overflow-y-auto">
+                    <div ref={readerScrollRef} className={`flex-1 min-h-0 overflow-y-auto ${isMobileViewport ? 'pb-36' : ''}`}>
                       {parsedSpeakerData ? (
                         readerView ? (
                           <div className="px-4 py-4 divide-y divide-slate-200 dark:divide-slate-800/70 relative">
@@ -3468,7 +3490,11 @@ export default function ProjectsPage() {
                             scrollToSegmentIndex={scrollToSegmentIndex}
                             onConfirmSegment={handleConfirmSegment}
                             onTranscriptInsightClick={(insightId) => {
-                              setContextSidebarOpen(true);
+                              if (isMobileViewport) {
+                                setMobileStudioTab('content');
+                              } else {
+                                setContextSidebarOpen(true);
+                              }
                               setActiveInsightId(insightId);
                             }}
                           />
@@ -3522,7 +3548,7 @@ export default function ProjectsPage() {
 
           {/* RIGHT COLUMN: Context Sidebar (25% on desktop) */}
           {/* Mobile backdrop for context sidebar */}
-          {contextSidebarOpen && (
+          {!isMobileViewport && contextSidebarOpen && (
             <div
               className="fixed inset-0 bg-black/60 z-20 lg:hidden"
               onClick={() => setContextSidebarOpen(false)}
@@ -3645,14 +3671,62 @@ export default function ProjectsPage() {
               ])
             )}
             onGenerateAnalysisOption={handleGenerateAnalysisOption}
-            isOpen={contextSidebarOpen}
-            onClose={() => setContextSidebarOpen(false)}
+            isOpen={isMobileViewport ? showMobileContent : contextSidebarOpen}
+            onClose={isMobileViewport ? undefined : () => setContextSidebarOpen(false)}
             readOnly={isDemoMode}
-            className={`transition-all duration-300 ease-in-out overflow-hidden ${contextSidebarOpen
-              ? 'fixed inset-x-0 bottom-0 z-30 h-[62svh] rounded-t-[1.75rem] border-l-0 opacity-100 shadow-2xl md:inset-y-0 md:right-0 md:left-auto md:h-auto md:w-[24rem] md:max-w-none md:rounded-none md:border-l lg:static lg:inset-auto lg:z-auto lg:flex-shrink-0 lg:w-[420px] lg:min-w-[380px] lg:shadow-none'
-              : 'pointer-events-none translate-y-8 opacity-0 md:translate-y-0 md:w-0'
-              }`}
+            mobileSheet={!isMobileViewport}
+            className={`transition-all duration-300 ease-in-out overflow-hidden ${
+              isMobileViewport
+                ? showMobileContent
+                  ? 'flex h-full w-full flex-col border-l-0 pb-36'
+                  : 'hidden'
+                : contextSidebarOpen
+                  ? 'fixed inset-x-0 bottom-0 z-30 h-[62svh] rounded-t-[1.75rem] border-l-0 opacity-100 shadow-2xl md:inset-y-0 md:right-0 md:left-auto md:h-auto md:w-[24rem] md:max-w-none md:rounded-none md:border-l lg:static lg:inset-auto lg:z-auto lg:flex-shrink-0 lg:w-[420px] lg:min-w-[380px] lg:shadow-none'
+                  : 'pointer-events-none translate-y-8 opacity-0 md:translate-y-0 md:w-0'
+            }`}
           />
+        </div>
+      )}
+
+      {isMobileViewport && projects.length > 0 && (
+        <div
+          className="fixed inset-x-3 z-30 rounded-2xl border border-slate-200/90 bg-white/95 p-1.5 shadow-[0_18px_50px_-20px_rgba(15,23,42,0.35)] backdrop-blur dark:border-slate-700/80 dark:bg-slate-900/95"
+          style={{
+            bottom: 'calc(env(safe-area-inset-bottom, 0px) + 5.5rem)',
+          }}
+        >
+          <div className="grid grid-cols-3 gap-1">
+            {([
+              { id: 'projects', label: 'Projects', icon: FileText, disabled: false },
+              { id: 'conversation', label: 'Conversation', icon: MessageSquare, disabled: !mobileHasProjectStage },
+              { id: 'content', label: 'Content', icon: Sparkles, disabled: !mobileHasProjectStage },
+            ] as const).map(({ id, label, icon: Icon, disabled }) => {
+              const isActive = mobileStudioTab === id;
+              return (
+                <button
+                  key={id}
+                  type="button"
+                  onClick={() => {
+                    if (!disabled) {
+                      setMobileStudioTab(id);
+                    }
+                  }}
+                  disabled={disabled}
+                  className={`flex flex-col items-center justify-center gap-1 rounded-xl px-3 py-2 text-[11px] font-semibold transition-colors ${
+                    isActive
+                      ? 'bg-blue-50 text-blue-700 dark:bg-blue-950/40 dark:text-blue-300'
+                      : disabled
+                        ? 'text-slate-400 dark:text-slate-600'
+                        : 'text-slate-600 hover:bg-slate-100 dark:text-slate-300 dark:hover:bg-slate-800/80'
+                  }`}
+                  aria-pressed={isActive}
+                >
+                  <Icon className="h-4 w-4" />
+                  <span>{label}</span>
+                </button>
+              );
+            })}
+          </div>
         </div>
       )}
 

@@ -258,6 +258,7 @@ interface ContextSidebarProps {
   // Mobile control
   isOpen?: boolean;
   onClose?: () => void;
+  mobileSheet?: boolean;
 
   // Review tab — segment review workflow
   segments?: SpeakerSegment[];
@@ -356,6 +357,7 @@ export function ContextSidebar({
   className,
   isOpen = true,
   onClose,
+  mobileSheet = true,
   segments = [],
   reviewItems = [],
   reviewSegmentIndices = [],
@@ -725,13 +727,13 @@ export function ContextSidebar({
     <aside
       className={cn(
         'flex flex-col h-full bg-slate-50 dark:bg-slate-900 border-l border-slate-200 dark:border-slate-800',
-        isMobileViewport && isOpen && (mobileExpanded ? 'h-[82svh]' : 'h-[62svh]'),
+        isMobileViewport && isOpen && mobileSheet && (mobileExpanded ? 'h-[82svh]' : 'h-[62svh]'),
         className
       )}
       data-tour="sidebar-panel"
       aria-hidden={!isOpen}
     >
-      {onClose && (
+      {onClose && mobileSheet && (
         <div className="flex-shrink-0 border-b border-slate-200/80 bg-white/95 px-4 py-3 backdrop-blur dark:border-slate-800/80 dark:bg-slate-950/95 lg:hidden">
           <div className="mx-auto mb-3 h-1.5 w-14 rounded-full bg-slate-300 dark:bg-slate-700" />
           <div className="flex items-center justify-between gap-3">
