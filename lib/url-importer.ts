@@ -9,7 +9,7 @@ import ffmpegPath from 'ffmpeg-static';
 import youtubedl from 'youtube-dl-exec';
 
 const MAX_FILE_SIZE = 500 * 1024 * 1024;
-const YT_DLP_JS_RUNTIME = `node:${process.execPath}`;
+const YT_DLP_JS_RUNTIME: `node:${string}` = `node:${process.execPath}`;
 
 if (ffmpegPath) {
   ffmpeg.setFfmpegPath(ffmpegPath);
