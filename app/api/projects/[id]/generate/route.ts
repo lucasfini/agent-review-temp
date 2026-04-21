@@ -1,7 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { supabaseAdmin } from '@/lib/supabase/server';
 import { getInternalJobToken } from '@/lib/internal-job-auth';
-import { getAppBaseUrl } from '@/lib/app-url';
+import { getInternalAppBaseUrl } from '@/lib/app-url';
 import { scheduleBackgroundTask } from '@/lib/background-task';
 import { DEFAULT_THEME_ID } from '@/lib/content-themes';
 import { normalizeCustomGuidance } from '@/lib/content-types';
@@ -141,7 +141,7 @@ export async function POST(
       }
     }
 
-    const baseUrl = getAppBaseUrl();
+    const baseUrl = getInternalAppBaseUrl();
     const internalJobToken = getInternalJobToken();
     const headers: Record<string, string> = { 'Content-Type': 'application/json' };
     if (internalJobToken) {

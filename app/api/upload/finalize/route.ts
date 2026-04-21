@@ -6,7 +6,7 @@ import { r2Client, BUCKET_NAME } from '@/lib/r2';
 import { verifyUploadToken } from '@/lib/upload-token';
 import { getInternalJobToken } from '@/lib/internal-job-auth';
 import { deleteProjectAudioObject } from '@/lib/audio-retention';
-import { getAppBaseUrl } from '@/lib/app-url';
+import { getInternalAppBaseUrl } from '@/lib/app-url';
 import { scheduleBackgroundTask } from '@/lib/background-task';
 
 export const runtime = 'nodejs';
@@ -114,7 +114,7 @@ export async function POST(request: NextRequest) {
     {
       const diarizationProvider = (process.env.ASSEMBLYAI_API_KEY || process.env.ASSEMBLYAI_ACCESS_KEY) ? 'assemblyai' : 'deepgram';
 
-      const baseUrl = getAppBaseUrl();
+      const baseUrl = getInternalAppBaseUrl();
 
       const internalJobToken = getInternalJobToken();
       const transcribeHeaders: Record<string, string> = {

@@ -1,7 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { supabaseAdmin } from '@/lib/supabase/server';
 import { isAuthorizedMaintenanceRequest } from '@/lib/maintenance-auth';
-import { getAppBaseUrl } from '@/lib/app-url';
+import { getInternalAppBaseUrl } from '@/lib/app-url';
 import { createReservation, failReservation, InsufficientCreditError } from '@/lib/billing/credit';
 import { estimateAnalysisJobCost, estimateContentGenerationCost } from '@/lib/billing/cost-map';
 import { isDemoUser } from '@/lib/demo-mode';
@@ -102,7 +102,7 @@ export async function POST(
       return NextResponse.json({ success: true, skipped: 'already-running' });
     }
 
-    const baseUrl = getAppBaseUrl();
+    const baseUrl = getInternalAppBaseUrl();
 
     while (true) {
       const { data: nextJob } = await (supabaseAdmin as any)

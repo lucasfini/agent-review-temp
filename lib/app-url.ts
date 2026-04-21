@@ -20,3 +20,13 @@ export function getAppBaseUrl(): string {
 
   return 'http://localhost:3000';
 }
+
+export function getInternalAppBaseUrl(): string {
+  const explicitInternalUrl = process.env.INTERNAL_APP_URL?.trim();
+  if (explicitInternalUrl) {
+    return explicitInternalUrl.replace(/\/+$/, '');
+  }
+
+  const port = process.env.PORT?.trim() || '3000';
+  return `http://127.0.0.1:${port}`;
+}

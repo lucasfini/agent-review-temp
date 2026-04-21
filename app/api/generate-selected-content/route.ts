@@ -5,7 +5,7 @@ import type { ContentBlock } from '@/lib/content-types';
 import { initializeGenerationProgress } from '@/lib/generation-progress';
 import { aiRatelimit } from '@/lib/rate-limit';
 import { getInternalJobToken } from '@/lib/internal-job-auth';
-import { getAppBaseUrl } from '@/lib/app-url';
+import { getInternalAppBaseUrl } from '@/lib/app-url';
 import { scheduleBackgroundTask } from '@/lib/background-task';
 import { calculateBlocksCost, getContentTypeById } from '@/lib/content-types';
 import { requireSufficientCredit } from '@/lib/billing/track-usage';
@@ -119,7 +119,7 @@ export async function POST(request: NextRequest) {
     await initializeGenerationProgress(projectId, blocks.length);
 
     // Start content generation process (async)
-    const baseUrl = getAppBaseUrl();
+    const baseUrl = getInternalAppBaseUrl();
 
     const internalJobToken = getInternalJobToken();
     const generationHeaders: Record<string, string> = {

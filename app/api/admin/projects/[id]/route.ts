@@ -3,7 +3,7 @@ import { NextRequest, NextResponse } from 'next/server';
 import { logAdminAuditEvent } from '@/lib/admin/audit';
 import { AdminAuthError, requireAdmin } from '@/lib/admin/require-admin';
 import { deleteProjectAudioObject } from '@/lib/audio-retention';
-import { getAppBaseUrl } from '@/lib/app-url';
+import { getInternalAppBaseUrl } from '@/lib/app-url';
 import { getInternalJobToken } from '@/lib/internal-job-auth';
 import { supabaseAdmin } from '@/lib/supabase/server';
 
@@ -16,7 +16,7 @@ async function startGenerationProcessor(projectId: string, adminAuthHeader: stri
     headers['x-internal-job-token'] = internalJobToken;
   }
 
-  await fetch(`${getAppBaseUrl()}/api/projects/${projectId}/generate/process`, {
+  await fetch(`${getInternalAppBaseUrl()}/api/projects/${projectId}/generate/process`, {
     method: 'POST',
     headers,
   });
