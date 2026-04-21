@@ -1146,7 +1146,7 @@ function HowItWorksGraphic({ step }: { step: HowItWorksStep }) {
 
   if (step.id === "upload") {
     return (
-      <div className="relative h-[26rem] overflow-hidden rounded-[2rem] border border-slate-200/70 bg-[linear-gradient(135deg,#eff6ff_0%,#eef2ff_52%,#f8fafc_100%)] p-5 shadow-[0_40px_120px_-60px_rgba(37,99,235,0.45)] dark:border-white/10 dark:bg-[linear-gradient(140deg,#020617_0%,#0f172a_45%,#172554_100%)]">
+      <div className="relative min-h-[24rem] overflow-hidden rounded-[2rem] border border-slate-200/70 bg-[linear-gradient(135deg,#eff6ff_0%,#eef2ff_52%,#f8fafc_100%)] p-4 shadow-[0_40px_120px_-60px_rgba(37,99,235,0.45)] sm:p-5 md:h-[26rem] dark:border-white/10 dark:bg-[linear-gradient(140deg,#020617_0%,#0f172a_45%,#172554_100%)]">
         <div className="absolute -left-8 top-12 h-36 w-36 rounded-full bg-blue-400/20 blur-3xl dark:bg-blue-500/20" />
         <div className="absolute bottom-6 right-2 h-44 w-44 rounded-full bg-indigo-400/20 blur-3xl dark:bg-indigo-500/20" />
         <div
@@ -1160,7 +1160,7 @@ function HowItWorksGraphic({ step }: { step: HowItWorksStep }) {
               audiorepurpose.com/dashboard/upload
             </div>
           </div>
-          <div className="grid flex-1 grid-cols-[1.25fr_0.68fr] gap-4">
+          <div className="grid flex-1 gap-4 md:grid-cols-[1.25fr_0.68fr]">
             <div className="rounded-[1.5rem] border border-dashed border-blue-300/70 bg-white/82 p-6 dark:border-blue-300/20 dark:bg-slate-900/75">
               <div className="mb-4 flex items-center justify-between">
                 <span className="rounded-full bg-blue-50 px-3 py-1 text-[11px] font-semibold uppercase tracking-[0.14em] text-blue-700 dark:bg-blue-500/12 dark:text-blue-300">
@@ -1229,7 +1229,7 @@ function HowItWorksGraphic({ step }: { step: HowItWorksStep }) {
 
   if (step.id === "process") {
     return (
-      <div className="relative h-[26rem] overflow-hidden rounded-[2rem] border border-slate-200/70 bg-[linear-gradient(145deg,#f8fafc_0%,#eef2ff_55%,#ecfeff_100%)] p-5 shadow-[0_40px_120px_-60px_rgba(99,102,241,0.42)] dark:border-white/10 dark:bg-[linear-gradient(145deg,#020617_0%,#111827_48%,#1e1b4b_100%)]">
+      <div className="relative min-h-[24rem] overflow-hidden rounded-[2rem] border border-slate-200/70 bg-[linear-gradient(145deg,#f8fafc_0%,#eef2ff_55%,#ecfeff_100%)] p-4 shadow-[0_40px_120px_-60px_rgba(99,102,241,0.42)] sm:p-5 md:h-[26rem] dark:border-white/10 dark:bg-[linear-gradient(145deg,#020617_0%,#111827_48%,#1e1b4b_100%)]">
         <div className="absolute left-10 top-8 h-36 w-36 rounded-full bg-violet-400/18 blur-3xl dark:bg-violet-500/18" />
         <div className="absolute bottom-4 right-10 h-40 w-40 rounded-full bg-cyan-400/16 blur-3xl dark:bg-cyan-500/18" />
         <div
@@ -1248,7 +1248,7 @@ function HowItWorksGraphic({ step }: { step: HowItWorksStep }) {
               Content Kit
             </div>
           </div>
-          <div className="grid flex-1 grid-cols-2 gap-4">
+          <div className="grid flex-1 gap-4 sm:grid-cols-2">
             {[
               {
                 label: "Named speakers",
@@ -1306,7 +1306,7 @@ function HowItWorksGraphic({ step }: { step: HowItWorksStep }) {
               </div>
             ))}
           </div>
-          <div className="grid grid-cols-[1.2fr_0.8fr] gap-4">
+          <div className="grid gap-4 md:grid-cols-[1.2fr_0.8fr]">
             <div className="rounded-[1.3rem] border border-slate-200/80 bg-white/80 p-4 dark:border-white/10 dark:bg-white/[0.05]">
               <div className="mb-2 text-sm font-semibold text-slate-800 dark:text-slate-100">
                 Processing plan
@@ -1348,11 +1348,11 @@ function HowItWorksGraphic({ step }: { step: HowItWorksStep }) {
   }
 
   return (
-    <div className="relative h-[26rem] overflow-hidden rounded-[2rem] border border-slate-200/70 bg-[linear-gradient(145deg,#eef2ff_0%,#f8fafc_52%,#ecfeff_100%)] p-5 shadow-[0_40px_120px_-60px_rgba(79,70,229,0.4)] dark:border-white/10 dark:bg-[linear-gradient(145deg,#020617_0%,#0f172a_45%,#172554_100%)]">
+    <div className="relative min-h-[24rem] overflow-hidden rounded-[2rem] border border-slate-200/70 bg-[linear-gradient(145deg,#eef2ff_0%,#f8fafc_52%,#ecfeff_100%)] p-4 shadow-[0_40px_120px_-60px_rgba(79,70,229,0.4)] sm:p-5 md:h-[26rem] dark:border-white/10 dark:bg-[linear-gradient(145deg,#020617_0%,#0f172a_45%,#172554_100%)]">
       <div className="absolute -left-4 top-10 h-40 w-40 rounded-full bg-indigo-400/18 blur-3xl dark:bg-indigo-500/20" />
       <div className="absolute bottom-8 right-8 h-44 w-44 rounded-full bg-cyan-400/16 blur-3xl dark:bg-cyan-500/18" />
       <div className={`${baseSurface} relative flex h-full flex-col gap-5 p-5`}>
-        <div className="grid grid-cols-[0.78fr_1.22fr] gap-4">
+        <div className="grid gap-4 md:grid-cols-[0.78fr_1.22fr]">
           <div className="rounded-[1.35rem] border border-slate-200/80 bg-white/82 p-4 dark:border-white/10 dark:bg-white/[0.05]">
             <div className="mb-4 text-sm font-semibold text-slate-900 dark:text-white">
               Project workspace

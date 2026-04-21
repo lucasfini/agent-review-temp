@@ -1209,7 +1209,89 @@ export default function UnifiedSettings({ userEmail, forcedSection }: UnifiedSet
                   </div>
                 ) : (
                   <>
-                    <div className="overflow-x-auto">
+                    <div className="sm:hidden divide-y divide-slate-200 dark:divide-slate-800">
+                      {filteredTransactions.map((transaction) => {
+                        const hasChildren = (transaction.children?.length || 0) > 0;
+                        const isExpanded = hasChildren && expandedGroups.has(transaction.id);
+
+                        return (
+                          <div key={transaction.id} className="px-4 py-4">
+                            <button
+                              type="button"
+                              onClick={hasChildren ? () => toggleGroup(transaction.id) : undefined}
+                              className={`w-full text-left ${hasChildren ? 'cursor-pointer' : 'cursor-default'}`}
+                            >
+                              <div className="flex items-start justify-between gap-3">
+                                <div className="min-w-0 flex-1">
+                                  <div className="flex items-center gap-2">
+                                    <TransactionTypeBadge type={transaction.transactionType} />
+                                    <span className="text-xs text-slate-500 dark:text-slate-400">
+                                      {new Date(transaction.createdAt).toLocaleDateString('en-US', {
+                                        month: 'short',
+                                        day: 'numeric',
+                                        year: 'numeric'
+                                      })}
+                                    </span>
+                                  </div>
+                                  <p className="mt-2 truncate text-sm font-medium text-slate-900 dark:text-slate-100">
+                                    {transaction.reason || '-'}
+                                  </p>
+                                  {transaction.projectTitle && (
+                                    <p className="mt-1 truncate text-xs text-slate-500 dark:text-slate-400">
+                                      {transaction.projectTitle}
+                                    </p>
+                                  )}
+                                  {!transaction.type || transaction.type !== 'workflow' ? (
+                                    <p className="mt-1 text-xs text-slate-500 dark:text-slate-400">
+                                      Invoice: {transaction.invoiceNumber || '-'}
+                                    </p>
+                                  ) : null}
+                                </div>
+                                <div className="flex flex-col items-end gap-2">
+                                  <span className={cn(
+                                    "text-sm font-semibold whitespace-nowrap",
+                                    transaction.amount > 0 ? "text-green-600" : "text-slate-900 dark:text-slate-50"
+                                  )}>
+                                    {transaction.amount > 0 ? '+' : ''}{formatAmount(transaction.amount)}
+                                  </span>
+                                  {hasChildren && (
+                                    isExpanded
+                                      ? <ChevronUp className="h-4 w-4 text-slate-500" />
+                                      : <ChevronDown className="h-4 w-4 text-slate-500" />
+                                  )}
+                                </div>
+                              </div>
+                            </button>
+
+                            {transaction.type === 'workflow' && isExpanded && transaction.children?.length ? (
+                              <div className="mt-3 space-y-2 rounded-xl bg-slate-50 p-3 dark:bg-slate-800/40">
+                                {transaction.children.map((child, idx) => (
+                                  <div key={`${transaction.id}-mobile-child-${idx}`} className="flex items-start justify-between gap-3 text-xs">
+                                    <div className="min-w-0 flex-1">
+                                      <p className="text-slate-600 dark:text-slate-300">{child.reason}</p>
+                                      <p className="mt-1 text-slate-400 dark:text-slate-500">
+                                        {new Date(child.createdAt).toLocaleTimeString('en-US', {
+                                          hour: 'numeric',
+                                          minute: '2-digit',
+                                        })}
+                                      </p>
+                                    </div>
+                                    <span className={cn(
+                                      "whitespace-nowrap font-medium",
+                                      child.amount > 0 ? "text-green-600" : "text-slate-500 dark:text-slate-400"
+                                    )}>
+                                      {child.amount > 0 ? '+' : ''}{formatAmount(child.amount)}
+                                    </span>
+                                  </div>
+                                ))}
+                              </div>
+                            ) : null}
+                          </div>
+                        );
+                      })}
+                    </div>
+
+                    <div className="hidden overflow-x-auto sm:block">
                       <table className="w-full text-sm">
                         <thead>
                           <tr className="border-b border-slate-200 dark:border-slate-800 bg-slate-50 dark:bg-slate-800/30">
@@ -1302,7 +1384,7 @@ export default function UnifiedSettings({ userEmail, forcedSection }: UnifiedSet
                     </div>
 
                     {/* Pagination */}
-                    <div className="flex items-center justify-between px-3 sm:px-6 py-3 border-t border-slate-200 dark:border-slate-800 bg-slate-50 dark:bg-slate-800/30">
+                    <div className="flex flex-col gap-3 px-3 py-3 sm:flex-row sm:items-center sm:justify-between sm:px-6 border-t border-slate-200 dark:border-slate-800 bg-slate-50 dark:bg-slate-800/30">
                       <span className="text-sm text-slate-500 dark:text-slate-400">
                         Showing {((transactionPage - 1) * TRANSACTIONS_PER_PAGE) + 1} to {Math.min(transactionPage * TRANSACTIONS_PER_PAGE, transactionTotal)} of {transactionTotal}
                       </span>

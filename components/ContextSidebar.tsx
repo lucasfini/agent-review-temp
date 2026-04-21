@@ -388,6 +388,8 @@ export function ContextSidebar({
   onGenerateAnalysisOption,
   readOnly = false,
 }: ContextSidebarProps) {
+  const [isMobileViewport, setIsMobileViewport] = useState(false);
+  const [mobileExpanded, setMobileExpanded] = useState(false);
   const [activeTab, setActiveTab] = useState<TabId>('review');
   const [expandedSections, setExpandedSections] = useState<Set<string>>(new Set(['speakers']));
   const [expandedContentSections, setExpandedContentSections] = useState<Set<string>>(
@@ -470,6 +472,24 @@ export function ContextSidebar({
   // Delete speaker state
   const [deleteSpeakerId, setDeleteSpeakerId] = useState<string | null>(null);
   const [deleteTargetId, setDeleteTargetId] = useState('');
+
+  useEffect(() => {
+    if (typeof window === 'undefined') return;
+
+    const mediaQuery = window.matchMedia('(max-width: 767px)');
+    const updateViewport = () => setIsMobileViewport(mediaQuery.matches);
+
+    updateViewport();
+    mediaQuery.addEventListener('change', updateViewport);
+
+    return () => mediaQuery.removeEventListener('change', updateViewport);
+  }, []);
+
+  useEffect(() => {
+    if (!isOpen) {
+      setMobileExpanded(false);
+    }
+  }, [isOpen]);
 
   const handleDeleteSubmit = async (speakerId: string, action: 'reassign' | 'delete') => {
     if (!onSpeakerDelete) return;
@@ -654,6 +674,11 @@ export function ContextSidebar({
   }, [activeAnalysisView, activeContentSection, availableAnalysisViews, availableOutputViews]);
 
   useEffect(() => {
+    if (isMobileViewport) {
+      setExpandedContentPanels(new Set([activeContentSection]));
+      return;
+    }
+
     if (availableAnalysisViews.length > 0 && availableOutputViews.length === 0) {
       setExpandedContentPanels(new Set(['analysis']));
       return;
@@ -663,7 +688,7 @@ export function ContextSidebar({
       return;
     }
     setExpandedContentPanels(new Set(['analysis', 'outputs']));
-  }, [availableAnalysisViews.length, availableOutputViews.length]);
+  }, [activeContentSection, availableAnalysisViews.length, availableOutputViews.length, isMobileViewport]);
 
   useEffect(() => {
     if (availableOutputViews.length === 0) {
@@ -700,13 +725,46 @@ export function ContextSidebar({
     <aside
       className={cn(
         'flex flex-col h-full bg-slate-50 dark:bg-slate-900 border-l border-slate-200 dark:border-slate-800',
+        isMobileViewport && isOpen && (mobileExpanded ? 'h-[82svh]' : 'h-[62svh]'),
         className
       )}
       data-tour="sidebar-panel"
       aria-hidden={!isOpen}
     >
+      {onClose && (
+        <div className="flex-shrink-0 border-b border-slate-200/80 bg-white/95 px-4 py-3 backdrop-blur dark:border-slate-800/80 dark:bg-slate-950/95 lg:hidden">
+          <div className="mx-auto mb-3 h-1.5 w-14 rounded-full bg-slate-300 dark:bg-slate-700" />
+          <div className="flex items-center justify-between gap-3">
+            <div className="min-w-0">
+              <p className="text-sm font-semibold text-slate-900 dark:text-slate-100">Project tools</p>
+              <p className="text-xs text-slate-500 dark:text-slate-400">
+                Review, generate, and manage speaker context without leaving the transcript.
+              </p>
+            </div>
+            <div className="flex items-center gap-2">
+              <button
+                type="button"
+                onClick={() => setMobileExpanded((prev) => !prev)}
+                className="rounded-lg border border-slate-200 bg-white p-2 text-slate-500 transition-colors hover:bg-slate-50 hover:text-slate-900 dark:border-slate-700 dark:bg-slate-900 dark:text-slate-300 dark:hover:bg-slate-800 dark:hover:text-white"
+                aria-label={mobileExpanded ? 'Collapse tools panel' : 'Expand tools panel'}
+              >
+                {mobileExpanded ? <PanelBottomClose className="h-4 w-4" /> : <PanelBottomOpen className="h-4 w-4" />}
+              </button>
+              <button
+                type="button"
+                onClick={onClose}
+                className="rounded-lg border border-slate-200 bg-white p-2 text-slate-500 transition-colors hover:bg-slate-50 hover:text-slate-900 dark:border-slate-700 dark:bg-slate-900 dark:text-slate-300 dark:hover:bg-slate-800 dark:hover:text-white"
+                aria-label="Close tools panel"
+              >
+                <X className="h-4 w-4" />
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
       {/* Tab Navigation */}
-      <div className="flex-shrink-0 border-b border-slate-200 dark:border-slate-800 bg-slate-100/60 dark:bg-slate-800/30">
+      <div className="flex-shrink-0 border-b border-slate-200 dark:border-slate-800 bg-slate-100/60 dark:bg-slate-800/30 lg:static lg:z-auto sticky top-0 z-10">
         {(() => {
           const reviewTabs = availableTabs.filter((tab) => tab.id === 'speakers' || tab.id === 'review');
           const contentTabs = availableTabs.filter((tab) => tab.id === 'generate' || tab.id === 'content');

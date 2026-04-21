@@ -9,14 +9,14 @@ export default function ContactPage() {
 
   return (
     <main className="min-h-screen bg-white text-slate-900 dark:bg-slate-950 dark:text-slate-100">
-      <div className="mx-auto flex max-w-3xl flex-col gap-6 px-6 py-14">
+      <div className="mx-auto flex max-w-3xl flex-col gap-6 px-4 py-10 sm:px-6 sm:py-14">
         <div className="inline-flex w-fit items-center gap-2 rounded-full border border-blue-200 bg-blue-50 px-3 py-1 text-sm font-medium text-blue-700 dark:border-blue-500/20 dark:bg-blue-500/10 dark:text-blue-300">
           <LifeBuoy className="h-4 w-4" />
           Contact AudioRepurpose
         </div>
 
         <div className="space-y-4">
-          <h1 className="text-4xl font-semibold tracking-tight text-slate-950 dark:text-white">
+          <h1 className="text-3xl font-semibold tracking-tight text-slate-950 dark:text-white sm:text-4xl">
             Reach support at {SUPPORT_EMAIL}
           </h1>
           <p className="max-w-2xl text-base leading-7 text-slate-600 dark:text-slate-300">
@@ -28,14 +28,14 @@ export default function ContactPage() {
         <div className="grid gap-4 sm:grid-cols-2">
           <a
             href={mailtoHref}
-            className="inline-flex items-center justify-center gap-2 rounded-xl bg-blue-600 px-4 py-3 text-sm font-medium text-white transition-colors hover:bg-blue-700"
+            className="inline-flex w-full items-center justify-center gap-2 rounded-xl bg-blue-600 px-4 py-3 text-sm font-medium text-white transition-colors hover:bg-blue-700"
           >
             <Mail className="h-4 w-4" />
             Email support
           </a>
           <Link
             href="/dashboard/contact"
-            className="inline-flex items-center justify-center gap-2 rounded-xl border border-slate-300 px-4 py-3 text-sm font-medium text-slate-700 transition-colors hover:bg-slate-50 dark:border-slate-700 dark:text-slate-200 dark:hover:bg-slate-900"
+            className="inline-flex w-full items-center justify-center gap-2 rounded-xl border border-slate-300 px-4 py-3 text-sm font-medium text-slate-700 transition-colors hover:bg-slate-50 dark:border-slate-700 dark:text-slate-200 dark:hover:bg-slate-900"
           >
             Open dashboard contact form
             <ArrowRight className="h-4 w-4" />

@@ -50,7 +50,7 @@ export default function ResetPasswordPage() {
           </p>
           <Link
             href="/auth/login"
-            className="inline-block bg-blue-600 text-white py-3 px-6 rounded-xl text-sm font-semibold hover:bg-blue-700 transition-colors"
+            className="inline-flex w-full items-center justify-center bg-blue-600 px-6 py-3 text-sm font-semibold text-white transition-colors hover:bg-blue-700 sm:inline-flex sm:w-auto rounded-xl"
           >
             Back to Login
           </Link>

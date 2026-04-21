@@ -3,8 +3,8 @@ import { SUPPORT_EMAIL } from '@/lib/site-config';
 export default function TermsPage() {
   return (
     <div className="min-h-screen bg-white text-slate-700 dark:bg-slate-950 dark:text-slate-200">
-      <div className="max-w-3xl mx-auto px-6 py-12">
-        <h1 className="text-3xl font-bold text-slate-900 dark:text-slate-50 mb-6">Terms of Service</h1>
+      <div className="max-w-3xl mx-auto px-4 py-10 sm:px-6 sm:py-12">
+        <h1 className="mb-6 text-2xl font-bold text-slate-900 dark:text-slate-50 sm:text-3xl">Terms of Service</h1>
         <p className="text-sm text-slate-500 dark:text-slate-400 mb-8">Effective date: April 7, 2026</p>
 
         <div className="space-y-6 text-sm leading-relaxed text-slate-600 dark:text-slate-300">

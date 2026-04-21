@@ -3,7 +3,7 @@
 import { useState, useEffect, useMemo, useRef, useCallback } from 'react';
 import Link from 'next/link';
 import { useSearchParams, useRouter } from 'next/navigation';
-import { FileText, Clock, CheckCircle, AlertCircle, Eye, Download, RefreshCw, Trash2, Zap, MessageCircle, Sparkles, BookOpen, Lightbulb, MessageSquare, PanelLeftClose, PanelLeftOpen, Search, Loader2, CheckSquare, Square, ListChecks, X, PanelRightOpen, PanelRightClose, ScanSearch, MoreHorizontal, Users, Mic, Radio, User, HelpCircle, Copy, Pencil, BarChart2 } from 'lucide-react';
+import { FileText, Clock, CheckCircle, AlertCircle, Eye, Download, RefreshCw, Trash2, Zap, MessageCircle, Sparkles, BookOpen, Lightbulb, MessageSquare, PanelLeftClose, PanelLeftOpen, Search, Loader2, CheckSquare, Square, ListChecks, X, PanelRightOpen, PanelRightClose, ScanSearch, MoreHorizontal, Users, Mic, Radio, User, HelpCircle, Copy, Pencil, BarChart2, ChevronLeft } from 'lucide-react';
 import { DropdownMenu, DropdownMenuItem, DropdownMenuSeparator } from '@/components/ui/dropdown-menu';
 import ConfirmModal from '@/components/ui/confirm-modal';
 import { useAuth } from '@/lib/auth/context';
@@ -229,6 +229,8 @@ export default function ProjectsPage() {
   const [searchTerm, setSearchTerm] = useState('');
   const [sortBy, setSortBy] = useState<'recent' | 'oldest' | 'name-asc' | 'name-desc'>('recent');
   const [expandedFeatures, setExpandedFeatures] = useState<Set<string>>(new Set());
+  const [isMobileViewport, setIsMobileViewport] = useState(false);
+  const [isDesktopViewport, setIsDesktopViewport] = useState(false);
 
   // Insights control state
   const [insightsSidebarOpen, setInsightsSidebarOpen] = useState(false);
@@ -296,6 +298,27 @@ export default function ProjectsPage() {
   const router = useRouter();
   const selectedProjectAudioExpired = isProjectAudioExpired(selectedProject);
   const selectedProjectAudioExpiryLabel = formatAudioExpiry(selectedProject?.audio_expires_at, prefs.locale, prefs.timezone);
+  const showMainStage = !isMobileViewport || !!selectedProject || selectedProjectLoading;
+
+  useEffect(() => {
+    if (typeof window === 'undefined') return;
+
+    const mobileQuery = window.matchMedia('(max-width: 767px)');
+    const desktopQuery = window.matchMedia('(min-width: 1024px)');
+    const updateViewport = () => {
+      setIsMobileViewport(mobileQuery.matches);
+      setIsDesktopViewport(desktopQuery.matches);
+    };
+
+    updateViewport();
+    mobileQuery.addEventListener('change', updateViewport);
+    desktopQuery.addEventListener('change', updateViewport);
+
+    return () => {
+      mobileQuery.removeEventListener('change', updateViewport);
+      desktopQuery.removeEventListener('change', updateViewport);
+    };
+  }, []);
 
   const activeGenerationJobs = useMemo(
     () => generationJobs.filter((job) => job.status === 'queued' || job.status === 'running'),
@@ -664,9 +687,22 @@ export default function ProjectsPage() {
   // Open details panel when a project is selected
   useEffect(() => {
     if (selectedProject) {
-      setContextSidebarOpen(true);
+      setContextSidebarOpen(isDesktopViewport);
     }
-  }, [selectedProject?.id]);
+  }, [isDesktopViewport, selectedProject?.id]);
+
+  useEffect(() => {
+    if (!selectedProject) {
+      setProjectsSidebarOpen(true);
+      setContextSidebarOpen(false);
+      return;
+    }
+
+    if (isMobileViewport) {
+      setProjectsSidebarOpen(false);
+      setContextSidebarOpen(false);
+    }
+  }, [isMobileViewport, selectedProject?.id]);
 
   const parseSpeakerData = (data: any) => {
     if (!data) return null;
@@ -738,6 +774,8 @@ export default function ProjectsPage() {
   const resetSelectedProject = useCallback(() => {
     selectedProjectRef.current = null;
     setSelectedProject(null);
+    setProjectsSidebarOpen(true);
+    setContextSidebarOpen(false);
     setSelectedProjectLoading(false);
     setOutputs([]);
     setInsightsData([]);
@@ -2709,7 +2747,7 @@ export default function ProjectsPage() {
         <div className="flex flex-1 overflow-hidden">
           {/* LEFT COLUMN: Projects List (25% on desktop) - Collapsible */}
           {/* Mobile backdrop for projects sidebar */}
-          {projectsSidebarOpen && (
+          {projectsSidebarOpen && !isMobileViewport && (
             <div
               className="fixed inset-0 bg-black/60 z-20 lg:hidden"
               onClick={() => setProjectsSidebarOpen(false)}
@@ -2718,9 +2756,13 @@ export default function ProjectsPage() {
           )}
           <aside
             data-tour="project-sidebar"
-            className={`flex-shrink-0 transition-all duration-300 ease-in-out border-r border-slate-200 dark:border-slate-800 bg-slate-50 dark:bg-slate-900 flex flex-col overflow-hidden ${projectsSidebarOpen
-              ? 'fixed inset-y-0 left-0 z-30 w-[85vw] max-w-xs opacity-100 shadow-2xl lg:static lg:inset-auto lg:z-auto lg:shadow-none lg:w-[520px] lg:flex-shrink-0 lg:min-w-[460px]'
-              : 'w-0 opacity-0 pointer-events-none'
+            className={`flex-shrink-0 border-r border-slate-200 bg-slate-50 transition-all duration-300 ease-in-out dark:border-slate-800 dark:bg-slate-900 ${isMobileViewport
+              ? (selectedProject || selectedProjectLoading)
+                ? 'hidden'
+                : 'flex w-full flex-col overflow-hidden border-r-0'
+              : projectsSidebarOpen
+                ? 'fixed inset-y-0 left-0 z-30 flex w-[88vw] max-w-sm flex-col overflow-hidden shadow-2xl md:w-[26rem] lg:static lg:inset-auto lg:z-auto lg:w-[520px] lg:min-w-[460px] lg:flex-shrink-0 lg:shadow-none'
+                : 'w-0 opacity-0 pointer-events-none'
               }`}
           >
             <div className="flex-shrink-0 p-5 pb-0 space-y-4">
@@ -2993,13 +3035,71 @@ export default function ProjectsPage() {
 
           {/* MIDDLE COLUMN: Main Content Stage */}
           <main
-            className={`flex-1 min-w-0 flex flex-col overflow-hidden transition-all duration-300 ease-in-out ${!projectsSidebarOpen && !contextSidebarOpen ? 'lg:w-full' : 'lg:w-1/2'
-              }`}
+            className={`${showMainStage ? 'flex' : 'hidden'} min-w-0 flex-1 flex-col overflow-hidden transition-all duration-300 ease-in-out ${!projectsSidebarOpen && !contextSidebarOpen ? 'lg:w-full' : 'lg:w-1/2'}`}
           >
             {selectedProject ? (
               <div className="h-full flex flex-col bg-white dark:bg-[#0F172A]">
+                <div className="flex-shrink-0 border-b border-slate-200 bg-white/95 px-4 py-3 backdrop-blur dark:border-slate-800 dark:bg-slate-900/95 lg:hidden">
+                  <div className="flex items-center gap-2">
+                    <button
+                      type="button"
+                      onClick={resetSelectedProject}
+                      className="rounded-lg p-2 text-slate-500 transition-colors hover:bg-slate-100 hover:text-slate-900 dark:text-slate-400 dark:hover:bg-slate-800 dark:hover:text-white"
+                      aria-label="Back to project list"
+                    >
+                      <ChevronLeft className="h-5 w-5" />
+                    </button>
+
+                    <div className="min-w-0 flex-1">
+                      {editingProjectTitle ? (
+                        <input
+                          type="text"
+                          value={editingTitleValue}
+                          onChange={(e) => setEditingTitleValue(e.target.value)}
+                          onKeyDown={(e) => {
+                            if (e.key === 'Enter') handleSaveProjectTitle();
+                            if (e.key === 'Escape') setEditingProjectTitle(false);
+                          }}
+                          onBlur={handleSaveProjectTitle}
+                          disabled={savingTitle}
+                          autoFocus
+                          className="w-full rounded-lg border border-blue-500/50 bg-slate-100/60 px-3 py-2 text-sm font-medium text-slate-700 outline-none dark:bg-slate-800/70 dark:text-slate-100"
+                        />
+                      ) : (
+                        <button
+                          type="button"
+                          onClick={() => { setEditingTitleValue(selectedProject.title); setEditingProjectTitle(true); }}
+                          className="w-full truncate rounded-lg px-1 py-1 text-left text-sm font-semibold text-slate-900 dark:text-slate-100"
+                          title="Rename project"
+                        >
+                          {selectedProject.title}
+                        </button>
+                      )}
+
+                      <div className="mt-1 flex flex-wrap items-center gap-2 text-[11px] text-slate-500 dark:text-slate-400">
+                        <span className="inline-flex items-center rounded-full border border-slate-200 bg-slate-100 px-2 py-0.5 dark:border-slate-700 dark:bg-slate-800">
+                          {getProcessingBadge(selectedProject)}
+                        </span>
+                        {selectedProject.project_type && (
+                          <span className="inline-flex items-center gap-1">
+                            {getProjectTypeBadge(selectedProject.project_type)}
+                          </span>
+                        )}
+                      </div>
+                    </div>
+
+                    <button
+                      type="button"
+                      onClick={() => setContextSidebarOpen(true)}
+                      className="rounded-lg border border-slate-200 bg-white px-3 py-2 text-xs font-semibold text-slate-700 transition-colors hover:bg-slate-50 dark:border-slate-700 dark:bg-slate-900 dark:text-slate-200 dark:hover:bg-slate-800"
+                    >
+                      Tools
+                    </button>
+                  </div>
+                </div>
+
                 {/* Global Project Header */}
-                <div className="flex-shrink-0 px-4 py-2.5 border-b border-slate-200 dark:border-slate-800 bg-white/80 dark:bg-slate-900/80">
+                <div className="hidden flex-shrink-0 px-4 py-2.5 border-b border-slate-200 dark:border-slate-800 bg-white/80 dark:bg-slate-900/80 lg:block">
                   <div className="flex items-center justify-between gap-3">
                     {/* Left: sidebar toggle + badges */}
                     <div className="flex items-center gap-2 flex-shrink-0">
@@ -3114,19 +3214,20 @@ export default function ProjectsPage() {
                   {/* Transcript Panel */}
                   <div className="flex flex-col min-h-0 overflow-hidden">
                     {/* Panel Header */}
-                    <div data-tour="transcript-header" className="flex-shrink-0 flex items-center justify-between gap-3 px-4 py-3 border-b border-slate-200 dark:border-slate-800 bg-white/50 dark:bg-slate-900/50 overflow-x-auto">
-                      <div className="flex items-start gap-2 flex-shrink-0">
+                    <div data-tour="transcript-header" className="flex-shrink-0 border-b border-slate-200 bg-white/50 px-4 py-3 dark:border-slate-800 dark:bg-slate-900/50">
+                      <div className="flex flex-col gap-3 md:flex-row md:items-center md:justify-between">
+                      <div className="flex min-w-0 items-start gap-2">
                         <BarChart2 className="w-4 h-4 text-blue-600 dark:text-blue-400" />
                         <div className="min-w-0">
-                          <span className="block text-slate-800 dark:text-slate-100 font-semibold text-sm whitespace-nowrap">Transcript</span>
+                          <span className="block text-slate-800 dark:text-slate-100 font-semibold text-sm">Transcript</span>
                           {parsedSpeakerData?.detectionMetadata && (
-                            <p className="mt-0.5 text-xs text-slate-500 dark:text-slate-400 whitespace-nowrap">
+                            <p className="mt-0.5 text-xs text-slate-500 dark:text-slate-400">
                               {parsedSpeakerData.detectionMetadata.totalSpeakers} speaker{parsedSpeakerData.detectionMetadata.totalSpeakers !== 1 ? 's' : ''} • {parsedSpeakerData.detectionMetadata.totalSegments} segments
                             </p>
                           )}
                         </div>
                       </div>
-                      <div className="flex items-center justify-end gap-2 flex-shrink-0 whitespace-nowrap">
+                      <div className="flex flex-wrap items-center justify-start gap-2 md:justify-end">
                         {parsedSpeakerData && (
                           <>
                             <label className={`flex items-center gap-1 text-xs px-2 py-0.5 rounded-full border transition-colors cursor-pointer ${showTimestamps ? 'border-blue-300 dark:border-blue-800/30 bg-blue-50 dark:bg-blue-900/20 text-blue-600 dark:text-blue-400' : 'border-slate-300 dark:border-slate-700 text-slate-500 hover:text-slate-600 dark:hover:text-slate-400'
@@ -3147,7 +3248,7 @@ export default function ProjectsPage() {
                             <select
                               value={selectedSpeaker || ''}
                               onChange={(e) => setSelectedSpeaker(e.target.value || null)}
-                              className={`text-xs px-2 py-0.5 rounded-full border transition-colors bg-transparent ${selectedSpeaker
+                              className={`min-w-[8rem] text-xs px-2 py-0.5 rounded-full border transition-colors bg-transparent ${selectedSpeaker
                                 ? 'border-blue-300 dark:border-blue-800/30 bg-blue-50 dark:bg-blue-900/20 text-blue-600 dark:text-blue-400'
                                 : 'border-slate-300 dark:border-slate-700 text-slate-500 hover:text-slate-600 dark:hover:text-slate-400'
                                 }`}
@@ -3224,6 +3325,7 @@ export default function ProjectsPage() {
                             Export
                           </DropdownMenuItem>
                         </DropdownMenu>
+                      </div>
                       </div>
                     </div>
 
@@ -3521,8 +3623,8 @@ export default function ProjectsPage() {
             onClose={() => setContextSidebarOpen(false)}
             readOnly={isDemoMode}
             className={`transition-all duration-300 ease-in-out overflow-hidden ${contextSidebarOpen
-              ? 'fixed inset-y-0 right-0 z-30 w-[85vw] max-w-xs opacity-100 shadow-2xl lg:static lg:inset-auto lg:z-auto lg:shadow-none lg:flex-shrink-0 lg:w-[420px] lg:min-w-[380px]'
-              : 'w-0 opacity-0 pointer-events-none'
+              ? 'fixed inset-x-0 bottom-0 z-30 h-[62svh] rounded-t-[1.75rem] border-l-0 opacity-100 shadow-2xl md:inset-y-0 md:right-0 md:left-auto md:h-auto md:w-[24rem] md:max-w-none md:rounded-none md:border-l lg:static lg:inset-auto lg:z-auto lg:flex-shrink-0 lg:w-[420px] lg:min-w-[380px] lg:shadow-none'
+              : 'pointer-events-none translate-y-8 opacity-0 md:translate-y-0 md:w-0'
               }`}
           />
         </div>

@@ -11,7 +11,7 @@ import Link from 'next/link';
 export default function PaymentCancelPage() {
   return (
     <div className="min-h-screen flex items-center justify-center bg-slate-950 p-4">
-      <div className="max-w-md w-full bg-slate-900 border border-slate-800 rounded-lg shadow-lg p-8">
+      <div className="max-w-md w-full bg-slate-900 border border-slate-800 rounded-lg shadow-lg p-6 sm:p-8">
         {/* Cancel Icon */}
         <div className="flex justify-center mb-6">
           <div className="bg-slate-800 rounded-full p-3">

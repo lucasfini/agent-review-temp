@@ -1,6 +1,6 @@
 "use client";
 
-import { useState, useEffect, useRef, useCallback } from 'react';
+import { useState, useEffect, useRef, useCallback, useMemo } from 'react';
 import Link from 'next/link';
 import Image from 'next/image';
 import { usePathname, useRouter, useSearchParams } from 'next/navigation';
@@ -42,6 +42,24 @@ type NavItemDef = {
 type RecentProject = { id: string; title: string; status?: string | null };
 
 const TOOLTIP_OFFSET_PX = 8;
+
+function getMobilePageTitle(pathname: string, activeSettingsSection: string | null): string {
+  if (pathname === '/dashboard' || pathname === '/dashboard/hub') return 'All Projects';
+  if (pathname === '/dashboard/projects') return 'Studio';
+  if (pathname === '/dashboard/upload') return 'Upload Audio';
+  if (pathname === '/dashboard/analytics') return 'Analytics';
+  if (pathname === '/dashboard/billing') return 'Billing';
+  if (pathname === '/dashboard/usage') return 'Usage';
+  if (pathname === '/dashboard/contact') return 'Contact';
+  if (pathname === '/dashboard/settings') {
+    if (activeSettingsSection === 'billing') return 'Billing';
+    if (activeSettingsSection === 'usage') return 'Usage';
+    return 'Preferences';
+  }
+  if (pathname.startsWith('/dashboard/admin')) return 'Admin';
+  return 'Dashboard';
+}
+
 function getDisplayName(user: SupabaseUser | null): string {
   if (!user) return 'User';
   const meta = user.user_metadata as Record<string, unknown> | undefined;
@@ -604,6 +622,12 @@ export default function DashboardNav({
   const activeSettingsSection = pathname.startsWith('/dashboard/settings')
     ? (rawSettingsSection === 'general' ? 'preferences' : rawSettingsSection)
     : null;
+  const mobilePageTitle = useMemo(
+    () => getMobilePageTitle(pathname, activeSettingsSection),
+    [pathname, activeSettingsSection]
+  );
+  const mobileActionHref = pathname === '/dashboard/upload' ? null : '/dashboard/upload';
+  const mobileActionLabel = pathname === '/dashboard/projects' ? 'Upload' : 'New';
 
   const activeProjectId = searchParams.get('id');
   const collapsed = isCollapsed ?? localCollapsed;
@@ -635,6 +659,21 @@ export default function DashboardNav({
     setIsLoadingBalance(true);
     fetchBalance();
   }, [fetchBalance]);
+
+  useEffect(() => {
+    setIsMobileMenuOpen(false);
+  }, [pathname, searchParams]);
+
+  useEffect(() => {
+    if (!isMobileMenuOpen) return;
+
+    const previousOverflow = document.body.style.overflow;
+    document.body.style.overflow = 'hidden';
+
+    return () => {
+      document.body.style.overflow = previousOverflow;
+    };
+  }, [isMobileMenuOpen]);
 
   useEffect(() => {
     if (!user) return;
@@ -801,31 +840,56 @@ export default function DashboardNav({
 
       {/* Mobile top bar */}
       <div className="md:hidden">
-        <div className="flex items-center justify-between bg-white dark:bg-slate-950 border-b border-slate-200 dark:border-slate-800 px-4 py-3">
-          <Link href="/dashboard/hub" className="flex items-center gap-2">
-            <BrandLogo showSubtitle={false} theme={logoTheme} />
-          </Link>
-          <div className="flex items-center gap-1">
-            <ThemeToggle />
-            <button
-              onClick={() => setIsMobileMenuOpen(true)}
-              className="p-2 rounded-lg text-slate-500 dark:text-slate-200 hover:text-slate-900 dark:hover:text-white hover:bg-slate-100 dark:hover:bg-slate-800"
-              aria-label="Open navigation menu"
-            >
-              <Menu className="h-6 w-6" />
-            </button>
+        <div className="sticky top-0 z-30 border-b border-slate-200/90 bg-white/95 px-4 py-3 backdrop-blur dark:border-slate-800/90 dark:bg-slate-950/95">
+          <div className="grid grid-cols-[auto_minmax(0,1fr)_auto] items-center gap-3">
+            <div className="flex items-center gap-1">
+              <button
+                onClick={() => setIsMobileMenuOpen(true)}
+                className="rounded-xl p-2 text-slate-500 transition-colors hover:bg-slate-100 hover:text-slate-900 dark:text-slate-200 dark:hover:bg-slate-800 dark:hover:text-white"
+                aria-label="Open navigation menu"
+              >
+                <Menu className="h-5 w-5" />
+              </button>
+              <Link
+                href="/dashboard/hub"
+                className="hidden rounded-lg p-1 text-slate-500 transition-colors hover:bg-slate-100 min-[375px]:inline-flex dark:text-slate-300 dark:hover:bg-slate-800"
+                aria-label="Go to project hub"
+              >
+                <BrandLogo showSubtitle={false} theme={logoTheme} size="sm" />
+              </Link>
+            </div>
+
+            <div className="min-w-0 text-center">
+              <p className="truncate text-sm font-semibold text-slate-900 dark:text-slate-100">
+                {mobilePageTitle}
+              </p>
+            </div>
+
+            <div className="flex items-center justify-end gap-1">
+              {mobileActionHref ? (
+                <Link
+                  href={mobileActionHref}
+                  className="inline-flex min-w-[3.75rem] items-center justify-center rounded-xl bg-blue-600 px-3 py-2 text-xs font-semibold text-white shadow-sm transition-colors hover:bg-blue-700"
+                >
+                  {mobileActionLabel}
+                </Link>
+              ) : (
+                <ThemeToggle />
+              )}
+              {mobileActionHref && <ThemeToggle />}
+            </div>
           </div>
         </div>
       </div>
 
       {/* Mobile menu overlay */}
       {isMobileMenuOpen && (
-        <div className="fixed inset-0 flex z-40 md:hidden">
+        <div className="fixed inset-0 z-50 flex md:hidden">
           <div
             className="fixed inset-0 bg-black/50 dark:bg-black/75"
             onClick={() => setIsMobileMenuOpen(false)}
           />
-          <div className="relative flex flex-col max-w-[85vw] w-80 bg-white dark:bg-slate-950 h-full overflow-y-auto shadow-xl">
+          <div className="relative flex h-full w-[min(88vw,20rem)] flex-col overflow-y-auto bg-white shadow-xl dark:bg-slate-950">
             <button
               onClick={() => setIsMobileMenuOpen(false)}
               className="absolute top-3 right-3 z-10 p-2 rounded-lg text-slate-500 dark:text-slate-400 hover:text-slate-900 dark:hover:text-white hover:bg-slate-100 dark:hover:bg-slate-800 transition-colors"

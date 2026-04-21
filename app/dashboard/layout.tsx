@@ -123,7 +123,7 @@ function DashboardLayoutContent({
           <div
             className={`flex flex-col min-w-0 w-full md:w-0 flex-1 transition-[margin] duration-200 ease-out ${usesDocumentFlow ? 'overflow-visible' : 'overflow-hidden'} ${isSidebarCollapsed ? 'md:ml-20' : 'md:ml-64'}`}
           >
-            <main className={`${usesDocumentFlow ? 'overflow-visible' : 'flex-1 overflow-y-auto'} relative focus:outline-none${displayedUploads.length > 0 ? ' pb-16' : ''}`}>
+            <main className={`${usesDocumentFlow ? 'overflow-visible' : 'flex-1 overflow-y-auto'} relative focus:outline-none${displayedUploads.length > 0 ? ' pb-24 md:pb-16' : ''}`}>
               {children}
             </main>
             {usesDocumentFlow && <CompactFooter inDashboard={true} />}
@@ -131,42 +131,84 @@ function DashboardLayoutContent({
 
           {/* Global upload/transcription progress banner */}
           {displayedUploads.length > 0 && (
-            <div
-              className={`fixed bottom-0 left-0 right-0 z-50 flex items-center gap-3 border-t border-slate-200 bg-white px-3 py-2 text-slate-900 shadow-lg transition-[left] duration-200 ease-out dark:border-transparent dark:bg-gray-900 dark:text-white sm:px-6 sm:py-3 ${isSidebarCollapsed ? 'md:left-20' : 'md:left-64'}`}
-            >
-              <Loader2 className="h-4 w-4 animate-spin flex-shrink-0 text-blue-400" />
-              <div className="flex-1 min-w-0">
-                {(() => {
-                  const activeUpload = displayedUploads[0];
-                  const isSyncedUpload = isSyncedUploadProgressItem(activeUpload);
-                  const stage = isSyncedUpload
-                    ? activeUpload.processingStage || 'pending'
-                    : activeUpload.processing_stage || (activeUpload.status === 'uploading' ? 'uploading' : 'transcribing');
-                  const tier = normalizeTier(
-                    isSyncedUpload
-                      ? activeUpload.processingTier
-                      : activeUpload.performance_level || 'content_kit'
+            (() => {
+              const activeUpload = displayedUploads[0];
+              const isSyncedUpload = isSyncedUploadProgressItem(activeUpload);
+              const stage = isSyncedUpload
+                ? activeUpload.processingStage || 'pending'
+                : activeUpload.processing_stage || (activeUpload.status === 'uploading' ? 'uploading' : 'transcribing');
+              const tier = normalizeTier(
+                isSyncedUpload
+                  ? activeUpload.processingTier
+                  : activeUpload.performance_level || 'content_kit'
+              );
+              const overallProgress = isSyncedUpload
+                ? Math.min(100, Math.max(0, Math.round(activeUpload.progress)))
+                : calculateOverallProgress(
+                    tier,
+                    stage,
+                    typeof activeUpload.processing_progress === 'number' ? activeUpload.processing_progress : 0
                   );
-                  const overallProgress = isSyncedUpload
-                    ? Math.min(100, Math.max(0, Math.round(activeUpload.progress)))
-                    : calculateOverallProgress(
-                        tier,
-                        stage,
-                        typeof activeUpload.processing_progress === 'number' ? activeUpload.processing_progress : 0
-                      );
-                  const message = isSyncedUpload
-                    ? (activeUpload.processingMessage || getUserFacingProcessingMessage(tier, stage, undefined))
-                    : getUserFacingProcessingMessage(
-                        tier,
-                        stage,
-                        activeUpload.processing_message
-                      );
-                  const title = isSyncedUpload
-                    ? activeUpload.title
-                    : activeUpload.title || activeUpload.audio_file_name;
+              const message = isSyncedUpload
+                ? (activeUpload.processingMessage || getUserFacingProcessingMessage(tier, stage, undefined))
+                : getUserFacingProcessingMessage(
+                    tier,
+                    stage,
+                    activeUpload.processing_message
+                  );
+              const title = isSyncedUpload
+                ? activeUpload.title
+                : activeUpload.title || activeUpload.audio_file_name;
+              const destinationProjectId = isSyncedUpload
+                ? activeUpload.projectId
+                : activeUpload.id;
+              const destinationPath = isUploadRoute
+                ? '/dashboard/upload'
+                : `/dashboard/projects?id=${destinationProjectId}`;
 
-                  return (
-                    <>
+              return (
+                <>
+                  <button
+                    type="button"
+                    onClick={() => router.push(destinationPath)}
+                    className="fixed inset-x-3 bottom-3 z-30 rounded-2xl border border-slate-200/90 bg-white/95 px-4 py-3 text-left text-slate-900 shadow-[0_18px_50px_-20px_rgba(15,23,42,0.35)] backdrop-blur transition-colors hover:bg-white dark:border-slate-700/80 dark:bg-slate-900/95 dark:text-white dark:hover:bg-slate-900 md:hidden"
+                    style={{ paddingBottom: 'calc(env(safe-area-inset-bottom, 0px) + 0.75rem)' }}
+                  >
+                    <div className="flex items-start gap-3">
+                      <Loader2 className="mt-0.5 h-4 w-4 animate-spin flex-shrink-0 text-blue-500 dark:text-blue-300" />
+                      <div className="min-w-0 flex-1">
+                        <p className="max-h-10 overflow-hidden text-sm font-medium leading-5">
+                          {message}
+                          <span className="text-slate-400"> — </span>
+                          <span className="text-slate-600 dark:text-slate-300">&ldquo;{title}&rdquo;</span>
+                        </p>
+                        <div className="mt-2 flex items-center gap-3">
+                          <div className="relative h-1.5 flex-1 overflow-hidden rounded-full bg-slate-200 dark:bg-slate-700">
+                            <div
+                              className="absolute inset-y-0 left-0 rounded-full bg-blue-500 transition-all duration-500 dark:bg-blue-400"
+                              style={{ width: `${overallProgress}%` }}
+                            />
+                          </div>
+                          <span className="text-xs font-semibold tabular-nums text-blue-600 dark:text-blue-300">
+                            {overallProgress}%
+                          </span>
+                        </div>
+                        {displayedUploads.length > 1 && (
+                          <p className="mt-2 text-xs text-slate-500 dark:text-slate-400">
+                            {displayedUploads.length - 1} more upload{displayedUploads.length > 2 ? 's' : ''} running
+                          </p>
+                        )}
+                      </div>
+                    </div>
+                  </button>
+
+                  <button
+                    type="button"
+                    onClick={() => router.push(destinationPath)}
+                    className={`fixed bottom-0 left-0 right-0 z-50 hidden items-center gap-3 border-t border-slate-200 bg-white px-3 py-2 text-left text-slate-900 shadow-lg transition-[left] duration-200 ease-out dark:border-transparent dark:bg-gray-900 dark:text-white sm:px-6 sm:py-3 md:flex ${isSidebarCollapsed ? 'md:left-20' : 'md:left-64'}`}
+                  >
+                    <Loader2 className="h-4 w-4 animate-spin flex-shrink-0 text-blue-400" />
+                    <div className="flex-1 min-w-0">
                       <p className="text-sm font-medium truncate leading-snug">
                         {message}
                         <span className="text-slate-400"> — </span>
@@ -184,11 +226,11 @@ function DashboardLayoutContent({
                           {overallProgress}%
                         </span>
                       </div>
-                    </>
-                  );
-                })()}
-              </div>
-            </div>
+                    </div>
+                  </button>
+                </>
+              );
+            })()
           )}
 
           {/* Coverage analysis banner — survives navigation via context */}

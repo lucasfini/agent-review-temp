@@ -116,7 +116,7 @@ function PaymentSuccessContent() {
 
   return (
     <div className="min-h-screen flex items-center justify-center bg-white dark:bg-slate-950 p-4">
-      <div className="max-w-md w-full bg-slate-50 dark:bg-slate-900 border border-slate-200 dark:border-slate-800 rounded-lg shadow-lg p-8">
+      <div className="max-w-md w-full bg-slate-50 dark:bg-slate-900 border border-slate-200 dark:border-slate-800 rounded-lg shadow-lg p-6 sm:p-8">
         {/* Success Icon */}
         <div className="flex justify-center mb-6">
           <div className="bg-green-900/30 rounded-full p-3">
