@@ -95,6 +95,9 @@ interface SpeakerRosterEntry {
   id: string;
   name: string;
   role?: string | null;
+  assignmentConfidence?: number | null;
+  assignmentContradictions?: string[];
+  requiresReview?: boolean;
   segmentCount: number;
   totalDuration: number;
 }
@@ -296,11 +299,31 @@ function buildSpeakerRoster(speakerData: any): SpeakerRosterEntry[] {
     id,
     name: getIdentityFirstSpeakerName(speakerData, id, orderMap),
     role: speaker?.role || null,
+    assignmentConfidence: typeof speaker?.assignmentConfidence === 'number' ? speaker.assignmentConfidence : null,
+    assignmentContradictions: Array.isArray(speaker?.assignmentContradictions) ? speaker.assignmentContradictions : [],
+    requiresReview: Boolean(speaker?.requiresReview),
     segmentCount: totals[id]?.count || 0,
     totalDuration: totals[id]?.duration || 0,
   }));
 
   return roster.sort((a, b) => b.totalDuration - a.totalDuration);
+}
+
+function buildExportConversationSpeakers(speakerData: any): Record<string, any> | undefined {
+  if (!speakerData?.speakers) return undefined;
+
+  return Object.fromEntries(
+    Object.entries(speakerData.speakers).map(([speakerId, speaker]: [string, any]) => [
+      speakerId,
+      {
+        ...speaker,
+        id: speaker?.id || speakerId,
+        assignmentConfidence: typeof speaker?.assignmentConfidence === 'number' ? speaker.assignmentConfidence : null,
+        assignmentContradictions: Array.isArray(speaker?.assignmentContradictions) ? speaker.assignmentContradictions : [],
+        requiresReview: Boolean(speaker?.requiresReview),
+      },
+    ])
+  );
 }
 
 function formatConversationTimestamp(startTime?: number, endTime?: number): string {
@@ -726,13 +749,16 @@ function formatAsJSON(projects: ExportProject[], manifest: ExportManifestItem[])
         const speakerData = parseSpeakerData(project);
         const roster = speakerData ? buildSpeakerRoster(speakerData) : [];
         coreContent.conversation = {
-          speakers: speakerData?.speakers,
+          speakers: buildExportConversationSpeakers(speakerData),
           segments: speakerData?.segments,
           detectionMetadata: speakerData?.detectionMetadata,
           speakerRoster: roster.length > 0 ? roster.map((speaker) => ({
             id: speaker.id,
             name: speaker.name,
             role: speaker.role || undefined,
+            assignmentConfidence: speaker.assignmentConfidence,
+            assignmentContradictions: speaker.assignmentContradictions,
+            requiresReview: speaker.requiresReview,
             segmentCount: speaker.segmentCount,
             totalDuration: speaker.totalDuration,
           })) : undefined,
@@ -1407,6 +1433,7 @@ export async function exportContent(
 export const __testUtils = {
   buildSpeakerOrderMap,
   buildSpeakerRoster,
+  buildExportConversationSpeakers,
   formatAsJSON,
   getIdentityFirstSpeakerName,
   formatConversationSegmentTag,

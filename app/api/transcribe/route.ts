@@ -42,6 +42,7 @@ import {
 } from '@/lib/speaker-finalization';
 import {
   detectShowIdentityFromContext,
+  detectGenericShowIdentityFromProjects,
   extractLearnedShowRosterFromProjects,
   mergeShowRosterEntries,
   type ShowRosterEntry,
@@ -197,18 +198,14 @@ async function inferRecurringShowRoster(params: {
   showIdentity: ReturnType<typeof detectShowIdentityFromContext>;
   effectiveRoster: ShowRosterEntry[];
 }> {
-  const showIdentity = detectShowIdentityFromContext({
+  let showIdentity = detectShowIdentityFromContext({
     title: params.title || null,
     filename: params.filename || null,
     segments: params.segments,
   });
 
-  if (!showIdentity && (!params.explicitRoster || params.explicitRoster.length === 0)) {
-    return { showIdentity: null, effectiveRoster: [] };
-  }
-
   let priorProjects: any[] = [];
-  if (params.userId && showIdentity) {
+  if (params.userId) {
     const { data } = await (supabaseAdmin as any)
       .from('projects')
       .select('id, title, metadata, speaker_data, preset_speakers, processing_completed_at, status')
@@ -219,6 +216,19 @@ async function inferRecurringShowRoster(params: {
       .limit(40);
 
     priorProjects = Array.isArray(data) ? data : [];
+  }
+
+  if (!showIdentity) {
+    showIdentity = detectGenericShowIdentityFromProjects({
+      title: params.title || null,
+      filename: params.filename || null,
+      segments: params.segments,
+      projects: priorProjects,
+    });
+  }
+
+  if (!showIdentity && (!params.explicitRoster || params.explicitRoster.length === 0)) {
+    return { showIdentity: null, effectiveRoster: [] };
   }
 
   const learnedRoster = extractLearnedShowRosterFromProjects(priorProjects, showIdentity);

@@ -13,6 +13,7 @@ import {
 } from '@/lib/speaker-finalization';
 import {
   detectShowIdentityFromContext,
+  detectGenericShowIdentityFromProjects,
   extractLearnedShowRosterFromProjects,
   mergeShowRosterEntries,
 } from '@/lib/show-speaker-memory';
@@ -543,6 +544,58 @@ describe('speaker pipeline regressions', () => {
     ]);
   });
 
+  test('discovers generic recurring shows from repeated titles and reuses learned host/co-host memory', () => {
+    const priorProjects = [
+      {
+        title: 'Hard Fork - OpenAI, Apple, and the Future of Search',
+        metadata: {
+          originalFileName: 'Hard_Fork_OpenAI_Apple_future_of_search.mp3',
+          fileName: 'Hard_Fork_OpenAI_Apple_future_of_search.mp3',
+        },
+        processing_completed_at: '2026-04-10T12:00:00.000Z',
+        speaker_data: {
+          speakers: {
+            speaker_1: { finalName: 'Kevin Roose', role: 'host' },
+            speaker_2: { finalName: 'Casey Newton', role: 'co_host' },
+          },
+        },
+      },
+      {
+        title: 'Hard Fork - The AI Copyright Mess',
+        metadata: {
+          originalFileName: 'Hard_Fork_AI_Copyright_Mess.mp3',
+          fileName: 'Hard_Fork_AI_Copyright_Mess.mp3',
+        },
+        processing_completed_at: '2026-04-14T12:00:00.000Z',
+        speaker_data: {
+          speakers: {
+            speaker_1: { finalName: 'Kevin Roose', role: 'host' },
+            speaker_2: { finalName: 'Casey Newton', role: 'co_host' },
+          },
+        },
+      },
+    ];
+
+    const genericIdentity = detectGenericShowIdentityFromProjects({
+      title: 'Hard Fork - Google’s Antitrust Problem',
+      filename: 'Hard_Fork_Google_Antitrust_Problem.mp3',
+      projects: priorProjects as any,
+    });
+
+    expect(genericIdentity).toEqual(
+      expect.objectContaining({
+        id: expect.stringContaining('generic_'),
+        displayName: 'Hard Fork',
+      })
+    );
+
+    const learned = extractLearnedShowRosterFromProjects(priorProjects as any, genericIdentity);
+    expect(learned).toEqual([
+      expect.objectContaining({ name: 'Kevin Roose', role: 'host', confidenceSource: 'auto_learned' }),
+      expect.objectContaining({ name: 'Casey Newton', role: 'co_host', confidenceSource: 'auto_learned' }),
+    ]);
+  });
+
   test('rejects sponsor-derived introduced names in conversational diagnostics', () => {
     const speakerMap = {
       speaker_1: { id: 'speaker_1', finalName: 'Ed Elson', role: 'host', segments: [] },
@@ -983,6 +1036,81 @@ describe('speaker pipeline regressions', () => {
     expect(finalized.speakerDataSpeakers.speaker_2.finalName).toBe('Speaker 2');
     expect(finalized.speakerDataSpeakers.speaker_1.requiresReview).toBe(true);
     expect(finalized.speakerDataSpeakers.speaker_2.requiresReview).toBe(true);
+  });
+
+  test('show memory anchors Pivot hosts and repairs swapped Kara/Scott ownership', () => {
+    const showIdentity = detectShowIdentityFromContext({
+      title: 'Kara Swisher Kash Patel is a “National Security Risk” Pivot - Pivot with Kara Swisher and Scott Galloway',
+      filename: 'Pivot_with_Kara_Swisher_and_Scott_Galloway_episode.json',
+      segments: [],
+    });
+
+    expect(showIdentity?.displayName).toBe('Pivot');
+
+    const speakerMap = {
+      speaker_1: { id: 'speaker_1', finalName: 'Scott Galloway', role: 'co_host', fallbackName: 'Speaker 1', segments: [] },
+      speaker_2: { id: 'speaker_2', finalName: 'Kara Swisher', role: 'host', fallbackName: 'Speaker 2', segments: [] },
+    };
+
+    const finalSegments: SpeakerSegment[] = [
+      {
+        speakerId: 'speaker_1',
+        initialSpeakerId: 'Speaker_A',
+        finalSpeakerId: 'speaker_1',
+        startTime: 0,
+        endTime: 15,
+        text: "Let's get into today's news, Scott. FBI Director Kash Patel just filed a defamation suit.",
+        confidence: 0.8,
+        status: 'confirmed',
+      },
+      {
+        speakerId: 'speaker_2',
+        initialSpeakerId: 'Speaker_B',
+        finalSpeakerId: 'speaker_2',
+        startTime: 15,
+        endTime: 40,
+        text: 'Look, I think The Atlantic reporting is thoughtful.',
+        confidence: 0.8,
+        status: 'confirmed',
+      },
+      {
+        speakerId: 'speaker_1',
+        initialSpeakerId: 'Speaker_A',
+        finalSpeakerId: 'speaker_1',
+        startTime: 40,
+        endTime: 48,
+        text: 'What does Scott Galloway think?',
+        confidence: 0.8,
+        status: 'confirmed',
+      },
+      {
+        speakerId: 'speaker_2',
+        initialSpeakerId: 'Speaker_B',
+        finalSpeakerId: 'speaker_2',
+        startTime: 48,
+        endTime: 72,
+        text: "Here's the bottom line, Kara, the markets love a winner.",
+        confidence: 0.8,
+        status: 'confirmed',
+      },
+    ];
+
+    const finalized = finalizeSpeakerAttributionForStorage(
+      speakerMap,
+      finalSegments,
+      {
+        projectType: 'PODCAST',
+        title: 'Pivot',
+        filename: 'Pivot_with_Kara_Swisher_and_Scott_Galloway_episode.json',
+        showIdentity,
+        showRoster: mergeShowRosterEntries(showIdentity?.roster),
+      }
+    );
+
+    expect(finalized.speakerDataSpeakers.speaker_1.finalName).toBe('Kara Swisher');
+    expect(finalized.speakerDataSpeakers.speaker_2.finalName).toBe('Scott Galloway');
+    expect(finalized.speakerDataSpeakers.speaker_1.requiresReview).toBeFalsy();
+    expect(finalized.speakerDataSpeakers.speaker_2.requiresReview).toBeFalsy();
   });
 
   test('clears show-title contamination instead of keeping it as a human identity', () => {

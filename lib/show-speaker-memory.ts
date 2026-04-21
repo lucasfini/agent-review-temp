@@ -60,6 +60,37 @@ const KNOWN_SHOW_PROFILES: KnownShowProfile[] = [
       },
     ],
   },
+  {
+    id: 'pivot',
+    displayName: 'Pivot',
+    titlePatterns: [
+      /\bpivot\b/i,
+      /\bpivot\s*-\s*pivot\s+with\s+kara\s+swisher\s+and\s+scott\s+galloway\b/i,
+    ],
+    filenamePatterns: [
+      /\bpivot\b/i,
+      /\bpivot[_\s-]+with[_\s-]+kara[_\s-]+swisher[_\s-]+and[_\s-]+scott[_\s-]+galloway\b/i,
+    ],
+    transcriptPatterns: [
+      /\bthis\s+is\s+pivot\b/i,
+      /\bwelcome\s+to\s+pivot\b/i,
+      /\bpivot\s+with\s+kara\s+swisher\s+and\s+scott\s+galloway\b/i,
+    ],
+    roster: [
+      {
+        name: 'Kara Swisher',
+        role: 'host',
+        aliases: ['Kara'],
+        confidenceSource: 'built_in',
+      },
+      {
+        name: 'Scott Galloway',
+        role: 'co_host',
+        aliases: ['Scott', 'Prof G'],
+        confidenceSource: 'built_in',
+      },
+    ],
+  },
 ];
 
 function normalizeText(value: string): string {
@@ -74,6 +105,65 @@ function normalizeText(value: string): string {
 
 function normalizeName(name: string): string {
   return normalizeText(name);
+}
+
+const GENERIC_SHOW_STOPWORDS = new Set([
+  'the', 'and', 'with', 'from', 'into', 'about', 'episode', 'youtube', 'official', 'clip',
+  'audio', 'video', 'full', 'show', 'podcast', 'news', 'interview', 'export', 'test',
+  'reaction', 'edition', 'part', 'kara', 'scott',
+]);
+
+function tokenizeShowIdentity(value: string): string[] {
+  return normalizeText(value)
+    .split(' ')
+    .filter((token) =>
+      token.length > 2 &&
+      !/^\d+$/.test(token) &&
+      !/^test\d*$/.test(token) &&
+      !/^export\d*$/.test(token) &&
+      !GENERIC_SHOW_STOPWORDS.has(token)
+    );
+}
+
+function buildShowIdentityFragments(value: string): Array<{ raw: string; tokens: string[] }> {
+  if (!value) return [];
+  const cleaned = value
+    .replace(/\((?:youtube|spotify|apple podcasts?|video|audio)\)/ig, ' ')
+    .replace(/\bexport-\d{4}-\d{2}-\d{2}(?:-[a-z0-9]+)?\b/ig, ' ')
+    .replace(/\btest\d+\b/ig, ' ')
+    .replace(/\b\d{4}-\d{2}-\d{2}\b/g, ' ')
+    .trim();
+
+  const parts = cleaned
+    .split(/\s+[—–-]\s+|\s+\|\s+|:\s+/)
+    .map((part) => part.trim())
+    .filter(Boolean);
+
+  const fragments = [cleaned, ...parts]
+    .map((raw) => ({ raw: raw.trim(), tokens: tokenizeShowIdentity(raw) }))
+    .filter((fragment) => fragment.raw.length > 0 && fragment.tokens.length >= 2);
+
+  const seen = new Set<string>();
+  return fragments.filter((fragment) => {
+    const key = fragment.tokens.join(' ');
+    if (!key || seen.has(key)) return false;
+    seen.add(key);
+    return true;
+  });
+}
+
+function scoreShowIdentityFragments(a: string[], b: string[]): number {
+  if (a.length < 2 || b.length < 2) return 0;
+  const overlap = a.filter((token) => b.includes(token));
+  if (overlap.length < 2) return 0;
+  const recall = overlap.length / Math.min(a.length, b.length);
+  const precision = overlap.length / Math.max(a.length, b.length);
+  return Number((recall * 0.7 + precision * 0.3).toFixed(3));
+}
+
+function buildGenericShowId(displayName: string): string {
+  const slug = tokenizeShowIdentity(displayName).slice(0, 6).join('_') || 'show';
+  return `generic_${slug}`;
 }
 
 function mergeAliases(...aliasGroups: Array<string[] | undefined>): string[] {
@@ -159,6 +249,78 @@ export function detectShowIdentityFromContext(params: {
   return null;
 }
 
+export function detectGenericShowIdentityFromProjects(params: {
+  title?: string | null;
+  filename?: string | null;
+  segments?: SpeakerSegment[];
+  projects?: Array<{
+    title?: string | null;
+    metadata?: any;
+  }>;
+}): ShowIdentityMatch | null {
+  const currentFragments = [
+    ...buildShowIdentityFragments(params.title || ''),
+    ...buildShowIdentityFragments(params.filename || ''),
+  ];
+
+  const transcriptWindow = (params.segments || [])
+    .slice(0, 12)
+    .map((segment) => segment.text)
+    .join(' ');
+  currentFragments.push(...buildShowIdentityFragments(transcriptWindow));
+
+  if (currentFragments.length === 0 || !Array.isArray(params.projects) || params.projects.length === 0) {
+    return null;
+  }
+
+  let best:
+    | {
+        current: { raw: string; tokens: string[] };
+        score: number;
+        matches: number;
+      }
+    | null = null;
+
+  for (const current of currentFragments) {
+    let matches = 0;
+    let bestScoreForCurrent = 0;
+
+    for (const project of params.projects) {
+      const priorSources = [
+        project.title || '',
+        project.metadata?.originalFileName || '',
+        project.metadata?.fileName || '',
+      ];
+      const priorFragments = priorSources.flatMap((source) => buildShowIdentityFragments(source));
+      if (priorFragments.length === 0) continue;
+
+      const priorBestScore = priorFragments.reduce(
+        (score, fragment) => Math.max(score, scoreShowIdentityFragments(current.tokens, fragment.tokens)),
+        0
+      );
+
+      if (priorBestScore >= 0.74) {
+        matches += 1;
+        bestScoreForCurrent = Math.max(bestScoreForCurrent, priorBestScore);
+      }
+    }
+
+    if (matches >= 2 && (!best || matches > best.matches || (matches === best.matches && bestScoreForCurrent > best.score))) {
+      best = { current, score: bestScoreForCurrent, matches };
+    }
+  }
+
+  if (!best) return null;
+
+  return {
+    id: buildGenericShowId(best.current.raw),
+    displayName: best.current.raw,
+    matchedBy: params.title ? 'title' : params.filename ? 'filename' : 'transcript',
+    matchedValue: best.current.raw,
+    roster: [],
+  };
+}
+
 export function mergeShowRosterEntries(
   ...sources: Array<Array<ShowRosterEntry | { name: string; role?: string | null; aliases?: string[] }> | undefined>
 ): ShowRosterEntry[] {
@@ -222,7 +384,11 @@ export function extractLearnedShowRosterFromProjects(
       title: project.title || project.metadata?.originalFileName || project.metadata?.fileName,
       filename: project.metadata?.originalFileName || project.metadata?.fileName,
     });
-    if (!projectMatch || projectMatch.id !== match.id) continue;
+    const projectMatchesCurrentShow = projectMatch
+      ? projectMatch.id === match.id
+      : buildShowIdentityFragments(project.title || project.metadata?.originalFileName || project.metadata?.fileName || '')
+        .some((fragment) => scoreShowIdentityFragments(fragment.tokens, tokenizeShowIdentity(match.displayName)) >= 0.74);
+    if (!projectMatchesCurrentShow) continue;
 
     const sources: ShowRosterEntry[] = [];
 

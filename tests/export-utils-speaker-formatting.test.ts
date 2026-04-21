@@ -127,4 +127,63 @@ describe('export speaker formatting', () => {
 
     expect(parsed.projects[0].coreContent.conversation.detectionMetadata.pipelineDiagnostics.showIdentity.displayName).toBe('Prof G Markets');
   });
+
+  test('json conversation export preserves speaker trust fields and review items', () => {
+    const project = {
+      id: 'project_1',
+      title: 'Pivot',
+      outputs: [],
+      speaker_data: {
+        speakers: {
+          speaker_1: {
+            finalName: 'Kara Swisher',
+            role: 'host',
+            assignmentConfidence: 0.61,
+            assignmentContradictions: ['vocative_conflict:Scott'],
+            requiresReview: true,
+          },
+        },
+        segments: [
+          {
+            speakerId: 'speaker_1',
+            finalSpeakerId: 'speaker_1',
+            startTime: 0,
+            endTime: 6,
+            text: "Let's get into today's news, Scott.",
+            status: 'uncertain',
+            confidenceReason: 'acoustic_only',
+            segmentKind: 'conversation',
+          },
+        ],
+        detectionMetadata: {
+          speakerAssignmentConfidence: 0.63,
+          speakerAssignmentReviewCount: 1,
+          speakerAssignmentBreakdown: {
+            reviewItems: [
+              {
+                index: 0,
+                speakerId: 'speaker_1',
+                reasons: ['uncertain:acoustic_only', 'anchor_turn'],
+                primaryReason: 'uncertain:acoustic_only',
+              },
+            ],
+          },
+        },
+      },
+    };
+
+    const json = __testUtils.formatAsJSON(
+      [project as any],
+      [{ projectId: 'project_1', projectTitle: 'Pivot', selectedBlockIds: [], selectedCoreContent: ['conversation'] }]
+    );
+    const parsed = JSON.parse(json);
+    const conversation = parsed.projects[0].coreContent.conversation;
+
+    expect(conversation.speakers.speaker_1.assignmentConfidence).toBe(0.61);
+    expect(conversation.speakers.speaker_1.assignmentContradictions).toEqual(['vocative_conflict:Scott']);
+    expect(conversation.speakers.speaker_1.requiresReview).toBe(true);
+    expect(conversation.detectionMetadata.speakerAssignmentReviewCount).toBe(1);
+    expect(conversation.detectionMetadata.speakerAssignmentBreakdown.reviewItems).toHaveLength(1);
+    expect(conversation.speakerRoster[0].requiresReview).toBe(true);
+  });
 });

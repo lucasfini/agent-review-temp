@@ -1815,6 +1815,7 @@ function countVocativeAliasMatches(text: string, aliases: string[]): number {
       new RegExp(`\\b${escaped},\\s+(?:how|what|why|where|when|thank|good|great|welcome|let|tell|do|does|did|are|can|could|would|should)\\b`, 'ig'),
       new RegExp(`\\b(?:thank\\s+you|thanks),\\s+${escaped}\\b`, 'ig'),
       new RegExp(`\\b(?:hey|hi),\\s+${escaped}\\b`, 'ig'),
+      new RegExp(`,\\s*${escaped}(?:\\s*[,.!?]|$)`, 'ig'),
     ];
     return count + patterns.reduce((sum, pattern) => sum + ((text.match(pattern) || []).length), 0);
   }, 0);
@@ -2053,7 +2054,68 @@ function inspectRecurringShowClusterOwnership(
     };
   });
 
+  if (entries.length === 2) {
+    const currentA = currentAssignmentIndices[0];
+    const currentB = currentAssignmentIndices[1];
+    if (
+      currentA >= 0 &&
+      currentB >= 0 &&
+      currentA !== currentB
+    ) {
+      const currentCandidateA = scoreMatrix[0][currentA];
+      const currentCandidateB = scoreMatrix[1][currentB];
+      const swappedCandidateA = scoreMatrix[0][currentB];
+      const swappedCandidateB = scoreMatrix[1][currentA];
+      const currentNegativeCount =
+        (currentCandidateA?.negativeEvidence.length || 0) +
+        (currentCandidateB?.negativeEvidence.length || 0);
+      const swappedNegativeCount =
+        (swappedCandidateA?.negativeEvidence.length || 0) +
+        (swappedCandidateB?.negativeEvidence.length || 0);
+      const currentTotalScore = (currentCandidateA?.score || 0) + (currentCandidateB?.score || 0);
+      const swappedTotalScore = (swappedCandidateA?.score || 0) + (swappedCandidateB?.score || 0);
+      const swappedCandidateASegmentCount = (speakerSegments.get(swappedCandidateA?.speakerId || '') || []).length;
+      const swappedCandidateBSegmentCount = (speakerSegments.get(swappedCandidateB?.speakerId || '') || []).length;
+      const reciprocalVocativeSwap =
+        currentNegativeCount >= 2 &&
+        swappedNegativeCount === 0 &&
+        swappedTotalScore >= currentTotalScore - 4 &&
+        swappedCandidateASegmentCount >= 2 &&
+        swappedCandidateBSegmentCount >= 2;
+
+      if (reciprocalVocativeSwap) {
+        entries[0] = {
+          ...entries[0],
+          chosenSpeakerId: swappedCandidateA.speakerId,
+          assignmentConfidence: Math.max(entries[0].assignmentConfidence, 0.84),
+          requiresReview: false,
+          swapDetected: swappedCandidateA.speakerId !== currentSpeakerIdForEntry(candidateSpeakers, currentA),
+          swapApplied: Boolean(appliedAssignments[recurringEntries[0].name] === swappedCandidateA.speakerId),
+          positiveEvidence: [...swappedCandidateA.positiveEvidence, 'reciprocal_vocative_swap'],
+          negativeEvidence: swappedCandidateA.negativeEvidence,
+          candidates: scoreMatrix[0].slice().sort((a, b) => b.score - a.score),
+        };
+        entries[1] = {
+          ...entries[1],
+          chosenSpeakerId: swappedCandidateB.speakerId,
+          assignmentConfidence: Math.max(entries[1].assignmentConfidence, 0.84),
+          requiresReview: false,
+          swapDetected: swappedCandidateB.speakerId !== currentSpeakerIdForEntry(candidateSpeakers, currentB),
+          swapApplied: Boolean(appliedAssignments[recurringEntries[1].name] === swappedCandidateB.speakerId),
+          positiveEvidence: [...swappedCandidateB.positiveEvidence, 'reciprocal_vocative_swap'],
+          negativeEvidence: swappedCandidateB.negativeEvidence,
+          candidates: scoreMatrix[1].slice().sort((a, b) => b.score - a.score),
+        };
+        swapDetected = true;
+      }
+    }
+  }
+
   return { entries, swapDetected, swapApplied };
+}
+
+function currentSpeakerIdForEntry(candidateSpeakers: GPTSpeaker[], candidateIndex: number): string | null {
+  return candidateIndex >= 0 ? candidateSpeakers[candidateIndex]?.id || null : null;
 }
 
 function getConversationalSpeakerStats(segments: SpeakerSegment[]): Map<string, {

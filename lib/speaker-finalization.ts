@@ -124,10 +124,16 @@ function buildTargetedReviewIndicesForSpeaker(
     anonymous: boolean;
   }
 ): number[] {
+  const hasUnresolvedUncertainSegments = ownedSegments.some(({ segment }) => (
+    segment.status === 'uncertain' &&
+    isRiskySegmentReason(segment.confidenceReason) &&
+    !isConfirmedReviewSegment(segment)
+  ));
   const riskySpeaker = options.requiresReview ||
     (options.assignmentConfidence != null && options.assignmentConfidence < 0.75) ||
     options.contradictions.length > 0 ||
-    options.anonymous;
+    options.anonymous ||
+    hasUnresolvedUncertainSegments;
 
   if (!riskySpeaker) return [];
 
@@ -205,10 +211,16 @@ function buildTargetedReviewItemsForSpeaker(
     anonymous: boolean;
   }
 ): Array<{ index: number; speakerId: string; reasons: string[]; primaryReason: string }> {
+  const hasUnresolvedUncertainSegments = ownedSegments.some(({ segment }) => (
+    segment.status === 'uncertain' &&
+    isRiskySegmentReason(segment.confidenceReason) &&
+    !isConfirmedReviewSegment(segment)
+  ));
   const riskySpeaker = options.requiresReview ||
     (options.assignmentConfidence != null && options.assignmentConfidence < 0.75) ||
     options.contradictions.length > 0 ||
-    options.anonymous;
+    options.anonymous ||
+    hasUnresolvedUncertainSegments;
 
   if (!riskySpeaker) return [];
 

@@ -265,4 +265,47 @@ describe('speaker review trust helpers', () => {
     ]);
     expect(formatReviewReason(reviewItems[0].primaryReason)).toBe(reviewItems[0].label);
   });
+
+  test('unresolved uncertain conversational segments create targeted review items even without speaker-level review flags', () => {
+    const speakerData = attachSpeakerAssignmentMetadata({
+      segments: [
+        {
+          speakerId: 'speaker_1',
+          finalSpeakerId: 'speaker_1',
+          startTime: 0,
+          endTime: 8,
+          text: "Let's get into today's news, Scott.",
+          status: 'uncertain',
+          confidenceReason: 'acoustic_only',
+        },
+        {
+          speakerId: 'speaker_1',
+          finalSpeakerId: 'speaker_1',
+          startTime: 8,
+          endTime: 28,
+          text: 'Longer substantive turn that should still count as the same conversational cluster.',
+          status: 'confirmed',
+        },
+      ],
+      speakers: {
+        speaker_1: {
+          finalName: 'Kara Swisher',
+          role: 'host',
+          assignmentConfidence: null,
+          assignmentContradictions: [],
+          requiresReview: false,
+        },
+      },
+      detectionMetadata: {},
+    });
+
+    expect(speakerData.detectionMetadata.speakerAssignmentReviewCount).toBeGreaterThan(0);
+    expect(getReviewSegmentIndicesFromSpeakerData(speakerData)).toContain(0);
+    expect(getReviewItemsFromSpeakerData(speakerData)[0]).toEqual(
+      expect.objectContaining({
+        index: 0,
+        primaryReason: expect.stringContaining('uncertain:'),
+      })
+    );
+  });
 });
