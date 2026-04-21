@@ -1503,8 +1503,11 @@ export default function UploadPage() {
                       {urlError && (
                         <div className="text-sm text-amber-700 dark:text-amber-300">{urlError}</div>
                       )}
+                      <div className="rounded-md border border-amber-200 bg-amber-50 px-3 py-2 text-xs text-amber-800 dark:border-amber-500/20 dark:bg-amber-500/10 dark:text-amber-200">
+                        YouTube import is best effort for public videos. Some links may still be blocked by YouTube&apos;s anti-bot checks even if they open normally in a browser. If that happens, download the audio or video file and upload it directly instead.
+                      </div>
                       <p className="text-xs text-slate-500 dark:text-slate-400">
-                        Supports public YouTube videos and direct audio/video links. Private, sign-in-required, or bot-protected YouTube videos are not supported yet. The finished transcript can be used for all 11 content types.
+                        Supports public YouTube videos and direct audio/video links. Direct file upload is the most reliable option for transcription and works with the same downstream content workflow.
                       </p>
                     </div>
                   </div>
