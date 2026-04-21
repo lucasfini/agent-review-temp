@@ -14,6 +14,7 @@ type ContactEmailInput = {
 };
 
 let cachedTransporter: nodemailer.Transporter | null = null;
+const SMTP_TIMEOUT_MS = 15_000;
 
 function getSmtpConfig() {
   const host = process.env.SMTP_HOST?.trim();
@@ -40,6 +41,10 @@ function getTransporter() {
       host: config.host,
       port: config.port,
       secure: config.secure,
+      requireTLS: !config.secure,
+      connectionTimeout: SMTP_TIMEOUT_MS,
+      greetingTimeout: SMTP_TIMEOUT_MS,
+      socketTimeout: SMTP_TIMEOUT_MS,
       auth: {
         user: config.user,
         pass: config.pass,
@@ -104,7 +109,7 @@ export async function sendContactEmail(input: ContactEmailInput) {
     return { delivered: false, reason: 'SMTP is not configured' };
   }
 
-  await mailer.transporter.sendMail({
+  const sendPromise = mailer.transporter.sendMail({
     from: mailer.config.from,
     to: mailer.config.to,
     replyTo: input.requesterEmail,
@@ -112,6 +117,13 @@ export async function sendContactEmail(input: ContactEmailInput) {
     text: buildTextBody(input),
     html: buildHtmlBody(input),
   });
+
+  await Promise.race([
+    sendPromise,
+    new Promise((_, reject) => {
+      setTimeout(() => reject(new Error('SMTP send timed out')), SMTP_TIMEOUT_MS);
+    }),
+  ]);
 
   return { delivered: true as const };
 }
