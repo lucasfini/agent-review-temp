@@ -1,4 +1,3 @@
-import nodemailer from 'nodemailer';
 import { SUPPORT_EMAIL } from '@/lib/site-config';
 
 type ContactEmailInput = {
@@ -13,46 +12,18 @@ type ContactEmailInput = {
   screenshotUrl?: string | null;
 };
 
-let cachedTransporter: nodemailer.Transporter | null = null;
-const SMTP_TIMEOUT_MS = 15_000;
+const RESEND_TIMEOUT_MS = 15_000;
 
-function getSmtpConfig() {
-  const host = process.env.SMTP_HOST?.trim();
-  const port = Number(process.env.SMTP_PORT || '587');
-  const secure = String(process.env.SMTP_SECURE || 'false').toLowerCase() === 'true';
-  const user = process.env.SMTP_USER?.trim();
-  const pass = process.env.SMTP_PASS?.trim();
+function getResendConfig() {
+  const apiKey = process.env.RESEND_API_KEY?.trim();
   const from = process.env.CONTACT_FROM_EMAIL?.trim() || SUPPORT_EMAIL;
   const to = process.env.CONTACT_TO_EMAIL?.trim() || SUPPORT_EMAIL;
 
-  if (!host || !port || !user || !pass) {
+  if (!apiKey) {
     return null;
   }
 
-  return { host, port, secure, user, pass, from, to };
-}
-
-function getTransporter() {
-  const config = getSmtpConfig();
-  if (!config) return null;
-
-  if (!cachedTransporter) {
-    cachedTransporter = nodemailer.createTransport({
-      host: config.host,
-      port: config.port,
-      secure: config.secure,
-      requireTLS: !config.secure,
-      connectionTimeout: SMTP_TIMEOUT_MS,
-      greetingTimeout: SMTP_TIMEOUT_MS,
-      socketTimeout: SMTP_TIMEOUT_MS,
-      auth: {
-        user: config.user,
-        pass: config.pass,
-      },
-    });
-  }
-
-  return { transporter: cachedTransporter, config };
+  return { apiKey, from, to };
 }
 
 function buildTextBody(input: ContactEmailInput) {
@@ -104,26 +75,45 @@ function buildHtmlBody(input: ContactEmailInput) {
 }
 
 export async function sendContactEmail(input: ContactEmailInput) {
-  const mailer = getTransporter();
-  if (!mailer) {
-    return { delivered: false, reason: 'SMTP is not configured' };
+  const config = getResendConfig();
+  if (!config) {
+    return { delivered: false, reason: 'Resend is not configured' };
   }
 
-  const sendPromise = mailer.transporter.sendMail({
-    from: mailer.config.from,
-    to: mailer.config.to,
-    replyTo: input.requesterEmail,
-    subject: `[AudioRepurpose] ${input.subject}`,
-    text: buildTextBody(input),
-    html: buildHtmlBody(input),
-  });
+  const abortController = new AbortController();
+  const timeoutId = setTimeout(() => abortController.abort(), RESEND_TIMEOUT_MS);
 
-  await Promise.race([
-    sendPromise,
-    new Promise((_, reject) => {
-      setTimeout(() => reject(new Error('SMTP send timed out')), SMTP_TIMEOUT_MS);
-    }),
-  ]);
+  try {
+    const response = await fetch('https://api.resend.com/emails', {
+      method: 'POST',
+      headers: {
+        Authorization: `Bearer ${config.apiKey}`,
+        'Content-Type': 'application/json',
+      },
+      body: JSON.stringify({
+        from: config.from,
+        to: [config.to],
+        reply_to: input.requesterEmail,
+        subject: `[AudioRepurpose] ${input.subject}`,
+        text: buildTextBody(input),
+        html: buildHtmlBody(input),
+      }),
+      signal: abortController.signal,
+      cache: 'no-store',
+    });
+
+    if (!response.ok) {
+      const errorText = await response.text();
+      throw new Error(errorText || `Resend API request failed with status ${response.status}`);
+    }
+  } catch (error) {
+    if (error instanceof Error && error.name === 'AbortError') {
+      throw new Error('Resend send timed out');
+    }
+    throw error;
+  } finally {
+    clearTimeout(timeoutId);
+  }
 
   return { delivered: true as const };
 }

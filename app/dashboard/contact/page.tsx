@@ -82,7 +82,7 @@ export default function ContactPage() {
       }
 
       if (data.emailDelivered === false) {
-        toast.warning(data.emailWarning || 'Support request saved, but email delivery is not configured yet.');
+        toast.warning(data.emailWarning || 'Support request saved, but Resend email delivery is not configured yet.');
       } else {
         toast.success('Support request submitted.');
       }

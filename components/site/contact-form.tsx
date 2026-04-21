@@ -43,7 +43,7 @@ export default function ContactForm() {
       if (data.emailDelivered === false) {
         setStatus({
           type: 'warning',
-          message: data.emailWarning || 'Your message was saved, but support email delivery is not configured yet.',
+          message: data.emailWarning || 'Your message was saved, but Resend email delivery is not configured yet.',
         });
       } else {
         setStatus({
