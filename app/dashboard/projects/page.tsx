@@ -296,9 +296,12 @@ export default function ProjectsPage() {
   const prefs = useUserPrefs();
   const searchParams = useSearchParams();
   const router = useRouter();
+  const requestedProjectId = searchParams.get('id');
   const selectedProjectAudioExpired = isProjectAudioExpired(selectedProject);
   const selectedProjectAudioExpiryLabel = formatAudioExpiry(selectedProject?.audio_expires_at, prefs.locale, prefs.timezone);
-  const showMainStage = !isMobileViewport || !!selectedProject || selectedProjectLoading;
+  const mobileRequestedProjectId = isMobileViewport ? requestedProjectId : null;
+  const showMobileList = isMobileViewport && !mobileRequestedProjectId;
+  const showMainStage = !isMobileViewport || !!mobileRequestedProjectId || selectedProjectLoading;
 
   useEffect(() => {
     if (typeof window === 'undefined') return;
@@ -692,7 +695,7 @@ export default function ProjectsPage() {
   }, [isDesktopViewport, selectedProject?.id]);
 
   useEffect(() => {
-    if (!selectedProject) {
+    if (!selectedProject && !selectedProjectLoading) {
       setProjectsSidebarOpen(true);
       setContextSidebarOpen(false);
       return;
@@ -1971,8 +1974,14 @@ export default function ProjectsPage() {
 
       if (response.status === 404) {
         if (selectedProjectRef.current === projectId) {
+          selectedProjectRef.current = null;
           setSelectedProject(null);
           setOutputs([]);
+          setContextSidebarOpen(false);
+          if (isMobileViewport) {
+            showToast('That project could not be found.', 'error');
+            router.replace('/dashboard/projects');
+          }
         }
         return null;
       }
@@ -2011,6 +2020,16 @@ export default function ProjectsPage() {
       return project;
     } catch (error) {
       console.error('Failed to fetch selected project:', error);
+      if (selectedProjectRef.current === projectId) {
+        selectedProjectRef.current = null;
+        setSelectedProject(null);
+        setOutputs([]);
+        setContextSidebarOpen(false);
+        if (isMobileViewport) {
+          showToast('We could not open that project right now.', 'error');
+          router.replace('/dashboard/projects');
+        }
+      }
       logDashboardLoad('projects', 'detail_error', {
         projectId,
         message: getDashboardErrorMessage(error, 'Failed to fetch project detail'),
@@ -2019,11 +2038,12 @@ export default function ProjectsPage() {
     } finally {
       setSelectedProjectLoading(false);
     }
-  }, [session?.access_token, syncProjectListEntry]);
+  }, [isMobileViewport, router, session?.access_token, showToast, syncProjectListEntry]);
 
   const selectProject = useCallback(async (projectId: string) => {
     selectedProjectRef.current = projectId;
     setProjectsSidebarOpen(false);
+    setSelectedProjectLoading(true);
     setInsightsData([]);
     setInsightsStatus({ count: 0, loading: true, generating: false, refreshing: false });
     setShowFullTranscription(false);
@@ -2036,7 +2056,7 @@ export default function ProjectsPage() {
       fetchProjectOutputs(projectId),
       fetchGenerationJobs(projectId),
     ]);
-  }, [fetchGenerationJobs, fetchSelectedProject]);
+  }, [fetchGenerationJobs, fetchProjectOutputs, fetchSelectedProject]);
 
   const fetchProjects = useCallback(async (
     options: { markLoading?: boolean; surfaceError?: boolean; source?: string } = {}
@@ -2114,29 +2134,35 @@ export default function ProjectsPage() {
 
   // Auto-select project from URL query parameter or default to the newest project
   useEffect(() => {
-    const projectId = searchParams.get('id');
-
     if (loading || projects.length === 0) return;
+    if (isMobileViewport && !requestedProjectId) return;
 
-    const requestedProjectId = projectId || projects[0]?.id;
-    if (!requestedProjectId) return;
+    const nextProjectId = requestedProjectId || projects[0]?.id;
+    if (!nextProjectId) return;
 
-    const projectToSelect = projects.find((project) => project.id === requestedProjectId);
+    const projectToSelect = projects.find((project) => project.id === nextProjectId);
     if (!projectToSelect) {
       if (selectedProject?.id && !projects.some((project) => project.id === selectedProject.id)) {
         resetSelectedProject();
       }
+      if (isMobileViewport && requestedProjectId) {
+        selectedProjectRef.current = null;
+        setSelectedProject(null);
+        setSelectedProjectLoading(false);
+        setContextSidebarOpen(false);
+        router.replace('/dashboard/projects');
+      }
       return;
     }
 
-    if (projectId !== requestedProjectId) {
-      router.replace(`/dashboard/projects?id=${requestedProjectId}`);
+    if (!requestedProjectId && !isMobileViewport) {
+      router.replace(`/dashboard/projects?id=${nextProjectId}`);
     }
 
-    if (selectedProjectRef.current !== requestedProjectId) {
-      void selectProject(requestedProjectId);
+    if (selectedProjectRef.current !== nextProjectId) {
+      void selectProject(nextProjectId);
     }
-  }, [searchParams, projects, loading, selectedProject?.id, resetSelectedProject, router, selectProject]);
+  }, [isMobileViewport, loading, projects, requestedProjectId, resetSelectedProject, router, selectProject, selectedProject?.id]);
 
   const fetchProjectOutputs = useCallback(async (projectId: string) => {
     try {
@@ -2757,9 +2783,9 @@ export default function ProjectsPage() {
           <aside
             data-tour="project-sidebar"
             className={`flex-shrink-0 border-r border-slate-200 bg-slate-50 transition-all duration-300 ease-in-out dark:border-slate-800 dark:bg-slate-900 ${isMobileViewport
-              ? (selectedProject || selectedProjectLoading)
-                ? 'hidden'
-                : 'flex w-full flex-col overflow-hidden border-r-0'
+              ? showMobileList
+                ? 'flex w-full flex-col overflow-hidden border-r-0'
+                : 'hidden'
               : projectsSidebarOpen
                 ? 'fixed inset-y-0 left-0 z-30 flex w-[88vw] max-w-sm flex-col overflow-hidden shadow-2xl md:w-[26rem] lg:static lg:inset-auto lg:z-auto lg:w-[520px] lg:min-w-[460px] lg:flex-shrink-0 lg:shadow-none'
                 : 'w-0 opacity-0 pointer-events-none'
