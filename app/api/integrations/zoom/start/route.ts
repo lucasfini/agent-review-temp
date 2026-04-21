@@ -1,7 +1,12 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { supabaseAdmin } from '@/lib/supabase/server';
+import { INTEGRATIONS_COMING_SOON_MESSAGE, INTEGRATIONS_ENABLED } from '@/lib/integrations/availability';
 
 export async function GET(request: NextRequest) {
+  if (!INTEGRATIONS_ENABLED) {
+    return NextResponse.json({ error: INTEGRATIONS_COMING_SOON_MESSAGE }, { status: 503 });
+  }
+
   const authHeader = request.headers.get('authorization');
   if (!authHeader) {
     return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });

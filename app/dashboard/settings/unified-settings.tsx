@@ -37,6 +37,7 @@ import CreditPackages from '@/components/billing/credit-packages';
 import { supabase } from '@/lib/supabase/client';
 import { toast } from 'sonner';
 import { formatSiteCreditDeltaFromUsd, formatSiteCreditsFromUsd } from '@/lib/billing/display';
+import { INTEGRATIONS_COMING_SOON_MESSAGE, INTEGRATIONS_ENABLED } from '@/lib/integrations/availability';
 
 // ============================================================================
 // TYPES
@@ -985,6 +986,11 @@ export default function UnifiedSettings({ userEmail, forcedSection }: UnifiedSet
               </CardDescription>
             </CardHeader>
             <CardContent className="space-y-4">
+              {!INTEGRATIONS_ENABLED && (
+                <div className="rounded-xl border border-amber-200 bg-amber-50 px-4 py-3 text-sm text-amber-700 dark:border-amber-500/20 dark:bg-amber-500/10 dark:text-amber-300">
+                  {INTEGRATIONS_COMING_SOON_MESSAGE}
+                </div>
+              )}
               {integrationsLoading && (
                 <div className="text-sm text-slate-400">Loading integrations...</div>
               )}
@@ -1019,14 +1025,16 @@ export default function UnifiedSettings({ userEmail, forcedSection }: UnifiedSet
                               <button
                                 type="button"
                                 onClick={() => startOAuth(provider)}
-                                className="px-3 py-2 text-sm font-medium bg-blue-600 text-white rounded-lg hover:bg-blue-700 transition-colors"
+                                disabled={!INTEGRATIONS_ENABLED}
+                                className="px-3 py-2 text-sm font-medium bg-blue-600 text-white rounded-lg hover:bg-blue-700 transition-colors disabled:cursor-not-allowed disabled:opacity-60"
                               >
-                                Connect
+                                {INTEGRATIONS_ENABLED ? 'Connect' : 'Coming soon'}
                               </button>
                             ) : (
                               <button
                                 type="button"
                                 onClick={() => disconnectProvider(provider)}
+                                disabled={!INTEGRATIONS_ENABLED}
                                 className="px-3 py-2 text-sm font-medium bg-slate-100 dark:bg-slate-800 text-slate-700 dark:text-slate-300 rounded-lg hover:bg-slate-200 dark:hover:bg-slate-700 transition-colors"
                               >
                                 Disconnect

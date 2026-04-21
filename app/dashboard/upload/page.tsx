@@ -17,6 +17,7 @@ import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogDescription } f
 import { FeatureHelp } from '@/components/ui/feature-help';
 import { useUploadProgressSync } from '@/lib/context/upload-progress-sync';
 import { toast } from 'sonner';
+import { INTEGRATIONS_COMING_SOON_MESSAGE, INTEGRATIONS_ENABLED } from '@/lib/integrations/availability';
 
 type IntegrationProvider = 'zoom' | 'microsoft';
 const HISTORY_PAGE_SIZE = 10;
@@ -1522,6 +1523,11 @@ export default function UploadPage() {
                       </div>
                       <p className="mt-1 text-sm text-slate-500 dark:text-slate-400">Pull recordings directly from connected tools</p>
                     </div>
+                    {!INTEGRATIONS_ENABLED && (
+                      <div className="mb-4 rounded-xl border border-amber-200 bg-amber-50 px-4 py-3 text-sm text-amber-700 dark:border-amber-500/20 dark:bg-amber-500/10 dark:text-amber-300">
+                        {INTEGRATIONS_COMING_SOON_MESSAGE}
+                      </div>
+                    )}
                     <div className="grid gap-4 md:grid-cols-2">
                       {(['zoom', 'microsoft'] as IntegrationProvider[]).map(provider => {
                         const status = integrations.find(i => i.provider === provider);
@@ -1549,15 +1555,16 @@ export default function UploadPage() {
                                   type="button"
                                   onClick={() => startOAuth(provider)}
                                   className="px-3 py-2 text-sm font-medium bg-blue-600 text-white rounded-lg hover:bg-blue-700 transition-colors"
-                                  disabled={integrationsLoading}
+                                  disabled={integrationsLoading || !INTEGRATIONS_ENABLED}
                                 >
-                                  Connect
+                                  {INTEGRATIONS_ENABLED ? 'Connect' : 'Coming soon'}
                                 </button>
                               ) : (
                                 <button
                                   type="button"
                                   onClick={() => openImportDialog(provider)}
                                   className="px-3 py-2 text-sm font-medium bg-slate-200 dark:bg-slate-700 text-slate-900 dark:text-white rounded-lg hover:bg-slate-300 dark:hover:bg-slate-600 transition-colors"
+                                  disabled={!INTEGRATIONS_ENABLED}
                                 >
                                   Select recording
                                 </button>
