@@ -81,7 +81,11 @@ export default function ContactPage() {
         throw new Error(data.error || 'Failed to submit support request.');
       }
 
-      toast.success('Support request submitted.');
+      if (data.emailDelivered === false) {
+        toast.warning(data.emailWarning || 'Support request saved, but email delivery is not configured yet.');
+      } else {
+        toast.success('Support request submitted.');
+      }
       setSubject('');
       setMessage('');
       setProjectTitle('');

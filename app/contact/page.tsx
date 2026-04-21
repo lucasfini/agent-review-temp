@@ -1,6 +1,7 @@
 import Link from 'next/link';
 import { ArrowRight, LifeBuoy, Mail } from 'lucide-react';
 import { SUPPORT_EMAIL } from '@/lib/site-config';
+import ContactForm from '@/components/site/contact-form';
 
 export default function ContactPage() {
   const subject = encodeURIComponent('AudioRepurpose support');
@@ -40,6 +41,8 @@ export default function ContactPage() {
             <ArrowRight className="h-4 w-4" />
           </Link>
         </div>
+
+        <ContactForm />
 
         <div className="rounded-2xl border border-slate-200 bg-slate-50 p-6 dark:border-slate-800 dark:bg-slate-900/60">
           <p className="text-sm font-medium text-slate-900 dark:text-slate-100">Best results</p>

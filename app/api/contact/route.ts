@@ -1,5 +1,6 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { supabaseAdmin } from '@/lib/supabase/server';
+import { sendContactEmail } from '@/lib/contact-mailer';
 
 async function getAuthedUser(request: NextRequest) {
   const authHeader = request.headers.get('Authorization');
@@ -14,12 +15,12 @@ async function getAuthedUser(request: NextRequest) {
 export async function POST(request: NextRequest) {
   try {
     const user = await getAuthedUser(request);
-    if (!user) return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
 
     const body = await request.json();
+    const email = typeof body.email === 'string' ? body.email.trim() : '';
     const payload = {
-      user_id: user.id,
-      email: user.email || '',
+      user_id: user?.id || null,
+      email: user?.email || email,
       category: typeof body.category === 'string' ? body.category : 'general',
       severity: typeof body.severity === 'string' ? body.severity : 'normal',
       affected_page: typeof body.affectedPage === 'string' ? body.affectedPage.trim() || null : null,
@@ -29,6 +30,10 @@ export async function POST(request: NextRequest) {
       message: typeof body.message === 'string' ? body.message.trim() : '',
       screenshot_url: typeof body.screenshotUrl === 'string' ? body.screenshotUrl.trim() || null : null,
     };
+
+    if (!payload.email) {
+      return NextResponse.json({ error: 'Email is required.' }, { status: 400 });
+    }
 
     if (!payload.subject || !payload.message) {
       return NextResponse.json({ error: 'Subject and message are required.' }, { status: 400 });
@@ -42,7 +47,31 @@ export async function POST(request: NextRequest) {
       return NextResponse.json({ error: error.message || 'Failed to submit support request' }, { status: 500 });
     }
 
-    return NextResponse.json({ success: true });
+    let emailDelivered = false;
+    let emailWarning: string | null = null;
+
+    try {
+      const result = await sendContactEmail({
+        requesterEmail: payload.email,
+        category: payload.category,
+        severity: payload.severity,
+        affectedPage: payload.affected_page,
+        serviceArea: payload.service_area,
+        projectTitle: payload.project_title,
+        subject: payload.subject,
+        message: payload.message,
+        screenshotUrl: payload.screenshot_url,
+      });
+      emailDelivered = result.delivered;
+      if (!result.delivered) {
+        emailWarning = result.reason;
+      }
+    } catch (emailError) {
+      console.error('[CONTACT API] Email delivery failed:', emailError);
+      emailWarning = 'Your request was saved, but email delivery to support failed.';
+    }
+
+    return NextResponse.json({ success: true, emailDelivered, emailWarning });
   } catch (error) {
     console.error('[CONTACT API] POST failed:', error);
     return NextResponse.json({ error: 'Failed to submit support request' }, { status: 500 });
