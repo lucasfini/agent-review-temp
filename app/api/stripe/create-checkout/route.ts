@@ -8,7 +8,8 @@ import Stripe from 'stripe';
 import { supabaseAdmin } from '@/lib/supabase/server';
 import { isDemoUser } from '@/lib/demo-mode';
 import { getAppBaseUrl } from '@/lib/app-url';
-import { resolveCreditPackage } from '@/lib/billing/credit-packages';
+import { getTotalCredits, resolveCreditPackage } from '@/lib/billing/credit-packages';
+import { formatSiteCreditsFromUsd } from '@/lib/billing/display';
 
 const stripe = new Stripe(process.env.STRIPE_SECRET_KEY!, {
   apiVersion: '2025-10-29.clover',
@@ -56,6 +57,9 @@ export async function POST(request: NextRequest) {
 
     const unitAmountCents = Math.round(pkg.price * 100);
     const appBaseUrl = getAppBaseUrl();
+    const totalCreditsLabel = formatSiteCreditsFromUsd(getTotalCredits(pkg));
+    const baseCreditsLabel = formatSiteCreditsFromUsd(pkg.amount);
+    const bonusCreditsLabel = pkg.bonus > 0 ? formatSiteCreditsFromUsd(pkg.bonus) : null;
 
     // Create Stripe checkout session
     const session = await stripe.checkout.sessions.create({
@@ -66,12 +70,12 @@ export async function POST(request: NextRequest) {
           price_data: {
             currency: 'usd',
             product_data: {
-              name: `${pkg.amount} Credits`,
+              name: totalCreditsLabel,
               description: pkg.bonus > 0
-                ? `${pkg.amount} credits + ${pkg.bonus} bonus credits`
+                ? `${baseCreditsLabel} + ${bonusCreditsLabel} bonus`
                 : packageId === 'custom'
-                  ? `Custom credit purchase`
-                  : `${pkg.amount} credits`,
+                  ? `Custom credit purchase - ${formatSiteCreditsFromUsd(pkg.amount)}`
+                  : baseCreditsLabel,
               images: [], // Optional: Add your logo URL here
             },
             unit_amount: unitAmountCents, // Convert to cents
