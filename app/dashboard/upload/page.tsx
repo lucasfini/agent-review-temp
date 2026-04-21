@@ -1504,7 +1504,7 @@ export default function UploadPage() {
                         <div className="text-sm text-amber-700 dark:text-amber-300">{urlError}</div>
                       )}
                       <p className="text-xs text-slate-500 dark:text-slate-400">
-                        Supports YouTube and direct audio/video links. The finished transcript can be used for all 11 content types.
+                        Supports public YouTube videos and direct audio/video links. Private, sign-in-required, or bot-protected YouTube videos are not supported yet. The finished transcript can be used for all 11 content types.
                       </p>
                     </div>
                   </div>

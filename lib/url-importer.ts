@@ -9,6 +9,7 @@ import ffmpegPath from 'ffmpeg-static';
 import youtubedl from 'youtube-dl-exec';
 
 const MAX_FILE_SIZE = 500 * 1024 * 1024;
+const YT_DLP_JS_RUNTIME = `node:${process.execPath}`;
 
 if (ffmpegPath) {
   ffmpeg.setFfmpegPath(ffmpegPath);
@@ -52,6 +53,96 @@ const isPrivateIp = (ip: string) => {
 export const isYouTubeUrl = (value: string) => {
   const lower = value.toLowerCase();
   return lower.includes('youtube.com') || lower.includes('youtu.be');
+};
+
+type YouTubeImportErrorCode =
+  | 'protected_video'
+  | 'video_unavailable'
+  | 'unsupported_video'
+  | 'download_failed';
+
+export class YouTubeImportError extends Error {
+  code: YouTubeImportErrorCode;
+  status: number;
+  details?: string;
+
+  constructor(code: YouTubeImportErrorCode, message: string, status = 422, details?: string) {
+    super(message);
+    this.name = 'YouTubeImportError';
+    this.code = code;
+    this.status = status;
+    this.details = details;
+  }
+}
+
+const getYouTubeDlCommonFlags = () => ({
+  noPlaylist: true,
+  jsRuntimes: YT_DLP_JS_RUNTIME,
+});
+
+const classifyYouTubeError = (error: unknown) => {
+  if (error instanceof YouTubeImportError) {
+    return error;
+  }
+
+  const stderr = typeof error === 'object' && error !== null && 'stderr' in error
+    ? String((error as { stderr?: unknown }).stderr || '')
+    : '';
+  const stdout = typeof error === 'object' && error !== null && 'stdout' in error
+    ? String((error as { stdout?: unknown }).stdout || '')
+    : '';
+  const message = error instanceof Error ? error.message : String(error || '');
+  const details = [stderr, stdout, message].filter(Boolean).join('\n').toLowerCase();
+
+  if (
+    details.includes('sign in to confirm you’re not a bot')
+    || details.includes("sign in to confirm you're not a bot")
+    || details.includes('use --cookies-from-browser')
+    || details.includes('use --cookies')
+    || details.includes('bot')
+  ) {
+    return new YouTubeImportError(
+      'protected_video',
+      'This YouTube video is protected by a sign-in or bot check and cannot be imported right now. Please use a public YouTube link or upload the audio file directly.',
+      422,
+      message
+    );
+  }
+
+  if (
+    details.includes('private video')
+    || details.includes('video unavailable')
+    || details.includes('this video is unavailable')
+    || details.includes('has been removed')
+    || details.includes('is not available')
+  ) {
+    return new YouTubeImportError(
+      'video_unavailable',
+      'This YouTube video is unavailable, private, or has been removed. Please confirm the link is public and still accessible.',
+      422,
+      message
+    );
+  }
+
+  if (
+    details.includes('unsupported url')
+    || details.includes('unsupported site')
+    || details.includes('unsupported')
+  ) {
+    return new YouTubeImportError(
+      'unsupported_video',
+      'This YouTube link could not be imported. Right now we only support public YouTube videos.',
+      422,
+      message
+    );
+  }
+
+  return new YouTubeImportError(
+    'download_failed',
+    'We could not import this YouTube video right now. Please try another public link or upload the media file directly.',
+    502,
+    message
+  );
 };
 
 export const validatePublicUrl = async (value: string) => {
@@ -116,23 +207,27 @@ export const downloadYouTubeAudio = async (url: string) => {
     let title = 'YouTube import';
     try {
       const info = await youtubedl(url, {
+        ...getYouTubeDlCommonFlags(),
         dumpSingleJson: true,
-        noPlaylist: true,
       }) as { title?: string };
       title = info.title || title;
     } catch (error) {
-      console.warn('[URL IMPORT] YouTube metadata lookup failed, continuing with fallback title:', error);
+      console.warn('[URL IMPORT] YouTube metadata lookup failed, continuing with fallback title:', classifyYouTubeError(error));
     }
 
     title = title.replace(/[/\\:*?"<>|]/g, '-');
 
     // Download best audio to temp file
     const outputTemplate = path.join(tmpDir, 'audio.%(ext)s');
-    await youtubedl(url, {
-      format: 'bestaudio[ext=m4a]/bestaudio[ext=webm]/bestaudio',
-      noPlaylist: true,
-      output: outputTemplate,
-    });
+    try {
+      await youtubedl(url, {
+        ...getYouTubeDlCommonFlags(),
+        format: 'bestaudio[ext=m4a]/bestaudio[ext=webm]/bestaudio',
+        output: outputTemplate,
+      });
+    } catch (error) {
+      throw classifyYouTubeError(error);
+    }
 
     // Read the output file (yt-dlp fills in the real extension)
     const files = await fs.readdir(tmpDir);

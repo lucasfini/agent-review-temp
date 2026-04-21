@@ -4,6 +4,7 @@ import { importRecording } from '@/lib/integrations/importer';
 import {
   validatePublicUrl,
   isYouTubeUrl,
+  YouTubeImportError,
   downloadYouTubeAudio,
   downloadDirectMedia,
   extractAudioFromVideoBuffer
@@ -175,6 +176,12 @@ export async function POST(request: NextRequest) {
     const billingResponse = billingErrorResponse(error);
     if (billingResponse.status === 402) {
       return billingResponse;
+    }
+    if (error instanceof YouTubeImportError) {
+      return NextResponse.json(
+        { error: error.message, code: error.code },
+        { status: error.status }
+      );
     }
     return NextResponse.json(
       { error: error instanceof Error ? error.message : 'URL import failed' },
