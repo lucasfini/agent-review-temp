@@ -2186,10 +2186,9 @@ function inspectRecurringShowClusterOwnership(
     const requiresReview = !chosenCandidate ||
       ((chosenCandidate.score < 10 || scoreGap < 4) && !forcedByExclusion && !strongPositive) ||
       ((negativeEvidence.length > 0 && !positiveEvidence.includes('self_id_full_name') && !positiveEvidence.includes('self_id_first_name'))) ||
-      (Boolean(clusterQuality) &&
-        clusterQuality.totalDuration < 18 &&
-        clusterQuality.segmentCount <= 2 &&
-        clusterQuality.substantiveTurns === 0 &&
+      ((clusterQuality?.totalDuration ?? Infinity) < 18 &&
+        (clusterQuality?.segmentCount ?? Infinity) <= 2 &&
+        (clusterQuality?.substantiveTurns ?? Infinity) === 0 &&
         !positiveEvidence.includes('self_id_full_name') &&
         !positiveEvidence.includes('current_name_match') &&
         !positiveEvidence.some((evidence) => evidence.startsWith('reply_after_vocative:')) &&
