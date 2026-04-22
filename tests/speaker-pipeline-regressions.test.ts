@@ -1399,6 +1399,237 @@ describe('speaker pipeline regressions', () => {
     expect(resolved.speakers.speaker_3.finalName).not.toBe('Yale Law School');
   });
 
+  test('final storage restores collapsed one-off interview clusters before naming', () => {
+    const speakers = {
+      speaker_1: { id: 'speaker_1', finalName: 'Speaker 1', role: 'unknown', fallbackName: 'Speaker 1', segments: [] },
+    };
+
+    const segments: SpeakerSegment[] = [
+      {
+        speakerId: 'speaker_1',
+        initialSpeakerId: 'Speaker_A',
+        finalSpeakerId: 'speaker_1',
+        startTime: 0,
+        endTime: 28,
+        text: "This is the Lex Fridman Podcast. And now, dear friends, here's Max Tegmark. Max, thank you for being here.",
+        confidence: 0.9,
+        status: 'confirmed',
+      },
+      {
+        speakerId: 'speaker_1',
+        initialSpeakerId: 'Speaker_B',
+        finalSpeakerId: 'speaker_1',
+        startTime: 28,
+        endTime: 54,
+        text: 'Thanks for having me. I think this is one of the defining moments in the history of AI.',
+        confidence: 0.9,
+        status: 'confirmed',
+      },
+      {
+        speakerId: 'speaker_1',
+        initialSpeakerId: 'Speaker_A',
+        finalSpeakerId: 'speaker_1',
+        startTime: 54,
+        endTime: 75,
+        text: 'What is the strongest argument for pausing these giant AI experiments?',
+        confidence: 0.9,
+        status: 'confirmed',
+      },
+      {
+        speakerId: 'speaker_1',
+        initialSpeakerId: 'Speaker_B',
+        finalSpeakerId: 'speaker_1',
+        startTime: 75,
+        endTime: 108,
+        text: 'The strongest argument is that capability is outrunning our ability to ensure safety and alignment.',
+        confidence: 0.9,
+        status: 'confirmed',
+      },
+      {
+        speakerId: 'speaker_1',
+        initialSpeakerId: 'Speaker_A',
+        finalSpeakerId: 'speaker_1',
+        startTime: 108,
+        endTime: 126,
+        text: 'And what does that imply for researchers right now?',
+        confidence: 0.9,
+        status: 'confirmed',
+      },
+      {
+        speakerId: 'speaker_1',
+        initialSpeakerId: 'Speaker_B',
+        finalSpeakerId: 'speaker_1',
+        startTime: 126,
+        endTime: 160,
+        text: 'It implies slowing down enough to make sure we do not build systems we fundamentally do not understand.',
+        confidence: 0.9,
+        status: 'confirmed',
+      },
+    ];
+
+    const finalized = finalizeSpeakerAttributionForStorage(speakers, segments, {
+      projectType: 'PODCAST',
+      title: 'Lex Fridman Podcast',
+      filename: 'lex_fridman_max_tegmark.json',
+    });
+
+    expect(new Set(finalized.segments.map((segment) => segment.finalSpeakerId || segment.speakerId)).size).toBeGreaterThanOrEqual(2);
+    expect(Object.values(finalized.speakers).some((speaker: any) => speaker.finalName === 'Lex Fridman')).toBe(true);
+  });
+
+  test('does not allow mentioned entities like General Assembly to become speakers', () => {
+    const speakerMap = {
+      speaker_1: { id: 'speaker_1', finalName: 'General Assembly', role: 'guest', fallbackName: 'Speaker 1', segments: [] },
+      speaker_3: { id: 'speaker_3', finalName: 'Speaker 3', role: 'unknown', fallbackName: 'Speaker 3', segments: [] },
+    };
+
+    const segments: SpeakerSegment[] = [
+      {
+        speakerId: 'speaker_3',
+        initialSpeakerId: 'Speaker_A',
+        finalSpeakerId: 'speaker_3',
+        startTime: 0,
+        endTime: 38,
+        text: 'From New York Times Opinion, this is The Ezra Klein Show. The UN General Assembly passed a resolution. Azab Ali is a professor at Yale Law School. Azab Ali, welcome to the show.',
+        confidence: 0.88,
+        status: 'confirmed',
+      },
+      {
+        speakerId: 'speaker_1',
+        initialSpeakerId: 'Speaker_B',
+        finalSpeakerId: 'speaker_1',
+        startTime: 38,
+        endTime: 74,
+        text: 'Thank you for having me. It is made up of laws, and it sort of depends on where you sit.',
+        confidence: 0.88,
+        status: 'confirmed',
+      },
+    ];
+
+    const resolved = __testUtils.resolveConversationalHumanNamesInSpeakerMap(
+      speakerMap,
+      segments,
+      {
+        projectType: 'PODCAST',
+        title: 'The Ezra Klein Show',
+        filename: 'ezra_klein_show.json',
+      }
+    );
+
+    expect(resolved.speakers.speaker_3.finalName).toBe('Ezra Klein');
+    expect(resolved.speakers.speaker_1.finalName).toBe('Azab Ali');
+    expect(resolved.speakers.speaker_1.finalName).not.toBe('General Assembly');
+  });
+
+  test('panel intro repair assigns explicit panelists and ignores Nobel cold-open leakage', () => {
+    const speakerMap = {
+      speaker_1: { id: 'speaker_1', finalName: 'Nobel', role: 'guest', fallbackName: 'Speaker 1', segments: [] },
+      speaker_2: { id: 'speaker_2', finalName: 'Speaker 2', role: 'unknown', fallbackName: 'Speaker 2', segments: [] },
+      speaker_3: { id: 'speaker_3', finalName: 'Speaker 3', role: 'unknown', fallbackName: 'Speaker 3', segments: [] },
+      speaker_4: { id: 'speaker_4', finalName: 'Speaker 4', role: 'unknown', fallbackName: 'Speaker 4', segments: [] },
+    };
+
+    const segments: SpeakerSegment[] = [
+      {
+        speakerId: 'speaker_2',
+        initialSpeakerId: 'Speaker_B',
+        finalSpeakerId: 'speaker_2',
+        startTime: 0,
+        endTime: 5,
+        text: 'I want to do a series on Nobel Prize winners gone bad.',
+        confidence: 0.82,
+        status: 'confirmed',
+      },
+      {
+        speakerId: 'speaker_4',
+        initialSpeakerId: 'Speaker_D',
+        finalSpeakerId: 'speaker_4',
+        startTime: 5,
+        endTime: 7,
+        text: 'Well, no, you would start with Nobel.',
+        confidence: 0.82,
+        status: 'confirmed',
+      },
+      {
+        speakerId: 'speaker_1',
+        initialSpeakerId: 'Speaker_A',
+        finalSpeakerId: 'speaker_1',
+        startTime: 8,
+        endTime: 34,
+        text: "Hello and welcome to The Climate Question from the BBC World Service. I'm Greer Jackson. We have Caroline Steele, host of Crowd Science on the BBC World Service. We have Akshat Vohrati, a senior climate reporter at Bloomberg Green. And our very own Justin Rowlett, the BBC's climate editor.",
+        confidence: 0.9,
+        status: 'confirmed',
+      },
+      {
+        speakerId: 'speaker_2',
+        initialSpeakerId: 'Speaker_B',
+        finalSpeakerId: 'speaker_2',
+        startTime: 34,
+        endTime: 38,
+        text: 'Hi, Greer. Thanks for having me on.',
+        confidence: 0.9,
+        status: 'confirmed',
+      },
+      {
+        speakerId: 'speaker_3',
+        initialSpeakerId: 'Speaker_C',
+        finalSpeakerId: 'speaker_3',
+        startTime: 38,
+        endTime: 41,
+        text: 'Nice to be here.',
+        confidence: 0.9,
+        status: 'confirmed',
+      },
+      {
+        speakerId: 'speaker_4',
+        initialSpeakerId: 'Speaker_D',
+        finalSpeakerId: 'speaker_4',
+        startTime: 41,
+        endTime: 45,
+        text: 'Lovely to be here. Thank you.',
+        confidence: 0.9,
+        status: 'confirmed',
+      },
+    ];
+
+    const resolved = __testUtils.resolveConversationalHumanNamesInSpeakerMap(
+      speakerMap,
+      segments,
+      {
+        projectType: 'PODCAST',
+        title: 'The Climate Question',
+        filename: 'climate_question.json',
+      }
+    );
+    expect(__testUtils.extractPanelIntroParticipants(segments, 120, {
+      projectType: 'PODCAST',
+      title: 'The Climate Question',
+      filename: 'climate_question.json',
+    })).toEqual([
+      { name: 'Caroline Steele', segmentIndex: 2 },
+      { name: 'Akshat Vohrati', segmentIndex: 2 },
+      { name: 'Justin Rowlett', segmentIndex: 2 },
+    ]);
+    const panelRepaired = __testUtils.repairSpeakerMapWithPanelIntros(
+      speakerMap,
+      segments,
+      {
+        projectType: 'PODCAST',
+        title: 'The Climate Question',
+        filename: 'climate_question.json',
+      }
+    );
+    expect(panelRepaired.speaker_2.finalName).toBe('Caroline Steele');
+    expect(panelRepaired.speaker_3.finalName).toBe('Akshat Vohrati');
+    expect(panelRepaired.speaker_4.finalName).toBe('Justin Rowlett');
+
+    expect(resolved.speakers.speaker_1.finalName).toBe('Greer Jackson');
+    expect(resolved.speakers.speaker_2.finalName).toBe('Caroline Steele');
+    expect(resolved.speakers.speaker_3.finalName).toBe('Akshat Vohrati');
+    expect(resolved.speakers.speaker_4.finalName).toBe('Justin Rowlett');
+    expect(Object.values(resolved.speakers).some((speaker: any) => speaker.finalName === 'Nobel')).toBe(false);
+  });
+
   test('clears show-title contamination instead of keeping it as a human identity', () => {
     const speakerMap = {
       speaker_1: {

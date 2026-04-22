@@ -73,6 +73,15 @@ type MergeSpeakerStats = {
   mainConversationShare: number;
 };
 
+type InitialClusterStats = {
+  initialSpeakerId: string;
+  segmentCount: number;
+  totalDuration: number;
+  substantiveTurns: number;
+  firstStart: number;
+  mainConversationShare: number;
+};
+
 function isConversationalSegment(segment: SpeakerSegment): boolean {
   if (segment.segmentKind === 'ad_read' || segment.segmentKind === 'promo') {
     return false;
@@ -180,7 +189,71 @@ function isMaterialConversationalCluster(stats: MergeSpeakerStats | undefined): 
     stats.mainConversationShare >= 0.18;
 }
 
+function buildInitialClusterStats(segments: SpeakerSegment[]): InitialClusterStats[] {
+  const stats = new Map<string, {
+    segmentCount: number;
+    totalDuration: number;
+    substantiveTurns: number;
+    firstStart: number;
+  }>();
+  let totalConversationalDuration = 0;
+
+  for (const segment of segments) {
+    if (!isConversationalSegment(segment)) continue;
+    const initialSpeakerId = (segment as any).initialSpeakerId || segment.speakerId;
+    const duration = Math.max(0, (segment.endTime || 0) - (segment.startTime || 0));
+    totalConversationalDuration += duration;
+    if (!stats.has(initialSpeakerId)) {
+      stats.set(initialSpeakerId, {
+        segmentCount: 0,
+        totalDuration: 0,
+        substantiveTurns: 0,
+        firstStart: segment.startTime || 0,
+      });
+    }
+    const entry = stats.get(initialSpeakerId)!;
+    entry.segmentCount += 1;
+    entry.totalDuration += duration;
+    entry.firstStart = Math.min(entry.firstStart, segment.startTime || 0);
+    if (getSegmentWordCount(segment) >= 8 || duration >= 6) {
+      entry.substantiveTurns += 1;
+    }
+  }
+
+  return Array.from(stats.entries())
+    .map(([initialSpeakerId, entry]) => ({
+      initialSpeakerId,
+      segmentCount: entry.segmentCount,
+      totalDuration: entry.totalDuration,
+      substantiveTurns: entry.substantiveTurns,
+      firstStart: entry.firstStart,
+      mainConversationShare: totalConversationalDuration > 0 ? entry.totalDuration / totalConversationalDuration : 0,
+    }))
+    .sort((a, b) => b.totalDuration - a.totalDuration);
+}
+
+function countAlternationsBetweenInitialClusters(
+  segments: SpeakerSegment[],
+  clusterA: string,
+  clusterB: string
+): number {
+  const filtered = segments
+    .filter((segment) => isConversationalSegment(segment))
+    .map((segment) => (segment as any).initialSpeakerId || segment.speakerId)
+    .filter((clusterId) => clusterId === clusterA || clusterId === clusterB);
+  let alternations = 0;
+  for (let i = 1; i < filtered.length; i++) {
+    if (filtered[i] !== filtered[i - 1]) {
+      alternations++;
+    }
+  }
+  return alternations;
+}
+
 function shouldSkipDuplicateSpeakerMerge(
+  segments: SpeakerSegment[],
+  primaryId: string,
+  duplicateId: string,
   primaryStats: MergeSpeakerStats | undefined,
   duplicateStats: MergeSpeakerStats | undefined,
   options: SpeakerFinalizationOptions
@@ -207,10 +280,114 @@ function shouldSkipDuplicateSpeakerMerge(
     primaryStats.dominantInitialSpeakerId !== duplicateStats.dominantInitialSpeakerId;
 
   if (!differentDominantInitial) {
-    return false;
+    const alternations = countAlternationsBetweenInitialClusters(
+      segments,
+      primaryStats.dominantInitialSpeakerId || primaryId,
+      duplicateStats.dominantInitialSpeakerId || duplicateId
+    );
+    if (alternations < 4) {
+      return false;
+    }
   }
 
   return isMaterialConversationalCluster(primaryStats) && isMaterialConversationalCluster(duplicateStats);
+}
+
+function getNextSpeakerId(speakers: Record<string, any>): string {
+  const maxSpeakerNumber = Object.keys(speakers).reduce((max, id) => {
+    const numericMatch = /speaker_(\d+)/i.exec(id);
+    return numericMatch ? Math.max(max, Number(numericMatch[1])) : max;
+  }, 0);
+  return `speaker_${maxSpeakerNumber + 1}`;
+}
+
+function preventOneOffConversationalCollapse(
+  segments: SpeakerSegment[],
+  speakers: Record<string, any>,
+  options: SpeakerFinalizationOptions = {}
+): { segments: SpeakerSegment[]; speakers: Record<string, any>; restoredClusters: string[] } {
+  const normalizedProjectType = (options.projectType || '').toUpperCase();
+  if (normalizedProjectType !== 'PODCAST' && normalizedProjectType !== 'INTERVIEW') {
+    return { segments, speakers, restoredClusters: [] };
+  }
+
+  const speakerStats = buildMergeSpeakerStats(segments);
+  const dominantFinalSpeakers = Array.from(speakerStats.entries())
+    .filter(([, stats]) => isMaterialConversationalCluster(stats))
+    .sort((a, b) => b[1].conversationalDuration - a[1].conversationalDuration);
+  if (dominantFinalSpeakers.length >= 2) {
+    return { segments, speakers, restoredClusters: [] };
+  }
+
+  const initialClusterStats = buildInitialClusterStats(segments).filter((entry) => (
+    entry.totalDuration >= 45 ||
+    entry.segmentCount >= 5 ||
+    entry.substantiveTurns >= 3 ||
+    entry.mainConversationShare >= 0.18
+  ));
+  if (initialClusterStats.length < 2) {
+    return { segments, speakers, restoredClusters: [] };
+  }
+
+  const primaryCluster = initialClusterStats[0];
+  const secondaryCluster = initialClusterStats[1];
+  if (countAlternationsBetweenInitialClusters(segments, primaryCluster.initialSpeakerId, secondaryCluster.initialSpeakerId) < 4) {
+    return { segments, speakers, restoredClusters: [] };
+  }
+
+  const primaryFinalId = segments.find((segment) => (
+    ((segment as any).initialSpeakerId || segment.speakerId) === primaryCluster.initialSpeakerId
+  ))?.finalSpeakerId || dominantFinalSpeakers[0]?.[0];
+  const secondaryCurrentFinalId = segments.find((segment) => (
+    ((segment as any).initialSpeakerId || segment.speakerId) === secondaryCluster.initialSpeakerId
+  ))?.finalSpeakerId || null;
+  if (!primaryFinalId || (secondaryCurrentFinalId && secondaryCurrentFinalId !== primaryFinalId)) {
+    return { segments, speakers, restoredClusters: [] };
+  }
+
+  const updatedSpeakers: Record<string, any> = { ...speakers };
+  const collapsedTemplate = updatedSpeakers[primaryFinalId] || {};
+  const reusableId = Object.keys(updatedSpeakers).find((speakerId) => (
+    speakerId !== primaryFinalId &&
+    (speakerStats.get(speakerId)?.conversationalSegmentCount || 0) === 0
+  ));
+  const restoredSpeakerId = reusableId || getNextSpeakerId(updatedSpeakers);
+  if (!updatedSpeakers[restoredSpeakerId]) {
+    const numericMatch = /speaker_(\d+)/i.exec(restoredSpeakerId);
+    const fallbackName = numericMatch ? `Speaker ${numericMatch[1]}` : restoredSpeakerId;
+    updatedSpeakers[restoredSpeakerId] = {
+      id: restoredSpeakerId,
+      finalName: fallbackName,
+      fallbackName,
+      role: 'unknown',
+      source: 'two-speaker collapse prevention',
+      roleConfidence: 0.55,
+      requiresReview: true,
+      assignmentConfidence: 0.55,
+      assignmentContradictions: ['collapsed_one_off_conversation'],
+    };
+  }
+
+  const updatedSegments = segments.map((segment) => {
+    const initialSpeakerId = (segment as any).initialSpeakerId || segment.speakerId;
+    if (initialSpeakerId !== secondaryCluster.initialSpeakerId) {
+      return segment;
+    }
+    return {
+      ...segment,
+      speakerId: restoredSpeakerId,
+      finalSpeakerId: restoredSpeakerId,
+      attributionEvidence: 'raw_diarization' as const,
+      confidenceReason: 'clean_cluster_consistency',
+      status: segment.status ?? 'tentative',
+    };
+  });
+
+  return {
+    segments: updatedSegments,
+    speakers: updatedSpeakers,
+    restoredClusters: [secondaryCluster.initialSpeakerId],
+  };
 }
 
 function getContradictionAliases(contradictions: string[]): string[] {
@@ -660,7 +837,7 @@ export function mergeDuplicateSpeakersByName(
 
     const primary = sorted[0];
     for (const dup of sorted.slice(1)) {
-      if (shouldSkipDuplicateSpeakerMerge(mergeStats.get(primary), mergeStats.get(dup), options)) {
+      if (shouldSkipDuplicateSpeakerMerge(segments, primary, dup, mergeStats.get(primary), mergeStats.get(dup), options)) {
         console.log(
           `[MERGE] Skipping duplicate merge for "${name}" between ${primary} and ${dup} because both are substantive conversational clusters`
         );
@@ -1047,29 +1224,42 @@ export function finalizeSpeakerAttributionForStorage(
   namingAssigned: number;
   namingInfo: string[];
   snapshot: PipelineSnapshot;
+  segments: SpeakerSegment[];
 } {
+  const collapsePrevention = preventOneOffConversationalCollapse(segments, speakers, options);
   const resolvedHumans = resolveConversationalHumanNamesInSpeakerMap(
-    speakers,
-    segments,
+    collapsePrevention.speakers,
+    collapsePrevention.segments,
     options
   );
-  const rawSpeakerDataSpeakers = buildSpeakerDataFromSegments(segments, resolvedHumans.speakers);
+  const rawSpeakerDataSpeakers = buildSpeakerDataFromSegments(collapsePrevention.segments, resolvedHumans.speakers);
   const speakerDataSpeakers = attachSpeakerAssignmentMetadata({
-    segments,
+    segments: collapsePrevention.segments,
     speakers: rawSpeakerDataSpeakers,
   }).speakers;
   const snapshot = collectSpeakerPipelineSnapshot(
     'post-final-naming',
-    segments,
+    collapsePrevention.segments,
     speakerDataSpeakers,
     options
   );
+  if (collapsePrevention.restoredClusters.length > 0) {
+    snapshot.warnings.push(
+      `Restored collapsed one-off conversational clusters: ${collapsePrevention.restoredClusters.join(', ')}`
+    );
+  }
 
   return {
     speakers: resolvedHumans.speakers,
     speakerDataSpeakers,
     namingAssigned: resolvedHumans.assigned,
-    namingInfo: resolvedHumans.info,
+    namingInfo: [
+      ...collapsePrevention.restoredClusters.map((clusterId) =>
+        `[COLLAPSE PREVENTION] Restored initial cluster ${clusterId} to its own conversational speaker`
+      ),
+      ...resolvedHumans.info,
+    ],
     snapshot,
+    segments: collapsePrevention.segments,
   };
 }

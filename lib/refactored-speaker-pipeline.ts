@@ -1781,12 +1781,22 @@ function findCorroboratedKnownHost(
 function extractEponymousShowHostName(
   options: Pick<ConversationalNamingOptions, 'title' | 'filename'>
 ): KnownHostEvidence | null {
+  const titleTokenBlocklist = new Set([
+    'daily', 'beast', 'climate', 'question', 'rest', 'politics', 'service',
+    'world', 'opinion', 'times', 'bbc', 'bloomberg', 'radio', 'network',
+  ]);
   const sources = [options.title, options.filename].filter(Boolean) as string[];
   for (const source of sources) {
     const normalizedSource = source.replace(/[_-]+/g, ' ');
     const match = normalizedSource.match(/\b(?:The\s+)?([A-Z][a-z]+(?:\s+[A-Z][a-z]+){1,2})\s+(?:Podcast|Show)\b/);
     const fullName = match?.[1]?.trim();
     if (!fullName) continue;
+    const blockedByTitleTokens = fullName
+      .split(/\s+/)
+      .some((token) => titleTokenBlocklist.has(token.toLowerCase()));
+    if (blockedByTitleTokens) {
+      continue;
+    }
     if (isLikelyNonHumanConversationalNameCandidate(fullName, {
       title: options.title,
       filename: options.filename,
@@ -2713,6 +2723,14 @@ function collectConversationalNameProvenance(
     add(guest.fullName, 'guest_intro');
   }
 
+  for (const participant of extractPanelIntroParticipants(
+    segments,
+    detectIntroWindowEndTime(segments, true).endTimeSeconds,
+    options
+  )) {
+    add(participant.name, 'panel_intro');
+  }
+
   const directIntro = findDirectAddressedFullNameIntroCandidate(
     segments,
     detectIntroWindowEndTime(segments, Boolean(options.showRoster?.length)).endTimeSeconds
@@ -2728,6 +2746,20 @@ function collectConversationalNameProvenance(
   }
 
   return provenance;
+}
+
+function hasParticipantStyleEvidence(
+  name: string,
+  provenance: Map<string, string[]>
+): boolean {
+  const reasons = provenance.get(normalizeSpeakerName(name)) || [];
+  return reasons.some((reason) => (
+    reason === 'self_id' ||
+    reason === 'direct_intro' ||
+    reason === 'guest_intro' ||
+    reason === 'panel_intro' ||
+    reason === 'recurring_roster'
+  ));
 }
 
 function enforceConversationalNameProvenanceInSpeakerMap(
@@ -2757,6 +2789,7 @@ function enforceConversationalNameProvenanceInSpeakerMap(
 
     const normalized = normalizeSpeakerName(currentName);
     const supported = provenance.has(normalized);
+    const participantSupported = hasParticipantStyleEvidence(currentName, provenance);
     const nonHuman = isLikelyNonHumanConversationalNameCandidate(currentName, {
       showIdentity: options.showIdentity,
       title: options.title,
@@ -2768,7 +2801,7 @@ function enforceConversationalNameProvenanceInSpeakerMap(
       (segment.finalSpeakerId || segment.speakerId) === speakerId
     );
     const selfVocative = ownedSegments.some((segment) => countVocativeAliasMatches(getSegText(segment), aliases) > 0);
-    if (supported && !nonHuman && !selfVocative) continue;
+    if (supported && participantSupported && !nonHuman && !selfVocative) continue;
 
     rejectedNamePromotions.push(currentName);
     updatedSpeakers[speakerId] = {
@@ -3699,14 +3732,24 @@ export function resolveConversationalHumanNamesInSpeakerMap(
     })
   );
 
-  const repairedSpeakers = repairSpeakerMapWithDirectGuestIntros(updatedSpeakers, segments, options);
+  const guestIntroRepairedSpeakers = repairSpeakerMapWithDirectGuestIntros(updatedSpeakers, segments, options);
   const selfIdRepairedSpeakers = repairSpeakerMapWithEarlyHostSelfId(
-    repairedSpeakers,
+    guestIntroRepairedSpeakers,
+    segments,
+    options
+  );
+  const knownHostRepairedSpeakers = repairSpeakerMapWithKnownHostIntro(
+    selfIdRepairedSpeakers,
+    segments,
+    options
+  );
+  const panelRepairedSpeakers = repairSpeakerMapWithPanelIntros(
+    knownHostRepairedSpeakers,
     segments,
     options
   );
   const guestValidatedSpeakers = repairSpeakerMapWithDominantGuestClusters(
-    selfIdRepairedSpeakers,
+    panelRepairedSpeakers,
     segments,
     options
   );
@@ -3720,9 +3763,14 @@ export function resolveConversationalHumanNamesInSpeakerMap(
     segments,
     options
   );
+  const finalPanelRepairedSpeakers = repairSpeakerMapWithPanelIntros(
+    provenanceVerified.speakers,
+    segments,
+    options
+  );
 
   return {
-    speakers: provenanceVerified.speakers,
+    speakers: finalPanelRepairedSpeakers,
     assigned: resolved.assigned,
     info: [...resolved.info, ...verifiedRecurringOwnership.info, ...provenanceVerified.info],
   };
@@ -3772,6 +3820,181 @@ function repairSpeakerMapWithEarlyHostSelfId(
   return updatedSpeakers;
 }
 
+function repairSpeakerMapWithKnownHostIntro(
+  speakers: Record<string, any>,
+  segments: SpeakerSegment[],
+  options: ConversationalNamingOptions
+): Record<string, any> {
+  const knownHost = findCorroboratedKnownHost(segments, options);
+  if (!knownHost) return speakers;
+
+  const hostSpeakerId = findHostIntroSpeakerId(segments, knownHost.fullName);
+  if (!hostSpeakerId || !speakers[hostSpeakerId]) return speakers;
+
+  const updatedSpeakers = Object.fromEntries(
+    Object.entries(speakers).map(([id, speaker]) => [id, { ...speaker }])
+  );
+  const targetSpeaker = updatedSpeakers[hostSpeakerId];
+  const currentName = typeof targetSpeaker.finalName === 'string' ? targetSpeaker.finalName.trim() : '';
+  const knownGuestNames = new Set(
+    findStrongInterviewGuestNames(segments, Boolean(options.showRoster?.length))
+      .map((guest) => normalizeSpeakerName(guest.fullName))
+  );
+  const ownsHostIntroPhrase = segments.some((segment) => (
+    (segment.finalSpeakerId || segment.speakerId) === hostSpeakerId &&
+    new RegExp(`\\b(?:this is|from .* this is)\\s+(?:the\\s+)?${escapeRegExp(knownHost.fullName)}\\s+(?:podcast|show)\\b`, 'i').test(getSegText(segment))
+  ));
+  const canReplace =
+    !currentName ||
+    /^Speaker\s+\d+$/i.test(currentName) ||
+    !isValidFinalHumanSpeakerName(currentName) ||
+    knownGuestNames.has(normalizeSpeakerName(currentName)) ||
+    ownsHostIntroPhrase ||
+    isLikelyNonHumanConversationalNameCandidate(currentName, {
+      showIdentity: options.showIdentity,
+      title: options.title,
+      filename: options.filename,
+    }) ||
+    isWeakShortSpeakerName(currentName);
+
+  if (!canReplace || normalizeSpeakerName(currentName || '') === normalizeSpeakerName(knownHost.fullName)) {
+    return speakers;
+  }
+
+  updatedSpeakers[hostSpeakerId] = {
+    ...targetSpeaker,
+    finalName: knownHost.fullName,
+    role: 'host',
+    source: targetSpeaker.source === 'preset_roster' ? targetSpeaker.source : 'intro_handoff',
+    extractedName: {
+      ...(targetSpeaker.extractedName || {}),
+      name: knownHost.fullName,
+      confidence: Math.max(targetSpeaker.roleConfidence || targetSpeaker.confidence || 0, 0.9),
+      context: 'Known host intro repair',
+    },
+  };
+
+  return updatedSpeakers;
+}
+
+function extractPanelIntroParticipants(
+  segments: SpeakerSegment[],
+  endTimeSeconds: number,
+  options: ConversationalNamingOptions
+): Array<{ name: string; segmentIndex: number }> {
+  const participants: Array<{ name: string; segmentIndex: number }> = [];
+  const seen = new Set<string>();
+  const patterns = [
+    /\b(?:we have|we've got|we also have|and our very own|plus)\s+([A-Z][a-z]+(?:\s+[A-Z][a-z]+){1,2})\b/gi,
+  ];
+
+  for (let i = 0; i < segments.length; i++) {
+    const segment = segments[i];
+    const startSeconds = getSegStartSeconds(segment);
+    if (startSeconds != null && startSeconds > endTimeSeconds) break;
+    if (!isHumanIntroEligibleSegment(segment)) continue;
+    const text = getSegText(segment);
+    if (!/\b(?:panel|experts|we have|we've got|our very own|plus)\b/i.test(text)) continue;
+
+    for (const pattern of patterns) {
+      pattern.lastIndex = 0;
+      let match: RegExpExecArray | null;
+      while ((match = pattern.exec(text)) !== null) {
+        const rawName = match[1]?.trim();
+        if (!rawName) continue;
+        if (!isValidIntroNameCandidate(rawName)) continue;
+        if (isLikelyNonHumanConversationalNameCandidate(rawName, {
+          showIdentity: options.showIdentity,
+          title: options.title,
+          filename: options.filename,
+        })) continue;
+        const normalized = normalizeSpeakerName(rawName);
+        if (seen.has(normalized)) continue;
+        seen.add(normalized);
+        participants.push({ name: rawName, segmentIndex: i });
+      }
+    }
+  }
+
+  return participants;
+}
+
+function repairSpeakerMapWithPanelIntros(
+  speakers: Record<string, any>,
+  segments: SpeakerSegment[],
+  options: ConversationalNamingOptions
+): Record<string, any> {
+  const introWindow = detectIntroWindowEndTime(segments, true);
+  const participants = extractPanelIntroParticipants(segments, introWindow.endTimeSeconds, options);
+  if (participants.length === 0) return speakers;
+
+  const updatedSpeakers = Object.fromEntries(
+    Object.entries(speakers).map(([id, speaker]) => [id, { ...speaker }])
+  );
+  const usedSpeakerIds = new Set<string>();
+
+  for (const participant of participants) {
+    const introSegment = segments[participant.segmentIndex];
+    const hostSpeakerId = introSegment?.finalSpeakerId || introSegment?.speakerId;
+    if (!hostSpeakerId) continue;
+
+    let targetSpeakerId: string | null = null;
+    for (let i = participant.segmentIndex + 1; i < segments.length; i++) {
+      const candidate = segments[i];
+      if (!isConversationalSegment(candidate)) continue;
+      const candidateSpeakerId = candidate.finalSpeakerId || candidate.speakerId;
+      if (!candidateSpeakerId || candidateSpeakerId === hostSpeakerId) continue;
+      if (usedSpeakerIds.has(candidateSpeakerId)) continue;
+      const wordCount = getSegText(candidate).split(/\s+/).filter(Boolean).length;
+      const duration = Math.max(0, (candidate.endTime || 0) - (candidate.startTime || 0));
+      if (wordCount < 2 && duration < 1.5) continue;
+      if (Object.values(updatedSpeakers).some((speaker: any) => normalizeSpeakerName(speaker.finalName || '') === normalizeSpeakerName(participant.name))) {
+        break;
+      }
+
+      const candidateSpeaker = updatedSpeakers[candidateSpeakerId];
+      if (!candidateSpeaker) continue;
+      const currentName = typeof candidateSpeaker.finalName === 'string' ? candidateSpeaker.finalName.trim() : '';
+      const canReplace =
+        !currentName ||
+        /^Speaker\s+\d+$/i.test(currentName) ||
+        !isValidFinalHumanSpeakerName(currentName) ||
+        isWeakShortSpeakerName(currentName) ||
+        isLikelyNonHumanConversationalNameCandidate(currentName, {
+          showIdentity: options.showIdentity,
+          title: options.title,
+          filename: options.filename,
+        });
+      if (!canReplace) continue;
+
+      targetSpeakerId = candidateSpeakerId;
+      break;
+    }
+
+    if (!targetSpeakerId || !updatedSpeakers[targetSpeakerId]) continue;
+
+    updatedSpeakers[targetSpeakerId] = {
+      ...updatedSpeakers[targetSpeakerId],
+      finalName: participant.name,
+      role: updatedSpeakers[targetSpeakerId].role === 'host' || updatedSpeakers[targetSpeakerId].role === 'co_host'
+        ? updatedSpeakers[targetSpeakerId].role
+        : 'guest',
+      source: updatedSpeakers[targetSpeakerId].source === 'preset_roster'
+        ? updatedSpeakers[targetSpeakerId].source
+        : 'intro_handoff',
+      extractedName: {
+        ...(updatedSpeakers[targetSpeakerId].extractedName || {}),
+        name: participant.name,
+        confidence: Math.max(updatedSpeakers[targetSpeakerId].roleConfidence || updatedSpeakers[targetSpeakerId].confidence || 0, 0.86),
+        context: 'Panel intro repair',
+      },
+    };
+    usedSpeakerIds.add(targetSpeakerId);
+  }
+
+  return updatedSpeakers;
+}
+
 function repairSpeakerMapWithDirectGuestIntros(
   speakers: Record<string, any>,
   segments: SpeakerSegment[],
@@ -3789,10 +4012,6 @@ function repairSpeakerMapWithDirectGuestIntros(
       .filter((entry) => entry.role === 'host' || entry.role === 'co_host')
       .map((entry) => normalizeSpeakerName(entry.name))
   );
-  if (recurringHumanNames.size === 0) {
-    return speakers;
-  }
-
   const updatedSpeakers = Object.fromEntries(
     Object.entries(speakers).map(([id, speaker]) => [id, { ...speaker }])
   );
@@ -3869,6 +4088,10 @@ function repairSpeakerMapWithDominantGuestClusters(
   segments: SpeakerSegment[],
   options: ConversationalNamingOptions
 ): Record<string, any> {
+  if (extractPanelIntroParticipants(segments, detectIntroWindowEndTime(segments, true).endTimeSeconds, options).length > 1) {
+    return speakers;
+  }
+
   const updatedSpeakers = Object.fromEntries(
     Object.entries(speakers).map(([id, speaker]) => [id, { ...speaker }])
   );
@@ -5952,7 +6175,8 @@ function extractStrongInterviewIntroNames(
   segments: SpeakerSegment[],
   endTimeSeconds: number
 ): Array<{ name: string; segmentIndex: number; phrase: string }> {
-  const existing = extractIntroHandoffNames(segments, endTimeSeconds);
+  const existing = extractIntroHandoffNames(segments, endTimeSeconds)
+    .filter((candidate) => candidate.name.trim().split(/\s+/).length >= 2);
   const seen = new Set(existing.map((candidate) => normalizeSpeakerName(candidate.name)));
   const candidates = [...existing];
 
@@ -5977,6 +6201,18 @@ function extractStrongInterviewIntroNames(
       ));
 
     if (validNames.length === 0) continue;
+    const participantScored = validNames
+      .map((value) => {
+        const escaped = escapeRegExp(value);
+        let score = 0;
+        if (new RegExp(`\\b${escaped},\\s+(?:it'?s|its|good|great|glad|thank|thanks|welcome)\\b`, 'i').test(text)) score += 8;
+        if (new RegExp(`\\b(?:here'?s|with|joined by|talking to|conversation with|our guest is)\\s+${escaped}\\b`, 'i').test(text)) score += 6;
+        if (new RegExp(`\\b${escaped}\\s+(?:is|was|who|specializes in|specialises in|host of|editor of|founder of|co-founder of|author of|reporter at|climate editor)\\b`, 'i').test(text)) score += 5;
+        if (/^(?:the\s+)/i.test(value)) score -= 6;
+        return { value, score };
+      })
+      .filter((candidate) => candidate.score > 0)
+      .sort((a, b) => b.score - a.score || b.value.split(/\s+/).length - a.value.split(/\s+/).length);
     const directAddressMatch = text.match(/\b([A-Z][a-z]+(?:\s+[A-Z][a-z]+){0,2}),\s+(?:it'?s|its|good|great|glad|thank|thanks|welcome)\b/);
     const addressedName = directAddressMatch?.[1]?.trim() || null;
     const addressedFirstName = addressedName?.split(/\s+/)[0]?.toLowerCase() || null;
@@ -5984,7 +6220,7 @@ function extractStrongInterviewIntroNames(
       ? validNames.find((value) => normalizeSpeakerName(value) === normalizeSpeakerName(addressedName)) ||
         validNames.find((value) => value.split(/\s+/)[0]?.toLowerCase() === addressedFirstName)
       : null;
-    const chosen = addressedCandidate || [...validNames].sort((a, b) => b.split(/\s+/).length - a.split(/\s+/).length)[0];
+    const chosen = addressedCandidate || participantScored[0]?.value || [...validNames].sort((a, b) => b.split(/\s+/).length - a.split(/\s+/).length)[0];
     const normalized = normalizeSpeakerName(chosen);
     if (seen.has(normalized)) continue;
 
@@ -6013,8 +6249,9 @@ function findDirectAddressedFullNameIntroCandidate(
       continue;
     }
 
-    const directAddressMatch = text.match(/\b([A-Z][a-z]+),\s+(?:it'?s|its|good|great|glad|thank|thanks|welcome)\b/);
-    const addressedFirstName = directAddressMatch?.[1]?.trim().toLowerCase() || null;
+    const directAddressMatch = text.match(/\b([A-Z][a-z]+(?:\s+[A-Z][a-z]+){0,2}),\s+(?:it'?s|its|good|great|glad|thank|thanks|welcome)\b/);
+    const addressedName = directAddressMatch?.[1]?.trim() || null;
+    const addressedFirstName = addressedName?.split(/\s+/)[0]?.toLowerCase() || null;
     if (!addressedFirstName) continue;
 
     const fullNameMatches = Array.from(text.matchAll(/\b([A-Z][a-z]+(?:\s+[A-Z][a-z]+){1,2})\b/g))
@@ -6025,7 +6262,10 @@ function findDirectAddressedFullNameIntroCandidate(
         !isLikelyNonHumanConversationalNameCandidate(value)
       ));
 
-    const chosen = fullNameMatches.find((value) => value.split(/\s+/)[0]?.toLowerCase() === addressedFirstName);
+    const chosen = addressedName
+      ? fullNameMatches.find((value) => normalizeSpeakerName(value) === normalizeSpeakerName(addressedName)) ||
+        fullNameMatches.find((value) => value.split(/\s+/)[0]?.toLowerCase() === addressedFirstName)
+      : null;
     if (!chosen) continue;
 
     return {
@@ -7711,4 +7951,7 @@ export const __testUtils = {
   findEarlySelfIdentifiedHost,
   extractFullNameSelfIdentifiedName,
   findStrongInterviewGuestNames,
+  extractPanelIntroParticipants,
+  findHostIntroSpeakerId,
+  repairSpeakerMapWithPanelIntros,
 };

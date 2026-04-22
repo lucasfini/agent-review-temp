@@ -1391,7 +1391,7 @@ export async function POST(request: NextRequest) {
     // ============================================================
     // STEP 5: BUILD UNIFIED SPEAKER DATA (Both branches feed here)
     // ============================================================
-    const finalSegments = enforceFinalSpeakerIdContract(
+    let finalSegments = enforceFinalSpeakerIdContract(
       reassignedSegments,
       '[FINAL] post-corrections'
     );
@@ -1425,6 +1425,7 @@ export async function POST(request: NextRequest) {
         showRoster: effectivePresetRoster,
       }
     );
+    finalSegments = finalHumanNaming.segments;
     speakersWithNames = finalHumanNaming.speakers;
     if (finalHumanNaming.namingAssigned > 0) {
       console.log(`[FINAL NAMING] Assigned ${finalHumanNaming.namingAssigned} conversational speaker name(s)`);
