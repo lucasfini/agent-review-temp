@@ -8,14 +8,13 @@ import { supabase } from '@/lib/supabase/client';
 import { useAuth } from '@/lib/auth/context';
 import { calculateOverallProgress, getStageDisplayName, getUserFacingProcessingMessage, type ProcessingStage } from '@/lib/tier-progress-config';
 import { SpeakerRosterForm, type RosterSpeaker } from '@/components/SpeakerRosterForm';
-import { useAudioExtractor } from '@/lib/hooks/useAudioExtractor';
 import { useActiveProcessingProjects } from '@/lib/hooks/useActiveProcessingProjects';
 import { emitProjectMutation } from '@/lib/project-events';
-import { normalizeTier, type TierLevel } from '@/lib/tier-config';
+import { normalizeTier } from '@/lib/tier-config';
 import { ANALYSIS_OPTION_CONFIG, DEFAULT_ANALYSIS_OPTIONS, getProcessingTierForAnalysis, getSelectedAnalysisKeys, normalizeAnalysisOptions, type AnalysisOptions } from '@/lib/analysis-options';
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogDescription } from '@/components/ui/dialog';
 import { FeatureHelp } from '@/components/ui/feature-help';
-import { useUploadProgressSync } from '@/lib/context/upload-progress-sync';
+import { useUploadProgressSync, type UploadedFile, type QueuedRosterSpeaker } from '@/lib/context/upload-progress-sync';
 import { toast } from 'sonner';
 import { INTEGRATIONS_COMING_SOON_MESSAGE, INTEGRATIONS_ENABLED } from '@/lib/integrations/availability';
 
@@ -48,26 +47,6 @@ interface MicrosoftRecording {
   size: number;
   createdAt: string;
   mimeType?: string;
-}
-
-interface UploadedFile {
-  file?: File;
-  id: string;
-  status: 'queued' | 'pending' | 'extracting' | 'uploading' | 'processing' | 'completed' | 'error' | 'cancelled';
-  progress: number;
-  extractionProgress?: number;
-  error?: string;
-  projectId?: string;
-  processingStage?: ProcessingStage;
-  stageProgress?: number;
-  processingMessage?: string;
-  processingTier: TierLevel;
-  analysisOptions: AnalysisOptions;
-  displayName: string;
-  estimatedDurationSeconds?: number;
-  sourceUrl?: string;
-  sourceType?: 'local' | 'url' | 'youtube' | 'direct' | 'zoom' | 'microsoft';
-  importPayload?: Record<string, unknown>;
 }
 
 interface UploadHistory {
@@ -116,41 +95,6 @@ function formatAnalysisSummary(options: AnalysisOptions): string {
     .join(' · ');
 }
 
-async function getMediaDurationSeconds(file: File): Promise<number | undefined> {
-  if (typeof window === 'undefined') return undefined;
-
-  const objectUrl = URL.createObjectURL(file);
-  const media = document.createElement(file.type.startsWith('video/') ? 'video' : 'audio');
-  media.preload = 'metadata';
-  media.src = objectUrl;
-
-  try {
-    const duration = await new Promise<number>((resolve, reject) => {
-      const cleanup = () => {
-        media.removeAttribute('src');
-        media.load();
-        URL.revokeObjectURL(objectUrl);
-      };
-
-      media.onloadedmetadata = () => {
-        const nextDuration = Number.isFinite(media.duration) ? Math.round(media.duration) : 0;
-        cleanup();
-        resolve(nextDuration);
-      };
-
-      media.onerror = () => {
-        cleanup();
-        reject(new Error('Failed to read media metadata'));
-      };
-    });
-
-    return duration > 0 ? duration : undefined;
-  } catch {
-    URL.revokeObjectURL(objectUrl);
-    return undefined;
-  }
-}
-
 const ANALYSIS_HELP_COPY: Record<keyof AnalysisOptions, { description: string; bestFor: string }> = {
   namedSpeakers: {
     description: 'Attempts to replace numbered speaker labels with real names and roles like host or guest.',
@@ -179,7 +123,6 @@ const ANALYSIS_HELP_COPY: Record<keyof AnalysisOptions, { description: string; b
 };
 
 export default function UploadPage() {
-  const [uploadedFiles, setUploadedFiles] = useState<UploadedFile[]>([]);
   const [isDragActive, setIsDragActive] = useState(false);
   const [uploadHistory, setUploadHistory] = useState<UploadHistory[]>([]);
   const [showHistory, setShowHistory] = useState(true);
@@ -206,20 +149,23 @@ export default function UploadPage() {
   const [urlTitle, setUrlTitle] = useState('');
   const [urlError, setUrlError] = useState<string | null>(null);
   const [isUrlSubmitting, setIsUrlSubmitting] = useState(false);
-  const [isStartingQueuedUploads, setIsStartingQueuedUploads] = useState(false);
   const [selectedQueuedFileId, setSelectedQueuedFileId] = useState<string | null>(null);
   const lastActiveProjectCountRef = useRef<number | null>(null);
-  const uploadControllersRef = useRef<Map<string, AbortController>>(new Map());
-  const uploadRequestRef = useRef<Map<string, XMLHttpRequest>>(new Map());
-  const pollTimeoutsRef = useRef<Map<string, ReturnType<typeof setTimeout>>>(new Map());
-  const cancelledUploadsRef = useRef<Set<string>>(new Set());
 
   // Fix: drag counter prevents isDragActive flickering when cursor passes over child elements
   const dragCounterRef = useRef(0);
 
-  const { extractAudio } = useAudioExtractor();
   const { user, session, isDemoMode } = useAuth();
-  const { setSyncedUploads } = useUploadProgressSync();
+  const {
+    uploadedFiles,
+    setUploadedFiles,
+    isStartingQueuedUploads,
+    startQueuedUploads,
+    removeFile,
+    cancelUploadedFile,
+    deleteActiveProject,
+    trackProcessingEntry,
+  } = useUploadProgressSync();
   const {
     activeProjects,
     isLoading: activeProjectsLoading,
@@ -243,42 +189,6 @@ export default function UploadPage() {
     () => formatAnalysisSummary(selectedQueuedFile?.analysisOptions || analysisOptions),
     [analysisOptions, selectedQueuedFile]
   );
-  useEffect(() => {
-    const controllers = uploadControllersRef.current;
-    const requests = uploadRequestRef.current;
-    const pollTimeouts = pollTimeoutsRef.current;
-    return () => {
-      controllers.forEach((controller) => controller.abort());
-      requests.forEach((xhr) => xhr.abort());
-      pollTimeouts.forEach((timeoutId) => clearTimeout(timeoutId));
-    };
-  }, []);
-
-  useEffect(() => {
-    const synced = uploadedFiles
-      .filter((file) => ['queued', 'pending', 'extracting', 'uploading', 'processing'].includes(file.status))
-      .map((file) => ({
-        id: file.id,
-        projectId: file.projectId,
-        title: file.displayName || file.file?.name || 'Untitled',
-        status: file.status as 'queued' | 'pending' | 'extracting' | 'uploading' | 'processing',
-        progress: file.status === 'extracting'
-          ? (file.extractionProgress || 0)
-          : file.progress,
-        processingStage: file.processingStage,
-        processingMessage: file.processingMessage,
-        processingTier: file.processingTier,
-      }));
-
-    setSyncedUploads(synced);
-  }, [setSyncedUploads, uploadedFiles]);
-
-  useEffect(() => {
-    return () => {
-      setSyncedUploads([]);
-    };
-  }, [setSyncedUploads]);
-
   // Heuristic to estimate speaker count from title
   const estimateSpeakerCountFromTitle = (filename: string): number | undefined => {
     const clean = filename.toLowerCase().replace(/\.[^/.]+$/, "").replace(/_/g, " ");
@@ -462,6 +372,8 @@ export default function UploadPage() {
       estimatedDurationSeconds: params.estimatedDurationSeconds,
       sourceType: params.sourceType,
       importPayload: params.importPayload,
+      speakerCount,
+      rosterSpeakers: rosterSpeakers as QueuedRosterSpeaker[],
     };
 
     setUploadedFiles((prev) => [...prev, queuedImport]);
@@ -516,18 +428,6 @@ export default function UploadPage() {
     }
     lastActiveProjectCountRef.current = activeCount;
   }, [activeProjects.length]);
-
-  const clearTrackedUploadState = (fileId: string) => {
-    uploadControllersRef.current.get(fileId)?.abort();
-    uploadControllersRef.current.delete(fileId);
-    uploadRequestRef.current.get(fileId)?.abort();
-    uploadRequestRef.current.delete(fileId);
-    const timeoutId = pollTimeoutsRef.current.get(fileId);
-    if (timeoutId) {
-      clearTimeout(timeoutId);
-      pollTimeoutsRef.current.delete(fileId);
-    }
-  };
 
   const getAccessToken = async () => {
     if (session?.access_token) {
@@ -588,51 +488,6 @@ export default function UploadPage() {
     } catch (error) {
       console.error('Failed to delete upload:', error);
       setConfirmDeleteId(null);
-    }
-  };
-
-  const cancelUploadedFile = async (uploadedFile: UploadedFile) => {
-    cancelledUploadsRef.current.add(uploadedFile.id);
-    uploadRequestRef.current.get(uploadedFile.id)?.abort();
-    uploadControllersRef.current.get(uploadedFile.id)?.abort();
-    clearTrackedUploadState(uploadedFile.id);
-
-    if (uploadedFile.projectId) {
-      try {
-        await cancelUploadOnServer(uploadedFile.projectId);
-        emitProjectMutation({ projectId: uploadedFile.projectId, action: 'cancelled' });
-      } catch (error) {
-        console.error('Failed to cancel upload:', error);
-        toast.error(error instanceof Error ? error.message : 'Failed to cancel upload.');
-        cancelledUploadsRef.current.delete(uploadedFile.id);
-        return;
-      }
-    }
-
-    setUploadedFiles(prev => prev.filter(f => f.id !== uploadedFile.id));
-    await refreshActiveProjects();
-    toast.success('Upload cancelled.');
-  };
-
-  const deleteActiveProject = async (projectId: string) => {
-    try {
-      await deleteProjectById(projectId);
-      emitProjectMutation({ projectId, action: 'deleted' });
-      setUploadedFiles(prev => {
-        prev
-          .filter(file => file.projectId === projectId)
-          .forEach(file => {
-            cancelledUploadsRef.current.add(file.id);
-            clearTrackedUploadState(file.id);
-          });
-        return prev.filter(file => file.projectId !== projectId);
-      });
-      await refreshActiveProjects();
-      await fetchUploadHistory();
-      toast.success('Project deleted.');
-    } catch (error) {
-      console.error('Failed to delete active project:', error);
-      toast.error(error instanceof Error ? error.message : 'Failed to delete project.');
     }
   };
 
@@ -776,8 +631,7 @@ export default function UploadPage() {
         projectId: result.projectId
       };
 
-      setUploadedFiles(prev => [newEntry, ...prev]);
-      pollForProgress(newEntry.id, result.projectId, processingTier);
+      trackProcessingEntry(newEntry, result.projectId, processingTier);
       setUrlInput('');
       setUrlTitle('');
       await refreshActiveProjects();
@@ -848,6 +702,8 @@ export default function UploadPage() {
         analysisOptions: selectedAnalysisOptions,
         displayName: file.name,
         sourceType: 'local',
+        speakerCount,
+        rosterSpeakers: rosterSpeakers as QueuedRosterSpeaker[],
       })),
       ...videoFiles.map((file): UploadedFile => ({
         file,
@@ -861,6 +717,8 @@ export default function UploadPage() {
         analysisOptions: selectedAnalysisOptions,
         displayName: file.name,
         sourceType: 'local',
+        speakerCount,
+        rosterSpeakers: rosterSpeakers as QueuedRosterSpeaker[],
       })),
     ];
 
@@ -868,467 +726,6 @@ export default function UploadPage() {
     setUploadedFiles(prev => [...prev, ...newFiles]);
     setSelectedQueuedFileId((current) => current || newFiles.find((file) => file.status === 'queued')?.id || null);
   };
-
-  const processVideoFile = async (uploadedFile: UploadedFile) => {
-    try {
-      if (!uploadedFile.file) {
-        throw new Error('No file provided for video processing');
-      }
-      const extractedAudioFile = await extractAudio(uploadedFile.file, (progress) => {
-        if (cancelledUploadsRef.current.has(uploadedFile.id)) return;
-        setUploadedFiles(prev => prev.map(f =>
-          f.id === uploadedFile.id ? { ...f, extractionProgress: progress } : f
-        ));
-      });
-
-      if (cancelledUploadsRef.current.has(uploadedFile.id)) {
-        setUploadedFiles(prev => prev.filter(f => f.id !== uploadedFile.id));
-        return;
-      }
-
-      const updatedFile = {
-        ...uploadedFile,
-        file: extractedAudioFile,
-        status: 'pending' as const,
-        processingMessage: 'Audio extracted. Starting upload...',
-        extractionProgress: 100,
-      };
-
-      setUploadedFiles(prev => prev.map(f =>
-        f.id === uploadedFile.id ? updatedFile : f
-      ));
-
-      processFile(updatedFile);
-
-    } catch (error) {
-      if (cancelledUploadsRef.current.has(uploadedFile.id)) {
-        setUploadedFiles(prev => prev.filter(f => f.id !== uploadedFile.id));
-        return;
-      }
-      console.error('Extraction error:', error);
-      setUploadedFiles(prev => prev.map(f =>
-        f.id === uploadedFile.id ? {
-          ...f,
-          status: 'error',
-          error: 'Failed to extract audio from video.',
-          processingMessage: 'Extraction failed',
-        } : f
-      ));
-    }
-  };
-
-  const processImportedRecording = async (uploadedFile: UploadedFile) => {
-    if (!uploadedFile.importPayload || !uploadedFile.sourceType || !['zoom', 'microsoft'].includes(uploadedFile.sourceType)) {
-      setUploadedFiles(prev => prev.map(f =>
-        f.id === uploadedFile.id ? {
-          ...f,
-          status: 'error',
-          error: 'Missing import details.',
-          processingStage: 'failed',
-          processingMessage: 'Import setup failed',
-          stageProgress: 0,
-          progress: 0,
-        } : f
-      ));
-      return;
-    }
-
-    setUploadedFiles(prev =>
-      prev.map(f => f.id === uploadedFile.id ? {
-        ...f,
-        status: 'processing',
-        processingStage: 'transcribing',
-        stageProgress: 0,
-        processingMessage: 'Importing recording...',
-        progress: calculateOverallProgress(f.processingTier, 'transcribing', 0),
-      } : f)
-    );
-
-    try {
-      const payload = {
-        ...uploadedFile.importPayload,
-        analysisOptions: normalizeAnalysisOptions(uploadedFile.analysisOptions),
-      };
-
-      const provider = uploadedFile.sourceType as IntegrationProvider;
-      await importRecording(provider, payload);
-      removeFile(uploadedFile.id);
-    } catch (error) {
-      console.error('Recording import error:', error);
-      setUploadedFiles(prev => prev.map(f =>
-        f.id === uploadedFile.id ? {
-          ...f,
-          status: 'error',
-          error: error instanceof Error ? error.message : 'Import failed.',
-          processingStage: 'failed',
-          processingMessage: 'Import failed',
-          stageProgress: 0,
-          progress: 0,
-        } : f
-      ));
-    }
-  };
-
-  const processFile = async (uploadedFile: UploadedFile) => {
-    const controller = new AbortController();
-    uploadControllersRef.current.set(uploadedFile.id, controller);
-
-    try {
-      if (!uploadedFile.file) {
-        throw new Error('No file provided for upload');
-      }
-      const fileProcessingTier = uploadedFile.processingTier;
-      const fileAnalysisOptions = normalizeAnalysisOptions(uploadedFile.analysisOptions);
-      const estimatedDurationSeconds = uploadedFile.estimatedDurationSeconds || await getMediaDurationSeconds(uploadedFile.file);
-      setUploadedFiles(prev =>
-        prev.map(f => f.id === uploadedFile.id ? {
-          ...f,
-          status: 'uploading',
-          processingStage: 'uploading',
-          stageProgress: 0,
-          processingMessage: 'Uploading audio...',
-          progress: calculateOverallProgress(f.processingTier, 'uploading', 0),
-        } : f)
-      );
-
-      const payload: any = {
-        fileName: uploadedFile.file.name,
-        contentType: uploadedFile.file.type || 'application/octet-stream',
-        size: uploadedFile.file.size,
-        title: uploadedFile.file.name.replace(/\.[^/.]+$/, ""),
-        performanceLevel: fileProcessingTier,
-        analysisOptions: fileAnalysisOptions,
-        ...(estimatedDurationSeconds ? { estimatedDurationSeconds } : {}),
-      };
-
-      if (rosterSpeakers.length > 0) {
-        payload.rosterSpeakers = rosterSpeakers;
-      }
-
-      if (speakerCount && speakerCount >= 2 && speakerCount <= 12) {
-        payload.speakerCount = speakerCount;
-      }
-
-      // Step 1: Initialize upload and get presigned URL
-      const initHeaders = await getAuthHeaders('json');
-      const initResponse = await fetch('/api/upload/init', {
-        method: 'POST',
-        headers: initHeaders,
-        body: JSON.stringify(payload),
-      });
-
-      if (!initResponse.ok) {
-        const errorData = await initResponse.json().catch(() => ({ error: 'Upload initialization failed' }));
-        throw new Error(errorData.error || `Init failed with status ${initResponse.status}`);
-      }
-
-      const { presignedUrl, objectKey, projectId, audioFingerprint, uploadToken } = await initResponse.json();
-
-      setUploadedFiles(prev =>
-        prev.map(f => f.id === uploadedFile.id ? { ...f, projectId } : f)
-      );
-
-      if (controller.signal.aborted || cancelledUploadsRef.current.has(uploadedFile.id)) {
-        await cancelUploadOnServer(projectId);
-        return;
-      }
-
-      // Step 2: Upload directly to R2 using XMLHttpRequest for real progress
-      await new Promise<void>((resolve, reject) => {
-        const xhr = new XMLHttpRequest();
-        uploadRequestRef.current.set(uploadedFile.id, xhr);
-
-        xhr.upload.addEventListener('progress', (event) => {
-          if (event.lengthComputable) {
-            const percentComplete = Math.round((event.loaded / event.total) * 100);
-            setUploadedFiles(prev =>
-              prev.map(f => {
-                if (f.id !== uploadedFile.id || f.status !== 'uploading') return f;
-                return {
-                  ...f,
-                  processingStage: 'uploading',
-                  stageProgress: percentComplete,
-                  progress: calculateOverallProgress(f.processingTier, 'uploading', percentComplete),
-                };
-              })
-            );
-          }
-        });
-
-        xhr.addEventListener('load', () => {
-          if (xhr.status >= 200 && xhr.status < 300) {
-            resolve();
-          } else {
-            console.error('S3 Upload Error:', xhr.status, xhr.responseText);
-            reject(new Error(`S3 Upload failed with status ${xhr.status}`));
-          }
-        });
-
-        xhr.addEventListener('error', () => reject(new Error('Network error during upload')));
-        xhr.addEventListener('abort', () => {
-          const abortError = new Error('Upload cancelled');
-          abortError.name = 'AbortError';
-          reject(abortError);
-        });
-
-        xhr.open('PUT', presignedUrl, true);
-        xhr.setRequestHeader('Content-Type', uploadedFile.file!.type || 'application/octet-stream');
-        xhr.send(uploadedFile.file);
-      });
-
-      uploadRequestRef.current.delete(uploadedFile.id);
-
-      if (controller.signal.aborted || cancelledUploadsRef.current.has(uploadedFile.id)) {
-        await cancelUploadOnServer(projectId);
-        return;
-      }
-
-      // Step 3: Finalize upload and queue transcription
-      const finalizeHeaders = await getAuthHeaders('json');
-      const finalizeResponse = await fetch('/api/upload/finalize', {
-        method: 'POST',
-        headers: finalizeHeaders,
-        body: JSON.stringify({
-          projectId,
-          objectKey,
-          audioFingerprint,
-          uploadToken,
-          performanceLevel: fileProcessingTier,
-          analysisOptions: fileAnalysisOptions,
-          speakerCount
-        }),
-        signal: controller.signal,
-      });
-
-      if (!finalizeResponse.ok) {
-        const errorData = await finalizeResponse.json().catch(() => ({ error: 'Finalize failed' }));
-        throw new Error(errorData.error || `Finalize failed with status ${finalizeResponse.status}`);
-      }
-
-      setUploadedFiles(prev =>
-        prev.map(f => f.id === uploadedFile.id ? {
-          ...f,
-          status: 'processing',
-          projectId,
-          processingStage: 'transcribing',
-          stageProgress: 0,
-          processingMessage: 'Upload complete. Starting transcription...',
-          progress: calculateOverallProgress(f.processingTier, 'transcribing', 0),
-        } : f)
-      );
-
-      pollForProgress(uploadedFile.id, projectId, uploadedFile.processingTier);
-
-    } catch (error) {
-      console.error('Upload error:', error);
-
-      let errorMessage = 'Upload failed';
-      // Treat init/server config failures as fatal so queued siblings don't
-      // spin through the queue and fail one-by-one.
-      let isServerError = false;
-
-      if (error instanceof Error) {
-        if (error.name === 'AbortError') {
-          if (cancelledUploadsRef.current.has(uploadedFile.id)) {
-            setUploadedFiles(prev => prev.filter(f => f.id !== uploadedFile.id));
-            return;
-          }
-          errorMessage = 'Upload cancelled.';
-        } else {
-          errorMessage = error.message;
-          // Init/config errors affect every queued file — mark siblings as
-          // error immediately so the queue doesn't keep spinning.
-          isServerError =
-            error.message.includes('initialization failed') ||
-            error.message.includes('Init failed') ||
-            error.message.includes('Unsupported audio format') ||
-            error.message.includes('500');
-        }
-      }
-
-      setUploadedFiles(prev =>
-        prev.map(f => {
-          if (f.id === uploadedFile.id) {
-            return {
-              ...f,
-              status: 'error' as const,
-              error: errorMessage,
-              processingStage: 'failed' as const,
-              processingMessage: errorMessage,
-              stageProgress: 0,
-              progress: 0,
-            };
-          }
-          // Cancel queued siblings if the failure is a server/config error
-          if (isServerError && f.status === 'queued') {
-            return {
-              ...f,
-              status: 'error' as const,
-              error: 'Upload stopped — a previous file failed to initialize.',
-              processingStage: 'failed' as const,
-              processingMessage: 'Upload stopped.',
-              stageProgress: 0,
-              progress: 0,
-            };
-          }
-          return f;
-        })
-      );
-    } finally {
-      clearTrackedUploadState(uploadedFile.id);
-    }
-  };
-
-  const pollForProgress = (fileId: string, projectId: string, fallbackTier?: TierLevel) => {
-    const poll = async () => {
-      if (cancelledUploadsRef.current.has(fileId)) {
-        clearTrackedUploadState(fileId);
-        return;
-      }
-
-      try {
-        const response = await fetch(`/api/projects/${projectId}/status`);
-        if (response.status === 404) {
-          setUploadedFiles(prev => prev.filter(f => f.id !== fileId));
-          clearTrackedUploadState(fileId);
-          return;
-        }
-        if (!response.ok) throw new Error('Failed to fetch project status');
-
-        const status = await response.json();
-        const apiStage = (status.processing_stage || 'pending') as ProcessingStage;
-        const normalizedStage: ProcessingStage =
-          status.status === 'cancelled' ? 'cancelled' :
-          status.status === 'failed' ? 'failed' :
-            status.status === 'completed' ? 'completed' : apiStage;
-        const stageProgress = typeof status.processing_progress === 'number' ? status.processing_progress : 0;
-        const derivedStatus =
-          status.status === 'cancelled' ? 'cancelled' :
-          status.status === 'completed' ? 'completed' :
-            status.status === 'failed' ? 'error' : 'processing';
-        const tier = (status.performance_level ||
-          uploadedFiles.find(f => f.id === fileId)?.processingTier ||
-          fallbackTier ||
-          'transcript') as TierLevel;
-        const progressValue = status.status === 'completed'
-          ? 100
-          : calculateOverallProgress(tier, normalizedStage, stageProgress);
-        const message = derivedStatus === 'completed'
-          ? 'Processing complete!'
-          : getUserFacingProcessingMessage(tier, normalizedStage, status.processing_message);
-
-        setUploadedFiles(prev =>
-          prev.map(f => {
-            if (f.id !== fileId) return f;
-            return {
-              ...f,
-              status: derivedStatus,
-              projectId,
-              processingStage: normalizedStage,
-              stageProgress,
-              processingMessage: message,
-              progress: progressValue,
-              error: derivedStatus === 'error' ? (message || 'Processing failed') : f.error,
-            };
-          })
-        );
-
-        if (status.status === 'completed' || status.status === 'failed') {
-          if (status.status === 'completed') {
-            emitProjectMutation({ projectId, action: 'updated' });
-          }
-          clearTrackedUploadState(fileId);
-          return;
-        }
-
-        if (status.status === 'cancelled') {
-          setUploadedFiles(prev => prev.filter(f => f.id !== fileId));
-          clearTrackedUploadState(fileId);
-          return;
-        }
-
-        const timeoutId = setTimeout(poll, 2000);
-        pollTimeoutsRef.current.set(fileId, timeoutId);
-      } catch (error) {
-        console.error('Status polling error:', error);
-        const timeoutId = setTimeout(poll, 4000);
-        pollTimeoutsRef.current.set(fileId, timeoutId);
-      }
-    };
-
-    poll();
-  };
-
-  const removeFile = (id: string) => {
-    cancelledUploadsRef.current.delete(id);
-    clearTrackedUploadState(id);
-    setUploadedFiles(prev => prev.filter(f => f.id !== id));
-    setSelectedQueuedFileId((current) => (current === id ? null : current));
-  };
-
-  const startQueuedUploads = () => {
-    if (isDemoMode) return;
-    setIsStartingQueuedUploads(true);
-  };
-
-  // ── Queue processor: start the next queued file when allowed and nothing is active ──
-  const queueProcessingRef = useRef(false);
-
-  useEffect(() => {
-    if (!isStartingQueuedUploads) return;
-    // Prevent re-entrance while we're already promoting a file
-    if (queueProcessingRef.current) return;
-
-    const isActiveStatus = (s: string) =>
-      s === 'pending' || s === 'extracting' || s === 'uploading' || s === 'processing';
-
-    const activeFile = uploadedFiles.find(f => isActiveStatus(f.status));
-    if (activeFile) return; // something is already running
-
-    const nextQueued = uploadedFiles.find(f => f.status === 'queued');
-    if (!nextQueued) {
-      setIsStartingQueuedUploads(false);
-      return;
-    }
-
-    queueProcessingRef.current = true;
-
-    if (!nextQueued.file && !nextQueued.importPayload) {
-      queueProcessingRef.current = false;
-      return;
-    }
-    const queuedFile = nextQueued.file;
-
-    const isVideo = Boolean(queuedFile) && (
-      queuedFile?.type.startsWith('video/') ||
-      ['.mp4', '.mov', '.mkv', '.avi', '.webm'].some(ext =>
-        queuedFile?.name.toLowerCase().endsWith(ext)
-      )
-    );
-
-    // Promote the file from queued → pending/extracting
-    const promoted: UploadedFile = {
-      ...nextQueued,
-      status: nextQueued.importPayload ? 'pending' as const : isVideo ? 'extracting' as const : 'pending' as const,
-      processingMessage: nextQueued.importPayload ? 'Starting import...' : isVideo ? 'Extracting audio...' : 'Starting upload...',
-      extractionProgress: isVideo ? 0 : undefined,
-    };
-
-    setUploadedFiles(prev => prev.map(f =>
-      f.id === nextQueued.id ? promoted : f
-    ));
-
-    if (nextQueued.importPayload) {
-      processImportedRecording(promoted);
-    } else if (isVideo) {
-      processVideoFile(promoted);
-    } else {
-      processFile(promoted);
-    }
-
-    // Allow next cycle after a tick
-    setTimeout(() => { queueProcessingRef.current = false; }, 0);
-  }, [isStartingQueuedUploads, uploadedFiles]);
 
   const uploadedProjectIds = new Set(
     uploadedFiles.map(f => f.projectId).filter(Boolean) as string[]
@@ -1404,6 +801,217 @@ export default function UploadPage() {
             </div>
 
             <div className="mb-6 rounded-2xl border border-slate-200 dark:border-slate-800 bg-white dark:bg-slate-900">
+              {uploadedFiles.length > 0 && (
+                <div className="border-b border-slate-200 dark:border-slate-800 px-5 py-5">
+                  <div className="mb-4 flex items-center justify-between">
+                    <div>
+                      <h3 className="text-sm font-semibold text-slate-900 dark:text-slate-50">Files</h3>
+                      <p className="mt-1 text-xs text-slate-500 dark:text-slate-400">
+                        Queued and active uploads appear here. Click a queued file to edit its options before it starts.
+                      </p>
+                    </div>
+                    {queuedFiles.length > 1 && (
+                      <span className="rounded-full border border-amber-200 bg-amber-50 px-2.5 py-1 text-xs font-medium text-amber-700 dark:border-amber-800/30 dark:bg-amber-900/20 dark:text-amber-300">
+                        {queuedFiles.length} queued
+                      </span>
+                    )}
+                  </div>
+
+                  <div className="space-y-3">
+                    {uploadedFiles.map((uploadedFile) => {
+                      const isActive = ['queued', 'pending', 'extracting', 'uploading', 'processing'].includes(uploadedFile.status);
+                      const isProcessing = ['pending', 'extracting', 'uploading', 'processing'].includes(uploadedFile.status);
+                      const isSelectedQueued = uploadedFile.status === 'queued' && uploadedFile.id === selectedQueuedFileId;
+                      const displayName = uploadedFile.displayName || uploadedFile.file?.name || 'Untitled';
+                      const fileSize = uploadedFile.file?.size;
+                      const queuePosition = uploadedFile.status === 'queued'
+                        ? queuedFiles.findIndex(f => f.id === uploadedFile.id) + 1
+                        : 0;
+                      const queueTotal = queuedFiles.length;
+                      return (
+                        <div
+                          key={uploadedFile.id}
+                          onClick={() => {
+                            if (uploadedFile.status === 'queued') {
+                              setSelectedQueuedFileId(uploadedFile.id);
+                            }
+                          }}
+                          className={`rounded-lg border p-4 shadow-sm transition-colors ${
+                            isSelectedQueued
+                              ? 'border-blue-300 bg-blue-50/70 ring-1 ring-blue-200 dark:border-blue-700 dark:bg-blue-950/20 dark:ring-blue-900/50'
+                              : 'border-slate-200 bg-white dark:border-slate-700 dark:bg-slate-900'
+                          } ${uploadedFile.status === 'queued' ? 'cursor-pointer hover:border-slate-300 dark:hover:border-slate-600' : ''}`}
+                        >
+                          <div className="flex items-start gap-3">
+                            <div className="flex-shrink-0 mt-0.5">
+                              {uploadedFile.status === 'extracting' ? (
+                                <FileVideo className="h-7 w-7 text-purple-500 animate-pulse" />
+                              ) : uploadedFile.status === 'queued' ? (
+                                <Clock className="h-7 w-7 text-amber-400" />
+                              ) : (
+                                <FileAudio className="h-7 w-7 text-blue-500" />
+                              )}
+                            </div>
+                            <div className="flex-1 min-w-0">
+                              <p className="text-sm font-medium text-slate-900 dark:text-slate-50 truncate" title={displayName}>
+                                {displayName}
+                              </p>
+                              <p className="text-xs text-slate-500 dark:text-slate-400">
+                                {typeof fileSize === 'number' && fileSize > 0
+                                  ? formatFileSize(fileSize)
+                                  : uploadedFile.sourceType === 'youtube'
+                                    ? 'YouTube import'
+                                    : uploadedFile.sourceType === 'direct'
+                                      ? 'URL import'
+                                      : 'Processing'}
+                              </p>
+                            </div>
+                            {isProcessing ? (
+                              <button
+                                onClick={(event) => {
+                                  event.stopPropagation();
+                                  cancelUploadedFile(uploadedFile);
+                                }}
+                                className="flex-shrink-0 p-1 rounded text-amber-400 hover:text-amber-300 hover:bg-amber-900/20 transition-colors"
+                                title="Cancel upload"
+                              >
+                                <X className="h-4 w-4" />
+                              </button>
+                            ) : (
+                              <button
+                                onClick={(event) => {
+                                  event.stopPropagation();
+                                  removeFile(uploadedFile.id);
+                                }}
+                                className="flex-shrink-0 p-1 rounded text-slate-500 hover:text-slate-600 dark:hover:text-slate-400 hover:bg-slate-100 dark:hover:bg-slate-800 transition-colors"
+                                title={uploadedFile.status === 'queued' ? 'Remove from queue' : 'Remove file'}
+                              >
+                                <X className="h-4 w-4" />
+                              </button>
+                            )}
+                          </div>
+
+                          <div className="mt-2 ml-10 flex items-center gap-2 flex-wrap">
+                            <div className="flex items-center space-x-2 flex-wrap">
+                              {uploadedFile.status === 'queued' && (
+                                <div className="flex items-center space-x-1">
+                                  <Clock className="h-3.5 w-3.5 text-amber-500" />
+                                  <span className="text-xs px-2 py-1 rounded-full bg-amber-100 dark:bg-amber-900/20 text-amber-700 dark:text-amber-400 font-medium">
+                                    {queueTotal > 1 ? `Queued (${queuePosition} of ${queueTotal})` : 'Queued'}
+                                  </span>
+                                  {isSelectedQueued && (
+                                    <span className="text-xs px-2 py-1 rounded-full bg-blue-100 text-blue-700 font-medium dark:bg-blue-900/20 dark:text-blue-300">
+                                      Editing
+                                    </span>
+                                  )}
+                                </div>
+                              )}
+                              {uploadedFile.status === 'pending' && (
+                                <span className="text-xs px-2 py-1 rounded-full bg-slate-100 dark:bg-slate-800 text-slate-500 dark:text-slate-400 font-medium">Starting…</span>
+                              )}
+                              {uploadedFile.status === 'extracting' && (
+                                <span className="text-xs px-2 py-1 rounded-full bg-blue-100 dark:bg-blue-900/20 text-blue-700 dark:text-blue-400 font-medium">Extracting audio</span>
+                              )}
+                              {uploadedFile.status === 'uploading' && (
+                                <span className="text-xs px-2 py-1 rounded-full bg-blue-100 dark:bg-blue-900/20 text-blue-700 dark:text-blue-400 font-medium">Uploading</span>
+                              )}
+                              {uploadedFile.status === 'processing' && uploadedFile.processingStage && (
+                                <>
+                                  {uploadedFile.processingStage === 'transcribing' && (
+                                    <span className="text-xs px-2 py-1 rounded-full bg-blue-100 dark:bg-blue-900/20 text-blue-700 dark:text-blue-400 font-medium">Transcribing</span>
+                                  )}
+                                  {(['diarization', 'name_extraction'] as ProcessingStage[]).includes(uploadedFile.processingStage) && (
+                                    <span className="text-xs px-2 py-1 rounded-full bg-blue-100 dark:bg-blue-900/20 text-blue-700 dark:text-blue-400 font-medium">Analyzing speakers</span>
+                                  )}
+                                  {(['summary', 'role_classification', 'chapters', 'takeaways', 'quotes', 'finalizing'] as ProcessingStage[]).includes(uploadedFile.processingStage) && (
+                                    <span className="text-xs px-2 py-1 rounded-full bg-blue-100 dark:bg-blue-900/20 text-blue-700 dark:text-blue-400 font-medium">Generating insights</span>
+                                  )}
+                                  {!(['transcribing', 'diarization', 'name_extraction', 'summary', 'role_classification', 'chapters', 'takeaways', 'quotes', 'finalizing'] as ProcessingStage[]).includes(uploadedFile.processingStage) && (
+                                    <span className="text-xs px-2 py-1 rounded-full bg-blue-100 dark:bg-blue-900/20 text-blue-700 dark:text-blue-400 font-medium">Processing</span>
+                                  )}
+                                </>
+                              )}
+                              {uploadedFile.status === 'completed' && (
+                                <div className="flex items-center space-x-1">
+                                  <CheckCircle className="h-4 w-4 text-green-500" />
+                                  <span className="text-xs px-2 py-1 rounded-full bg-emerald-100 dark:bg-emerald-900/20 text-emerald-700 dark:text-emerald-300 font-medium hidden sm:inline">Complete</span>
+                                </div>
+                              )}
+                              {uploadedFile.status === 'error' && (
+                                <div className="flex items-center space-x-1">
+                                  <AlertCircle className="h-4 w-4 text-red-500" />
+                                  <span className="text-xs px-2 py-1 rounded-full bg-red-100 dark:bg-red-900/20 text-red-600 dark:text-red-300 font-medium hidden sm:inline">Error</span>
+                                </div>
+                              )}
+                            </div>
+
+                            <span className="text-[10px] uppercase tracking-wide text-slate-600 dark:text-slate-300 border border-slate-300 dark:border-slate-700/70 bg-slate-100 dark:bg-slate-800/60 px-2 py-0.5 rounded">
+                              {formatAnalysisSummary(uploadedFile.analysisOptions)}
+                            </span>
+
+                            {uploadedFile.status === 'completed' && uploadedFile.projectId && (
+                              <a
+                                href={`/dashboard/projects?id=${uploadedFile.projectId}`}
+                                className="inline-flex items-center gap-1.5 px-2.5 py-1 text-xs font-semibold text-white bg-blue-600 hover:bg-blue-700 rounded-lg flex-shrink-0 transition-colors"
+                              >
+                                <Eye className="h-3.5 w-3.5" />
+                                View
+                              </a>
+                            )}
+                          </div>
+
+                          {isActive && uploadedFile.status !== 'queued' && (
+                            <>
+                              <div className="mt-3">
+                                <div className="w-full bg-slate-200 dark:bg-slate-700 rounded-full h-1.5">
+                                  <div
+                                    className={`h-1.5 rounded-full transition-all duration-300 ${uploadedFile.status === 'extracting' ? 'bg-purple-500' : 'bg-blue-600'}`}
+                                    style={{ width: `${uploadedFile.status === 'extracting' ? uploadedFile.extractionProgress : uploadedFile.progress}%` }}
+                                  />
+                                </div>
+                              </div>
+                              {(uploadedFile.processingStage || uploadedFile.processingMessage) && (
+                                <div className="mt-2 flex flex-col gap-1 text-xs text-slate-500 dark:text-slate-400 sm:flex-row sm:items-center sm:justify-between">
+                                  <div className="flex items-center gap-2">
+                                    {uploadedFile.processingStage && (
+                                      <span className="font-medium text-slate-500 dark:text-slate-400">
+                                        {uploadedFile.status === 'extracting' ? 'Extracting audio' : getStageDisplayName(uploadedFile.processingTier, uploadedFile.processingStage)}
+                                      </span>
+                                    )}
+                                    <span className="font-semibold text-blue-400">
+                                      {Math.min(100, Math.max(0, Math.round(uploadedFile.status === 'extracting'
+                                        ? uploadedFile.extractionProgress || 0
+                                        : uploadedFile.progress)))}%
+                                    </span>
+                                  </div>
+                                  {uploadedFile.processingMessage && (
+                                    <span className="text-slate-400 dark:text-slate-500 sm:text-right">
+                                      {uploadedFile.status === 'extracting'
+                                        ? uploadedFile.processingMessage
+                                        : getUserFacingProcessingMessage(
+                                            uploadedFile.processingTier,
+                                            uploadedFile.processingStage || 'pending',
+                                            uploadedFile.processingMessage
+                                          )}
+                                    </span>
+                                  )}
+                                </div>
+                              )}
+                            </>
+                          )}
+
+                          {uploadedFile.status === 'error' && uploadedFile.error && (
+                            <div className="mt-3 p-3 bg-red-900/20 border border-red-800/30 rounded-md">
+                              <p className="text-xs text-red-300 break-words">{uploadedFile.error}</p>
+                            </div>
+                          )}
+                        </div>
+                      );
+                    })}
+                  </div>
+                </div>
+              )}
+
               <div className="border-b border-slate-200 dark:border-slate-800 px-5 py-5">
                 {activeTab === 'local' && (
                   <div data-tour="upload-zone">
@@ -1672,211 +1280,6 @@ export default function UploadPage() {
             <p className="mb-4 text-xs text-slate-400 dark:text-slate-600 text-center">
               Source audio is stored for 7 days, then deleted. Transcripts and generated content stay permanently.
             </p>
-
-            {/* Active File List */}
-            {uploadedFiles.length > 0 && (
-              <div className="mb-6 space-y-3">
-                <h3 className="text-sm font-semibold text-slate-600 dark:text-slate-300">Files</h3>
-
-                {uploadedFiles.map((uploadedFile) => {
-                  const isActive = ['queued', 'pending', 'extracting', 'uploading', 'processing'].includes(uploadedFile.status);
-                  const isProcessing = ['pending', 'extracting', 'uploading', 'processing'].includes(uploadedFile.status);
-                  const isSelectedQueued = uploadedFile.status === 'queued' && uploadedFile.id === selectedQueuedFileId;
-                  const displayName = uploadedFile.displayName || uploadedFile.file?.name || 'Untitled';
-                  const fileSize = uploadedFile.file?.size;
-                  const queuePosition = uploadedFile.status === 'queued'
-                    ? queuedFiles.findIndex(f => f.id === uploadedFile.id) + 1
-                    : 0;
-                  const queueTotal = queuedFiles.length;
-                  return (
-                    <div
-                      key={uploadedFile.id}
-                      onClick={() => {
-                        if (uploadedFile.status === 'queued') {
-                          setSelectedQueuedFileId(uploadedFile.id);
-                        }
-                      }}
-                      className={`rounded-lg border p-4 shadow-sm transition-colors ${
-                        isSelectedQueued
-                          ? 'border-blue-300 bg-blue-50/70 ring-1 ring-blue-200 dark:border-blue-700 dark:bg-blue-950/20 dark:ring-blue-900/50'
-                          : 'border-slate-200 bg-white dark:border-slate-700 dark:bg-slate-900'
-                      } ${uploadedFile.status === 'queued' ? 'cursor-pointer hover:border-slate-300 dark:hover:border-slate-600' : ''}`}
-                    >
-                      {/* Row 1: icon + name + cancel/remove */}
-                      <div className="flex items-start gap-3">
-                        <div className="flex-shrink-0 mt-0.5">
-                          {uploadedFile.status === 'extracting' ? (
-                            <FileVideo className="h-7 w-7 text-purple-500 animate-pulse" />
-                          ) : uploadedFile.status === 'queued' ? (
-                            <Clock className="h-7 w-7 text-amber-400" />
-                          ) : (
-                            <FileAudio className="h-7 w-7 text-blue-500" />
-                          )}
-                        </div>
-                        <div className="flex-1 min-w-0">
-                          <p className="text-sm font-medium text-slate-900 dark:text-slate-50 truncate" title={displayName}>
-                            {displayName}
-                          </p>
-                          <p className="text-xs text-slate-500 dark:text-slate-400">
-                            {typeof fileSize === 'number' && fileSize > 0
-                              ? formatFileSize(fileSize)
-                              : uploadedFile.sourceType === 'youtube'
-                                ? 'YouTube import'
-                                : uploadedFile.sourceType === 'direct'
-                                  ? 'URL import'
-                                  : 'Processing'}
-                          </p>
-                        </div>
-                        {/* Cancel/Remove — always top-right */}
-                        {isProcessing ? (
-                          <button
-                            onClick={(event) => {
-                              event.stopPropagation();
-                              cancelUploadedFile(uploadedFile);
-                            }}
-                            className="flex-shrink-0 p-1 rounded text-amber-400 hover:text-amber-300 hover:bg-amber-900/20 transition-colors"
-                            title="Cancel upload"
-                          >
-                            <X className="h-4 w-4" />
-                          </button>
-                        ) : (
-                          <button
-                            onClick={(event) => {
-                              event.stopPropagation();
-                              removeFile(uploadedFile.id);
-                            }}
-                            className="flex-shrink-0 p-1 rounded text-slate-500 hover:text-slate-600 dark:hover:text-slate-400 hover:bg-slate-100 dark:hover:bg-slate-800 transition-colors"
-                            title={uploadedFile.status === 'queued' ? 'Remove from queue' : 'Remove file'}
-                          >
-                            <X className="h-4 w-4" />
-                          </button>
-                        )}
-                      </div>
-
-                      {/* Row 2: status badges + tier + view button */}
-                      <div className="mt-2 ml-10 flex items-center gap-2 flex-wrap">
-                          {/* Status badges */}
-                          <div className="flex items-center space-x-2 flex-wrap">
-                            {uploadedFile.status === 'queued' && (
-                              <div className="flex items-center space-x-1">
-                                <Clock className="h-3.5 w-3.5 text-amber-500" />
-                                <span className="text-xs px-2 py-1 rounded-full bg-amber-100 dark:bg-amber-900/20 text-amber-700 dark:text-amber-400 font-medium">
-                                  {queueTotal > 1 ? `Queued (${queuePosition} of ${queueTotal})` : 'Queued'}
-                                </span>
-                                {isSelectedQueued && (
-                                  <span className="text-xs px-2 py-1 rounded-full bg-blue-100 text-blue-700 font-medium dark:bg-blue-900/20 dark:text-blue-300">
-                                    Editing
-                                  </span>
-                                )}
-                              </div>
-                            )}
-                            {uploadedFile.status === 'pending' && (
-                              <span className="text-xs px-2 py-1 rounded-full bg-slate-100 dark:bg-slate-800 text-slate-500 dark:text-slate-400 font-medium">Starting…</span>
-                            )}
-                            {uploadedFile.status === 'extracting' && (
-                              <span className="text-xs px-2 py-1 rounded-full bg-blue-100 dark:bg-blue-900/20 text-blue-700 dark:text-blue-400 font-medium">Extracting audio</span>
-                            )}
-                            {uploadedFile.status === 'uploading' && (
-                              <span className="text-xs px-2 py-1 rounded-full bg-blue-100 dark:bg-blue-900/20 text-blue-700 dark:text-blue-400 font-medium">Uploading</span>
-                            )}
-                            {uploadedFile.status === 'processing' && uploadedFile.processingStage && (
-                              <>
-                                {uploadedFile.processingStage === 'transcribing' && (
-                                  <span className="text-xs px-2 py-1 rounded-full bg-blue-100 dark:bg-blue-900/20 text-blue-700 dark:text-blue-400 font-medium">Transcribing</span>
-                                )}
-                                {(['diarization', 'name_extraction'] as ProcessingStage[]).includes(uploadedFile.processingStage) && (
-                                  <span className="text-xs px-2 py-1 rounded-full bg-blue-100 dark:bg-blue-900/20 text-blue-700 dark:text-blue-400 font-medium">Analyzing speakers</span>
-                                )}
-                                {(['summary', 'role_classification', 'chapters', 'takeaways', 'quotes', 'finalizing'] as ProcessingStage[]).includes(uploadedFile.processingStage) && (
-                                  <span className="text-xs px-2 py-1 rounded-full bg-blue-100 dark:bg-blue-900/20 text-blue-700 dark:text-blue-400 font-medium">Generating insights</span>
-                                )}
-                                {!(['transcribing', 'diarization', 'name_extraction', 'summary', 'role_classification', 'chapters', 'takeaways', 'quotes', 'finalizing'] as ProcessingStage[]).includes(uploadedFile.processingStage) && (
-                                  <span className="text-xs px-2 py-1 rounded-full bg-blue-100 dark:bg-blue-900/20 text-blue-700 dark:text-blue-400 font-medium">Processing</span>
-                                )}
-                              </>
-                            )}
-                            {uploadedFile.status === 'completed' && (
-                              <div className="flex items-center space-x-1">
-                                <CheckCircle className="h-4 w-4 text-green-500" />
-                                <span className="text-xs px-2 py-1 rounded-full bg-emerald-100 dark:bg-emerald-900/20 text-emerald-700 dark:text-emerald-300 font-medium hidden sm:inline">Complete</span>
-                              </div>
-                            )}
-                            {uploadedFile.status === 'error' && (
-                              <div className="flex items-center space-x-1">
-                                <AlertCircle className="h-4 w-4 text-red-500" />
-                                <span className="text-xs px-2 py-1 rounded-full bg-red-100 dark:bg-red-900/20 text-red-600 dark:text-red-300 font-medium hidden sm:inline">Error</span>
-                              </div>
-                            )}
-                          </div>
-
-                          <span className="text-[10px] uppercase tracking-wide text-slate-600 dark:text-slate-300 border border-slate-300 dark:border-slate-700/70 bg-slate-100 dark:bg-slate-800/60 px-2 py-0.5 rounded">
-                            {formatAnalysisSummary(uploadedFile.analysisOptions)}
-                          </span>
-
-                          {/* View button — shown when completed */}
-                          {uploadedFile.status === 'completed' && uploadedFile.projectId && (
-                            <a
-                              href={`/dashboard/projects?id=${uploadedFile.projectId}`}
-                              className="inline-flex items-center gap-1.5 px-2.5 py-1 text-xs font-semibold text-white bg-blue-600 hover:bg-blue-700 rounded-lg flex-shrink-0 transition-colors"
-                            >
-                              <Eye className="h-3.5 w-3.5" />
-                              View
-                            </a>
-                          )}
-                      </div>
-
-                      {/* Progress bar — not shown for queued files */}
-                      {isActive && uploadedFile.status !== 'queued' && (
-                        <>
-                          <div className="mt-3">
-                            <div className="w-full bg-slate-200 dark:bg-slate-700 rounded-full h-1.5">
-                              <div
-                                className={`h-1.5 rounded-full transition-all duration-300 ${uploadedFile.status === 'extracting' ? 'bg-purple-500' : 'bg-blue-600'}`}
-                                style={{ width: `${uploadedFile.status === 'extracting' ? uploadedFile.extractionProgress : uploadedFile.progress}%` }}
-                              />
-                            </div>
-                          </div>
-                          {(uploadedFile.processingStage || uploadedFile.processingMessage) && (
-                            <div className="mt-2 flex flex-col gap-1 text-xs text-slate-500 dark:text-slate-400 sm:flex-row sm:items-center sm:justify-between">
-                              <div className="flex items-center gap-2">
-                                {uploadedFile.processingStage && (
-                                  <span className="font-medium text-slate-500 dark:text-slate-400">
-                                    {uploadedFile.status === 'extracting' ? 'Extracting audio' : getStageDisplayName(uploadedFile.processingTier, uploadedFile.processingStage)}
-                                  </span>
-                                )}
-                                <span className="font-semibold text-blue-400">
-                                  {Math.min(100, Math.max(0, Math.round(uploadedFile.status === 'extracting'
-                                    ? uploadedFile.extractionProgress || 0
-                                    : uploadedFile.progress)))}%
-                                </span>
-                              </div>
-                              {uploadedFile.processingMessage && (
-                                <span className="text-slate-400 dark:text-slate-500 sm:text-right">
-                                  {uploadedFile.status === 'extracting'
-                                    ? uploadedFile.processingMessage
-                                    : getUserFacingProcessingMessage(
-                                        uploadedFile.processingTier,
-                                        uploadedFile.processingStage || 'pending',
-                                        uploadedFile.processingMessage
-                                      )}
-                                </span>
-                              )}
-                            </div>
-                          )}
-                        </>
-                      )}
-
-                      {/* Error message */}
-                      {uploadedFile.status === 'error' && uploadedFile.error && (
-                        <div className="mt-3 p-3 bg-red-900/20 border border-red-800/30 rounded-md">
-                          <p className="text-xs text-red-300 break-words">{uploadedFile.error}</p>
-                        </div>
-                      )}
-                    </div>
-                  );
-                })}
-              </div>
-            )}
 
             {/* Advanced Options — collapsible, out of the critical path */}
             <div className="mb-8 border border-slate-300 dark:border-slate-700 rounded-lg overflow-hidden" data-tour="advanced-options" data-expanded={showAdvancedOptions ? 'true' : 'false'}>
