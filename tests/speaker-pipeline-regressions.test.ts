@@ -1113,6 +1113,109 @@ describe('speaker pipeline regressions', () => {
     expect(finalized.speakerDataSpeakers.speaker_2.requiresReview).toBeFalsy();
   });
 
+  test('built-in Pivot anchors beat weak learned co-hosts and clear mention-only names from dominant clusters', () => {
+    const showIdentity = detectShowIdentityFromContext({
+      title: 'Kara Swisher Kash Patel is a “National Security Risk” Pivot - Pivot with Kara Swisher and Scott Galloway',
+      filename: 'Pivot_with_Kara_Swisher_and_Scott_Galloway_episode.json',
+      segments: [],
+    });
+
+    const learnedRoster = extractLearnedShowRosterFromProjects(
+      [
+        {
+          title: 'Pivot prior episode',
+          metadata: {
+            originalFileName: 'Pivot_with_Kara_Swisher_and_Scott_Galloway_prior.json',
+            fileName: 'Pivot_with_Kara_Swisher_and_Scott_Galloway_prior.json',
+          },
+          processing_completed_at: '2026-04-18T12:00:00.000Z',
+          speaker_data: {
+            speakers: {
+              speaker_1: { finalName: 'Kara Swisher', role: 'host' },
+              speaker_2: { finalName: 'Scott Galloway', role: 'co_host' },
+              speaker_3: { finalName: 'Kristen Soltis Anderson', role: 'co_host' },
+            },
+          },
+        },
+      ] as any,
+      showIdentity
+    );
+
+    expect(learnedRoster).not.toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({ name: 'Kristen Soltis Anderson' }),
+      ])
+    );
+
+    const speakerMap = {
+      speaker_1: { id: 'speaker_1', finalName: 'Ron Conway', role: 'guest', fallbackName: 'Speaker 1', segments: [] },
+      speaker_2: { id: 'speaker_2', finalName: 'Kara Swisher', role: 'host', fallbackName: 'Speaker 2', segments: [] },
+      speaker_3: { id: 'speaker_3', finalName: 'Speaker 3', role: 'unknown', fallbackName: 'Speaker 3', segments: [] },
+      speaker_4: { id: 'speaker_4', finalName: 'IP', role: 'guest', fallbackName: 'Speaker 4', segments: [] },
+    };
+
+    const finalSegments: SpeakerSegment[] = [
+      {
+        speakerId: 'speaker_1',
+        initialSpeakerId: 'Speaker_A',
+        finalSpeakerId: 'speaker_1',
+        startTime: 0,
+        endTime: 28,
+        text: "Let's get into today's news, Scott. What does Scott Galloway think about the Ron Conway comments?",
+        confidence: 0.82,
+        status: 'confirmed',
+      },
+      {
+        speakerId: 'speaker_3',
+        initialSpeakerId: 'Speaker_B',
+        finalSpeakerId: 'speaker_3',
+        startTime: 28,
+        endTime: 92,
+        text: "Here's the bottom line, Kara, Washington loves a fight and Kash Patel is escalating one.",
+        confidence: 0.82,
+        status: 'confirmed',
+      },
+      {
+        speakerId: 'speaker_2',
+        initialSpeakerId: 'Speaker_C',
+        finalSpeakerId: 'speaker_2',
+        startTime: 92,
+        endTime: 95,
+        text: 'Exactly.',
+        confidence: 0.62,
+        status: 'tentative',
+        confidenceReason: 'transition_short',
+      },
+      {
+        speakerId: 'speaker_4',
+        initialSpeakerId: 'Speaker_D',
+        finalSpeakerId: 'speaker_4',
+        startTime: 120,
+        endTime: 128,
+        text: 'The IP fight is broader than people realize.',
+        confidence: 0.8,
+        status: 'confirmed',
+      },
+    ];
+
+    const finalized = finalizeSpeakerAttributionForStorage(
+      speakerMap,
+      finalSegments,
+      {
+        projectType: 'PODCAST',
+        title: 'Pivot',
+        filename: 'Pivot_with_Kara_Swisher_and_Scott_Galloway_episode.json',
+        showIdentity,
+        showRoster: mergeShowRosterEntries(showIdentity?.roster, learnedRoster),
+      }
+    );
+
+    expect(finalized.speakerDataSpeakers.speaker_1.finalName).toBe('Kara Swisher');
+    expect(finalized.speakerDataSpeakers.speaker_3.finalName).toBe('Scott Galloway');
+    expect(finalized.speakerDataSpeakers.speaker_2.finalName).toBe('Speaker 2');
+    expect(finalized.speakerDataSpeakers.speaker_4.finalName).toBe('Speaker 4');
+  });
+
   test('clears show-title contamination instead of keeping it as a human identity', () => {
     const speakerMap = {
       speaker_1: {

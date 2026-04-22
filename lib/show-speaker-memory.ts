@@ -179,15 +179,20 @@ function sourcePriority(source?: ShowRosterEntry['confidenceSource']): number {
   switch (source) {
     case 'manual':
       return 4;
+    case 'built_in':
+      return 4;
     case 'corrected':
       return 3;
-    case 'built_in':
-      return 2;
     case 'auto_learned':
       return 1;
     default:
       return 0;
   }
+}
+
+function getKnownShowProfileById(id?: string | null): KnownShowProfile | null {
+  if (!id) return null;
+  return KNOWN_SHOW_PROFILES.find((profile) => profile.id === id) || null;
 }
 
 function chooseRole(
@@ -378,6 +383,20 @@ export function extractLearnedShowRosterFromProjects(
   if (!match) return [];
 
   const aggregated = new Map<string, { entry: ShowRosterEntry; seen: number }>();
+  const knownProfile = getKnownShowProfileById(match.id);
+  const builtInRosterByRole = new Map<SpeakerRole, Set<string>>();
+  const builtInNames = new Set<string>();
+
+  for (const entry of knownProfile?.roster || []) {
+    const normalized = normalizeName(entry.name);
+    builtInNames.add(normalized);
+    if (entry.role) {
+      if (!builtInRosterByRole.has(entry.role)) {
+        builtInRosterByRole.set(entry.role, new Set<string>());
+      }
+      builtInRosterByRole.get(entry.role)!.add(normalized);
+    }
+  }
 
   for (const project of projects) {
     const projectMatch = detectShowIdentityFromContext({
@@ -446,7 +465,19 @@ export function extractLearnedShowRosterFromProjects(
   return Array.from(aggregated.values())
     .filter(({ entry, seen }) => {
       if (entry.confidenceSource === 'manual' || entry.confidenceSource === 'built_in') return true;
-      if (entry.role === 'host' || entry.role === 'co_host') return seen >= 1;
+      if (entry.role === 'host' || entry.role === 'co_host') {
+        const normalized = normalizeName(entry.name);
+        if (knownProfile) {
+          if (builtInNames.has(normalized)) {
+            return seen >= 1;
+          }
+          const roleAnchors = entry.role ? builtInRosterByRole.get(entry.role) : null;
+          if (roleAnchors && roleAnchors.size > 0) {
+            return false;
+          }
+        }
+        return seen >= 2;
+      }
       return false;
     })
     .map(({ entry }) => entry);
