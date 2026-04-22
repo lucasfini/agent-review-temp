@@ -9,6 +9,7 @@ import { calculateOverallProgress, type ProcessingStage } from '@/lib/tier-progr
 import type { TierLevel } from '@/lib/tier-config';
 import type { AnalysisOptions } from '@/lib/analysis-options';
 import { normalizeAnalysisOptions } from '@/lib/analysis-options';
+import { loadPersistedQueuedUploads, persistQueuedUploads } from '@/lib/upload-queue-storage';
 import { toast } from 'sonner';
 
 type IntegrationProvider = 'zoom' | 'microsoft';
@@ -114,6 +115,7 @@ async function getMediaDurationSeconds(file: File): Promise<number | undefined> 
 export function UploadProgressSyncProvider({ children }: { children: ReactNode }) {
   const [uploadedFiles, setUploadedFiles] = useState<UploadedFile[]>([]);
   const [isStartingQueuedUploads, setIsStartingQueuedUploads] = useState(false);
+  const [hasHydratedPersistedQueue, setHasHydratedPersistedQueue] = useState(false);
   const uploadControllersRef = useRef<Map<string, AbortController>>(new Map());
   const uploadRequestRef = useRef<Map<string, XMLHttpRequest>>(new Map());
   const pollTimeoutsRef = useRef<Map<string, ReturnType<typeof setTimeout>>>(new Map());
@@ -626,14 +628,50 @@ export function UploadProgressSyncProvider({ children }: { children: ReactNode }
   }, [pollForProgress]);
 
   useEffect(() => {
+    let cancelled = false;
+
+    const hydrateQueuedUploads = async () => {
+      const persistedUploads = await loadPersistedQueuedUploads();
+      if (cancelled) return;
+
+      if (persistedUploads.length > 0) {
+        setUploadedFiles((current) => {
+          const currentIds = new Set(current.map((file) => file.id));
+          const restored = persistedUploads.filter((file) => !currentIds.has(file.id));
+          return restored.length > 0 ? [...current, ...restored] : current;
+        });
+      }
+
+      setHasHydratedPersistedQueue(true);
+    };
+
+    hydrateQueuedUploads();
+
     return () => {
-      uploadControllersRef.current.forEach((controller) => controller.abort());
-      uploadRequestRef.current.forEach((xhr) => xhr.abort());
-      pollTimeoutsRef.current.forEach((timeoutId) => clearTimeout(timeoutId));
+      cancelled = true;
     };
   }, []);
 
   useEffect(() => {
+    if (!hasHydratedPersistedQueue) return;
+
+    persistQueuedUploads(uploadedFiles);
+  }, [hasHydratedPersistedQueue, uploadedFiles]);
+
+  useEffect(() => {
+    const uploadControllers = uploadControllersRef.current;
+    const uploadRequests = uploadRequestRef.current;
+    const pollTimeouts = pollTimeoutsRef.current;
+
+    return () => {
+      uploadControllers.forEach((controller) => controller.abort());
+      uploadRequests.forEach((xhr) => xhr.abort());
+      pollTimeouts.forEach((timeoutId) => clearTimeout(timeoutId));
+    };
+  }, []);
+
+  useEffect(() => {
+    if (!hasHydratedPersistedQueue) return;
     if (!isStartingQueuedUploads) return;
     if (queueProcessingRef.current) return;
 
@@ -684,7 +722,7 @@ export function UploadProgressSyncProvider({ children }: { children: ReactNode }
     }
 
     setTimeout(() => { queueProcessingRef.current = false; }, 0);
-  }, [isStartingQueuedUploads, processFile, processImportedRecording, processVideoFile, uploadedFiles]);
+  }, [hasHydratedPersistedQueue, isStartingQueuedUploads, processFile, processImportedRecording, processVideoFile, uploadedFiles]);
 
   const syncedUploads = useMemo(() => uploadedFiles
     .filter((file) => ['queued', 'pending', 'extracting', 'uploading', 'processing'].includes(file.status))

@@ -1767,7 +1767,88 @@ function findCorroboratedKnownHost(
     }
   }
 
+  const eponymousHost = extractEponymousShowHostName(options);
+  if (eponymousHost) {
+    const hostIntroSpeakerId = findHostIntroSpeakerId(segments, eponymousHost.fullName);
+    if (hostIntroSpeakerId) {
+      return eponymousHost;
+    }
+  }
+
   return null;
+}
+
+function extractEponymousShowHostName(
+  options: Pick<ConversationalNamingOptions, 'title' | 'filename'>
+): KnownHostEvidence | null {
+  const sources = [options.title, options.filename].filter(Boolean) as string[];
+  for (const source of sources) {
+    const normalizedSource = source.replace(/[_-]+/g, ' ');
+    const match = normalizedSource.match(/\b(?:The\s+)?([A-Z][a-z]+(?:\s+[A-Z][a-z]+){1,2})\s+(?:Podcast|Show)\b/);
+    const fullName = match?.[1]?.trim();
+    if (!fullName) continue;
+    if (isLikelyNonHumanConversationalNameCandidate(fullName, {
+      title: options.title,
+      filename: options.filename,
+    })) {
+      continue;
+    }
+    return {
+      fullName,
+      firstName: fullName.split(/\s+/)[0] || fullName,
+      reason: `show_title:${fullName}`,
+    };
+  }
+
+  return null;
+}
+
+function findHostIntroSpeakerId(
+  segments: SpeakerSegment[],
+  expectedHostName?: string | null
+): string | null {
+  const scores = new Map<string, number>();
+  const expectedHostFirstName = expectedHostName?.split(/\s+/)[0] || null;
+  const expectedHostRegex = expectedHostName
+    ? new RegExp(`\\b${escapeRegExp(expectedHostName)}\\b`, 'i')
+    : null;
+
+  for (const segment of segments) {
+    if (!isHumanIntroEligibleSegment(segment)) continue;
+    if ((segment.startTime || 0) > 180) break;
+
+    const speakerId = segment.finalSpeakerId || segment.speakerId;
+    if (!speakerId) continue;
+    const text = getSegText(segment);
+    let score = 0;
+
+    if (/\b(?:welcome\s+(?:to|back)|this\s+is\s+the|from\s+.+,\s+this\s+is\s+the)\b/i.test(text)) {
+      score += 5;
+    }
+    if (/\b(?:i'm|i am|my name is)\s+[A-Z][a-z]+(?:\s+[A-Z][a-z]+){1,2}\b/.test(text)) {
+      score += 5;
+    }
+    if (/\b([A-Z][a-z]+),\s+(?:what|how|why|when|where|let|let's|thanks|thank|good|great|welcome)\b/.test(text)) {
+      score += 2;
+    }
+    if (/\b(?:podcast|show)\b/i.test(text)) {
+      score += 2;
+    }
+    if (expectedHostRegex?.test(text)) {
+      score += 6;
+    } else if (expectedHostFirstName && new RegExp(`\\b${escapeRegExp(expectedHostFirstName)}\\b`, 'i').test(text)) {
+      score += 2;
+    }
+
+    if (score > 0) {
+      scores.set(speakerId, (scores.get(speakerId) || 0) + score);
+    }
+  }
+
+  const ranked = Array.from(scores.entries()).sort((a, b) => b[1] - a[1]);
+  if (!ranked.length) return null;
+  if (ranked[0][1] < 5) return null;
+  return ranked[0][0];
 }
 
 function buildRecurringAliasSet(entry: ShowRosterEntry): string[] {
@@ -2640,8 +2721,8 @@ function collectConversationalNameProvenance(
 
   for (const segment of segments) {
     if (!isConversationalSegment(segment)) continue;
-    const selfId = extractValidatedSelfIdName(segment.text || '', STRONG_SELF_ID_PATTERNS);
-    if (selfId && selfId.trim().split(/\s+/).length >= 2) {
+    const selfId = extractFullNameSelfIdentifiedName(segment.text || '');
+    if (selfId) {
       add(selfId, 'self_id');
     }
   }
@@ -3070,6 +3151,11 @@ function findLikelyConversationalHostSpeakerId(
   roster: GPTSpeaker[],
   segments: SpeakerSegment[]
 ): string | null {
+  const introAnchoredSpeakerId = findHostIntroSpeakerId(segments);
+  if (introAnchoredSpeakerId && roster.some((speaker) => speaker.id === introAnchoredSpeakerId)) {
+    return introAnchoredSpeakerId;
+  }
+
   const candidates = roster
     .filter((speaker) =>
       !isAdvertiserLikeSpeaker(speaker) &&
@@ -3086,6 +3172,58 @@ function findLikelyConversationalHostSpeakerId(
   if (candidates.length === 0) return null;
   if (candidates[0].score < 4) return null;
   return candidates[0].id;
+}
+
+function findEarlySelfIdentifiedHost(
+  segments: SpeakerSegment[]
+): { speakerId: string; fullName: string; reason: string } | null {
+  for (const segment of segments) {
+    if ((segment.startTime || 0) > 180) break;
+
+    const text = getSegText(segment);
+    if (!text) continue;
+    if (segment.sponsorName || isSponsorHeavyText(text) || segment.segmentKind === 'ad_read' || segment.segmentKind === 'promo') {
+      continue;
+    }
+    if (!/\b(?:welcome\s+(?:to|back)|this\s+is|from\s+.+,\s+this\s+is)\b/i.test(text)) continue;
+
+    const selfId = extractFullNameSelfIdentifiedName(text);
+    if (/Daily Beast podcast/i.test(text)) {
+      console.log('DEBUG findEarlySelfIdentifiedHost', {
+        text,
+        matchedSelfId: selfId,
+        speakerId: segment.finalSpeakerId || segment.speakerId,
+      });
+    }
+    if (!selfId || selfId.trim().split(/\s+/).length < 2) continue;
+    if (isLikelyNonHumanConversationalNameCandidate(selfId)) continue;
+
+    const speakerId = segment.finalSpeakerId || segment.speakerId;
+    if (!speakerId) continue;
+
+    return {
+      speakerId,
+      fullName: selfId,
+      reason: 'early_host_self_id',
+    };
+  }
+
+  return null;
+}
+
+function extractFullNameSelfIdentifiedName(text: string): string | null {
+  const directMatch = text.match(/\b(?:I'?m|I am|My name is)\s+((?:Dr\.?\s+|Prof\.?\s+|Professor\s+)?[A-Z][a-z]+(?:\s+[A-Z][a-z]+){1,2})\b/);
+  const candidate = directMatch?.[1]?.trim() || null;
+  if (candidate && !isLikelyNonHumanConversationalNameCandidate(candidate)) {
+    return candidate;
+  }
+
+  const validated = extractValidatedSelfIdName(text, STRONG_SELF_ID_PATTERNS);
+  if (validated && validated.trim().split(/\s+/).length >= 2) {
+    return validated.trim();
+  }
+
+  return null;
 }
 
 function findLikelyGuestTargetSpeakerId(
@@ -3230,6 +3368,8 @@ export function resolveConversationalHumanNames(
   info.push(...recurringAssignments.info);
 
   const knownHost = findCorroboratedKnownHost(segments, options);
+  const earlyHostSelfId = findEarlySelfIdentifiedHost(segments);
+  const knownHostSpeakerId = knownHost ? findHostIntroSpeakerId(segments, knownHost.fullName) : null;
   const recurringHumanNames = new Set(
     ((options.showRoster && options.showRoster.length > 0)
       ? options.showRoster
@@ -3264,8 +3404,35 @@ export function resolveConversationalHumanNames(
     useExtendedIntroWindow
   );
   const hostSpeakerId =
+    earlyHostSelfId?.speakerId ||
+    knownHostSpeakerId ||
     introAnchoredCandidate?.hostSpeakerId ||
     findLikelyConversationalHostSpeakerId(updatedRoster, segments);
+
+  if (earlyHostSelfId?.speakerId) {
+    const selfIdentifiedSpeaker = updatedRoster.find((speaker) => speaker.id === earlyHostSelfId.speakerId);
+    if (selfIdentifiedSpeaker) {
+      const currentName = selfIdentifiedSpeaker.name?.trim() || null;
+      const canReplace =
+        !currentName ||
+        !isValidFinalHumanSpeakerName(currentName) ||
+        isLikelyNonHumanConversationalNameCandidate(currentName, {
+          showIdentity: recurringAssignments.showIdentity || options.showIdentity,
+          title: options.title,
+          filename: options.filename,
+        }) ||
+        isWeakShortSpeakerName(currentName);
+
+      if (canReplace && normalizeSpeakerName(currentName || '') !== normalizeSpeakerName(earlyHostSelfId.fullName)) {
+        selfIdentifiedSpeaker.name = earlyHostSelfId.fullName;
+        selfIdentifiedSpeaker.role = 'host';
+        selfIdentifiedSpeaker.confidence = Math.max(selfIdentifiedSpeaker.confidence, 0.92);
+        selfIdentifiedSpeaker.source = selfIdentifiedSpeaker.source === 'preset_roster' ? selfIdentifiedSpeaker.source : 'intro_handoff';
+        assigned++;
+        info.push(`[CONVERSATIONAL NAMING] ${selfIdentifiedSpeaker.id}: "${currentName || '(unnamed)'}" → "${earlyHostSelfId.fullName}" (${earlyHostSelfId.reason})`);
+      }
+    }
+  }
 
   if (knownHost && hostSpeakerId) {
     const hostSpeaker = updatedRoster.find((speaker) => speaker.id === hostSpeakerId);
@@ -3286,7 +3453,7 @@ export function resolveConversationalHumanNames(
         hostSpeaker.name = knownHost.fullName;
         hostSpeaker.role = 'host';
         hostSpeaker.confidence = Math.max(hostSpeaker.confidence, 0.88);
-        hostSpeaker.source = hostSpeaker.source === 'preset_roster' ? hostSpeaker.source : 'heuristic';
+        hostSpeaker.source = hostSpeaker.source === 'preset_roster' ? hostSpeaker.source : 'intro_handoff';
         assigned++;
         info.push(`[CONVERSATIONAL NAMING] ${hostSpeaker.id}: "${currentName || '(unnamed)'}" → "${knownHost.fullName}" (${knownHost.reason})`);
       }
@@ -3540,8 +3707,13 @@ export function resolveConversationalHumanNamesInSpeakerMap(
   );
 
   const repairedSpeakers = repairSpeakerMapWithDirectGuestIntros(updatedSpeakers, segments, options);
-  const guestValidatedSpeakers = repairSpeakerMapWithDominantGuestClusters(
+  const selfIdRepairedSpeakers = repairSpeakerMapWithEarlyHostSelfId(
     repairedSpeakers,
+    segments,
+    options
+  );
+  const guestValidatedSpeakers = repairSpeakerMapWithDominantGuestClusters(
+    selfIdRepairedSpeakers,
     segments,
     options
   );
@@ -3561,6 +3733,60 @@ export function resolveConversationalHumanNamesInSpeakerMap(
     assigned: resolved.assigned,
     info: [...resolved.info, ...verifiedRecurringOwnership.info, ...provenanceVerified.info],
   };
+}
+
+function repairSpeakerMapWithEarlyHostSelfId(
+  speakers: Record<string, any>,
+  segments: SpeakerSegment[],
+  options: ConversationalNamingOptions
+): Record<string, any> {
+  const earlyHostSelfId = findEarlySelfIdentifiedHost(segments);
+  if (segments.some((segment) => /Daily Beast podcast/i.test(getSegText(segment)))) {
+    console.log('DEBUG repairSpeakerMapWithEarlyHostSelfId', {
+      earlyHostSelfId,
+      before: speakers,
+    });
+  }
+  if (!earlyHostSelfId) return speakers;
+
+  const updatedSpeakers = Object.fromEntries(
+    Object.entries(speakers).map(([id, speaker]) => [id, { ...speaker }])
+  );
+  const targetSpeaker = updatedSpeakers[earlyHostSelfId.speakerId];
+  if (!targetSpeaker) return speakers;
+
+  const currentName = typeof targetSpeaker.finalName === 'string' ? targetSpeaker.finalName.trim() : '';
+  const canReplace =
+    !currentName ||
+    /^Speaker\s+\d+$/i.test(currentName) ||
+    !isValidFinalHumanSpeakerName(currentName) ||
+    isLikelyNonHumanConversationalNameCandidate(currentName, {
+      showIdentity: options.showIdentity,
+      title: options.title,
+      filename: options.filename,
+    }) ||
+    isWeakShortSpeakerName(currentName);
+
+  if (!canReplace) return speakers;
+
+  updatedSpeakers[earlyHostSelfId.speakerId] = {
+    ...targetSpeaker,
+    finalName: earlyHostSelfId.fullName,
+    role: 'host',
+    source: targetSpeaker.source === 'preset_roster' ? targetSpeaker.source : 'intro_handoff',
+    extractedName: {
+      ...(targetSpeaker.extractedName || {}),
+      name: earlyHostSelfId.fullName,
+      confidence: Math.max(targetSpeaker.roleConfidence || targetSpeaker.confidence || 0, 0.92),
+      context: 'Host intro self-identification',
+    },
+  };
+
+  if (segments.some((segment) => /Daily Beast podcast/i.test(getSegText(segment)))) {
+    console.log('DEBUG repairSpeakerMapWithEarlyHostSelfId_after', updatedSpeakers);
+  }
+
+  return updatedSpeakers;
 }
 
 function repairSpeakerMapWithDirectGuestIntros(
@@ -5888,6 +6114,10 @@ function sanitizeSpeakerRosterForTaggedContent(
       demotedAdvertisers++;
     }
 
+    if (speaker.role === 'quoted_audio' && hasConversation && !allAdLike) {
+      nextSpeaker = { ...nextSpeaker, role: 'unknown' };
+    }
+
     if (nextSpeaker.name && allAdLike && nextSpeaker.role !== 'advertiser') {
       nextSpeaker = {
         ...nextSpeaker,
@@ -7490,4 +7720,6 @@ export const __testUtils = {
   inspectConversationalNamingState,
   resolveConversationalHumanNames,
   resolveConversationalHumanNamesInSpeakerMap,
+  findEarlySelfIdentifiedHost,
+  extractFullNameSelfIdentifiedName,
 };

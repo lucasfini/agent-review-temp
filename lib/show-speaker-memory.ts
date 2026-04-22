@@ -496,6 +496,7 @@ export function isLikelyNonHumanConversationalNameCandidate(
 
   if (
     /\b(?:markets?|podcast|show|tour|newsletter|episode|promo|advertiser|sponsor)\b/.test(normalizedCandidate) ||
+    /\b(?:school|university|college|law\s+school|institute|center|centre|department|ministry|foundation|magazine|newspaper|news|opinion|world\s+service|radio|network|press|times|bloomberg|bbc|vox\s+media)\b/.test(normalizedCandidate) ||
     /\b[a-z0-9-]+\.(?:com|org|net|io|co)\b/.test(normalizedCandidate)
   ) {
     return true;

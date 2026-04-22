@@ -1300,6 +1300,102 @@ describe('speaker pipeline regressions', () => {
     expect(Object.keys(merged.speakers).sort()).toEqual(['speaker_1', 'speaker_2', 'speaker_3']);
   });
 
+  test('one-off host intro self-identification names the host and keeps the guest episode-local', () => {
+    const speakerMap = {
+      speaker_1: { id: 'speaker_1', finalName: 'Speaker 1', role: 'unknown', fallbackName: 'Speaker 1', segments: [] },
+      speaker_2: { id: 'speaker_2', finalName: 'Speaker 2', role: 'unknown', fallbackName: 'Speaker 2', segments: [] },
+    };
+
+    const segments: SpeakerSegment[] = [
+      {
+        speakerId: 'speaker_1',
+        initialSpeakerId: 'Speaker_A',
+        finalSpeakerId: 'speaker_1',
+        startTime: 0,
+        endTime: 34,
+        text: "I'm Joanna Coles. This is the Daily Beast podcast. Today we're talking to David Rothkopf about what else but RFK Jr. and Kid Rock's insane video. David Rothkopf, welcome back to the show.",
+        confidence: 0.84,
+        status: 'confirmed',
+      },
+      {
+        speakerId: 'speaker_2',
+        initialSpeakerId: 'Speaker_B',
+        finalSpeakerId: 'speaker_2',
+        startTime: 34,
+        endTime: 75,
+        text: "Great to be here. The reality is that they realize they're going to lose, and so they are using every conceivable tool in order to put their thumb on the scale.",
+        confidence: 0.84,
+        status: 'confirmed',
+      },
+    ];
+
+    const resolved = __testUtils.resolveConversationalHumanNamesInSpeakerMap(
+      speakerMap,
+      segments,
+      {
+        projectType: 'PODCAST',
+        title: "Here's the Proof Trump Knows He's Doomed",
+        filename: 'Daily_Beast_Podcast_episode.json',
+      }
+    );
+    expect(__testUtils.extractFullNameSelfIdentifiedName(segments[0].text || '')).toBe('Joanna Coles');
+    expect(__testUtils.findEarlySelfIdentifiedHost(segments)).toEqual({
+      speakerId: 'speaker_1',
+      fullName: 'Joanna Coles',
+      reason: 'early_host_self_id',
+    });
+
+    expect(resolved.speakers.speaker_1.finalName).toBe('Joanna Coles');
+    expect(resolved.speakers.speaker_1.role).toBe('host');
+    expect(resolved.speakers.speaker_2.finalName).toBe('David Rothkopf');
+    expect(resolved.speakers.speaker_2.role).toBe('guest');
+  });
+
+  test('eponymous show titles anchor the host and block institution leakage for guests', () => {
+    const speakerMap = {
+      speaker_2: { id: 'speaker_2', finalName: 'Speaker 2', role: 'quoted_audio', fallbackName: 'Speaker 2', segments: [] },
+      speaker_3: { id: 'speaker_3', finalName: 'Yale Law School', role: 'guest', fallbackName: 'Speaker 3', segments: [] },
+    };
+
+    const segments: SpeakerSegment[] = [
+      {
+        speakerId: 'speaker_2',
+        initialSpeakerId: 'Speaker_A',
+        finalSpeakerId: 'speaker_2',
+        startTime: 0,
+        endTime: 36,
+        text: 'From New York Times Opinion, this is The Ezra Klein Show. Azab Ali is a professor at Yale Law School who specializes in international law. Azab Ali, welcome to the show.',
+        confidence: 0.84,
+        status: 'confirmed',
+      },
+      {
+        speakerId: 'speaker_3',
+        initialSpeakerId: 'Speaker_B',
+        finalSpeakerId: 'speaker_3',
+        startTime: 36,
+        endTime: 78,
+        text: 'Thank you for having me. It is made up of laws, and it sort of depends on where you sit.',
+        confidence: 0.84,
+        status: 'confirmed',
+      },
+    ];
+
+    const resolved = __testUtils.resolveConversationalHumanNamesInSpeakerMap(
+      speakerMap,
+      segments,
+      {
+        projectType: 'PODCAST',
+        title: 'The Ezra Klein Show',
+        filename: 'The_Ezra_Klein_Show_episode.json',
+      }
+    );
+
+    expect(resolved.speakers.speaker_2.finalName).toBe('Ezra Klein');
+    expect(resolved.speakers.speaker_2.role).toBe('host');
+    expect(resolved.speakers.speaker_3.finalName).toBe('Azab Ali');
+    expect(resolved.speakers.speaker_3.finalName).not.toBe('Yale Law School');
+  });
+
   test('clears show-title contamination instead of keeping it as a human identity', () => {
     const speakerMap = {
       speaker_1: {
