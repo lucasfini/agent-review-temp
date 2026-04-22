@@ -1332,7 +1332,13 @@ export async function POST(request: NextRequest) {
     // ============================================================
     // STEP 4.5: POST-CORRECTION DUPLICATE NAME MERGE
     // ============================================================
-    const mergeResult = mergeDuplicateSpeakersByName(reassignedSegments, speakersWithNames);
+    const mergeResult = mergeDuplicateSpeakersByName(reassignedSegments, speakersWithNames, {
+      projectType,
+      title: existingProject?.title || undefined,
+      filename: fileName,
+      showIdentity: inferredShowContext.showIdentity,
+      showRoster: effectivePresetRoster,
+    });
     if (mergeResult.mergedCount > 0) {
       reassignedSegments = mergeResult.segments;
       speakersWithNames = mergeResult.speakers;

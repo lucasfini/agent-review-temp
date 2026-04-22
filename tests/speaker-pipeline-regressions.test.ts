@@ -10,6 +10,7 @@ import {
   applyNeighborSmoothing,
   collectSpeakerPipelineSnapshot,
   finalizeSpeakerAttributionForStorage,
+  mergeDuplicateSpeakersByName,
 } from '@/lib/speaker-finalization';
 import {
   detectShowIdentityFromContext,
@@ -1214,6 +1215,89 @@ describe('speaker pipeline regressions', () => {
     expect(finalized.speakerDataSpeakers.speaker_3.finalName).toBe('Scott Galloway');
     expect(finalized.speakerDataSpeakers.speaker_2.finalName).toBe('Speaker 2');
     expect(finalized.speakerDataSpeakers.speaker_4.finalName).toBe('Speaker 4');
+  });
+
+  test('duplicate-name merge does not collapse two substantive conversational host clusters on recurring podcasts', () => {
+    const showIdentity = detectShowIdentityFromContext({
+      title: 'Pivot',
+      filename: 'Pivot_with_Kara_Swisher_and_Scott_Galloway_episode.json',
+      segments: [],
+    });
+
+    const speakers = {
+      speaker_1: { id: 'speaker_1', finalName: 'Scott Galloway', role: 'co_host', segments: [] },
+      speaker_2: { id: 'speaker_2', finalName: 'Scott Galloway', role: 'co_host', segments: [] },
+      speaker_3: { id: 'speaker_3', finalName: 'SoFi', role: 'advertiser', segments: [] },
+    };
+
+    const segments: SpeakerSegment[] = [
+      {
+        speakerId: 'speaker_1',
+        initialSpeakerId: 'Speaker_A',
+        finalSpeakerId: 'speaker_1',
+        startTime: 0,
+        endTime: 24,
+        text: "Let's get into today's news, Scott. What do you make of the hearings?",
+        confidence: 0.82,
+        status: 'confirmed',
+      },
+      {
+        speakerId: 'speaker_2',
+        initialSpeakerId: 'Speaker_B',
+        finalSpeakerId: 'speaker_2',
+        startTime: 24,
+        endTime: 63,
+        text: "Here's the bottom line, Kara. Washington loves the theater of these fights, but the policy reality is more limited.",
+        confidence: 0.82,
+        status: 'confirmed',
+      },
+      {
+        speakerId: 'speaker_1',
+        initialSpeakerId: 'Speaker_A',
+        finalSpeakerId: 'speaker_1',
+        startTime: 63,
+        endTime: 95,
+        text: 'That is exactly why I wanted to start there, because the incentives are very different than the headlines suggest.',
+        confidence: 0.8,
+        status: 'confirmed',
+      },
+      {
+        speakerId: 'speaker_2',
+        initialSpeakerId: 'Speaker_B',
+        finalSpeakerId: 'speaker_2',
+        startTime: 95,
+        endTime: 142,
+        text: 'And when you zoom out, the market impact is smaller than people think unless the fight broadens materially.',
+        confidence: 0.8,
+        status: 'confirmed',
+      },
+      {
+        speakerId: 'speaker_3',
+        initialSpeakerId: 'Speaker_C',
+        finalSpeakerId: 'speaker_3',
+        startTime: 142,
+        endTime: 156,
+        text: 'This episode is brought to you by SoFi.',
+        confidence: 0.9,
+        status: 'confirmed',
+        segmentKind: 'ad_read',
+        sponsorName: 'SoFi',
+      },
+    ];
+
+    const merged = mergeDuplicateSpeakersByName(segments, speakers, {
+      projectType: 'PODCAST',
+      title: 'Pivot',
+      filename: 'Pivot_with_Kara_Swisher_and_Scott_Galloway_episode.json',
+      showIdentity,
+      showRoster: mergeShowRosterEntries(showIdentity?.roster),
+    });
+
+    expect(merged.mergedCount).toBe(0);
+    expect(new Set(merged.segments.map((segment) => (segment as any).finalSpeakerId || segment.speakerId))).toEqual(
+      new Set(['speaker_1', 'speaker_2', 'speaker_3'])
+    );
+    expect(Object.keys(merged.speakers).sort()).toEqual(['speaker_1', 'speaker_2', 'speaker_3']);
   });
 
   test('clears show-title contamination instead of keeping it as a human identity', () => {
