@@ -3100,6 +3100,7 @@ export default function ProjectsPage() {
           >
             {selectedProject ? (
               <div className="h-full flex flex-col bg-white dark:bg-[#0F172A]">
+                {(!isMobileViewport || !mobileConversationChromeCollapsed) && (
                 <div className="flex-shrink-0 border-b border-slate-200 bg-white/95 px-4 py-3 backdrop-blur dark:border-slate-800 dark:bg-slate-900/95 lg:hidden">
                   <div className="flex items-center gap-2">
                     <button
@@ -3150,6 +3151,7 @@ export default function ProjectsPage() {
                     </div>
                   </div>
                 </div>
+                )}
 
                 {/* Global Project Header */}
                 <div className="hidden flex-shrink-0 px-4 py-2.5 border-b border-slate-200 dark:border-slate-800 bg-white/80 dark:bg-slate-900/80 lg:block">

@@ -406,15 +406,15 @@ export default function ExportModal({
   const allProjectsFullySelected = projects.every(p => isProjectFullySelected(p.id));
 
   return (
-    <div className="fixed inset-0 z-[60] bg-black/30 flex items-center justify-center px-4 py-6">
-      <div className="relative w-full max-w-5xl bg-slate-50 dark:bg-slate-900 rounded-xl shadow-2xl max-h-[90vh] flex flex-col overflow-hidden">
+    <div className="fixed inset-0 z-[60] bg-black/30 flex items-center justify-center p-0 sm:px-4 sm:py-6">
+      <div className="relative flex h-[100dvh] w-full flex-col overflow-hidden bg-slate-50 shadow-2xl dark:bg-slate-900 sm:max-h-[90vh] sm:max-w-5xl sm:rounded-xl">
         {/* Header */}
-        <div className="flex items-center justify-between px-6 py-4 border-b border-slate-300 dark:border-slate-700">
-          <div>
+        <div className="flex items-start justify-between gap-4 border-b border-slate-300 px-4 py-4 dark:border-slate-700 sm:px-6">
+          <div className="min-w-0">
             <h2 className="text-lg font-semibold text-slate-900 dark:text-slate-50">
               Export Content
             </h2>
-            <p className="text-sm text-slate-700 dark:text-slate-200 mt-0.5">
+            <p className="mt-0.5 break-words pr-2 text-sm text-slate-700 dark:text-slate-200 sm:pr-0">
               {isBulkExport
                 ? `${projects.length} projects selected`
                 : projects[0]?.title || 'Export content'
@@ -424,17 +424,17 @@ export default function ExportModal({
           <button
             onClick={onClose}
             disabled={isExporting}
-            className="p-2 text-slate-600 dark:text-slate-300 hover:text-slate-900 dark:hover:text-white hover:bg-slate-100 dark:hover:bg-slate-800 rounded-lg transition-colors"
+            className="rounded-lg p-2 text-slate-600 transition-colors hover:bg-slate-100 hover:text-slate-900 dark:text-slate-300 dark:hover:bg-slate-800 dark:hover:text-white"
           >
             <X className="w-5 h-5" />
           </button>
         </div>
 
         {/* Content */}
-        <div className="flex-1 overflow-hidden flex flex-col sm:flex-row">
+        <div className="flex flex-1 min-h-0 flex-col overflow-hidden sm:flex-row">
           {/* Left Rail: Project List (only for bulk export) */}
           {isBulkExport && (
-            <div className="w-full sm:w-56 border-b sm:border-b-0 sm:border-r border-slate-300 dark:border-slate-700 flex flex-col bg-slate-100/80 dark:bg-slate-800/50 max-h-40 sm:max-h-none overflow-y-auto sm:overflow-visible">
+            <div className="flex max-h-44 w-full flex-col overflow-y-auto border-b border-slate-300 bg-slate-100/80 dark:border-slate-700 dark:bg-slate-800/50 sm:max-h-none sm:w-56 sm:border-b-0 sm:border-r sm:overflow-visible">
               <div className="px-4 py-3 border-b border-slate-300 dark:border-slate-700">
                 <div className="flex items-center justify-between">
                   <span className="text-xs font-medium text-slate-700 dark:text-slate-200 uppercase tracking-wide">
@@ -497,13 +497,13 @@ export default function ExportModal({
           )}
 
           {/* Right Rail: Content Blocks */}
-          <div className="flex-1 flex flex-col overflow-hidden">
+          <div className="flex min-h-0 flex-1 flex-col overflow-hidden">
             {/* Content Blocks List */}
-            <div className="flex-1 overflow-y-auto p-4 space-y-3">
+            <div className="flex-1 overflow-y-auto p-3 space-y-3 sm:p-4">
               {/* Core Content Section */}
               {activeProject && getAvailableCoreContent(activeProject).length > 0 && (
                 <div className="border border-indigo-200 dark:border-indigo-800/30 rounded-lg overflow-hidden bg-indigo-50 dark:bg-indigo-900/20">
-                  <div className="flex items-center justify-between px-4 py-3 bg-indigo-100 dark:bg-indigo-900/20">
+                  <div className="flex items-center justify-between gap-3 px-4 py-3 bg-indigo-100 dark:bg-indigo-900/20">
                     <div className="flex items-center gap-3">
                       <button
                         onClick={() => toggleAllCoreForProject(activeProject.id)}
@@ -547,7 +547,7 @@ export default function ExportModal({
                         <div
                           key={contentType}
                           onClick={() => toggleCoreContent(activeProject.id, contentType)}
-                          className={`flex items-center gap-3 px-4 py-3 cursor-pointer transition-colors ${isSelected ? 'bg-indigo-100 dark:bg-indigo-900/40' : 'hover:bg-indigo-50 dark:hover:bg-indigo-900/20'
+                          className={`flex items-start gap-3 px-4 py-3 cursor-pointer transition-colors ${isSelected ? 'bg-indigo-100 dark:bg-indigo-900/40' : 'hover:bg-indigo-50 dark:hover:bg-indigo-900/20'
                             }`}
                         >
                           <div className="flex-shrink-0">
@@ -665,16 +665,16 @@ export default function ExportModal({
         </div>
 
         {/* Footer */}
-        <div className="px-6 py-4 border-t border-slate-300 dark:border-slate-700 bg-slate-100/80 dark:bg-slate-800/50">
-          <div className="flex items-center justify-between">
+        <div className="border-t border-slate-300 bg-slate-100/80 px-4 py-4 dark:border-slate-700 dark:bg-slate-800/50 sm:px-6">
+          <div className="flex flex-col gap-4 sm:flex-row sm:items-end sm:justify-between">
             {/* Format Selection */}
-            <div className="flex items-center gap-4">
+            <div className="flex flex-col gap-2 sm:flex-row sm:items-center sm:gap-4">
               <label className="text-sm font-medium text-slate-800 dark:text-slate-100">Format:</label>
-              <div className="relative">
+              <div className="relative w-full sm:w-auto">
                 <select
                   value={selectedFormat}
                   onChange={(e) => setSelectedFormat(e.target.value as ExportPayload['format'])}
-                  className="appearance-none bg-white dark:bg-slate-900 border border-slate-300 dark:border-slate-600 rounded-lg px-4 py-2 pr-10 text-sm text-slate-900 dark:text-slate-50 focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-transparent"
+                  className="w-full appearance-none rounded-lg border border-slate-300 bg-white px-4 py-2 pr-10 text-sm text-slate-900 focus:border-transparent focus:outline-none focus:ring-2 focus:ring-blue-500 dark:border-slate-600 dark:bg-slate-900 dark:text-slate-50 sm:min-w-[15rem]"
                 >
                   {FORMAT_OPTIONS.map(opt => (
                     <option key={opt.value} value={opt.value}>
@@ -687,8 +687,8 @@ export default function ExportModal({
             </div>
 
             {/* Selection Stats & Actions */}
-            <div className="flex items-center gap-4">
-              <span className="text-sm text-slate-700 dark:text-slate-200">
+            <div className="flex flex-col gap-3 sm:items-end">
+              <span className="text-sm text-slate-700 dark:text-slate-200 sm:text-right">
                 {selectionStats.totalCoreSelected > 0 && (
                   <span className="text-indigo-600">{selectionStats.totalCoreSelected} core</span>
                 )}
@@ -698,18 +698,18 @@ export default function ExportModal({
                 {isBulkExport && selectionStats.projectsWithSelections.length > 0 && ` across ${selectionStats.projectsWithSelections.length} projects`}
               </span>
 
-              <div className="flex items-center gap-2">
+              <div className="flex w-full items-center gap-2 sm:w-auto">
                 <button
                   onClick={onClose}
                   disabled={isExporting}
-                  className="px-4 py-2 text-sm font-medium text-slate-600 dark:text-slate-300 bg-white dark:bg-slate-900 border border-slate-300 dark:border-slate-600 rounded-lg hover:bg-slate-50 dark:hover:bg-slate-800/50 disabled:opacity-50 transition-colors"
+                  className="flex-1 rounded-lg border border-slate-300 bg-white px-4 py-2 text-sm font-medium text-slate-600 transition-colors hover:bg-slate-50 disabled:opacity-50 dark:border-slate-600 dark:bg-slate-900 dark:text-slate-300 dark:hover:bg-slate-800/50 sm:flex-none"
                 >
                   Cancel
                 </button>
                 <button
                   onClick={handleExport}
                   disabled={isExporting || !selectionStats.hasSelections}
-                  className="inline-flex items-center px-4 py-2 text-sm font-medium text-white bg-blue-600 rounded-lg hover:bg-blue-700 disabled:opacity-50 disabled:cursor-not-allowed transition-colors"
+                  className="inline-flex flex-1 items-center justify-center rounded-lg bg-blue-600 px-4 py-2 text-sm font-medium text-white transition-colors hover:bg-blue-700 disabled:cursor-not-allowed disabled:opacity-50 sm:flex-none"
                 >
                   {isExporting ? (
                     <>
