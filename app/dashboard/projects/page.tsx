@@ -3,7 +3,7 @@
 import { useState, useEffect, useMemo, useRef, useCallback } from 'react';
 import Link from 'next/link';
 import { useSearchParams, useRouter } from 'next/navigation';
-import { FileText, Clock, CheckCircle, AlertCircle, Eye, Download, RefreshCw, Trash2, Zap, MessageCircle, Sparkles, BookOpen, Lightbulb, MessageSquare, PanelLeftClose, PanelLeftOpen, Search, Loader2, CheckSquare, Square, ListChecks, X, PanelRightOpen, PanelRightClose, ScanSearch, MoreHorizontal, Users, Mic, Radio, User, HelpCircle, Copy, Pencil, BarChart2, ChevronLeft } from 'lucide-react';
+import { FileText, Clock, CheckCircle, AlertCircle, Eye, Download, RefreshCw, Trash2, Zap, MessageCircle, Sparkles, BookOpen, Lightbulb, MessageSquare, PanelLeftClose, PanelLeftOpen, Search, Loader2, CheckSquare, Square, ListChecks, X, PanelRightOpen, PanelRightClose, ScanSearch, MoreHorizontal, Users, Mic, Radio, User, HelpCircle, Copy, Pencil, BarChart2, ChevronLeft, ChevronDown, ChevronUp } from 'lucide-react';
 import { DropdownMenu, DropdownMenuItem, DropdownMenuSeparator } from '@/components/ui/dropdown-menu';
 import ConfirmModal from '@/components/ui/confirm-modal';
 import { useAuth } from '@/lib/auth/context';
@@ -233,6 +233,7 @@ export default function ProjectsPage() {
   const [isMobileViewport, setIsMobileViewport] = useState(false);
   const [isDesktopViewport, setIsDesktopViewport] = useState(false);
   const [mobileStudioTab, setMobileStudioTab] = useState<MobileStudioTab>('projects');
+  const [mobileConversationChromeCollapsed, setMobileConversationChromeCollapsed] = useState(false);
 
   // Insights control state
   const [insightsSidebarOpen, setInsightsSidebarOpen] = useState(false);
@@ -725,6 +726,10 @@ export default function ProjectsPage() {
       setContextSidebarOpen(false);
     }
   }, [isMobileViewport, selectedProject?.id]);
+
+  useEffect(() => {
+    setMobileConversationChromeCollapsed(false);
+  }, [selectedProject?.id]);
 
   const parseSpeakerData = (data: any) => {
     if (!data) return null;
@@ -3264,16 +3269,33 @@ export default function ProjectsPage() {
                     {/* Panel Header */}
                     <div data-tour="transcript-header" className="flex-shrink-0 border-b border-slate-200 bg-white/50 px-4 py-3 dark:border-slate-800 dark:bg-slate-900/50">
                       <div className="flex flex-col gap-3 md:flex-row md:items-center md:justify-between">
-                      <div className="flex min-w-0 items-start gap-2">
-                        <BarChart2 className="w-4 h-4 text-blue-600 dark:text-blue-400" />
-                        <div className="min-w-0">
-                          <span className="block text-slate-800 dark:text-slate-100 font-semibold text-sm">Transcript</span>
-                          {parsedSpeakerData?.detectionMetadata && (
-                            <p className="mt-0.5 text-xs text-slate-500 dark:text-slate-400">
-                              {parsedSpeakerData.detectionMetadata.totalSpeakers} speaker{parsedSpeakerData.detectionMetadata.totalSpeakers !== 1 ? 's' : ''} • {parsedSpeakerData.detectionMetadata.totalSegments} segments
-                            </p>
-                          )}
+                      <div className="flex min-w-0 items-start justify-between gap-3">
+                        <div className="flex min-w-0 items-start gap-2">
+                          <BarChart2 className="w-4 h-4 text-blue-600 dark:text-blue-400" />
+                          <div className="min-w-0">
+                            <span className="block text-slate-800 dark:text-slate-100 font-semibold text-sm">Transcript</span>
+                            {parsedSpeakerData?.detectionMetadata && (
+                              <p className="mt-0.5 text-xs text-slate-500 dark:text-slate-400">
+                                {parsedSpeakerData.detectionMetadata.totalSpeakers} speaker{parsedSpeakerData.detectionMetadata.totalSpeakers !== 1 ? 's' : ''} • {parsedSpeakerData.detectionMetadata.totalSegments} segments
+                              </p>
+                            )}
+                          </div>
                         </div>
+                        {isMobileViewport && (
+                          <button
+                            type="button"
+                            onClick={() => setMobileConversationChromeCollapsed((prev) => !prev)}
+                            className="inline-flex items-center gap-1 rounded-full border border-slate-200 bg-white px-2.5 py-1 text-[11px] font-semibold text-slate-600 transition-colors hover:bg-slate-50 dark:border-slate-700 dark:bg-slate-900 dark:text-slate-300 dark:hover:bg-slate-800"
+                            aria-label={mobileConversationChromeCollapsed ? 'Show playback tools' : 'Hide playback tools'}
+                          >
+                            {mobileConversationChromeCollapsed ? (
+                              <ChevronDown className="h-3.5 w-3.5" />
+                            ) : (
+                              <ChevronUp className="h-3.5 w-3.5" />
+                            )}
+                            {mobileConversationChromeCollapsed ? 'Show player' : 'Hide player'}
+                          </button>
+                        )}
                       </div>
                       <div className="flex flex-wrap items-center justify-start gap-2 md:justify-end">
                         {parsedSpeakerData && (
@@ -3377,47 +3399,51 @@ export default function ProjectsPage() {
                       </div>
                     </div>
 
-                    {/* Status notices */}
-                    {(isProjectRefreshing || (projectPreviousStatus === 'processing' && selectedProject.status === 'completed')) && (
-                      <div className="flex-shrink-0 px-4 py-2 bg-white dark:bg-slate-900 border-b border-slate-200 dark:border-slate-800">
-                        {isProjectRefreshing && (
-                          <div className="flex items-center gap-2 text-blue-400 text-sm">
-                            <RefreshCw className="h-3.5 w-3.5 animate-spin" />
-                            <span>Refreshing speaker data...</span>
+                    {(!isMobileViewport || !mobileConversationChromeCollapsed) && (
+                      <>
+                        {/* Status notices */}
+                        {(isProjectRefreshing || (projectPreviousStatus === 'processing' && selectedProject.status === 'completed')) && (
+                          <div className="flex-shrink-0 px-4 py-2 bg-white dark:bg-slate-900 border-b border-slate-200 dark:border-slate-800">
+                            {isProjectRefreshing && (
+                              <div className="flex items-center gap-2 text-blue-400 text-sm">
+                                <RefreshCw className="h-3.5 w-3.5 animate-spin" />
+                                <span>Refreshing speaker data...</span>
+                              </div>
+                            )}
+                            {projectPreviousStatus === 'processing' && selectedProject.status === 'completed' && (
+                              <div className="flex items-center gap-2 text-green-400 text-sm">
+                                <CheckCircle className="h-3.5 w-3.5" />
+                                <span>Processing complete!</span>
+                              </div>
+                            )}
                           </div>
                         )}
-                        {projectPreviousStatus === 'processing' && selectedProject.status === 'completed' && (
-                          <div className="flex items-center gap-2 text-green-400 text-sm">
-                            <CheckCircle className="h-3.5 w-3.5" />
-                            <span>Processing complete!</span>
-                          </div>
+
+                        <div className="flex-shrink-0 px-4 py-2 border-b border-slate-200 dark:border-slate-800 bg-slate-50/70 dark:bg-slate-950/70">
+                          {selectedProjectAudioExpired ? (
+                            <div className="flex items-center gap-2 text-rose-300 text-sm">
+                              <Clock className="h-3.5 w-3.5 flex-shrink-0" />
+                              <span>
+                                Source audio expired{selectedProjectAudioExpiryLabel ? ` on ${selectedProjectAudioExpiryLabel}` : ''}. Transcript and generated content remain available.
+                              </span>
+                            </div>
+                          ) : selectedProjectAudioExpiryLabel ? (
+                            <div className="flex items-center gap-2 text-slate-500 dark:text-slate-400 text-sm">
+                              <Clock className="h-3.5 w-3.5 flex-shrink-0" />
+                              <span>Source audio will be deleted on {selectedProjectAudioExpiryLabel}.</span>
+                            </div>
+                          ) : null}
+                        </div>
+
+                        {/* Audio Player */}
+                        {!selectedProjectAudioExpired && audioUrl && (
+                          <AudioPlayer src={audioUrl} audioElementRef={audioElementRef} />
                         )}
-                      </div>
-                    )}
-
-                    <div className="flex-shrink-0 px-4 py-2 border-b border-slate-200 dark:border-slate-800 bg-slate-50/70 dark:bg-slate-950/70">
-                      {selectedProjectAudioExpired ? (
-                        <div className="flex items-center gap-2 text-rose-300 text-sm">
-                          <Clock className="h-3.5 w-3.5 flex-shrink-0" />
-                          <span>
-                            Source audio expired{selectedProjectAudioExpiryLabel ? ` on ${selectedProjectAudioExpiryLabel}` : ''}. Transcript and generated content remain available.
-                          </span>
-                        </div>
-                      ) : selectedProjectAudioExpiryLabel ? (
-                        <div className="flex items-center gap-2 text-slate-500 dark:text-slate-400 text-sm">
-                          <Clock className="h-3.5 w-3.5 flex-shrink-0" />
-                          <span>Source audio will be deleted on {selectedProjectAudioExpiryLabel}.</span>
-                        </div>
-                      ) : null}
-                    </div>
-
-                    {/* Audio Player */}
-                    {!selectedProjectAudioExpired && audioUrl && (
-                      <AudioPlayer src={audioUrl} audioElementRef={audioElementRef} />
+                      </>
                     )}
 
                     {/* Transcript Body */}
-                    <div ref={readerScrollRef} className={`flex-1 min-h-0 overflow-y-auto ${isMobileViewport ? 'pb-36' : ''}`}>
+                    <div ref={readerScrollRef} className={`flex-1 min-h-0 overflow-y-auto ${isMobileViewport ? 'pb-28' : ''}`}>
                       {parsedSpeakerData ? (
                         readerView ? (
                           <div className="px-4 py-4 divide-y divide-slate-200 dark:divide-slate-800/70 relative">
@@ -3678,7 +3704,7 @@ export default function ProjectsPage() {
             className={`transition-all duration-300 ease-in-out overflow-hidden ${
               isMobileViewport
                 ? showMobileContent
-                  ? 'flex h-full w-full flex-col border-l-0 pb-36'
+                  ? 'flex h-full w-full flex-col border-l-0 pb-28'
                   : 'hidden'
                 : contextSidebarOpen
                   ? 'fixed inset-x-0 bottom-0 z-30 h-[62svh] rounded-t-[1.75rem] border-l-0 opacity-100 shadow-2xl md:inset-y-0 md:right-0 md:left-auto md:h-auto md:w-[24rem] md:max-w-none md:rounded-none md:border-l lg:static lg:inset-auto lg:z-auto lg:flex-shrink-0 lg:w-[420px] lg:min-w-[380px] lg:shadow-none'
@@ -3690,9 +3716,9 @@ export default function ProjectsPage() {
 
       {isMobileViewport && projects.length > 0 && (
         <div
-          className="fixed inset-x-3 z-30 rounded-2xl border border-slate-200/90 bg-white/95 p-1.5 shadow-[0_18px_50px_-20px_rgba(15,23,42,0.35)] backdrop-blur dark:border-slate-700/80 dark:bg-slate-900/95"
+          className="fixed inset-x-0 bottom-0 z-30 rounded-t-[1.75rem] border border-b-0 border-slate-200/90 bg-white/95 px-3 pt-2 shadow-[0_-18px_50px_-24px_rgba(15,23,42,0.4)] backdrop-blur dark:border-slate-700/80 dark:bg-slate-900/95"
           style={{
-            bottom: 'calc(env(safe-area-inset-bottom, 0px) + 5.5rem)',
+            paddingBottom: 'calc(env(safe-area-inset-bottom, 0px) + 0.35rem)',
           }}
         >
           <div className="grid grid-cols-3 gap-1">
