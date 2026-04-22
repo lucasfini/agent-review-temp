@@ -3188,13 +3188,6 @@ function findEarlySelfIdentifiedHost(
     if (!/\b(?:welcome\s+(?:to|back)|this\s+is|from\s+.+,\s+this\s+is)\b/i.test(text)) continue;
 
     const selfId = extractFullNameSelfIdentifiedName(text);
-    if (/Daily Beast podcast/i.test(text)) {
-      console.log('DEBUG findEarlySelfIdentifiedHost', {
-        text,
-        matchedSelfId: selfId,
-        speakerId: segment.finalSpeakerId || segment.speakerId,
-      });
-    }
     if (!selfId || selfId.trim().split(/\s+/).length < 2) continue;
     if (isLikelyNonHumanConversationalNameCandidate(selfId)) continue;
 
@@ -3741,12 +3734,6 @@ function repairSpeakerMapWithEarlyHostSelfId(
   options: ConversationalNamingOptions
 ): Record<string, any> {
   const earlyHostSelfId = findEarlySelfIdentifiedHost(segments);
-  if (segments.some((segment) => /Daily Beast podcast/i.test(getSegText(segment)))) {
-    console.log('DEBUG repairSpeakerMapWithEarlyHostSelfId', {
-      earlyHostSelfId,
-      before: speakers,
-    });
-  }
   if (!earlyHostSelfId) return speakers;
 
   const updatedSpeakers = Object.fromEntries(
@@ -3781,10 +3768,6 @@ function repairSpeakerMapWithEarlyHostSelfId(
       context: 'Host intro self-identification',
     },
   };
-
-  if (segments.some((segment) => /Daily Beast podcast/i.test(getSegText(segment)))) {
-    console.log('DEBUG repairSpeakerMapWithEarlyHostSelfId_after', updatedSpeakers);
-  }
 
   return updatedSpeakers;
 }
@@ -5980,6 +5963,8 @@ function extractStrongInterviewIntroNames(
     if (!isHumanIntroEligibleSegment(seg)) continue;
     const text = getSegText(seg);
     if (!/\b(?:joined by|good to have you|glad to have you|good to see you|great to see you|welcome|bring in)\b/i.test(text)) continue;
+    const selfIdentifiedName = extractFullNameSelfIdentifiedName(text);
+    const normalizedSelfIdentifiedName = selfIdentifiedName ? normalizeSpeakerName(selfIdentifiedName) : null;
 
     const matches = Array.from(text.matchAll(/\b([A-Z][a-z]+(?:\s+[A-Z][a-z]+)+)\b/g));
     const validNames = matches
@@ -5987,14 +5972,17 @@ function extractStrongInterviewIntroNames(
       .filter((value): value is string => (
         Boolean(value) &&
         isValidIntroNameCandidate(value) &&
-        !isLikelyNonHumanConversationalNameCandidate(value)
+        !isLikelyNonHumanConversationalNameCandidate(value) &&
+        normalizeSpeakerName(value) !== normalizedSelfIdentifiedName
       ));
 
     if (validNames.length === 0) continue;
-    const directAddressMatch = text.match(/\b([A-Z][a-z]+),\s+(?:it'?s|its|good|great|glad|thank|thanks|welcome)\b/);
-    const addressedFirstName = directAddressMatch?.[1]?.trim().toLowerCase() || null;
-    const addressedCandidate = addressedFirstName
-      ? validNames.find((value) => value.split(/\s+/)[0]?.toLowerCase() === addressedFirstName)
+    const directAddressMatch = text.match(/\b([A-Z][a-z]+(?:\s+[A-Z][a-z]+){0,2}),\s+(?:it'?s|its|good|great|glad|thank|thanks|welcome)\b/);
+    const addressedName = directAddressMatch?.[1]?.trim() || null;
+    const addressedFirstName = addressedName?.split(/\s+/)[0]?.toLowerCase() || null;
+    const addressedCandidate = addressedName
+      ? validNames.find((value) => normalizeSpeakerName(value) === normalizeSpeakerName(addressedName)) ||
+        validNames.find((value) => value.split(/\s+/)[0]?.toLowerCase() === addressedFirstName)
       : null;
     const chosen = addressedCandidate || [...validNames].sort((a, b) => b.split(/\s+/).length - a.split(/\s+/).length)[0];
     const normalized = normalizeSpeakerName(chosen);
@@ -7722,4 +7710,5 @@ export const __testUtils = {
   resolveConversationalHumanNamesInSpeakerMap,
   findEarlySelfIdentifiedHost,
   extractFullNameSelfIdentifiedName,
+  findStrongInterviewGuestNames,
 };

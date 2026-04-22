@@ -1344,6 +1344,9 @@ describe('speaker pipeline regressions', () => {
       fullName: 'Joanna Coles',
       reason: 'early_host_self_id',
     });
+    expect(__testUtils.findStrongInterviewGuestNames(segments, false)).toEqual([
+      { fullName: 'David Rothkopf', firstName: 'David', segmentIndex: 0 },
+    ]);
 
     expect(resolved.speakers.speaker_1.finalName).toBe('Joanna Coles');
     expect(resolved.speakers.speaker_1.role).toBe('host');
