@@ -1,12 +1,13 @@
 "use client";
 
 import { useEffect, useRef, useState } from 'react';
-import type { RefObject } from 'react';
+import type { ReactNode, RefObject } from 'react';
 import { Play, Pause, Volume1, Volume2, VolumeX } from 'lucide-react';
 
 interface AudioPlayerProps {
   src: string;
   audioElementRef: RefObject<HTMLAudioElement | null>;
+  headerToggle?: ReactNode;
 }
 
 function fmt(seconds: number): string {
@@ -33,7 +34,7 @@ function generateWaveform(seed: string, count = 80): number[] {
 
 const SPEEDS = [1, 1.2, 1.5, 2];
 
-export function AudioPlayer({ src, audioElementRef }: AudioPlayerProps) {
+export function AudioPlayer({ src, audioElementRef, headerToggle }: AudioPlayerProps) {
   const [isPlaying, setIsPlaying] = useState(false);
   const [isMuted, setIsMuted] = useState(false);
   const [volume, setVolume] = useState(1);
@@ -172,6 +173,12 @@ export function AudioPlayer({ src, audioElementRef }: AudioPlayerProps) {
     <div className="flex-shrink-0 flex flex-col gap-1.5 border-b border-slate-200 bg-white px-4 pt-2.5 pb-2 select-none dark:border-slate-800 dark:bg-slate-950">
       {/* Hidden audio element — ref forwarded from parent */}
       <audio ref={audioElementRef} src={src} preload="metadata" className="hidden" crossOrigin="anonymous" />
+
+      {headerToggle ? (
+        <div className="flex justify-end pb-1">
+          {headerToggle}
+        </div>
+      ) : null}
 
       <div className="flex items-center gap-3">
         {/* Play / Pause */}

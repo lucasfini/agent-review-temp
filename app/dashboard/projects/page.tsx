@@ -3267,95 +3267,92 @@ export default function ProjectsPage() {
                   {/* Transcript Panel */}
                   <div className="flex flex-col min-h-0 overflow-hidden">
                     {/* Panel Header */}
-                    <div data-tour="transcript-header" className="flex-shrink-0 border-b border-slate-200 bg-white/50 px-4 py-3 dark:border-slate-800 dark:bg-slate-900/50">
-                      <div className="flex flex-col gap-3 md:flex-row md:items-center md:justify-between">
-                      <div className="flex min-w-0 items-start justify-between gap-3">
-                        <div className="flex min-w-0 items-start gap-2">
-                          <BarChart2 className="w-4 h-4 text-blue-600 dark:text-blue-400" />
-                          <div className="min-w-0">
-                            <span className="block text-slate-800 dark:text-slate-100 font-semibold text-sm">Transcript</span>
-                            {parsedSpeakerData?.detectionMetadata && (
-                              <p className="mt-0.5 text-xs text-slate-500 dark:text-slate-400">
-                                {parsedSpeakerData.detectionMetadata.totalSpeakers} speaker{parsedSpeakerData.detectionMetadata.totalSpeakers !== 1 ? 's' : ''} • {parsedSpeakerData.detectionMetadata.totalSegments} segments
-                              </p>
-                            )}
+                    {(!isMobileViewport || !mobileConversationChromeCollapsed) && (
+                      <div data-tour="transcript-header" className="flex-shrink-0 border-b border-slate-200 bg-white/50 px-4 py-3 dark:border-slate-800 dark:bg-slate-900/50">
+                        <div className="flex flex-col gap-3 md:flex-row md:items-center md:justify-between">
+                        <div className="flex min-w-0 items-start justify-between gap-3">
+                          <div className="flex min-w-0 items-start gap-2">
+                            <BarChart2 className="w-4 h-4 text-blue-600 dark:text-blue-400" />
+                            <div className="min-w-0">
+                              <span className="block text-slate-800 dark:text-slate-100 font-semibold text-sm">Transcript</span>
+                              {parsedSpeakerData?.detectionMetadata && (
+                                <p className="mt-0.5 text-xs text-slate-500 dark:text-slate-400">
+                                  {parsedSpeakerData.detectionMetadata.totalSpeakers} speaker{parsedSpeakerData.detectionMetadata.totalSpeakers !== 1 ? 's' : ''} • {parsedSpeakerData.detectionMetadata.totalSegments} segments
+                                </p>
+                              )}
+                            </div>
                           </div>
-                        </div>
-                        {isMobileViewport && (
-                          <button
-                            type="button"
-                            onClick={() => setMobileConversationChromeCollapsed((prev) => !prev)}
-                            className="inline-flex items-center gap-1 rounded-full border border-slate-200 bg-white px-2.5 py-1 text-[11px] font-semibold text-slate-600 transition-colors hover:bg-slate-50 dark:border-slate-700 dark:bg-slate-900 dark:text-slate-300 dark:hover:bg-slate-800"
-                            aria-label={mobileConversationChromeCollapsed ? 'Show playback tools' : 'Hide playback tools'}
-                          >
-                            {mobileConversationChromeCollapsed ? (
-                              <ChevronDown className="h-3.5 w-3.5" />
-                            ) : (
-                              <ChevronUp className="h-3.5 w-3.5" />
-                            )}
-                            {mobileConversationChromeCollapsed ? 'Show player' : 'Hide player'}
-                          </button>
-                        )}
-                      </div>
-                      <div className="flex flex-wrap items-center justify-start gap-2 md:justify-end">
-                        {parsedSpeakerData && (
-                          <>
-                            <label className={`flex items-center gap-1 text-xs px-2 py-0.5 rounded-full border transition-colors cursor-pointer ${showTimestamps ? 'border-blue-300 dark:border-blue-800/30 bg-blue-50 dark:bg-blue-900/20 text-blue-600 dark:text-blue-400' : 'border-slate-300 dark:border-slate-700 text-slate-500 hover:text-slate-600 dark:hover:text-slate-400'
-                              }`} title="Toggle timestamps">
-                              <input type="checkbox" checked={showTimestamps} onChange={(e) => setShowTimestamps(e.target.checked)} className="sr-only" aria-label="Toggle transcript timestamps" />
-                              <Clock className="w-3 h-3" />
-                            </label>
-                            <button
-                              data-tour="view-toggle"
-                              onClick={() => setReaderView(v => !v)}
-                              className={`flex items-center gap-1 text-xs px-2 py-0.5 rounded-full border transition-colors ${readerView ? 'border-blue-300 dark:border-blue-800/30 bg-blue-50 dark:bg-blue-900/20 text-blue-600 dark:text-blue-400' : 'border-slate-300 dark:border-slate-700 text-slate-500 hover:text-slate-600 dark:hover:text-slate-400'
-                                }`}
-                              title="Reader view"
-                              aria-label={readerView ? 'Disable reader view' : 'Enable reader view'}
-                            >
-                              <BookOpen className="w-3 h-3" />
-                            </button>
-                            <select
-                              value={selectedSpeaker || ''}
-                              onChange={(e) => setSelectedSpeaker(e.target.value || null)}
-                              className={`min-w-[8rem] text-xs px-2 py-0.5 rounded-full border transition-colors bg-transparent ${selectedSpeaker
-                                ? 'border-blue-300 dark:border-blue-800/30 bg-blue-50 dark:bg-blue-900/20 text-blue-600 dark:text-blue-400'
-                                : 'border-slate-300 dark:border-slate-700 text-slate-500 hover:text-slate-600 dark:hover:text-slate-400'
-                                }`}
-                            >
-                              <option value="">All speakers</option>
-                              {Object.keys(parsedSpeakerData.speakers || {}).map((speakerId) => (
-                                <option key={speakerId} value={speakerId}>
-                                  {getSpeakerDisplayName(parsedSpeakerData.speakers[speakerId])}
-                                </option>
-                              ))}
-                            </select>
-                          </>
-                        )}
-                        <DropdownMenu
-                          align="right"
-                          side="bottom"
-                          offset={8}
-                          portal
-                          trigger={
+                          {isMobileViewport && (
                             <button
                               type="button"
-                              data-tour="export-btn"
-                              className={`inline-flex items-center gap-1.5 px-2.5 py-1 text-xs font-medium rounded-md border transition-colors disabled:opacity-60 disabled:cursor-not-allowed ${runningCoverageIds.has(selectedProject.id)
-                                ? 'border-cyan-300 dark:border-cyan-800/40 bg-cyan-50 dark:bg-cyan-900/20 text-cyan-700 dark:text-cyan-300'
-                                : 'border-slate-300 dark:border-slate-700 bg-white dark:bg-slate-800/80 text-slate-700 dark:text-slate-100 hover:bg-slate-50 dark:hover:bg-slate-700'
-                                }`}
-                              title={isDemoMode ? 'Demo account is read-only' : !selectedProject.transcription_text ? 'Analysis requires a transcript' : 'More actions'}
+                              onClick={() => setMobileConversationChromeCollapsed(true)}
+                              className="inline-flex items-center gap-1 rounded-full border border-slate-200 bg-white px-2.5 py-1 text-[11px] font-semibold text-slate-600 transition-colors hover:bg-slate-50 dark:border-slate-700 dark:bg-slate-900 dark:text-slate-300 dark:hover:bg-slate-800"
+                              aria-label="Hide header rows"
                             >
-                              {runningCoverageIds.has(selectedProject.id) ? (
-                                <Loader2 className="w-4 h-4 animate-spin" />
-                              ) : (
-                                <MoreHorizontal className="w-4 h-4" />
-                              )}
-                              <span className="sr-only">More actions</span>
+                              <ChevronUp className="h-3.5 w-3.5" />
+                              Hide header
                             </button>
-                          }
-                        >
+                          )}
+                        </div>
+                        <div className="flex flex-wrap items-center justify-start gap-2 md:justify-end">
+                          {parsedSpeakerData && (
+                            <>
+                              <label className={`flex items-center gap-1 text-xs px-2 py-0.5 rounded-full border transition-colors cursor-pointer ${showTimestamps ? 'border-blue-300 dark:border-blue-800/30 bg-blue-50 dark:bg-blue-900/20 text-blue-600 dark:text-blue-400' : 'border-slate-300 dark:border-slate-700 text-slate-500 hover:text-slate-600 dark:hover:text-slate-400'
+                                }`} title="Toggle timestamps">
+                                <input type="checkbox" checked={showTimestamps} onChange={(e) => setShowTimestamps(e.target.checked)} className="sr-only" aria-label="Toggle transcript timestamps" />
+                                <Clock className="w-3 h-3" />
+                              </label>
+                              <button
+                                data-tour="view-toggle"
+                                onClick={() => setReaderView(v => !v)}
+                                className={`flex items-center gap-1 text-xs px-2 py-0.5 rounded-full border transition-colors ${readerView ? 'border-blue-300 dark:border-blue-800/30 bg-blue-50 dark:bg-blue-900/20 text-blue-600 dark:text-blue-400' : 'border-slate-300 dark:border-slate-700 text-slate-500 hover:text-slate-600 dark:hover:text-slate-400'
+                                  }`}
+                                title="Reader view"
+                                aria-label={readerView ? 'Disable reader view' : 'Enable reader view'}
+                              >
+                                <BookOpen className="w-3 h-3" />
+                              </button>
+                              <select
+                                value={selectedSpeaker || ''}
+                                onChange={(e) => setSelectedSpeaker(e.target.value || null)}
+                                className={`min-w-[8rem] text-xs px-2 py-0.5 rounded-full border transition-colors bg-transparent ${selectedSpeaker
+                                  ? 'border-blue-300 dark:border-blue-800/30 bg-blue-50 dark:bg-blue-900/20 text-blue-600 dark:text-blue-400'
+                                  : 'border-slate-300 dark:border-slate-700 text-slate-500 hover:text-slate-600 dark:hover:text-slate-400'
+                                  }`}
+                              >
+                                <option value="">All speakers</option>
+                                {Object.keys(parsedSpeakerData.speakers || {}).map((speakerId) => (
+                                  <option key={speakerId} value={speakerId}>
+                                    {getSpeakerDisplayName(parsedSpeakerData.speakers[speakerId])}
+                                  </option>
+                                ))}
+                              </select>
+                            </>
+                          )}
+                          <DropdownMenu
+                            align="right"
+                            side="bottom"
+                            offset={8}
+                            portal
+                            trigger={
+                              <button
+                                type="button"
+                                data-tour="export-btn"
+                                className={`inline-flex items-center gap-1.5 px-2.5 py-1 text-xs font-medium rounded-md border transition-colors disabled:opacity-60 disabled:cursor-not-allowed ${runningCoverageIds.has(selectedProject.id)
+                                  ? 'border-cyan-300 dark:border-cyan-800/40 bg-cyan-50 dark:bg-cyan-900/20 text-cyan-700 dark:text-cyan-300'
+                                  : 'border-slate-300 dark:border-slate-700 bg-white dark:bg-slate-800/80 text-slate-700 dark:text-slate-100 hover:bg-slate-50 dark:hover:bg-slate-700'
+                                  }`}
+                                title={isDemoMode ? 'Demo account is read-only' : !selectedProject.transcription_text ? 'Analysis requires a transcript' : 'More actions'}
+                              >
+                                {runningCoverageIds.has(selectedProject.id) ? (
+                                  <Loader2 className="w-4 h-4 animate-spin" />
+                                ) : (
+                                  <MoreHorizontal className="w-4 h-4" />
+                                )}
+                                <span className="sr-only">More actions</span>
+                              </button>
+                            }
+                          >
                           <DropdownMenuItem
                             onClick={() => handleRunCoverage(selectedProject)}
                             disabled={isDemoMode || runningCoverageIds.has(selectedProject.id) || !selectedProject.transcription_text}
@@ -3394,10 +3391,11 @@ export default function ProjectsPage() {
                             <Download className="w-4 h-4" />
                             Export
                           </DropdownMenuItem>
-                        </DropdownMenu>
+                          </DropdownMenu>
+                        </div>
+                        </div>
                       </div>
-                      </div>
-                    </div>
+                    )}
 
                     {(!isMobileViewport || !mobileConversationChromeCollapsed) && (
                       <>
@@ -3434,16 +3432,32 @@ export default function ProjectsPage() {
                             </div>
                           ) : null}
                         </div>
-
-                        {/* Audio Player */}
-                        {!selectedProjectAudioExpired && audioUrl && (
-                          <AudioPlayer src={audioUrl} audioElementRef={audioElementRef} />
-                        )}
                       </>
                     )}
 
+                    {/* Audio Player */}
+                    {!selectedProjectAudioExpired && audioUrl && (
+                      <AudioPlayer
+                        src={audioUrl}
+                        audioElementRef={audioElementRef}
+                        headerToggle={
+                          isMobileViewport && mobileConversationChromeCollapsed ? (
+                            <button
+                              type="button"
+                              onClick={() => setMobileConversationChromeCollapsed(false)}
+                              className="inline-flex items-center gap-1 rounded-full border border-slate-200 bg-white px-2.5 py-1 text-[11px] font-semibold text-slate-600 transition-colors hover:bg-slate-50 dark:border-slate-700 dark:bg-slate-900 dark:text-slate-300 dark:hover:bg-slate-800"
+                              aria-label="Show header rows"
+                            >
+                              <ChevronDown className="h-3.5 w-3.5" />
+                              Show header
+                            </button>
+                          ) : null
+                        }
+                      />
+                    )}
+
                     {/* Transcript Body */}
-                    <div ref={readerScrollRef} className={`flex-1 min-h-0 overflow-y-auto ${isMobileViewport ? 'pb-28' : ''}`}>
+                    <div ref={readerScrollRef} className="flex-1 min-h-0 overflow-y-auto">
                       {parsedSpeakerData ? (
                         readerView ? (
                           <div className="px-4 py-4 divide-y divide-slate-200 dark:divide-slate-800/70 relative">
@@ -3542,7 +3556,7 @@ export default function ProjectsPage() {
                     </div>
 
                     {/* Transcript Footer */}
-                    <div className="flex-shrink-0 border-t border-slate-200 dark:border-slate-800 px-4 py-3">
+                    <div className={`flex-shrink-0 border-t border-slate-200 px-4 text-slate-400 dark:border-slate-800 dark:text-slate-500 ${isMobileViewport ? 'pt-2 pb-20' : 'py-3'}`}>
                       <p className="text-slate-400 dark:text-slate-500 text-xs">
                         {parsedSpeakerData?.detectionMetadata?.totalSpeakers ?? 0} speakers detected
                         {(selectedProject.audio_duration || selectedProject.audio_duration_seconds)

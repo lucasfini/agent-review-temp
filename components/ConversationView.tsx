@@ -1043,7 +1043,7 @@ export default function ConversationView({
   return (
     <div className={`h-full flex flex-col ${className}`}>
       {/* Conversation Segments */}
-      <div ref={transcriptContainerRef} className="flex-1 overflow-y-auto px-4 pt-4 pb-4" data-tour="conversation-feed">
+      <div ref={transcriptContainerRef} className="flex-1 overflow-y-auto px-4 pt-4 pb-2" data-tour="conversation-feed">
         {/* Resume auto-scroll button — sticky at top when user has scrolled away */}
         {autoScrollPaused && (
           <div className="sticky top-2 z-10 flex justify-center mb-2 pointer-events-none">
@@ -1220,7 +1220,7 @@ export default function ConversationView({
       </div>
 
       {/* Footer Stats */}
-      <div className="flex-shrink-0 px-4 pb-4 text-xs text-slate-500 dark:text-slate-400 pt-4 border-t border-slate-200 dark:border-slate-700">
+      <div className="flex-shrink-0 border-t border-slate-200 px-4 pt-3 pb-2 text-xs text-slate-500 dark:border-slate-700 dark:text-slate-400">
         {selectedSpeaker ? (
           <span>
             Showing {filteredSegments.length} segments from {getSpeakerDisplayName(speakers[selectedSpeaker])}
