@@ -11,22 +11,22 @@ import {
   Upload,
   Search,
   Filter,
-  MoreHorizontal,
   ChevronDown,
   ChevronUp,
-  Play,
   Trash2,
   Eye,
   Zap,
   FolderOpen,
-  TrendingUp,
-  Calendar,
   Sparkles,
   Users,
   Mic,
   Radio,
   User,
-  HelpCircle
+  HelpCircle,
+  ListChecks,
+  CheckSquare,
+  Square,
+  X
 } from 'lucide-react';
 import { useAuth } from '@/lib/auth/context';
 import { supabase } from '@/lib/supabase/client';
@@ -92,15 +92,6 @@ function formatDuration(seconds: number): string {
   if (hours > 0) return `${hours}h ${minutes}m`;
   return `${minutes}m`;
 }
-
-function formatBytes(bytes: number): string {
-  if (!bytes) return '0 B';
-  const k = 1024;
-  const sizes = ['B', 'KB', 'MB', 'GB'];
-  const i = Math.floor(Math.log(bytes) / Math.log(k));
-  return `${parseFloat((bytes / Math.pow(k, i)).toFixed(1))} ${sizes[i]}`;
-}
-
 
 function isAudioExpired(project: Project): boolean {
   if (project.audio_deleted_at) return true;
@@ -222,6 +213,10 @@ export default function ProjectHubPage() {
   const [showFilters, setShowFilters] = useState(false);
   const [deletingId, setDeletingId] = useState<string | null>(null);
   const [pendingDeleteId, setPendingDeleteId] = useState<string | null>(null);
+  const [selectionMode, setSelectionMode] = useState(false);
+  const [selectedProjectIds, setSelectedProjectIds] = useState<Set<string>>(new Set());
+  const [pendingBulkDelete, setPendingBulkDelete] = useState(false);
+  const [bulkDeleting, setBulkDeleting] = useState(false);
   const [hubPage, setHubPage] = useState(1);
 
   // Fetch data
@@ -359,6 +354,40 @@ export default function ProjectHubPage() {
     return filteredProjects.slice(start, start + HUB_PAGE_SIZE);
   }, [filteredProjects, hubPage]);
 
+  const selectedProjectCount = selectedProjectIds.size;
+  const pagedProjectIds = useMemo(() => pagedProjects.map((project) => project.id), [pagedProjects]);
+  const allPagedProjectsSelected = pagedProjectIds.length > 0 && pagedProjectIds.every((id) => selectedProjectIds.has(id));
+  const somePagedProjectsSelected = pagedProjectIds.some((id) => selectedProjectIds.has(id));
+
+  const exitSelectionMode = () => {
+    setSelectionMode(false);
+    setSelectedProjectIds(new Set());
+  };
+
+  const toggleProjectSelection = (projectId: string) => {
+    setSelectedProjectIds((previous) => {
+      const next = new Set(previous);
+      if (next.has(projectId)) {
+        next.delete(projectId);
+      } else {
+        next.add(projectId);
+      }
+      return next;
+    });
+  };
+
+  const togglePagedProjectSelection = () => {
+    setSelectedProjectIds((previous) => {
+      const next = new Set(previous);
+      if (allPagedProjectsSelected) {
+        pagedProjectIds.forEach((id) => next.delete(id));
+      } else {
+        pagedProjectIds.forEach((id) => next.add(id));
+      }
+      return next;
+    });
+  };
+
   useEffect(() => {
     setHubPage(1);
   }, [searchTerm, statusFilter, typeFilter, sortBy]);
@@ -368,6 +397,14 @@ export default function ProjectHubPage() {
       setHubPage(totalPages);
     }
   }, [hubPage, totalPages]);
+
+  useEffect(() => {
+    const availableProjectIds = new Set(projects.map((project) => project.id));
+    setSelectedProjectIds((previous) => {
+      const next = new Set(Array.from(previous).filter((id) => availableProjectIds.has(id)));
+      return next.size === previous.size ? previous : next;
+    });
+  }, [projects]);
 
   // Output counts by project
   const outputCountByProject = useMemo(() => {
@@ -401,6 +438,13 @@ export default function ProjectHubPage() {
 
       emitProjectMutation({ projectId: pendingDeleteId, action: 'deleted' });
       setProjects(prev => prev.filter(p => p.id !== pendingDeleteId));
+      setOutputs(prev => prev.filter(output => output.project_id !== pendingDeleteId));
+      setSelectedProjectIds(prev => {
+        if (!prev.has(pendingDeleteId)) return prev;
+        const next = new Set(prev);
+        next.delete(pendingDeleteId);
+        return next;
+      });
       toast.success('Project deleted');
     } catch (error) {
       console.error('Delete failed:', error);
@@ -408,6 +452,67 @@ export default function ProjectHubPage() {
     } finally {
       setDeletingId(null);
       setPendingDeleteId(null);
+    }
+  };
+
+  const confirmBulkDelete = async () => {
+    const projectIds = Array.from(selectedProjectIds);
+    if (projectIds.length === 0 || !user?.id) return;
+
+    setBulkDeleting(true);
+    try {
+      const { data: { session } } = await supabase.auth.getSession();
+      const headers = session?.access_token ? { Authorization: `Bearer ${session.access_token}` } : {};
+
+      const results = await Promise.allSettled(
+        projectIds.map(async (projectId) => {
+          const response = await fetch(`/api/projects/${projectId}`, {
+            method: 'DELETE',
+            headers,
+          });
+
+          if (!response.ok) {
+            const data = await response.json().catch(() => ({ error: 'Failed to delete project' }));
+            throw new Error(data.error || 'Failed to delete project');
+          }
+
+          return projectId;
+        })
+      );
+
+      const deletedIds = results
+        .filter((result): result is PromiseFulfilledResult<string> => result.status === 'fulfilled')
+        .map((result) => result.value);
+      const failedCount = results.length - deletedIds.length;
+      const deletedIdSet = new Set(deletedIds);
+
+      deletedIds.forEach((projectId) => {
+        emitProjectMutation({ projectId, action: 'deleted' });
+      });
+
+      if (deletedIds.length > 0) {
+        setProjects((prev) => prev.filter((project) => !deletedIdSet.has(project.id)));
+        setOutputs((prev) => prev.filter((output) => !deletedIdSet.has(output.project_id)));
+      }
+
+      setSelectedProjectIds((prev) => {
+        const next = new Set(prev);
+        deletedIds.forEach((projectId) => next.delete(projectId));
+        return next;
+      });
+
+      if (failedCount > 0) {
+        toast.error(`Deleted ${deletedIds.length} project${deletedIds.length === 1 ? '' : 's'}; ${failedCount} failed`);
+      } else {
+        toast.success(`Deleted ${deletedIds.length} project${deletedIds.length === 1 ? '' : 's'}`);
+        setSelectionMode(false);
+      }
+    } catch (error) {
+      console.error('Bulk delete failed:', error);
+      toast.error('Failed to delete selected projects');
+    } finally {
+      setBulkDeleting(false);
+      setPendingBulkDelete(false);
     }
   };
 
@@ -453,6 +558,15 @@ export default function ProjectHubPage() {
         confirmText="Delete"
         isDestructive
       />
+      <ConfirmModal
+        isOpen={pendingBulkDelete}
+        onClose={() => setPendingBulkDelete(false)}
+        onConfirm={confirmBulkDelete}
+        title={`Delete ${selectedProjectCount} Project${selectedProjectCount === 1 ? '' : 's'}`}
+        description="This will permanently delete the selected projects and all their generated content. This cannot be undone."
+        confirmText={`Delete ${selectedProjectCount}`}
+        isDestructive
+      />
       <div className="max-w-7xl mx-auto space-y-6">
         {/* Header */}
         <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-3">
@@ -462,13 +576,45 @@ export default function ProjectHubPage() {
               Your full project history and usage overview
             </p>
           </div>
-          <Link
-            href="/dashboard/upload"
-            className="inline-flex items-center gap-2 px-4 py-2 bg-blue-600 text-white text-sm font-medium rounded-lg hover:bg-blue-700 transition-colors self-start sm:self-auto"
-          >
-            <Upload className="h-4 w-4" />
-            New Project
-          </Link>
+          <div className="flex items-center gap-2 self-start sm:self-auto">
+            {!isDemoMode && projects.length > 0 && (
+              <button
+                type="button"
+                onClick={() => {
+                  if (selectionMode) {
+                    exitSelectionMode();
+                  } else {
+                    setSelectionMode(true);
+                  }
+                }}
+                className={cn(
+                  "inline-flex items-center gap-2 px-3 py-2 text-sm font-medium rounded-lg border transition-colors",
+                  selectionMode
+                    ? "bg-blue-50 dark:bg-blue-900/20 border-blue-700 text-blue-600 dark:text-blue-400"
+                    : "bg-white dark:bg-slate-900 border-slate-300 dark:border-slate-700 text-slate-600 dark:text-slate-300 hover:bg-slate-100 dark:hover:bg-slate-800"
+                )}
+              >
+                {selectionMode ? (
+                  <>
+                    <X className="h-4 w-4" />
+                    Cancel
+                  </>
+                ) : (
+                  <>
+                    <ListChecks className="h-4 w-4" />
+                    Select
+                  </>
+                )}
+              </button>
+            )}
+            <Link
+              href="/dashboard/upload"
+              className="inline-flex items-center gap-2 px-4 py-2 bg-blue-600 text-white text-sm font-medium rounded-lg hover:bg-blue-700 transition-colors"
+            >
+              <Upload className="h-4 w-4" />
+              New Project
+            </Link>
+          </div>
         </div>
 
         {/* Collapsible Stats Row */}
@@ -592,6 +738,51 @@ export default function ProjectHubPage() {
             )}
           </div>
 
+          {selectionMode && filteredProjects.length > 0 && (
+            <div className="px-4 py-3 border-b border-slate-200 dark:border-slate-800 bg-blue-50 dark:bg-blue-950/20">
+              <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-3">
+                <div className="flex items-center gap-3">
+                  <button
+                    type="button"
+                    onClick={togglePagedProjectSelection}
+                    className="inline-flex items-center gap-2 text-sm font-medium text-blue-700 dark:text-blue-300"
+                    aria-label={allPagedProjectsSelected ? 'Deselect visible projects' : 'Select visible projects'}
+                  >
+                    {allPagedProjectsSelected ? (
+                      <CheckSquare className="h-4 w-4" />
+                    ) : somePagedProjectsSelected ? (
+                      <span className="h-4 w-4 rounded border-2 border-blue-600 bg-blue-600/20" />
+                    ) : (
+                      <Square className="h-4 w-4" />
+                    )}
+                    Select visible
+                  </button>
+                  <span className="text-sm text-blue-700 dark:text-blue-300">
+                    {selectedProjectCount} selected
+                  </span>
+                  {selectedProjectCount > 0 && (
+                    <button
+                      type="button"
+                      onClick={() => setSelectedProjectIds(new Set())}
+                      className="text-xs font-medium text-blue-600 hover:text-blue-500 dark:text-blue-300 dark:hover:text-blue-200"
+                    >
+                      Clear
+                    </button>
+                  )}
+                </div>
+                <button
+                  type="button"
+                  onClick={() => setPendingBulkDelete(true)}
+                  disabled={selectedProjectCount === 0 || bulkDeleting}
+                  className="inline-flex items-center justify-center gap-2 rounded-lg bg-red-600 px-3 py-2 text-sm font-medium text-white transition-colors hover:bg-red-700 disabled:cursor-not-allowed disabled:opacity-50"
+                >
+                  {bulkDeleting ? <Loader2 className="h-4 w-4 animate-spin" /> : <Trash2 className="h-4 w-4" />}
+                  Delete selected
+                </button>
+              </div>
+            </div>
+          )}
+
           {/* Projects Table */}
           {filteredProjects.length === 0 ? (
             projects.length === 0 ? (
@@ -617,12 +808,37 @@ export default function ProjectHubPage() {
               {/* ── Mobile card list (< sm) ── */}
               <div className="sm:hidden divide-y divide-slate-200 dark:divide-slate-800">
                 {pagedProjects.map((project) => (
-                  <div key={project.id} className="p-4 space-y-3">
+                  <div
+                    key={project.id}
+                    className={cn(
+                      "p-4 space-y-3 transition-colors",
+                      selectionMode && selectedProjectIds.has(project.id) && "bg-blue-50 dark:bg-blue-950/20"
+                    )}
+                  >
                     {/* Title + status */}
                     <div className="flex items-start justify-between gap-3">
+                      {selectionMode && (
+                        <button
+                          type="button"
+                          onClick={() => toggleProjectSelection(project.id)}
+                          className="mt-0.5 flex-shrink-0 text-slate-500 hover:text-blue-600 dark:hover:text-blue-400"
+                          aria-label={selectedProjectIds.has(project.id) ? `Deselect ${project.title || 'project'}` : `Select ${project.title || 'project'}`}
+                        >
+                          {selectedProjectIds.has(project.id) ? (
+                            <CheckSquare className="h-5 w-5 text-blue-600 dark:text-blue-400" />
+                          ) : (
+                            <Square className="h-5 w-5" />
+                          )}
+                        </button>
+                      )}
                       <Link
                         href={`/dashboard/projects?id=${project.id}`}
                         className="flex-1 min-w-0"
+                        onClick={(event) => {
+                          if (!selectionMode) return;
+                          event.preventDefault();
+                          toggleProjectSelection(project.id);
+                        }}
                       >
                         <p className="font-medium text-slate-700 dark:text-slate-200 truncate">
                           {project.title || 'Untitled'}
@@ -672,7 +888,7 @@ export default function ProjectHubPage() {
                         <button
                           type="button"
                           onClick={() => handleDelete(project.id)}
-                          disabled={deletingId === project.id}
+                          disabled={deletingId === project.id || bulkDeleting}
                           className="p-2 text-slate-500 hover:text-red-500 dark:hover:text-red-400 hover:bg-red-50 dark:hover:bg-red-900/20 rounded-lg transition-colors disabled:opacity-50"
                           title="Delete"
                         >
@@ -693,6 +909,24 @@ export default function ProjectHubPage() {
                 <table className="w-full text-sm">
                   <thead>
                     <tr className="border-b border-slate-200 dark:border-slate-800 bg-slate-50 dark:bg-slate-800/40">
+                      {selectionMode && (
+                        <th className="w-10 px-4 py-3">
+                          <button
+                            type="button"
+                            onClick={togglePagedProjectSelection}
+                            className="inline-flex text-slate-500 hover:text-blue-600 dark:hover:text-blue-400"
+                            aria-label={allPagedProjectsSelected ? 'Deselect visible projects' : 'Select visible projects'}
+                          >
+                            {allPagedProjectsSelected ? (
+                              <CheckSquare className="h-4 w-4 text-blue-600 dark:text-blue-400" />
+                            ) : somePagedProjectsSelected ? (
+                              <span className="h-4 w-4 rounded border-2 border-blue-600 bg-blue-600/20" />
+                            ) : (
+                              <Square className="h-4 w-4" />
+                            )}
+                          </button>
+                        </th>
+                      )}
                       <th className="text-left font-medium text-slate-500 dark:text-slate-400 px-4 py-3">Project</th>
                       <th className="text-left font-medium text-slate-500 dark:text-slate-400 px-4 py-3">Status</th>
                       <th className="hidden sm:table-cell text-left font-medium text-slate-500 dark:text-slate-400 px-4 py-3">Type</th>
@@ -706,12 +940,36 @@ export default function ProjectHubPage() {
                     {pagedProjects.map((project) => (
                       <tr
                         key={project.id}
-                        className="hover:bg-slate-50 dark:hover:bg-slate-800/50 transition-colors group"
+                        className={cn(
+                          "hover:bg-slate-50 dark:hover:bg-slate-800/50 transition-colors group",
+                          selectionMode && selectedProjectIds.has(project.id) && "bg-blue-50 dark:bg-blue-950/20"
+                        )}
                       >
+                        {selectionMode && (
+                          <td className="px-4 py-3 align-top">
+                            <button
+                              type="button"
+                              onClick={() => toggleProjectSelection(project.id)}
+                              className="inline-flex text-slate-500 hover:text-blue-600 dark:hover:text-blue-400"
+                              aria-label={selectedProjectIds.has(project.id) ? `Deselect ${project.title || 'project'}` : `Select ${project.title || 'project'}`}
+                            >
+                              {selectedProjectIds.has(project.id) ? (
+                                <CheckSquare className="h-4 w-4 text-blue-600 dark:text-blue-400" />
+                              ) : (
+                                <Square className="h-4 w-4" />
+                              )}
+                            </button>
+                          </td>
+                        )}
                         <td className="px-4 py-3">
                           <Link
                             href={`/dashboard/projects?id=${project.id}`}
                             className="block"
+                            onClick={(event) => {
+                              if (!selectionMode) return;
+                              event.preventDefault();
+                              toggleProjectSelection(project.id);
+                            }}
                           >
                             <div className="font-medium text-slate-700 dark:text-slate-200 group-hover:text-blue-600 dark:group-hover:text-blue-400 transition-colors">
                               {project.title || 'Untitled'}
@@ -772,7 +1030,7 @@ export default function ProjectHubPage() {
                               <button
                                 type="button"
                                 onClick={() => handleDelete(project.id)}
-                                disabled={deletingId === project.id}
+                                disabled={deletingId === project.id || bulkDeleting}
                                 className="p-1.5 text-slate-500 hover:text-red-500 dark:hover:text-red-400 hover:bg-red-50 dark:hover:bg-red-900/20 rounded transition-colors disabled:opacity-50"
                                 title="Delete"
                               >
