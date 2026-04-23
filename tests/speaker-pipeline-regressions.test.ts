@@ -1578,6 +1578,139 @@ describe('speaker pipeline regressions', () => {
     expect(resolved.speakers.speaker_1.finalName).not.toBe('General Assembly');
   });
 
+  test('daily beast guest intro is not overwritten by title or role phrases', () => {
+    const speakerMap = {
+      speaker_1: { id: 'speaker_1', finalName: 'Joanna Coles', role: 'host', fallbackName: 'Speaker 1', segments: [] },
+      speaker_2: { id: 'speaker_2', finalName: 'Human Services Secretary', role: 'guest', fallbackName: 'Speaker 2', segments: [] },
+    };
+
+    const segments: SpeakerSegment[] = [
+      {
+        speakerId: 'speaker_1',
+        initialSpeakerId: 'Speaker_A',
+        finalSpeakerId: 'speaker_1',
+        startTime: 0,
+        endTime: 24,
+        text: "I'm Joanna Coles. This is the Daily Beast podcast. Today we're talking to David Rothkopf about the Human Services Secretary. David Rothkopf, welcome back.",
+        confidence: 0.9,
+        status: 'confirmed',
+      },
+      {
+        speakerId: 'speaker_2',
+        initialSpeakerId: 'Speaker_B',
+        finalSpeakerId: 'speaker_2',
+        startTime: 24,
+        endTime: 58,
+        text: 'Very serious. The reality is that they realize they are going to lose, and so they are using every conceivable tool.',
+        confidence: 0.9,
+        status: 'confirmed',
+      },
+    ];
+
+    const resolved = __testUtils.resolveConversationalHumanNamesInSpeakerMap(
+      speakerMap,
+      segments,
+      {
+        projectType: 'PODCAST',
+        title: 'The Daily Beast Podcast',
+        filename: 'daily_beast_david_rothkopf.json',
+      }
+    );
+
+    expect(resolved.speakers.speaker_2.finalName).toBe('David Rothkopf');
+    expect(resolved.speakers.speaker_2.finalName).not.toBe('Human Services Secretary');
+    expect(resolved.speakers.speaker_2.finalNameLocked).toBe(true);
+    expect(resolved.speakers.speaker_2.nameProvenance).toEqual(expect.arrayContaining(['direct_intro', 'guest_intro']));
+  });
+
+  test('ezra guest intro is not overwritten by treaties or institutions', () => {
+    const speakerMap = {
+      speaker_1: { id: 'speaker_1', finalName: 'Ezra Klein', role: 'host', fallbackName: 'Speaker 1', segments: [] },
+      speaker_2: { id: 'speaker_2', finalName: 'Versailles Peace Treaty', role: 'guest', fallbackName: 'Speaker 2', segments: [] },
+    };
+
+    const segments: SpeakerSegment[] = [
+      {
+        speakerId: 'speaker_1',
+        initialSpeakerId: 'Speaker_A',
+        finalSpeakerId: 'speaker_1',
+        startTime: 0,
+        endTime: 44,
+        text: 'From New York Times Opinion, this is The Ezra Klein Show. The UN General Assembly passed a resolution. Azza Bali is a professor at Yale Law School. Azza Bali, welcome to the show.',
+        confidence: 0.88,
+        status: 'confirmed',
+      },
+      {
+        speakerId: 'speaker_2',
+        initialSpeakerId: 'Speaker_B',
+        finalSpeakerId: 'speaker_2',
+        startTime: 44,
+        endTime: 76,
+        text: 'Thank you for having me. International law is not just the Versailles Peace Treaty. It depends on institutions and practice.',
+        confidence: 0.88,
+        status: 'confirmed',
+      },
+    ];
+
+    const resolved = __testUtils.resolveConversationalHumanNamesInSpeakerMap(
+      speakerMap,
+      segments,
+      {
+        projectType: 'PODCAST',
+        title: 'The Ezra Klein Show',
+        filename: 'ezra_klein_show.json',
+      }
+    );
+
+    expect(resolved.speakers.speaker_2.finalName).toBe('Azza Bali');
+    expect(resolved.speakers.speaker_2.finalName).not.toBe('Versailles Peace Treaty');
+    expect(resolved.speakers.speaker_2.finalNameLocked).toBe(true);
+  });
+
+  test('topic and geopolitical phrases cannot survive as conversational speaker names', () => {
+    const speakerMap = {
+      speaker_1: { id: 'speaker_1', finalName: 'Speaker 1', role: 'unknown', fallbackName: 'Speaker 1', segments: [] },
+      speaker_2: { id: 'speaker_2', finalName: 'United States', role: 'guest', fallbackName: 'Speaker 2', segments: [] },
+    };
+
+    const segments: SpeakerSegment[] = [
+      {
+        speakerId: 'speaker_1',
+        initialSpeakerId: 'Speaker_A',
+        finalSpeakerId: 'speaker_1',
+        startTime: 0,
+        endTime: 48,
+        text: 'Welcome to The Rest Is Politics US and another emergency livestream. I think the United States is now moving toward a strike.',
+        confidence: 0.8,
+        status: 'confirmed',
+      },
+      {
+        speakerId: 'speaker_2',
+        initialSpeakerId: 'Speaker_B',
+        finalSpeakerId: 'speaker_2',
+        startTime: 48,
+        endTime: 86,
+        text: 'Well, first off, I was in the UK and people asked me whether he was going to strike Iran.',
+        confidence: 0.8,
+        status: 'confirmed',
+      },
+    ];
+
+    const resolved = __testUtils.resolveConversationalHumanNamesInSpeakerMap(
+      speakerMap,
+      segments,
+      {
+        projectType: 'PODCAST',
+        title: 'ALL HELL BREAKS LOOSE As Trump ATTACKS IRAN LIVE The Rest Is Politics US',
+        filename: 'rest_is_politics_us.json',
+      }
+    );
+
+    expect(resolved.speakers.speaker_2.finalName).toBe('Speaker 2');
+    expect(resolved.speakers.speaker_2.finalName).not.toBe('United States');
+    expect(resolved.speakers.speaker_2.requiresReview).toBe(true);
+  });
+
   test('generic show identity stays normalized and never uses transcript blobs as display name', () => {
     const priorProjects = [
       {

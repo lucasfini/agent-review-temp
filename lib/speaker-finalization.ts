@@ -800,6 +800,23 @@ export function attachSpeakerAssignmentMetadata(
       requiresReview: speaker.requiresReview,
       contradictions: speaker.contradictions,
     }));
+  const finalNameProvenance = Object.values(speakerData?.speakers || {}).map((speaker: any) => ({
+    speakerId: speaker.id,
+    finalName: typeof speaker.finalName === 'string' ? speaker.finalName : null,
+    provenance: Array.isArray(speaker.nameProvenance) ? speaker.nameProvenance : [],
+    finalNameLocked: Boolean(speaker.finalNameLocked),
+  }));
+  const finalizationSnapshots = Array.isArray(existingDiagnostics?.finalizationSnapshots)
+    ? existingDiagnostics.finalizationSnapshots.map((snapshot: any) => ({
+        ...snapshot,
+        conversationalNaming: snapshot?.conversationalNaming
+          ? {
+              ...snapshot.conversationalNaming,
+              nameProvenance: finalNameProvenance,
+            }
+          : snapshot?.conversationalNaming,
+      }))
+    : existingDiagnostics?.finalizationSnapshots;
 
   return {
     ...speakerData,
@@ -816,6 +833,8 @@ export function attachSpeakerAssignmentMetadata(
       },
       pipelineDiagnostics: existingDiagnostics ? {
         ...existingDiagnostics,
+        finalizationSnapshots,
+        finalNameProvenance,
         finalAssignmentConfidence: summary.confidence,
         finalReviewSummary: {
           reviewCount: summary.reviewCount,

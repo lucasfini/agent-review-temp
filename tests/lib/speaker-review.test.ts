@@ -139,6 +139,55 @@ describe('speaker review trust helpers', () => {
     ]);
   });
 
+  test('finalization diagnostics preserve final speaker name provenance', () => {
+    const speakerData = attachSpeakerAssignmentMetadata({
+      segments: [
+        {
+          speakerId: 'speaker_2',
+          finalSpeakerId: 'speaker_2',
+          startTime: 0,
+          endTime: 12,
+          text: 'Thanks for having me.',
+          status: 'confirmed',
+        },
+      ],
+      speakers: {
+        speaker_2: {
+          id: 'speaker_2',
+          finalName: 'David Rothkopf',
+          role: 'guest',
+          finalNameLocked: true,
+          nameProvenance: ['direct_intro', 'guest_intro'],
+          assignmentContradictions: [],
+          requiresReview: false,
+        },
+      },
+      detectionMetadata: {
+        pipelineDiagnostics: {
+          finalizationSnapshots: [
+            {
+              stage: 'pre_final',
+              conversationalNaming: {
+                nameProvenance: [],
+              },
+            },
+          ],
+        },
+      },
+    });
+
+    expect(
+      speakerData.detectionMetadata.pipelineDiagnostics.finalizationSnapshots[0].conversationalNaming.nameProvenance
+    ).toEqual([
+      expect.objectContaining({
+        speakerId: 'speaker_2',
+        finalName: 'David Rothkopf',
+        provenance: ['direct_intro', 'guest_intro'],
+        finalNameLocked: true,
+      }),
+    ]);
+  });
+
   test('confirmed review segments increase trust and drop out of the review queue', () => {
     const unconfirmed = attachSpeakerAssignmentMetadata({
       segments: [

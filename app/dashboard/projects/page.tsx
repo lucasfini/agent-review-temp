@@ -1615,7 +1615,8 @@ export default function ProjectsPage() {
     const result = await exportContent(
       projectsForExport,
       payload.export_manifest,
-      payload.format
+      payload.format,
+      { debug: payload.debug }
     );
 
     if (result.success) {

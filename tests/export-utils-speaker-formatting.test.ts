@@ -233,4 +233,36 @@ describe('export speaker formatting', () => {
     expect(conversation.debug.rawSpeakerData.speakers.speaker_1.finalNameLocked).toBe(true);
     expect(conversation.debug.pipelineDiagnostics.collapsePreventionResolved).toBe(true);
   });
+
+  test('normal json export omits debug speaker payload unless diagnostic mode is requested', () => {
+    const project = {
+      id: 'project_1',
+      title: 'Lex Fridman Podcast',
+      outputs: [],
+      speaker_data: {
+        speakers: {
+          speaker_1: {
+            finalName: 'Lex Fridman',
+            role: 'host',
+            finalNameLocked: true,
+            nameProvenance: ['self_id'],
+          },
+        },
+        segments: [],
+        detectionMetadata: {
+          pipelineDiagnostics: {
+            collapsePreventionResolved: true,
+          },
+        },
+      },
+    };
+
+    const json = __testUtils.formatAsJSON(
+      [project as any],
+      [{ projectId: 'project_1', projectTitle: 'Lex Fridman Podcast', selectedBlockIds: [], selectedCoreContent: ['conversation'] }]
+    );
+    const parsed = JSON.parse(json);
+
+    expect(parsed.projects[0].coreContent.conversation.debug).toBeUndefined();
+  });
 });

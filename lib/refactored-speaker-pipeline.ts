@@ -1599,6 +1599,7 @@ export type ConversationalNamingInspection = {
   recurringAnchors: Array<{ name: string; role?: SpeakerRole; speakerId: string; evidence: string[] }>;
   rejectedHumanNameCandidates: string[];
   rejectedNamePromotions: string[];
+  rejectedNamePromotionReasons?: Array<{ speakerId: string; name: string; reasons: string[] }>;
   nameProvenance: Array<{ speakerId: string; finalName: string | null; provenance: string[]; finalNameLocked: boolean }>;
   rejectedIntroducedNames: string[];
   rejectedGuestMemoryCarryovers: string[];
@@ -2677,6 +2678,7 @@ function assignRecurringShowRosterNames(
     }
     targetSpeaker.confidence = Math.max(targetSpeaker.confidence, 0.9);
     targetSpeaker.source = entry.confidenceSource === 'manual' ? 'preset_roster' : 'heuristic';
+    addRosterSpeakerProvenance(targetSpeaker, ['recurring_roster'], true);
     assignedSpeakerIds.add(chosenSpeakerId);
     anchors.push({
       name: entry.name,
@@ -2762,8 +2764,23 @@ function hasParticipantStyleProvenanceReasons(reasons: string[]): boolean {
     reason === 'guest_intro' ||
     reason === 'panel_intro' ||
     reason === 'known_host_intro' ||
-    reason === 'recurring_roster'
+    reason === 'recurring_roster' ||
+    reason === 'dominant_reply_after_intro'
   ));
+}
+
+function addRosterSpeakerProvenance(
+  speaker: GPTSpeaker,
+  reasons: string[],
+  lockFinalName = true
+): void {
+  const existing = Array.isArray((speaker as any).nameProvenance)
+    ? (speaker as any).nameProvenance.filter((value: unknown): value is string => typeof value === 'string' && value.trim().length > 0)
+    : [];
+  (speaker as any).nameProvenance = Array.from(new Set([...existing, ...reasons]));
+  if (lockFinalName) {
+    (speaker as any).finalNameLocked = true;
+  }
 }
 
 function hasParticipantStyleEvidence(
@@ -2826,6 +2843,58 @@ function collectNameProvenanceReasons(
   return Array.from(collected);
 }
 
+function getConversationalNameRejectionReasons(
+  name: string,
+  speaker: any,
+  segments: SpeakerSegment[],
+  options: ConversationalNamingOptions,
+  provenance: Map<string, string[]>
+): string[] {
+  const reasons = new Set<string>();
+  const normalized = normalizeSpeakerName(name);
+  const titleContext = `${options.title || ''} ${options.filename || ''}`.toLowerCase();
+
+  if (isLikelyNonHumanConversationalNameCandidate(name, {
+    showIdentity: options.showIdentity,
+    title: options.title,
+    filename: options.filename,
+  })) {
+    reasons.add('mentioned_entity_only');
+  }
+  if (/\b(?:school|university|college|institute|center|centre|department|ministry|foundation|magazine|newspaper|news|opinion|world service|radio|network|press|times|general assembly|security council|united nations|u\.?n\.?)\b/i.test(name)) {
+    reasons.add('institution_or_body');
+  }
+  if (/\b(?:secretary|minister|president|prime minister|senator|governor|chief of staff|human services)\b/i.test(name)) {
+    reasons.add('title_or_role_phrase');
+  }
+  if (/\b(?:united states|united kingdom|america|israel|palestinians?|iran|russia|ukraine|china|canada|europe)\b/i.test(name)) {
+    reasons.add('geopolitical_entity');
+  }
+  if (/\b(?:treaty|resolution|accord|agreement|act|bill|law|nobel(?: prize)?)\b/i.test(name)) {
+    reasons.add('topic_phrase');
+  }
+  if (normalized && titleContext.includes(normalized)) {
+    reasons.add('topic_phrase');
+  }
+
+  const participantSupported = hasParticipantStyleEvidence(name, provenance) ||
+    hasParticipantStyleProvenanceReasons(getSpeakerNameProvenance(speaker));
+  if (!participantSupported) {
+    reasons.add('unsupported_provenance');
+  }
+
+  const aliases = buildRecurringAliasSet({ name });
+  const ownedSegments = segments.filter((segment) =>
+    isConversationalSegment(segment) &&
+    (segment.finalSpeakerId || segment.speakerId) === speaker.id
+  );
+  if (ownedSegments.some((segment) => countVocativeAliasMatches(getSegText(segment), aliases) > 0)) {
+    reasons.add('self_vocative');
+  }
+
+  return Array.from(reasons);
+}
+
 function setSpeakerIdentityWithProvenance(
   speaker: any,
   name: string,
@@ -2869,20 +2938,21 @@ function enforceConversationalNameProvenanceInSpeakerMap(
   speakers: Record<string, any>,
   segments: SpeakerSegment[],
   options: ConversationalNamingOptions
-): { speakers: Record<string, any>; rejectedNamePromotions: string[]; info: string[] } {
+): { speakers: Record<string, any>; rejectedNamePromotions: string[]; rejectedNamePromotionReasons: Array<{ speakerId: string; name: string; reasons: string[] }>; info: string[] } {
   const updatedSpeakers = Object.fromEntries(
     Object.entries(speakers).map(([id, speaker]) => [id, { ...speaker }])
   );
   const info: string[] = [];
   const rejectedNamePromotions: string[] = [];
+  const rejectedNamePromotionReasons: Array<{ speakerId: string; name: string; reasons: string[] }> = [];
   const provenance = collectConversationalNameProvenance(segments, options);
 
   for (const [speakerId, speaker] of Object.entries(updatedSpeakers)) {
     const currentName = typeof speaker.finalName === 'string' ? speaker.finalName.trim() : '';
     if (!currentName || /^Speaker\s+\d+$/i.test(currentName)) continue;
     if (speaker.role === 'advertiser' || speaker.role === 'quoted_audio' || speaker.role === 'narrator') continue;
-    const participantSupported = hasParticipantStyleEvidence(currentName, provenance) ||
-      hasParticipantStyleProvenanceReasons(getSpeakerNameProvenance(speaker));
+    const rejectionReasons = getConversationalNameRejectionReasons(currentName, speaker, segments, options, provenance);
+    const participantSupported = !rejectionReasons.includes('unsupported_provenance');
     if (
       speaker.source === 'preset_roster' ||
       speaker.source === 'manual' ||
@@ -2895,20 +2965,18 @@ function enforceConversationalNameProvenanceInSpeakerMap(
 
     const normalized = normalizeSpeakerName(currentName);
     const supported = provenance.has(normalized);
-    const nonHuman = isLikelyNonHumanConversationalNameCandidate(currentName, {
-      showIdentity: options.showIdentity,
-      title: options.title,
-      filename: options.filename,
-    });
-    const aliases = buildRecurringAliasSet({ name: currentName });
-    const ownedSegments = segments.filter((segment) =>
-      isConversationalSegment(segment) &&
-      (segment.finalSpeakerId || segment.speakerId) === speakerId
-    );
-    const selfVocative = ownedSegments.some((segment) => countVocativeAliasMatches(getSegText(segment), aliases) > 0);
+    const nonHuman = rejectionReasons.some((reason) => (
+      reason === 'mentioned_entity_only' ||
+      reason === 'institution_or_body' ||
+      reason === 'title_or_role_phrase' ||
+      reason === 'geopolitical_entity' ||
+      reason === 'topic_phrase'
+    ));
+    const selfVocative = rejectionReasons.includes('self_vocative');
     if (supported && participantSupported && !nonHuman && !selfVocative) continue;
 
     rejectedNamePromotions.push(currentName);
+    rejectedNamePromotionReasons.push({ speakerId, name: currentName, reasons: rejectionReasons });
     updatedSpeakers[speakerId] = {
       ...speaker,
       finalName: getNumberedSpeakerFallbackName(speakerId, speaker),
@@ -2921,7 +2989,7 @@ function enforceConversationalNameProvenanceInSpeakerMap(
     info.push(`[CONVERSATIONAL NAMING] Cleared unsupported conversational name "${currentName}" from ${speakerId}`);
   }
 
-  return { speakers: updatedSpeakers, rejectedNamePromotions, info };
+  return { speakers: updatedSpeakers, rejectedNamePromotions, rejectedNamePromotionReasons, info };
 }
 
 function clearNonHumanConversationalNames(
@@ -3559,6 +3627,11 @@ export function resolveConversationalHumanNames(
         selfIdentifiedSpeaker.role = 'host';
         selfIdentifiedSpeaker.confidence = Math.max(selfIdentifiedSpeaker.confidence, 0.92);
         selfIdentifiedSpeaker.source = selfIdentifiedSpeaker.source === 'preset_roster' ? selfIdentifiedSpeaker.source : 'intro_handoff';
+        addRosterSpeakerProvenance(selfIdentifiedSpeaker, collectNameProvenanceReasons(earlyHostSelfId.fullName, {
+          ...options,
+          segments,
+          provenance: ['self_id'],
+        }), true);
         assigned++;
         info.push(`[CONVERSATIONAL NAMING] ${selfIdentifiedSpeaker.id}: "${currentName || '(unnamed)'}" → "${earlyHostSelfId.fullName}" (${earlyHostSelfId.reason})`);
       }
@@ -3585,6 +3658,11 @@ export function resolveConversationalHumanNames(
         hostSpeaker.role = 'host';
         hostSpeaker.confidence = Math.max(hostSpeaker.confidence, 0.88);
         hostSpeaker.source = hostSpeaker.source === 'preset_roster' ? hostSpeaker.source : 'intro_handoff';
+        addRosterSpeakerProvenance(hostSpeaker, collectNameProvenanceReasons(knownHost.fullName, {
+          ...options,
+          segments,
+          provenance: ['known_host_intro', 'self_id'],
+        }), true);
         assigned++;
         info.push(`[CONVERSATIONAL NAMING] ${hostSpeaker.id}: "${currentName || '(unnamed)'}" → "${knownHost.fullName}" (${knownHost.reason})`);
       }
@@ -3617,6 +3695,11 @@ export function resolveConversationalHumanNames(
         }
         guestSpeaker.confidence = Math.max(guestSpeaker.confidence, 0.9);
         guestSpeaker.source = guestSpeaker.source === 'preset_roster' ? guestSpeaker.source : 'intro_handoff';
+        addRosterSpeakerProvenance(guestSpeaker, collectNameProvenanceReasons(introducedName, {
+          ...options,
+          segments,
+          provenance: ['direct_intro', 'guest_intro', 'dominant_reply_after_intro'],
+        }), true);
         assigned++;
         info.push(
           `[CONVERSATIONAL NAMING] ${guestSpeaker.id}: "${currentName || '(unnamed)'}" → "${introducedName}" (intro_anchor)`
@@ -3674,6 +3757,7 @@ export function inspectConversationalNamingState(
       recurringAnchors: [],
       rejectedHumanNameCandidates: [],
       rejectedNamePromotions: [],
+      rejectedNamePromotionReasons: [],
       nameProvenance: [],
       rejectedIntroducedNames: [],
       rejectedGuestMemoryCarryovers: [],
@@ -3721,6 +3805,23 @@ export function inspectConversationalNamingState(
       !provenance.has(normalizeSpeakerName(speaker.name))
     )
     .map((speaker) => speaker.name as string);
+  const rejectedNamePromotionReasons = recurringAssignments.roster
+    .filter((speaker) => speaker.name && !isAdvertiserLikeSpeaker(speaker))
+    .map((speaker) => ({
+      speakerId: speaker.id,
+      name: speaker.name as string,
+      reasons: getConversationalNameRejectionReasons(
+        speaker.name as string,
+        speaker,
+        segments,
+        {
+          ...options,
+          showIdentity: recurringAssignments.showIdentity || options.showIdentity,
+        },
+        provenance
+      ),
+    }))
+    .filter((entry) => entry.reasons.length > 0);
   const guestCandidateRankings = introAnchoredCandidate?.hostSpeakerId != null
     ? buildGuestReplyCandidateRankings(
         segments,
@@ -3774,6 +3875,7 @@ export function inspectConversationalNamingState(
       ...clearedNonHuman.rejectedCandidates,
     ],
     rejectedNamePromotions,
+    rejectedNamePromotionReasons,
     nameProvenance,
     rejectedIntroducedNames: collectRejectedIntroducedNames(segments),
     rejectedGuestMemoryCarryovers: recurringAssignments.rejectedGuestCarryovers,
@@ -3840,10 +3942,30 @@ export function resolveConversationalHumanNamesInSpeakerMap(
           filename: options.filename,
         }) &&
         nameProvenance.has(normalizeSpeakerName(originalFinalName));
+      const originalRejectedName = originalFinalName.length > 0 &&
+        !/^Speaker\s+\d+$/i.test(originalFinalName) &&
+        !originalCanSurvive;
       const preserveOriginalLockedName = Boolean(
         resolvedSpeaker?.name &&
         isFinalNameLocked(original) &&
         !canOverwriteSpeakerIdentity(original, resolvedSpeaker.name, options)
+      );
+      const resolvedProvenance = resolvedSpeaker?.name
+        ? collectNameProvenanceReasons(resolvedSpeaker.name, {
+            ...options,
+            segments,
+            provenance: getSpeakerNameProvenance(resolvedSpeaker),
+          })
+        : [];
+      const nextNameProvenance = Array.from(new Set([
+        ...getSpeakerNameProvenance(original),
+        ...resolvedProvenance,
+      ]));
+      const shouldLockResolvedName = Boolean(
+        preserveOriginalLockedName ||
+        isFinalNameLocked(original) ||
+        isFinalNameLocked(resolvedSpeaker) ||
+        hasParticipantStyleProvenanceReasons(nextNameProvenance)
       );
       const nextFinalName = resolvedSpeaker?.name
         ? preserveOriginalLockedName
@@ -3859,8 +3981,9 @@ export function resolveConversationalHumanNamesInSpeakerMap(
         role: resolvedSpeaker?.role || original.role,
         roleConfidence: resolvedSpeaker?.confidence || original.roleConfidence,
         source: resolvedSpeaker?.source || original.source,
-        finalNameLocked: preserveOriginalLockedName ? original.finalNameLocked : original.finalNameLocked || false,
-        nameProvenance: getSpeakerNameProvenance(original),
+        requiresReview: original.requiresReview || (originalRejectedName && !resolvedSpeaker?.name) || undefined,
+        finalNameLocked: shouldLockResolvedName,
+        nameProvenance: nextNameProvenance,
         extractedName: resolvedSpeaker?.name
           ? {
               ...(original.extractedName || {}),
@@ -3899,8 +4022,18 @@ export function resolveConversationalHumanNamesInSpeakerMap(
     segments,
     options
   );
-  const provenanceVerified = enforceConversationalNameProvenanceInSpeakerMap(
+  const postRecurringGuestIntroRepair = repairSpeakerMapWithDirectGuestIntros(
     verifiedRecurringOwnership.speakers,
+    segments,
+    options
+  );
+  const postRecurringGuestClusterRepair = repairSpeakerMapWithDominantGuestClusters(
+    postRecurringGuestIntroRepair,
+    segments,
+    options
+  );
+  const provenanceVerified = enforceConversationalNameProvenanceInSpeakerMap(
+    postRecurringGuestClusterRepair,
     segments,
     options
   );
@@ -4312,7 +4445,7 @@ function repairSpeakerMapWithDominantGuestClusters(
           provenance: collectNameProvenanceReasons(guestName.fullName, {
             ...options,
             segments,
-            provenance: ['guest_intro'],
+            provenance: ['guest_intro', 'dominant_reply_after_intro'],
           }),
           lockFinalName: true,
         }
@@ -4432,6 +4565,8 @@ function verifyRecurringShowOwnershipInSpeakerMap(
         finalName: getNumberedSpeakerFallbackName(speakerId, speaker),
         role: speaker.role === entry.role ? 'unknown' : speaker.role,
         extractedName: undefined,
+        finalNameLocked: false,
+        nameProvenance: [],
         assignmentConfidence: entry.assignmentConfidence,
         assignmentContradictions: entry.negativeEvidence,
         requiresReview: true,
@@ -6267,6 +6402,10 @@ function applyInterviewIntroBasedNaming(
     }
     targetSpeaker.confidence = Math.max(targetSpeaker.confidence, 0.86);
     targetSpeaker.source = targetSpeaker.source === 'preset_roster' ? targetSpeaker.source : 'intro_handoff';
+    addRosterSpeakerProvenance(targetSpeaker, collectNameProvenanceReasons(candidate.name, {
+      segments,
+      provenance: ['guest_intro', 'dominant_reply_after_intro'],
+    }), true);
 
     existingNames.add(normalizedCandidate);
     assigned++;
@@ -6345,6 +6484,10 @@ function applyDirectAddressedGuestIntroNaming(
     targetSpeaker.role = 'guest';
     targetSpeaker.confidence = Math.max(targetSpeaker.confidence, 0.88);
     targetSpeaker.source = targetSpeaker.source === 'preset_roster' ? targetSpeaker.source : 'intro_handoff';
+    addRosterSpeakerProvenance(targetSpeaker, collectNameProvenanceReasons(fullName, {
+      segments,
+      provenance: ['direct_intro', 'guest_intro', 'dominant_reply_after_intro'],
+    }), true);
     assigned++;
     info.push(`[DIRECT INTRO] ${guestSpeakerId}: "${currentName || '(unnamed)'}" → "${fullName}"`);
     break;

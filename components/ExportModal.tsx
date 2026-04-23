@@ -92,6 +92,7 @@ export interface ExportManifestItem {
 export interface ExportPayload {
   format: 'markdown' | 'pdf' | 'json' | 'plaintext';
   export_manifest: ExportManifestItem[];
+  debug?: boolean;
 }
 
 interface ExportModalProps {
@@ -145,6 +146,7 @@ export default function ExportModal({
   const [selectedCoreContent, setSelectedCoreContent] = useState<Record<string, Set<CoreContentType>>>({});
   const [expandedGroups, setExpandedGroups] = useState<Set<string>>(new Set());
   const [isExporting, setIsExporting] = useState(false);
+  const [includeDiagnosticJson, setIncludeDiagnosticJson] = useState(false);
 
   // Initialize selected blocks when projects change
   useEffect(() => {
@@ -174,8 +176,15 @@ export default function ExportModal({
       setSelectedProjectId(null);
       setExpandedGroups(new Set());
       setIsExporting(false);
+      setIncludeDiagnosticJson(false);
     }
   }, [isOpen]);
+
+  useEffect(() => {
+    if (selectedFormat !== 'json') {
+      setIncludeDiagnosticJson(false);
+    }
+  }, [selectedFormat]);
 
   // Get currently selected project
   const activeProject = useMemo(() =>
@@ -387,6 +396,7 @@ export default function ExportModal({
       const payload: ExportPayload = {
         format: selectedFormat,
         export_manifest: manifest,
+        debug: selectedFormat === 'json' ? includeDiagnosticJson : false,
       };
 
       console.log('[EXPORT] Payload:', JSON.stringify(payload, null, 2));
@@ -684,6 +694,17 @@ export default function ExportModal({
                 </select>
                 <ChevronDown className="absolute right-3 top-1/2 -translate-y-1/2 w-4 h-4 text-slate-600 dark:text-slate-300 pointer-events-none" />
               </div>
+              {selectedFormat === 'json' && (
+                <label className="flex items-center gap-2 rounded-lg border border-amber-300 bg-amber-50 px-3 py-2 text-sm text-amber-900 dark:border-amber-500/40 dark:bg-amber-500/10 dark:text-amber-100">
+                  <input
+                    type="checkbox"
+                    checked={includeDiagnosticJson}
+                    onChange={(event) => setIncludeDiagnosticJson(event.target.checked)}
+                    className="h-4 w-4 rounded border-amber-400 text-amber-600 focus:ring-amber-500"
+                  />
+                  <span>Include diagnostic speaker data</span>
+                </label>
+              )}
             </div>
 
             {/* Selection Stats & Actions */}
