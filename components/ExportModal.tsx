@@ -151,12 +151,12 @@ export default function ExportModal({
   // Initialize selected blocks when projects change
   useEffect(() => {
     if (isOpen && projects.length > 0) {
-      // Initialize all projects with empty selections
+      // Default to exporting all available content for the chosen projects.
       const initialBlocks: Record<string, Set<string>> = {};
       const initialCore: Record<string, Set<CoreContentType>> = {};
       projects.forEach(p => {
-        initialBlocks[p.id] = new Set();
-        initialCore[p.id] = new Set();
+        initialBlocks[p.id] = new Set(p.outputs.map(o => o.id));
+        initialCore[p.id] = new Set(getAvailableCoreContent(p));
       });
       setSelectedBlocks(initialBlocks);
       setSelectedCoreContent(initialCore);
@@ -249,15 +249,26 @@ export default function ExportModal({
   const isProjectFullySelected = (projectId: string) => {
     const project = projects.find(p => p.id === projectId);
     if (!project) return false;
-    return selectedBlocks[projectId]?.size === project.outputs.length && project.outputs.length > 0;
+    const selectedOutputCount = selectedBlocks[projectId]?.size || 0;
+    const availableCoreCount = getAvailableCoreContent(project).length;
+    const selectedCoreCount = selectedCoreContent[projectId]?.size || 0;
+    const totalAvailable = project.outputs.length + availableCoreCount;
+
+    if (totalAvailable === 0) return false;
+    return selectedOutputCount === project.outputs.length && selectedCoreCount === availableCoreCount;
   };
 
   // Check if a project has some outputs selected
   const isProjectPartiallySelected = (projectId: string) => {
     const project = projects.find(p => p.id === projectId);
     if (!project) return false;
-    const selectedCount = selectedBlocks[projectId]?.size || 0;
-    return selectedCount > 0 && selectedCount < project.outputs.length;
+    const selectedOutputCount = selectedBlocks[projectId]?.size || 0;
+    const availableCoreCount = getAvailableCoreContent(project).length;
+    const selectedCoreCount = selectedCoreContent[projectId]?.size || 0;
+    const totalSelected = selectedOutputCount + selectedCoreCount;
+    const totalAvailable = project.outputs.length + availableCoreCount;
+
+    return totalSelected > 0 && totalSelected < totalAvailable;
   };
 
   // Toggle individual block selection
@@ -277,17 +288,17 @@ export default function ExportModal({
   const toggleAllForProject = (projectId: string) => {
     const project = projects.find(p => p.id === projectId);
     if (!project) return;
+    const availableCore = getAvailableCoreContent(project);
 
-    setSelectedBlocks(prev => {
-      const isFullySelected = isProjectFullySelected(projectId);
-      if (isFullySelected) {
-        // Deselect all
-        return { ...prev, [projectId]: new Set() };
-      } else {
-        // Select all
-        return { ...prev, [projectId]: new Set(project.outputs.map(o => o.id)) };
-      }
-    });
+    const isFullySelected = isProjectFullySelected(projectId);
+    setSelectedBlocks(prev => ({
+      ...prev,
+      [projectId]: isFullySelected ? new Set() : new Set(project.outputs.map(o => o.id)),
+    }));
+    setSelectedCoreContent(prev => ({
+      ...prev,
+      [projectId]: isFullySelected ? new Set() : new Set(availableCore),
+    }));
   };
 
   // Toggle all blocks for all projects
@@ -301,6 +312,17 @@ export default function ExportModal({
           newState[p.id] = new Set();
         } else {
           newState[p.id] = new Set(p.outputs.map(o => o.id));
+        }
+      });
+      return newState;
+    });
+    setSelectedCoreContent(() => {
+      const newState: Record<string, Set<CoreContentType>> = {};
+      projects.forEach(p => {
+        if (allFullySelected) {
+          newState[p.id] = new Set();
+        } else {
+          newState[p.id] = new Set(getAvailableCoreContent(p));
         }
       });
       return newState;
@@ -463,7 +485,8 @@ export default function ExportModal({
                   const isActive = project.id === selectedProjectId;
                   const isFullySelected = isProjectFullySelected(project.id);
                   const isPartiallySelected = isProjectPartiallySelected(project.id);
-                  const selectedCount = selectedBlocks[project.id]?.size || 0;
+                  const selectedCount = (selectedBlocks[project.id]?.size || 0) + (selectedCoreContent[project.id]?.size || 0);
+                  const availableCount = project.outputs.length + getAvailableCoreContent(project).length;
 
                   return (
                     <div
@@ -495,7 +518,7 @@ export default function ExportModal({
                             {project.title}
                           </p>
                           <p className="text-xs text-slate-700 dark:text-slate-200 mt-0.5">
-                            {selectedCount} / {project.outputs.length} selected
+                            {selectedCount} / {availableCount} selected
                           </p>
                         </div>
                       </div>
