@@ -1475,6 +1475,63 @@ describe('speaker pipeline regressions', () => {
 
     expect(new Set(finalized.segments.map((segment) => segment.finalSpeakerId || segment.speakerId)).size).toBeGreaterThanOrEqual(2);
     expect(Object.values(finalized.speakers).some((speaker: any) => speaker.finalName === 'Lex Fridman')).toBe(true);
+    const repairedHost = Object.values(finalized.speakerDataSpeakers).find((speaker: any) => speaker.finalName === 'Lex Fridman') as any;
+    expect(repairedHost.assignmentContradictions || []).not.toContain('collapsed_one_off_conversation');
+    expect(finalized.snapshot.assignmentTrust.confidence).toBeGreaterThan(0.65);
+  });
+
+  test('strong guest intro lock prevents later mention-only overwrite', () => {
+    const speakerMap = {
+      speaker_1: { id: 'speaker_1', finalName: 'Joanna Coles', role: 'host', fallbackName: 'Speaker 1', segments: [] },
+      speaker_2: { id: 'speaker_2', finalName: 'Penn Station', role: 'guest', fallbackName: 'Speaker 2', source: 'intro_handoff', segments: [] },
+    };
+
+    const segments: SpeakerSegment[] = [
+      {
+        speakerId: 'speaker_1',
+        initialSpeakerId: 'Speaker_A',
+        finalSpeakerId: 'speaker_1',
+        startTime: 0,
+        endTime: 34,
+        text: "I'm Joanna Coles. This is the Daily Beast podcast. Today we're talking to David Rothkopf about RFK Jr. and Kid Rock. David Rothkopf, welcome back to the show.",
+        confidence: 0.9,
+        status: 'confirmed',
+      },
+      {
+        speakerId: 'speaker_2',
+        initialSpeakerId: 'Speaker_B',
+        finalSpeakerId: 'speaker_2',
+        startTime: 34,
+        endTime: 52,
+        text: 'Very serious. The reality is that they realize they are going to lose, and so they are using every conceivable tool.',
+        confidence: 0.9,
+        status: 'confirmed',
+      },
+      {
+        speakerId: 'speaker_1',
+        initialSpeakerId: 'Speaker_A',
+        finalSpeakerId: 'speaker_1',
+        startTime: 52,
+        endTime: 68,
+        text: "Before we go further, I was running through Penn Station this morning and thinking about how chaotic the city feels right now.",
+        confidence: 0.82,
+        status: 'confirmed',
+      },
+    ];
+
+    const resolved = __testUtils.resolveConversationalHumanNamesInSpeakerMap(
+      speakerMap,
+      segments,
+      {
+        projectType: 'PODCAST',
+        title: 'The Daily Beast Podcast',
+        filename: 'daily_beast_david_rothkopf.json',
+      }
+    );
+
+    expect(resolved.speakers.speaker_2.finalName).toBe('David Rothkopf');
+    expect(resolved.speakers.speaker_2.finalNameLocked).toBe(true);
+    expect(resolved.speakers.speaker_2.nameProvenance).toEqual(expect.arrayContaining(['direct_intro', 'guest_intro']));
   });
 
   test('does not allow mentioned entities like General Assembly to become speakers', () => {
@@ -1519,6 +1576,43 @@ describe('speaker pipeline regressions', () => {
     expect(resolved.speakers.speaker_3.finalName).toBe('Ezra Klein');
     expect(resolved.speakers.speaker_1.finalName).toBe('Azab Ali');
     expect(resolved.speakers.speaker_1.finalName).not.toBe('General Assembly');
+  });
+
+  test('generic show identity stays normalized and never uses transcript blobs as display name', () => {
+    const priorProjects = [
+      {
+        title: "Here's the Proof Trump Knows He's Doomed Rothkopf The Daily Beast Podcast",
+        metadata: {
+          originalFileName: 'The_Daily_Beast_Podcast_David_Rothkopf.mp3',
+          fileName: 'The_Daily_Beast_Podcast_David_Rothkopf.mp3',
+        },
+      },
+      {
+        title: 'The Daily Beast Podcast - Blue Sky and Andy Beshear',
+        metadata: {
+          originalFileName: 'The_Daily_Beast_Podcast_Andy_Beshear.mp3',
+          fileName: 'The_Daily_Beast_Podcast_Andy_Beshear.mp3',
+        },
+      },
+    ];
+
+    const genericIdentity = detectGenericShowIdentityFromProjects({
+      title: "Here's the Proof Trump Knows He's Doomed Rothkopf The Daily Beast Podcast - The Daily Beast",
+      filename: 'The_Daily_Beast_Podcast_David_Rothkopf.mp3',
+      segments: [
+        {
+          speakerId: 'speaker_1',
+          startTime: 0,
+          endTime: 25,
+          text: "David, how seriously do you think we should take the threats to the election? I'm Joanna Coles. This is the Daily Beast podcast. Today we're talking to David Rothkopf.",
+        } as SpeakerSegment,
+      ],
+      projects: priorProjects as any,
+    });
+
+    expect(genericIdentity?.displayName).toBe('The Daily Beast');
+    expect(genericIdentity?.displayName.length).toBeLessThan(80);
+    expect(genericIdentity?.matchedBy).toBe('title');
   });
 
   test('panel intro repair assigns explicit panelists and ignores Nobel cold-open leakage', () => {

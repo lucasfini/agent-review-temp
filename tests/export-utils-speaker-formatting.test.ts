@@ -186,4 +186,51 @@ describe('export speaker formatting', () => {
     expect(conversation.detectionMetadata.speakerAssignmentBreakdown.reviewItems).toHaveLength(1);
     expect(conversation.speakerRoster[0].requiresReview).toBe(true);
   });
+
+  test('json debug export includes raw speaker diagnostics without changing normal conversation shape', () => {
+    const project = {
+      id: 'project_1',
+      title: 'Lex Fridman Podcast',
+      outputs: [],
+      speaker_data: {
+        speakers: {
+          speaker_1: {
+            finalName: 'Lex Fridman',
+            role: 'host',
+            finalNameLocked: true,
+            nameProvenance: ['self_id'],
+          },
+        },
+        segments: [
+          {
+            speakerId: 'speaker_1',
+            finalSpeakerId: 'speaker_1',
+            startTime: 0,
+            endTime: 6,
+            text: 'This is the Lex Fridman Podcast.',
+            segmentKind: 'conversation',
+          },
+        ],
+        detectionMetadata: {
+          pipelineDiagnostics: {
+            collapsePreventionApplied: true,
+            collapsePreventionResolved: true,
+          },
+        },
+      },
+    };
+
+    const json = __testUtils.formatAsJSON(
+      [project as any],
+      [{ projectId: 'project_1', projectTitle: 'Lex Fridman Podcast', selectedBlockIds: [], selectedCoreContent: ['conversation'] }],
+      { debug: true }
+    );
+    const parsed = JSON.parse(json);
+    const conversation = parsed.projects[0].coreContent.conversation;
+
+    expect(conversation.speakers.speaker_1.finalName).toBe('Lex Fridman');
+    expect(conversation.debug.exportMode).toBe('debug');
+    expect(conversation.debug.rawSpeakerData.speakers.speaker_1.finalNameLocked).toBe(true);
+    expect(conversation.debug.pipelineDiagnostics.collapsePreventionResolved).toBe(true);
+  });
 });

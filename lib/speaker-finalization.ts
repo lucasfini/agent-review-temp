@@ -390,6 +390,43 @@ function preventOneOffConversationalCollapse(
   };
 }
 
+function reconcileCollapsePreventionMetadata(
+  segments: SpeakerSegment[],
+  speakers: Record<string, any>,
+  restoredClusters: string[]
+): Record<string, any> {
+  if (restoredClusters.length === 0) return speakers;
+
+  const conversationalStats = buildMergeSpeakerStats(segments);
+  const materialClusters = Array.from(conversationalStats.entries())
+    .filter(([, stats]) => isMaterialConversationalCluster(stats));
+  if (materialClusters.length < 2) {
+    return speakers;
+  }
+
+  return Object.fromEntries(
+    Object.entries(speakers).map(([speakerId, speaker]) => {
+      const contradictions = Array.isArray(speaker?.assignmentContradictions)
+        ? speaker.assignmentContradictions.filter((value: unknown): value is string => typeof value === 'string')
+        : [];
+      if (!contradictions.includes('collapsed_one_off_conversation')) {
+        return [speakerId, speaker];
+      }
+
+      const remainingContradictions = contradictions.filter((value: string) => value !== 'collapsed_one_off_conversation');
+      return [speakerId, {
+        ...speaker,
+        assignmentConfidence: Math.max(
+          typeof speaker?.assignmentConfidence === 'number' ? speaker.assignmentConfidence : 0,
+          0.82
+        ),
+        assignmentContradictions: remainingContradictions,
+        requiresReview: remainingContradictions.length > 0 ? Boolean(speaker?.requiresReview) : false,
+      }];
+    })
+  );
+}
+
 function getContradictionAliases(contradictions: string[]): string[] {
   const aliases = new Set<string>();
   for (const contradiction of contradictions) {
@@ -1029,6 +1066,8 @@ export function buildSpeakerDataFromSegments(
       assignmentConfidence: rosterEntry.assignmentConfidence,
       assignmentContradictions: rosterEntry.assignmentContradictions,
       requiresReview: rosterEntry.requiresReview,
+      finalNameLocked: rosterEntry.finalNameLocked,
+      nameProvenance: rosterEntry.nameProvenance,
       extractedName: rosterEntry.extractedName,
       profile: rosterEntry.profile,
       segments: segs.map((segment) => ({
@@ -1066,6 +1105,8 @@ export function buildSpeakerDataFromSegments(
         assignmentConfidence: speaker.assignmentConfidence,
         assignmentContradictions: speaker.assignmentContradictions,
         requiresReview: speaker.requiresReview,
+        finalNameLocked: speaker.finalNameLocked,
+        nameProvenance: speaker.nameProvenance,
         extractedName: speaker.extractedName,
         profile: speaker.profile,
         segments: [],
@@ -1233,9 +1274,14 @@ export function finalizeSpeakerAttributionForStorage(
     options
   );
   const rawSpeakerDataSpeakers = buildSpeakerDataFromSegments(collapsePrevention.segments, resolvedHumans.speakers);
+  const reconciledSpeakerDataSpeakers = reconcileCollapsePreventionMetadata(
+    collapsePrevention.segments,
+    rawSpeakerDataSpeakers,
+    collapsePrevention.restoredClusters
+  );
   const speakerDataSpeakers = attachSpeakerAssignmentMetadata({
     segments: collapsePrevention.segments,
-    speakers: rawSpeakerDataSpeakers,
+    speakers: reconciledSpeakerDataSpeakers,
   }).speakers;
   const snapshot = collectSpeakerPipelineSnapshot(
     'post-final-naming',

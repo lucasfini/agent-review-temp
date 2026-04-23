@@ -152,6 +152,29 @@ function buildShowIdentityFragments(value: string): Array<{ raw: string; tokens:
   });
 }
 
+function buildGenericShowDisplayName(raw: string): string {
+  const fragments = buildShowIdentityFragments(raw);
+  if (fragments.length === 0) {
+    return raw.trim();
+  }
+
+  const candidates = fragments
+    .map((fragment) => ({
+      raw: fragment.raw
+        .replace(/\s+/g, ' ')
+        .replace(/\s+(podcast|show)\b/i, '')
+        .trim(),
+      tokenCount: fragment.tokens.length,
+    }))
+    .filter((fragment) => fragment.raw.length > 0)
+    .sort((a, b) => {
+      if (a.tokenCount !== b.tokenCount) return a.tokenCount - b.tokenCount;
+      return a.raw.length - b.raw.length;
+    });
+
+  return candidates[0]?.raw || fragments[0].raw.trim();
+}
+
 function scoreShowIdentityFragments(a: string[], b: string[]): number {
   if (a.length < 2 || b.length < 2) return 0;
   const overlap = a.filter((token) => b.includes(token));
@@ -263,16 +286,20 @@ export function detectGenericShowIdentityFromProjects(params: {
     metadata?: any;
   }>;
 }): ShowIdentityMatch | null {
+  const titleFragments = buildShowIdentityFragments(params.title || '');
+  const filenameFragments = buildShowIdentityFragments(params.filename || '');
   const currentFragments = [
-    ...buildShowIdentityFragments(params.title || ''),
-    ...buildShowIdentityFragments(params.filename || ''),
+    ...titleFragments,
+    ...filenameFragments,
   ];
 
-  const transcriptWindow = (params.segments || [])
-    .slice(0, 12)
-    .map((segment) => segment.text)
-    .join(' ');
-  currentFragments.push(...buildShowIdentityFragments(transcriptWindow));
+  if (currentFragments.length === 0) {
+    const transcriptWindow = (params.segments || [])
+      .slice(0, 12)
+      .map((segment) => segment.text)
+      .join(' ');
+    currentFragments.push(...buildShowIdentityFragments(transcriptWindow));
+  }
 
   if (currentFragments.length === 0 || !Array.isArray(params.projects) || params.projects.length === 0) {
     return null;
@@ -317,11 +344,25 @@ export function detectGenericShowIdentityFromProjects(params: {
 
   if (!best) return null;
 
+  const normalizedDisplayName = buildGenericShowDisplayName(
+    titleFragments[0]?.raw ||
+    filenameFragments[0]?.raw ||
+    best.current.raw
+  );
+  const matchedBy: ShowIdentityMatch['matchedBy'] =
+    titleFragments.length > 0 ? 'title' : filenameFragments.length > 0 ? 'filename' : 'transcript';
+  const matchedValue =
+    matchedBy === 'title'
+      ? (params.title || normalizedDisplayName)
+      : matchedBy === 'filename'
+        ? (params.filename || normalizedDisplayName)
+        : best.current.raw;
+
   return {
-    id: buildGenericShowId(best.current.raw),
-    displayName: best.current.raw,
-    matchedBy: params.title ? 'title' : params.filename ? 'filename' : 'transcript',
-    matchedValue: best.current.raw,
+    id: buildGenericShowId(normalizedDisplayName),
+    displayName: normalizedDisplayName,
+    matchedBy,
+    matchedValue,
     roster: [],
   };
 }

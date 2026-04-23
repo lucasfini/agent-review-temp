@@ -1588,6 +1588,7 @@ type IntroAnchoredNamingCandidate = {
 
 export type ConversationalNamingInspection = {
   showIdentity: string | null;
+  normalizedShowIdentity: { id: string; displayName: string; matchedBy: 'title' | 'filename' | 'transcript' } | null;
   knownHostName: string | null;
   knownHostReason: string | null;
   introAnchorFound: boolean;
@@ -1598,6 +1599,7 @@ export type ConversationalNamingInspection = {
   recurringAnchors: Array<{ name: string; role?: SpeakerRole; speakerId: string; evidence: string[] }>;
   rejectedHumanNameCandidates: string[];
   rejectedNamePromotions: string[];
+  nameProvenance: Array<{ speakerId: string; finalName: string | null; provenance: string[]; finalNameLocked: boolean }>;
   rejectedIntroducedNames: string[];
   rejectedGuestMemoryCarryovers: string[];
   suppressedRosterEntries: string[];
@@ -1632,6 +1634,8 @@ export type ConversationalNamingInspection = {
   }>;
   swapDetected: boolean;
   swapApplied: boolean;
+  collapsePreventionApplied: boolean;
+  collapsePreventionResolved: boolean;
 };
 
 type GuestReplyCandidateRanking = {
@@ -2737,6 +2741,9 @@ function collectConversationalNameProvenance(
   );
   if (directIntro) add(directIntro.name, 'direct_intro');
 
+  const knownHost = findCorroboratedKnownHost(segments, options);
+  if (knownHost) add(knownHost.fullName, 'known_host_intro');
+
   for (const segment of segments) {
     if (!isConversationalSegment(segment)) continue;
     const selfId = extractFullNameSelfIdentifiedName(segment.text || '');
@@ -2748,18 +2755,114 @@ function collectConversationalNameProvenance(
   return provenance;
 }
 
-function hasParticipantStyleEvidence(
-  name: string,
-  provenance: Map<string, string[]>
-): boolean {
-  const reasons = provenance.get(normalizeSpeakerName(name)) || [];
+function hasParticipantStyleProvenanceReasons(reasons: string[]): boolean {
   return reasons.some((reason) => (
     reason === 'self_id' ||
     reason === 'direct_intro' ||
     reason === 'guest_intro' ||
     reason === 'panel_intro' ||
+    reason === 'known_host_intro' ||
     reason === 'recurring_roster'
   ));
+}
+
+function hasParticipantStyleEvidence(
+  name: string,
+  provenance: Map<string, string[]>
+): boolean {
+  const reasons = provenance.get(normalizeSpeakerName(name)) || [];
+  return hasParticipantStyleProvenanceReasons(reasons);
+}
+
+function getSpeakerNameProvenance(speaker: any): string[] {
+  return Array.isArray(speaker?.nameProvenance)
+    ? speaker.nameProvenance.filter((value: unknown): value is string => typeof value === 'string' && value.trim().length > 0)
+    : [];
+}
+
+function isFinalNameLocked(speaker: any): boolean {
+  return Boolean(speaker?.finalNameLocked);
+}
+
+function canOverwriteSpeakerIdentity(
+  speaker: any,
+  nextName: string,
+  options: ConversationalNamingOptions
+): boolean {
+  const currentName = typeof speaker?.finalName === 'string' ? speaker.finalName.trim() : '';
+  if (!currentName) return true;
+  if (normalizeSpeakerName(currentName) === normalizeSpeakerName(nextName)) return true;
+  if (!isFinalNameLocked(speaker)) return true;
+  const currentProvenance = getSpeakerNameProvenance(speaker);
+  const nextProvenance = collectNameProvenanceReasons(nextName, options);
+  const currentStrength = currentProvenance.filter((reason) => reason !== 'derived').length;
+  const nextStrength = nextProvenance.filter((reason) => reason !== 'derived').length;
+  return nextStrength > currentStrength;
+}
+
+function collectNameProvenanceReasons(
+  name: string,
+  options: {
+    provenance?: string[];
+    segments?: SpeakerSegment[];
+    conversationalProvenance?: Map<string, string[]>;
+  } & ConversationalNamingOptions
+): string[] {
+  const explicit = Array.isArray(options.provenance) ? options.provenance.filter(Boolean) : [];
+  const normalized = normalizeSpeakerName(name);
+  const collected = new Set<string>(explicit);
+
+  const conversationalProvenance = options.conversationalProvenance || (
+    options.segments ? collectConversationalNameProvenance(options.segments, options) : null
+  );
+  for (const reason of conversationalProvenance?.get(normalized) || []) {
+    collected.add(reason);
+  }
+
+  if (collected.size === 0) {
+    collected.add('derived');
+  }
+
+  return Array.from(collected);
+}
+
+function setSpeakerIdentityWithProvenance(
+  speaker: any,
+  name: string,
+  params: {
+    role?: string | null;
+    confidence?: number;
+    source?: string;
+    context: string;
+    provenance: string[];
+    lockFinalName?: boolean;
+    assignmentConfidence?: number | null;
+    assignmentContradictions?: string[];
+    requiresReview?: boolean;
+  }
+): any {
+  const nextConfidence = params.confidence ?? speaker.roleConfidence ?? speaker.confidence ?? 0;
+  return {
+    ...speaker,
+    finalName: name,
+    role: params.role ?? speaker.role,
+    roleConfidence: Math.max(speaker.roleConfidence || 0, nextConfidence),
+    source: params.source || speaker.source,
+    extractedName: {
+      ...(speaker.extractedName || {}),
+      name,
+      confidence: Math.max(speaker.extractedName?.confidence || 0, nextConfidence),
+      context: params.context,
+    },
+    finalNameLocked: params.lockFinalName ?? speaker.finalNameLocked ?? false,
+    nameProvenance: Array.from(new Set([
+      ...getSpeakerNameProvenance(speaker),
+      ...params.provenance,
+    ])),
+    assignmentConfidence: params.assignmentConfidence ?? speaker.assignmentConfidence,
+    assignmentContradictions: params.assignmentContradictions ?? speaker.assignmentContradictions,
+    requiresReview: params.requiresReview ?? speaker.requiresReview,
+  };
 }
 
 function enforceConversationalNameProvenanceInSpeakerMap(
@@ -2778,18 +2881,20 @@ function enforceConversationalNameProvenanceInSpeakerMap(
     const currentName = typeof speaker.finalName === 'string' ? speaker.finalName.trim() : '';
     if (!currentName || /^Speaker\s+\d+$/i.test(currentName)) continue;
     if (speaker.role === 'advertiser' || speaker.role === 'quoted_audio' || speaker.role === 'narrator') continue;
+    const participantSupported = hasParticipantStyleEvidence(currentName, provenance) ||
+      hasParticipantStyleProvenanceReasons(getSpeakerNameProvenance(speaker));
     if (
       speaker.source === 'preset_roster' ||
       speaker.source === 'manual' ||
-      speaker.source === 'intro_handoff' ||
-      /intro|Recurring show ownership verification/i.test(String(speaker.extractedName?.context || ''))
+      (speaker.source === 'intro_handoff' && participantSupported) ||
+      (/Recurring show ownership verification/i.test(String(speaker.extractedName?.context || '')) ||
+        (/intro/i.test(String(speaker.extractedName?.context || '')) && isFinalNameLocked(speaker) && participantSupported))
     ) {
       continue;
     }
 
     const normalized = normalizeSpeakerName(currentName);
     const supported = provenance.has(normalized);
-    const participantSupported = hasParticipantStyleEvidence(currentName, provenance);
     const nonHuman = isLikelyNonHumanConversationalNameCandidate(currentName, {
       showIdentity: options.showIdentity,
       title: options.title,
@@ -3558,6 +3663,7 @@ export function inspectConversationalNamingState(
   if (normalizedProjectType === 'DEBATE') {
     return {
       showIdentity: null,
+      normalizedShowIdentity: null,
       knownHostName: null,
       knownHostReason: null,
       introAnchorFound: false,
@@ -3568,6 +3674,7 @@ export function inspectConversationalNamingState(
       recurringAnchors: [],
       rejectedHumanNameCandidates: [],
       rejectedNamePromotions: [],
+      nameProvenance: [],
       rejectedIntroducedNames: [],
       rejectedGuestMemoryCarryovers: [],
       suppressedRosterEntries: [],
@@ -3576,6 +3683,8 @@ export function inspectConversationalNamingState(
       clusterOwnershipCandidates: [],
       swapDetected: false,
       swapApplied: false,
+      collapsePreventionApplied: false,
+      collapsePreventionResolved: false,
     };
   }
 
@@ -3632,9 +3741,26 @@ export function inspectConversationalNamingState(
     .map((candidate) => candidate.firstName)
     .filter((firstName, index, all) => all.indexOf(firstName) === index);
   const recurringOwnership = inspectRecurringShowClusterOwnership(recurringAssignments.roster, segments, options);
+  const nameProvenance = roster.map((speaker) => ({
+    speakerId: speaker.id,
+    finalName: typeof speaker?.name === 'string' ? speaker.name : null,
+    provenance: getSpeakerNameProvenance(speaker),
+    finalNameLocked: isFinalNameLocked(speaker),
+  }));
+  const collapsePreventionApplied = roster.some((speaker: any) =>
+    Array.isArray(speaker?.assignmentContradictions) &&
+    speaker.assignmentContradictions.includes('collapsed_one_off_conversation')
+  );
+  const collapsePreventionResolved = collapsePreventionApplied &&
+    nameProvenance.some((entry) => entry.finalNameLocked && !/^Speaker\s+\d+$/i.test(entry.finalName || ''));
 
   return {
     showIdentity: recurringAssignments.showIdentity?.displayName || null,
+    normalizedShowIdentity: recurringAssignments.showIdentity ? {
+      id: recurringAssignments.showIdentity.id,
+      displayName: recurringAssignments.showIdentity.displayName,
+      matchedBy: recurringAssignments.showIdentity.matchedBy,
+    } : null,
     knownHostName: knownHost?.fullName || null,
     knownHostReason: knownHost?.reason || null,
     introAnchorFound: Boolean(introAnchoredCandidate),
@@ -3648,6 +3774,7 @@ export function inspectConversationalNamingState(
       ...clearedNonHuman.rejectedCandidates,
     ],
     rejectedNamePromotions,
+    nameProvenance,
     rejectedIntroducedNames: collectRejectedIntroducedNames(segments),
     rejectedGuestMemoryCarryovers: recurringAssignments.rejectedGuestCarryovers,
     suppressedRosterEntries: recurringAssignments.suppressedEntries,
@@ -3656,6 +3783,8 @@ export function inspectConversationalNamingState(
     clusterOwnershipCandidates: recurringOwnership.entries,
     swapDetected: recurringOwnership.swapDetected,
     swapApplied: recurringOwnership.swapApplied,
+    collapsePreventionApplied,
+    collapsePreventionResolved,
   };
 }
 
@@ -3684,6 +3813,9 @@ export function resolveConversationalHumanNamesInSpeakerMap(
       confidence: speaker.roleConfidence || speaker.confidence || 0.5,
       source: speaker.source,
       profile: speaker.profile,
+      finalNameLocked: speaker.finalNameLocked,
+      nameProvenance: speaker.nameProvenance,
+      assignmentContradictions: speaker.assignmentContradictions,
     };
   });
   const nameProvenance = collectConversationalNameProvenance(segments, options);
@@ -3708,8 +3840,15 @@ export function resolveConversationalHumanNamesInSpeakerMap(
           filename: options.filename,
         }) &&
         nameProvenance.has(normalizeSpeakerName(originalFinalName));
+      const preserveOriginalLockedName = Boolean(
+        resolvedSpeaker?.name &&
+        isFinalNameLocked(original) &&
+        !canOverwriteSpeakerIdentity(original, resolvedSpeaker.name, options)
+      );
       const nextFinalName = resolvedSpeaker?.name
-        ? resolvedSpeaker.name
+        ? preserveOriginalLockedName
+          ? originalFinalName
+          : resolvedSpeaker.name
         : originalCanSurvive
           ? originalFinalName
           : original.fallbackName || numberedFallback;
@@ -3720,6 +3859,8 @@ export function resolveConversationalHumanNamesInSpeakerMap(
         role: resolvedSpeaker?.role || original.role,
         roleConfidence: resolvedSpeaker?.confidence || original.roleConfidence,
         source: resolvedSpeaker?.source || original.source,
+        finalNameLocked: preserveOriginalLockedName ? original.finalNameLocked : original.finalNameLocked || false,
+        nameProvenance: getSpeakerNameProvenance(original),
         extractedName: resolvedSpeaker?.name
           ? {
               ...(original.extractedName || {}),
@@ -3789,6 +3930,9 @@ function repairSpeakerMapWithEarlyHostSelfId(
   );
   const targetSpeaker = updatedSpeakers[earlyHostSelfId.speakerId];
   if (!targetSpeaker) return speakers;
+  if (!canOverwriteSpeakerIdentity(targetSpeaker, earlyHostSelfId.fullName, options)) {
+    return speakers;
+  }
 
   const currentName = typeof targetSpeaker.finalName === 'string' ? targetSpeaker.finalName.trim() : '';
   const canReplace =
@@ -3804,18 +3948,22 @@ function repairSpeakerMapWithEarlyHostSelfId(
 
   if (!canReplace) return speakers;
 
-  updatedSpeakers[earlyHostSelfId.speakerId] = {
-    ...targetSpeaker,
-    finalName: earlyHostSelfId.fullName,
-    role: 'host',
-    source: targetSpeaker.source === 'preset_roster' ? targetSpeaker.source : 'intro_handoff',
-    extractedName: {
-      ...(targetSpeaker.extractedName || {}),
-      name: earlyHostSelfId.fullName,
+  updatedSpeakers[earlyHostSelfId.speakerId] = setSpeakerIdentityWithProvenance(
+    targetSpeaker,
+    earlyHostSelfId.fullName,
+    {
+      role: 'host',
       confidence: Math.max(targetSpeaker.roleConfidence || targetSpeaker.confidence || 0, 0.92),
+      source: targetSpeaker.source === 'preset_roster' ? targetSpeaker.source : 'intro_handoff',
       context: 'Host intro self-identification',
-    },
-  };
+      provenance: collectNameProvenanceReasons(earlyHostSelfId.fullName, {
+        ...options,
+        segments,
+        provenance: ['self_id'],
+      }),
+      lockFinalName: true,
+    }
+  );
 
   return updatedSpeakers;
 }
@@ -3835,6 +3983,9 @@ function repairSpeakerMapWithKnownHostIntro(
     Object.entries(speakers).map(([id, speaker]) => [id, { ...speaker }])
   );
   const targetSpeaker = updatedSpeakers[hostSpeakerId];
+  if (!canOverwriteSpeakerIdentity(targetSpeaker, knownHost.fullName, options)) {
+    return speakers;
+  }
   const currentName = typeof targetSpeaker.finalName === 'string' ? targetSpeaker.finalName.trim() : '';
   const knownGuestNames = new Set(
     findStrongInterviewGuestNames(segments, Boolean(options.showRoster?.length))
@@ -3861,18 +4012,22 @@ function repairSpeakerMapWithKnownHostIntro(
     return speakers;
   }
 
-  updatedSpeakers[hostSpeakerId] = {
-    ...targetSpeaker,
-    finalName: knownHost.fullName,
-    role: 'host',
-    source: targetSpeaker.source === 'preset_roster' ? targetSpeaker.source : 'intro_handoff',
-    extractedName: {
-      ...(targetSpeaker.extractedName || {}),
-      name: knownHost.fullName,
+  updatedSpeakers[hostSpeakerId] = setSpeakerIdentityWithProvenance(
+    targetSpeaker,
+    knownHost.fullName,
+    {
+      role: 'host',
       confidence: Math.max(targetSpeaker.roleConfidence || targetSpeaker.confidence || 0, 0.9),
+      source: targetSpeaker.source === 'preset_roster' ? targetSpeaker.source : 'intro_handoff',
       context: 'Known host intro repair',
-    },
-  };
+      provenance: collectNameProvenanceReasons(knownHost.fullName, {
+        ...options,
+        segments,
+        provenance: ['self_id'],
+      }),
+      lockFinalName: true,
+    }
+  );
 
   return updatedSpeakers;
 }
@@ -3954,6 +4109,7 @@ function repairSpeakerMapWithPanelIntros(
 
       const candidateSpeaker = updatedSpeakers[candidateSpeakerId];
       if (!candidateSpeaker) continue;
+      if (!canOverwriteSpeakerIdentity(candidateSpeaker, participant.name, options)) continue;
       const currentName = typeof candidateSpeaker.finalName === 'string' ? candidateSpeaker.finalName.trim() : '';
       const canReplace =
         !currentName ||
@@ -3973,22 +4129,26 @@ function repairSpeakerMapWithPanelIntros(
 
     if (!targetSpeakerId || !updatedSpeakers[targetSpeakerId]) continue;
 
-    updatedSpeakers[targetSpeakerId] = {
-      ...updatedSpeakers[targetSpeakerId],
-      finalName: participant.name,
-      role: updatedSpeakers[targetSpeakerId].role === 'host' || updatedSpeakers[targetSpeakerId].role === 'co_host'
-        ? updatedSpeakers[targetSpeakerId].role
-        : 'guest',
-      source: updatedSpeakers[targetSpeakerId].source === 'preset_roster'
-        ? updatedSpeakers[targetSpeakerId].source
-        : 'intro_handoff',
-      extractedName: {
-        ...(updatedSpeakers[targetSpeakerId].extractedName || {}),
-        name: participant.name,
+    updatedSpeakers[targetSpeakerId] = setSpeakerIdentityWithProvenance(
+      updatedSpeakers[targetSpeakerId],
+      participant.name,
+      {
+        role: updatedSpeakers[targetSpeakerId].role === 'host' || updatedSpeakers[targetSpeakerId].role === 'co_host'
+          ? updatedSpeakers[targetSpeakerId].role
+          : 'guest',
         confidence: Math.max(updatedSpeakers[targetSpeakerId].roleConfidence || updatedSpeakers[targetSpeakerId].confidence || 0, 0.86),
+        source: updatedSpeakers[targetSpeakerId].source === 'preset_roster'
+          ? updatedSpeakers[targetSpeakerId].source
+          : 'intro_handoff',
         context: 'Panel intro repair',
-      },
-    };
+        provenance: collectNameProvenanceReasons(participant.name, {
+          ...options,
+          segments,
+          provenance: ['panel_intro'],
+        }),
+        lockFinalName: true,
+      }
+    );
     usedSpeakerIds.add(targetSpeakerId);
   }
 
@@ -4020,8 +4180,8 @@ function repairSpeakerMapWithDirectGuestIntros(
     const segment = segments[i];
     if (!isHumanIntroEligibleSegment(segment)) continue;
     const text = getSegText(segment);
-    const directAddressMatch = text.match(/\b([A-Z][a-z]+),\s+[^.]{0,80}\b(?:it'?s|its|good|great|glad|thank|thanks|welcome)\b/);
-    const addressedFirstName = directAddressMatch?.[1]?.trim().toLowerCase() || null;
+    const directAddressMatch = text.match(/\b([A-Z][a-z]+(?:\s+[A-Z][a-z]+){0,2}),\s+[^.]{0,80}\b(?:it'?s|its|good|great|glad|thank|thanks|welcome)\b/);
+    const addressedFirstName = directAddressMatch?.[1]?.trim().split(/\s+/)[0]?.toLowerCase() || null;
     if (!addressedFirstName) continue;
 
     const fullName = Array.from(text.matchAll(/\b([A-Z][a-z]+(?:\s+[A-Z][a-z]+){1,2})\b/g))
@@ -4045,7 +4205,13 @@ function repairSpeakerMapWithDirectGuestIntros(
     if (!guestSpeakerId || !updatedSpeakers[guestSpeakerId]) continue;
 
     const currentSpeaker = updatedSpeakers[guestSpeakerId];
+    if (!canOverwriteSpeakerIdentity(currentSpeaker, fullName, options)) {
+      continue;
+    }
     const currentName = typeof currentSpeaker.finalName === 'string' ? currentSpeaker.finalName.trim() : '';
+    const currentHasParticipantEvidence =
+      hasParticipantStyleEvidence(currentName, collectConversationalNameProvenance(segments, options)) ||
+      hasParticipantStyleProvenanceReasons(getSpeakerNameProvenance(currentSpeaker));
     const normalizedCurrent = normalizeSpeakerName(currentName || '');
     const duplicateNameElsewhere = currentName.length > 0 && Object.entries(updatedSpeakers).some(([id, speaker]) => (
       id !== guestSpeakerId &&
@@ -4057,6 +4223,7 @@ function repairSpeakerMapWithDirectGuestIntros(
       /^Speaker\s+\d+$/i.test(currentName) ||
       !isValidFinalHumanSpeakerName(currentName) ||
       isWeakShortSpeakerName(currentName) ||
+      !currentHasParticipantEvidence ||
       recurringHumanNames.has(normalizedCurrent) ||
       duplicateNameElsewhere;
 
@@ -4064,19 +4231,22 @@ function repairSpeakerMapWithDirectGuestIntros(
       continue;
     }
 
-    updatedSpeakers[guestSpeakerId] = {
-      ...currentSpeaker,
-      finalName: fullName,
-      role: 'guest',
-      roleConfidence: Math.max(currentSpeaker.roleConfidence || 0, 0.88),
-      source: currentSpeaker.source === 'preset_roster' ? currentSpeaker.source : 'intro_handoff',
-      extractedName: {
-        ...(currentSpeaker.extractedName || {}),
-        name: fullName,
+    updatedSpeakers[guestSpeakerId] = setSpeakerIdentityWithProvenance(
+      currentSpeaker,
+      fullName,
+      {
+        role: 'guest',
         confidence: Math.max(currentSpeaker.roleConfidence || 0, 0.88),
+        source: currentSpeaker.source === 'preset_roster' ? currentSpeaker.source : 'intro_handoff',
         context: 'Direct guest intro repair',
-      },
-    };
+        provenance: collectNameProvenanceReasons(fullName, {
+          ...options,
+          segments,
+          provenance: ['direct_intro', 'guest_intro'],
+        }),
+        lockFinalName: true,
+      }
+    );
     break;
   }
 
@@ -4113,7 +4283,11 @@ function repairSpeakerMapWithDominantGuestClusters(
     if (!targetCandidate || !updatedSpeakers[targetCandidate.speakerId]) continue;
 
     const targetSpeaker = updatedSpeakers[targetCandidate.speakerId];
+    if (!canOverwriteSpeakerIdentity(targetSpeaker, guestName.fullName, options)) continue;
     const currentTargetName = typeof targetSpeaker.finalName === 'string' ? targetSpeaker.finalName.trim() : '';
+    const currentHasParticipantEvidence =
+      hasParticipantStyleEvidence(currentTargetName, collectConversationalNameProvenance(segments, options)) ||
+      hasParticipantStyleProvenanceReasons(getSpeakerNameProvenance(targetSpeaker));
     const normalizedFullName = normalizeSpeakerName(guestName.fullName);
     const normalizedFirstName = normalizeSpeakerName(guestName.firstName);
 
@@ -4123,22 +4297,26 @@ function repairSpeakerMapWithDominantGuestClusters(
         currentTargetName.length === 0 ||
         /^Speaker\s+\d+$/i.test(currentTargetName) ||
         !isValidFinalHumanSpeakerName(currentTargetName) ||
-        isWeakShortSpeakerName(currentTargetName)
+        isWeakShortSpeakerName(currentTargetName) ||
+        !currentHasParticipantEvidence
       )
     ) {
-      updatedSpeakers[targetCandidate.speakerId] = {
-        ...targetSpeaker,
-        finalName: guestName.fullName,
-        role: 'guest',
-        roleConfidence: Math.max(targetSpeaker.roleConfidence || 0, 0.9),
-        source: targetSpeaker.source === 'preset_roster' ? targetSpeaker.source : 'intro_handoff',
-        extractedName: {
-          ...(targetSpeaker.extractedName || {}),
-          name: guestName.fullName,
+      updatedSpeakers[targetCandidate.speakerId] = setSpeakerIdentityWithProvenance(
+        targetSpeaker,
+        guestName.fullName,
+        {
+          role: 'guest',
           confidence: Math.max(targetSpeaker.roleConfidence || 0, 0.9),
+          source: targetSpeaker.source === 'preset_roster' ? targetSpeaker.source : 'intro_handoff',
           context: 'Dominant guest cluster repair',
-        },
-      };
+          provenance: collectNameProvenanceReasons(guestName.fullName, {
+            ...options,
+            segments,
+            provenance: ['guest_intro'],
+          }),
+          lockFinalName: true,
+        }
+      );
     }
 
     for (const [speakerId, speaker] of Object.entries(updatedSpeakers)) {
@@ -4195,6 +4373,9 @@ function verifyRecurringShowOwnershipInSpeakerMap(
       confidence: speaker.roleConfidence || speaker.confidence || 0.5,
       source: speaker.source,
       profile: speaker.profile,
+      finalNameLocked: speaker.finalNameLocked,
+      nameProvenance: speaker.nameProvenance,
+      assignmentContradictions: speaker.assignmentContradictions,
     };
   });
 
@@ -4219,20 +4400,21 @@ function verifyRecurringShowOwnershipInSpeakerMap(
       const previousName = targetSpeaker?.finalName || targetSpeaker?.name || null;
       if (targetSpeaker) {
         updatedSpeakers[entry.chosenSpeakerId] = {
-          ...targetSpeaker,
-          finalName: entry.name,
-          role: entry.role || targetSpeaker.role || 'unknown',
-          roleConfidence: Math.max(targetSpeaker.roleConfidence || 0, entry.assignmentConfidence || 0.85),
-          source: targetSpeaker.source === 'preset_roster' ? targetSpeaker.source : 'heuristic',
-          extractedName: {
-            ...(targetSpeaker.extractedName || {}),
-            name: entry.name,
+          ...setSpeakerIdentityWithProvenance(targetSpeaker, entry.name, {
+            role: entry.role || targetSpeaker.role || 'unknown',
             confidence: Math.max(targetSpeaker.roleConfidence || 0, entry.assignmentConfidence || 0.85),
+            source: targetSpeaker.source === 'preset_roster' ? targetSpeaker.source : 'heuristic',
             context: 'Recurring show ownership verification',
-          },
-          assignmentConfidence: entry.assignmentConfidence,
-          assignmentContradictions: entry.negativeEvidence,
-          requiresReview: false,
+            provenance: collectNameProvenanceReasons(entry.name, {
+              ...options,
+              segments,
+              provenance: ['recurring_roster'],
+            }),
+            lockFinalName: true,
+            assignmentConfidence: entry.assignmentConfidence,
+            assignmentContradictions: entry.negativeEvidence,
+            requiresReview: false,
+          }),
         };
         appliedAssignments[entry.name] = entry.chosenSpeakerId;
         if (normalizeSpeakerName(previousName || '') !== normalizeSpeakerName(entry.name)) {
@@ -6116,8 +6298,8 @@ function applyDirectAddressedGuestIntroNaming(
     if (!isHumanIntroEligibleSegment(segment)) continue;
 
     const text = getSegText(segment);
-    const directAddressMatch = text.match(/\b([A-Z][a-z]+),\s+[^.]{0,80}\b(?:it'?s|its|good|great|glad|thank|thanks|welcome)\b/);
-    const addressedFirstName = directAddressMatch?.[1]?.trim().toLowerCase() || null;
+    const directAddressMatch = text.match(/\b([A-Z][a-z]+(?:\s+[A-Z][a-z]+){0,2}),\s+[^.]{0,80}\b(?:it'?s|its|good|great|glad|thank|thanks|welcome)\b/);
+    const addressedFirstName = directAddressMatch?.[1]?.trim().split(/\s+/)[0]?.toLowerCase() || null;
     if (!addressedFirstName) continue;
 
     const fullName = Array.from(text.matchAll(/\b([A-Z][a-z]+(?:\s+[A-Z][a-z]+){1,2})\b/g))

@@ -14,6 +14,9 @@ export interface GPTSpeaker {
   confidence: number;
   source?: string;
   profile?: SpeakerIdentityProfile;
+  finalNameLocked?: boolean;
+  nameProvenance?: string[];
+  assignmentContradictions?: string[];
 }
 
 export interface GPTSpeakerIntelligenceResult {

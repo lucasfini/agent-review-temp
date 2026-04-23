@@ -90,6 +90,9 @@ export interface ExportManifestItem {
 }
 
 export type ExportFormat = 'markdown' | 'pdf' | 'json' | 'plaintext';
+export interface ExportOptions {
+  debug?: boolean;
+}
 
 interface SpeakerRosterEntry {
   id: string;
@@ -726,7 +729,20 @@ Exported from AudioRepurpose
 /**
  * Format outputs as JSON
  */
-function formatAsJSON(projects: ExportProject[], manifest: ExportManifestItem[]): string {
+function buildConversationDebugPayload(speakerData: any): Record<string, any> | undefined {
+  if (!speakerData) return undefined;
+  return {
+    exportMode: 'debug',
+    rawSpeakerData: speakerData,
+    pipelineDiagnostics: speakerData?.detectionMetadata?.pipelineDiagnostics,
+  };
+}
+
+function formatAsJSON(
+  projects: ExportProject[],
+  manifest: ExportManifestItem[],
+  options: ExportOptions = {}
+): string {
   const exportData = {
     exportedAt: new Date().toISOString(),
     projects: projects.map(project => {
@@ -762,6 +778,7 @@ function formatAsJSON(projects: ExportProject[], manifest: ExportManifestItem[])
             segmentCount: speaker.segmentCount,
             totalDuration: speaker.totalDuration,
           })) : undefined,
+          ...(options.debug ? { debug: buildConversationDebugPayload(speakerData) } : {}),
         };
       }
       if (selectedCore.includes('summary') && project.ai_summary) {
@@ -943,9 +960,10 @@ async function exportAsZip(
  */
 async function exportAsJSON(
   projects: ExportProject[],
-  manifest: ExportManifestItem[]
+  manifest: ExportManifestItem[],
+  options: ExportOptions = {}
 ): Promise<void> {
-  const content = formatAsJSON(projects, manifest);
+  const content = formatAsJSON(projects, manifest, options);
   const blob = new Blob([content], { type: 'application/json' });
   const timestamp = new Date().toISOString().split('T')[0];
   const isMultiProject = projects.length > 1;
@@ -1375,7 +1393,8 @@ function countSelectedItems(
 export async function exportContent(
   projects: ExportProject[],
   manifest: ExportManifestItem[],
-  format: ExportFormat
+  format: ExportFormat,
+  options: ExportOptions = {}
 ): Promise<{ success: boolean; message: string }> {
   try {
     const counts = countSelectedItems(projects, manifest);
@@ -1388,7 +1407,7 @@ export async function exportContent(
 
     switch (format) {
       case 'json':
-        await exportAsJSON(projects, manifest);
+        await exportAsJSON(projects, manifest, options);
         break;
 
       case 'markdown':
