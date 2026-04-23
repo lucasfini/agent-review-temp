@@ -54,7 +54,7 @@ interface Balance {
 
 interface GroupedTransaction {
   id: string;
-  type: 'single' | 'workflow';
+  type: 'single' | 'workflow' | 'project';
   createdAt: string;
   transactionType: string;
   amount: number;
@@ -68,7 +68,7 @@ interface GroupedTransaction {
   releasedAmount?: number;
   reservationStatus?: string;
   childCount?: number;
-  children?: { reason: string; amount: number; createdAt: string; kind?: 'hold' | 'charge' | 'release' | 'usage' }[];
+  children?: { reason: string; amount: number; createdAt: string; kind?: 'hold' | 'charge' | 'release' | 'usage'; detail?: string }[];
 }
 
 interface UsageEvent {
@@ -113,6 +113,7 @@ function TransactionTypeBadge({ type }: { type: string }) {
     purchase: { variant: 'success', label: 'Purchase' },
     debit: { variant: 'secondary', label: 'Usage' },
     workflow: { variant: 'secondary', label: 'Workflow' },
+    project: { variant: 'secondary', label: 'Project' },
     refund: { variant: 'info', label: 'Refund' },
     reserve: { variant: 'warning', label: 'Hold' },
     release: { variant: 'info', label: 'Release' },
@@ -657,15 +658,32 @@ export default function UnifiedSettings({ userEmail, forcedSection }: UnifiedSet
   };
 
   const handleExportTransactions = () => {
-    const csv = [
-      ['Date', 'Type', 'Amount', 'Reason', 'Invoice Number'],
-      ...transactions.map(t => [
+    const rows = transactions.flatMap(t => {
+      const parentRow = [
         new Date(t.createdAt).toISOString(),
         t.transactionType,
         t.amount.toFixed(4),
         t.reason,
         t.invoiceNumber || ''
-      ])
+      ];
+
+      if (!t.children?.length) return [parentRow];
+
+      return [
+        parentRow,
+        ...t.children.map(child => [
+          new Date(child.createdAt).toISOString(),
+          child.kind || 'usage',
+          child.amount.toFixed(4),
+          `${t.reason} - ${child.reason}`,
+          ''
+        ]),
+      ];
+    });
+
+    const csv = [
+      ['Date', 'Type', 'Amount', 'Reason', 'Invoice Number'],
+      ...rows
     ].map(row => row.join(',')).join('\n');
 
     const blob = new Blob([csv], { type: 'text/csv' });
@@ -1174,7 +1192,7 @@ export default function UnifiedSettings({ userEmail, forcedSection }: UnifiedSet
                 <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-4">
                   <div>
                     <CardTitle>Transaction History</CardTitle>
-                    <CardDescription>View and export your billing history</CardDescription>
+                    <CardDescription>Projects are grouped with their credit charges inside each dropdown</CardDescription>
                   </div>
                   <div className="flex items-center gap-2">
                     <div className="relative flex-1 sm:flex-none">
@@ -1241,7 +1259,7 @@ export default function UnifiedSettings({ userEmail, forcedSection }: UnifiedSet
                                       {transaction.projectTitle}
                                     </p>
                                   )}
-                                  {!transaction.type || transaction.type !== 'workflow' ? (
+                                  {!transaction.type || (transaction.type !== 'workflow' && transaction.type !== 'project') ? (
                                     <p className="mt-1 text-xs text-slate-500 dark:text-slate-400">
                                       Invoice: {transaction.invoiceNumber || '-'}
                                     </p>
@@ -1252,7 +1270,7 @@ export default function UnifiedSettings({ userEmail, forcedSection }: UnifiedSet
                                     "text-sm font-semibold whitespace-nowrap",
                                     transaction.amount > 0 ? "text-green-600" : "text-slate-900 dark:text-slate-50"
                                   )}>
-                                    {transaction.amount > 0 ? '+' : ''}{formatAmount(transaction.amount)}
+                                    {formatAmount(transaction.amount)}
                                   </span>
                                   {hasChildren && (
                                     isExpanded
@@ -1263,14 +1281,14 @@ export default function UnifiedSettings({ userEmail, forcedSection }: UnifiedSet
                               </div>
                             </button>
 
-                            {transaction.type === 'workflow' && isExpanded && transaction.children?.length ? (
+                            {isExpanded && transaction.children?.length ? (
                               <div className="mt-3 space-y-2 rounded-xl bg-slate-50 p-3 dark:bg-slate-800/40">
                                 {transaction.children.map((child, idx) => (
                                   <div key={`${transaction.id}-mobile-child-${idx}`} className="flex items-start justify-between gap-3 text-xs">
                                     <div className="min-w-0 flex-1">
                                       <p className="text-slate-600 dark:text-slate-300">{child.reason}</p>
                                       <p className="mt-1 text-slate-400 dark:text-slate-500">
-                                        {new Date(child.createdAt).toLocaleTimeString('en-US', {
+                                        {child.detail ? `${child.detail} - ` : ''}{new Date(child.createdAt).toLocaleTimeString('en-US', {
                                           hour: 'numeric',
                                           minute: '2-digit',
                                         })}
@@ -1280,7 +1298,7 @@ export default function UnifiedSettings({ userEmail, forcedSection }: UnifiedSet
                                       "whitespace-nowrap font-medium",
                                       child.amount > 0 ? "text-green-600" : "text-slate-500 dark:text-slate-400"
                                     )}>
-                                      {child.amount > 0 ? '+' : ''}{formatAmount(child.amount)}
+                                      {formatAmount(child.amount)}
                                     </span>
                                   </div>
                                 ))}
@@ -1305,7 +1323,7 @@ export default function UnifiedSettings({ userEmail, forcedSection }: UnifiedSet
                         </thead>
                         <tbody className="divide-y divide-slate-200 dark:divide-slate-800">
                           {filteredTransactions.map((transaction) => {
-                            const isGrouped = transaction.type === 'workflow';
+                            const isGrouped = transaction.type === 'workflow' || transaction.type === 'project';
                             const hasChildren = (transaction.children?.length || 0) > 0;
                             const isExpanded = hasChildren && expandedGroups.has(transaction.id);
 
@@ -1350,7 +1368,7 @@ export default function UnifiedSettings({ userEmail, forcedSection }: UnifiedSet
                                     "px-3 sm:px-6 py-3 text-right font-semibold whitespace-nowrap",
                                     transaction.amount > 0 ? "text-green-600" : "text-slate-900 dark:text-slate-50"
                                   )}>
-                                    {transaction.amount > 0 ? '+' : ''}{formatAmount(transaction.amount)}
+                                    {formatAmount(transaction.amount)}
                                   </td>
                                 </tr>
                                 {/* Expanded children */}
@@ -1365,14 +1383,17 @@ export default function UnifiedSettings({ userEmail, forcedSection }: UnifiedSet
                                     </td>
                                     <td className="hidden sm:table-cell px-3 sm:px-6 py-2"></td>
                                     <td className="pl-8 sm:pl-12 pr-3 sm:pr-6 py-2 text-xs text-slate-500 dark:text-slate-400">
-                                      {child.reason}
+                                      <span>{child.reason}</span>
+                                      {child.detail && (
+                                        <span className="ml-2 text-slate-400 dark:text-slate-500">{child.detail}</span>
+                                      )}
                                     </td>
                                     <td className="hidden md:table-cell px-3 sm:px-6 py-2"></td>
                                     <td className={cn(
                                       "px-3 sm:px-6 py-2 text-right text-xs",
                                       child.amount > 0 ? "text-green-600" : "text-slate-500 dark:text-slate-400"
                                     )}>
-                                      {child.amount > 0 ? '+' : ''}{formatAmount(child.amount)}
+                                      {formatAmount(child.amount)}
                                     </td>
                                   </tr>
                                 ))}
