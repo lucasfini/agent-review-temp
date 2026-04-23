@@ -30,6 +30,13 @@ import {
   type ShowIdentityMatch,
   type ShowRosterEntry,
 } from './show-speaker-memory';
+import {
+  matchNonHumanSpeakerNameRules,
+  matchPanelIntroRules,
+  matchStrongGuestIntroRules,
+  matchWeakGuestMentionRules,
+  type SpeakerNamingRuleMatch,
+} from './speaker-naming-rules';
 
 // Invalid names that should never be extracted (adjectives, possessives, common words)
 const INVALID_NAME_PATTERNS = [
@@ -1600,6 +1607,11 @@ export type ConversationalNamingInspection = {
   rejectedHumanNameCandidates: string[];
   rejectedNamePromotions: string[];
   rejectedNamePromotionReasons?: Array<{ speakerId: string; name: string; reasons: string[] }>;
+  ruleMatches?: {
+    accepted: SpeakerNamingRuleMatch[];
+    rejected: SpeakerNamingRuleMatch[];
+    weakMentions: SpeakerNamingRuleMatch[];
+  };
   nameProvenance: Array<{ speakerId: string; finalName: string | null; provenance: string[]; finalNameLocked: boolean }>;
   rejectedIntroducedNames: string[];
   rejectedGuestMemoryCarryovers: string[];
@@ -2851,32 +2863,25 @@ function getConversationalNameRejectionReasons(
   provenance: Map<string, string[]>
 ): string[] {
   const reasons = new Set<string>();
-  const normalized = normalizeSpeakerName(name);
-  const titleContext = `${options.title || ''} ${options.filename || ''}`.toLowerCase();
+  const ruleMatches = matchNonHumanSpeakerNameRules(name);
 
-  if (isLikelyNonHumanConversationalNameCandidate(name, {
+  if (ruleMatches.length > 0 || isLikelyNonHumanConversationalNameCandidate(name, {
     showIdentity: options.showIdentity,
     title: options.title,
     filename: options.filename,
   })) {
     reasons.add('mentioned_entity_only');
   }
-  if (/\b(?:school|university|college|institute|center|centre|department|ministry|foundation|magazine|newspaper|news|opinion|world service|radio|network|press|times|general assembly|security council|united nations|u\.?n\.?)\b/i.test(name)) {
-    reasons.add('institution_or_body');
-  }
-  if (/\b(?:secretary|minister|president|prime minister|senator|governor|chief of staff|human services)\b/i.test(name)) {
-    reasons.add('title_or_role_phrase');
-  }
-  if (/\b(?:united states|united kingdom|america|israel|palestinians?|iran|russia|ukraine|china|canada|europe)\b/i.test(name)) {
-    reasons.add('geopolitical_entity');
-  }
-  if (/\b(?:treaty|resolution|accord|agreement|act|bill|law|nobel(?: prize)?)\b/i.test(name)) {
-    reasons.add('topic_phrase');
-  }
-  if (normalized && titleContext.includes(normalized)) {
-    reasons.add('topic_phrase');
-  }
 
+  for (const match of ruleMatches) {
+    if (match.category === 'non_human_institution') reasons.add('institution_or_body');
+    if (match.category === 'non_human_location') reasons.add('non_human_location');
+    if (match.category === 'non_human_title_or_role') reasons.add('title_or_role_phrase');
+    if (match.category === 'non_human_geopolitical') reasons.add('geopolitical_entity');
+    if (match.category === 'non_human_topic_or_law') reasons.add('topic_phrase');
+    if (match.category === 'non_human_show_or_promo') reasons.add('show_or_promo');
+    if (match.category === 'non_human_sponsor_product') reasons.add('sponsor_product');
+  }
   const participantSupported = hasParticipantStyleEvidence(name, provenance) ||
     hasParticipantStyleProvenanceReasons(getSpeakerNameProvenance(speaker));
   if (!participantSupported) {
@@ -2968,9 +2973,12 @@ function enforceConversationalNameProvenanceInSpeakerMap(
     const nonHuman = rejectionReasons.some((reason) => (
       reason === 'mentioned_entity_only' ||
       reason === 'institution_or_body' ||
+      reason === 'non_human_location' ||
       reason === 'title_or_role_phrase' ||
       reason === 'geopolitical_entity' ||
-      reason === 'topic_phrase'
+      reason === 'topic_phrase' ||
+      reason === 'show_or_promo' ||
+      reason === 'sponsor_product'
     ));
     const selfVocative = rejectionReasons.includes('self_vocative');
     if (supported && participantSupported && !nonHuman && !selfVocative) continue;
@@ -3544,6 +3552,46 @@ function isFirstNameShadowedByFullGuestIntro(
   ));
 }
 
+function collectConversationalNamingRuleMatches(
+  segments: SpeakerSegment[],
+  options: ConversationalNamingOptions
+): { accepted: SpeakerNamingRuleMatch[]; rejected: SpeakerNamingRuleMatch[]; weakMentions: SpeakerNamingRuleMatch[] } {
+  const introWindow = detectIntroWindowEndTime(segments, Boolean(options.showRoster?.length));
+  const accepted: SpeakerNamingRuleMatch[] = [];
+  const rejected: SpeakerNamingRuleMatch[] = [];
+  const weakMentions: SpeakerNamingRuleMatch[] = [];
+
+  for (const segment of segments) {
+    if (!isConversationalSegment(segment)) continue;
+    const text = getSegText(segment);
+    const startSeconds = getSegStartSeconds(segment);
+    const inIntroWindow = startSeconds == null || startSeconds <= introWindow.endTimeSeconds;
+
+    for (const match of [...matchStrongGuestIntroRules(text), ...matchPanelIntroRules(text)]) {
+      if (!match.name) continue;
+      const blocked = isLikelyNonHumanConversationalNameCandidate(match.name, {
+        showIdentity: options.showIdentity,
+        title: options.title,
+        filename: options.filename,
+      });
+      if (inIntroWindow && !blocked) {
+        accepted.push(match);
+      } else {
+        rejected.push({
+          ...match,
+          reason: blocked ? `${match.reason}; blocked as non-human` : `${match.reason}; outside intro window`,
+        });
+      }
+    }
+
+    for (const match of matchWeakGuestMentionRules(text)) {
+      weakMentions.push(match);
+    }
+  }
+
+  return { accepted, rejected, weakMentions };
+}
+
 export function resolveConversationalHumanNames(
   roster: GPTSpeaker[],
   segments: SpeakerSegment[],
@@ -3758,6 +3806,11 @@ export function inspectConversationalNamingState(
       rejectedHumanNameCandidates: [],
       rejectedNamePromotions: [],
       rejectedNamePromotionReasons: [],
+      ruleMatches: {
+        accepted: [],
+        rejected: [],
+        weakMentions: [],
+      },
       nameProvenance: [],
       rejectedIntroducedNames: [],
       rejectedGuestMemoryCarryovers: [],
@@ -3842,6 +3895,10 @@ export function inspectConversationalNamingState(
     .map((candidate) => candidate.firstName)
     .filter((firstName, index, all) => all.indexOf(firstName) === index);
   const recurringOwnership = inspectRecurringShowClusterOwnership(recurringAssignments.roster, segments, options);
+  const ruleMatches = collectConversationalNamingRuleMatches(segments, {
+    ...options,
+    showIdentity: recurringAssignments.showIdentity || options.showIdentity,
+  });
   const nameProvenance = roster.map((speaker) => ({
     speakerId: speaker.id,
     finalName: typeof speaker?.name === 'string' ? speaker.name : null,
@@ -3876,6 +3933,7 @@ export function inspectConversationalNamingState(
     ],
     rejectedNamePromotions,
     rejectedNamePromotionReasons,
+    ruleMatches,
     nameProvenance,
     rejectedIntroducedNames: collectRejectedIntroducedNames(segments),
     rejectedGuestMemoryCarryovers: recurringAssignments.rejectedGuestCarryovers,
@@ -4172,10 +4230,6 @@ function extractPanelIntroParticipants(
 ): Array<{ name: string; segmentIndex: number }> {
   const participants: Array<{ name: string; segmentIndex: number }> = [];
   const seen = new Set<string>();
-  const patterns = [
-    /\b(?:we have|we've got|we also have|and our very own|plus)\s+([A-Z][a-z]+(?:\s+[A-Z][a-z]+){1,2})\b/gi,
-  ];
-
   for (let i = 0; i < segments.length; i++) {
     const segment = segments[i];
     const startSeconds = getSegStartSeconds(segment);
@@ -4184,23 +4238,19 @@ function extractPanelIntroParticipants(
     const text = getSegText(segment);
     if (!/\b(?:panel|experts|we have|we've got|our very own|plus)\b/i.test(text)) continue;
 
-    for (const pattern of patterns) {
-      pattern.lastIndex = 0;
-      let match: RegExpExecArray | null;
-      while ((match = pattern.exec(text)) !== null) {
-        const rawName = match[1]?.trim();
-        if (!rawName) continue;
-        if (!isValidIntroNameCandidate(rawName)) continue;
-        if (isLikelyNonHumanConversationalNameCandidate(rawName, {
-          showIdentity: options.showIdentity,
-          title: options.title,
-          filename: options.filename,
-        })) continue;
-        const normalized = normalizeSpeakerName(rawName);
-        if (seen.has(normalized)) continue;
-        seen.add(normalized);
-        participants.push({ name: rawName, segmentIndex: i });
-      }
+    for (const match of matchPanelIntroRules(text)) {
+      const rawName = match.name?.trim();
+      if (!rawName) continue;
+      if (!isValidIntroNameCandidate(rawName)) continue;
+      if (isLikelyNonHumanConversationalNameCandidate(rawName, {
+        showIdentity: options.showIdentity,
+        title: options.title,
+        filename: options.filename,
+      })) continue;
+      const normalized = normalizeSpeakerName(rawName);
+      if (seen.has(normalized)) continue;
+      seen.add(normalized);
+      participants.push({ name: rawName, segmentIndex: i });
     }
   }
 
@@ -6511,9 +6561,10 @@ function extractStrongInterviewIntroNames(
     if (startSeconds != null && startSeconds > endTimeSeconds) break;
     if (!isHumanIntroEligibleSegment(seg)) continue;
     const text = getSegText(seg);
-    if (!/\b(?:joined by|good to have you|glad to have you|good to see you|great to see you|welcome|bring in)\b/i.test(text)) continue;
     const selfIdentifiedName = extractFullNameSelfIdentifiedName(text);
     const normalizedSelfIdentifiedName = selfIdentifiedName ? normalizeSpeakerName(selfIdentifiedName) : null;
+    const ruleMatches = matchStrongGuestIntroRules(text);
+    if (ruleMatches.length === 0) continue;
 
     const matches = Array.from(text.matchAll(/\b([A-Z][a-z]+(?:\s+[A-Z][a-z]+)+)\b/g));
     const validNames = matches
@@ -6525,6 +6576,21 @@ function extractStrongInterviewIntroNames(
         normalizeSpeakerName(value) !== normalizedSelfIdentifiedName
       ));
 
+    for (const ruleMatch of ruleMatches) {
+      const ruleName = ruleMatch.name?.trim();
+      if (!ruleName) continue;
+      if (!validNames.some((value) => normalizeSpeakerName(value) === normalizeSpeakerName(ruleName))) continue;
+      const normalized = normalizeSpeakerName(ruleName);
+      if (seen.has(normalized)) continue;
+
+      seen.add(normalized);
+      candidates.push({
+        name: ruleName,
+        segmentIndex: i,
+        phrase: ruleMatch.category,
+      });
+    }
+
     if (validNames.length === 0) continue;
     const participantScored = validNames
       .map((value) => {
@@ -6532,7 +6598,7 @@ function extractStrongInterviewIntroNames(
         let score = 0;
         if (new RegExp(`\\b${escaped},\\s+(?:it'?s|its|good|great|glad|thank|thanks|welcome)\\b`, 'i').test(text)) score += 8;
         if (new RegExp(`\\b(?:here'?s|with|joined by|talking to|conversation with|our guest is)\\s+${escaped}\\b`, 'i').test(text)) score += 6;
-        if (new RegExp(`\\b${escaped}\\s+(?:is|was|who|specializes in|specialises in|host of|editor of|founder of|co-founder of|author of|reporter at|climate editor)\\b`, 'i').test(text)) score += 5;
+        if (new RegExp(`\\b${escaped}\\s+(?:(?:is|was)\\s+(?:a|an)\\s+(?:author|columnist|consultant|economist|editor|founder|journalist|physicist|professor|reporter|researcher|writer)|who\\s+(?:specializes|specialises)\\s+in|specializes in|specialises in|host of|editor of|founder of|co-founder of|author of|reporter at|climate editor)\\b`, 'i').test(text)) score += 5;
         if (/^(?:the\s+)/i.test(value)) score -= 6;
         return { value, score };
       })

@@ -18,6 +18,12 @@ import {
   extractLearnedShowRosterFromProjects,
   mergeShowRosterEntries,
 } from '@/lib/show-speaker-memory';
+import {
+  matchNonHumanSpeakerNameRules,
+  matchPanelIntroRules,
+  matchStrongGuestIntroRules,
+  matchWeakGuestMentionRules,
+} from '@/lib/speaker-naming-rules';
 import type { SpeakerSegment } from '@/lib/types';
 import type { GPTSpeaker } from '@/lib/gpt-speaker-intelligence';
 import * as gptSpeakerIntelligence from '@/lib/gpt-speaker-intelligence';
@@ -1621,6 +1627,185 @@ describe('speaker pipeline regressions', () => {
     expect(resolved.speakers.speaker_2.finalName).not.toBe('Human Services Secretary');
     expect(resolved.speakers.speaker_2.finalNameLocked).toBe(true);
     expect(resolved.speakers.speaker_2.nameProvenance).toEqual(expect.arrayContaining(['direct_intro', 'guest_intro']));
+  });
+
+  test('daily beast transport hubs cannot become panel-intro speakers', () => {
+    const speakerMap = {
+      speaker_1: { id: 'speaker_1', finalName: 'Joanna Coles', role: 'host', fallbackName: 'Speaker 1', segments: [] },
+      speaker_2: { id: 'speaker_2', finalName: 'Penn Station', role: 'guest', fallbackName: 'Speaker 2', segments: [] },
+    };
+
+    const segments: SpeakerSegment[] = [
+      {
+        speakerId: 'speaker_1',
+        initialSpeakerId: 'Speaker_A',
+        finalSpeakerId: 'speaker_1',
+        startTime: 0,
+        endTime: 64,
+        text: "I'm Joanna Coles. This is the Daily Beast podcast. Today we're talking to David Rothkopf about the latest madness. We'll be discussing that with David Rothkopf.",
+        confidence: 0.9,
+        status: 'confirmed',
+      },
+      {
+        speakerId: 'speaker_2',
+        initialSpeakerId: 'Speaker_B',
+        finalSpeakerId: 'speaker_2',
+        startTime: 64,
+        endTime: 90,
+        text: 'Very serious. The reality is that they realize they are going to lose.',
+        confidence: 0.9,
+        status: 'confirmed',
+      },
+      {
+        speakerId: 'speaker_1',
+        initialSpeakerId: 'Speaker_A',
+        finalSpeakerId: 'speaker_1',
+        startTime: 1200,
+        endTime: 1230,
+        text: "We've got Penn Station, we've got Dulles Airport, and now we've got Palm Beach International.",
+        confidence: 0.8,
+        status: 'confirmed',
+      },
+    ];
+
+    const resolved = __testUtils.resolveConversationalHumanNamesInSpeakerMap(
+      speakerMap,
+      segments,
+      {
+        projectType: 'PODCAST',
+        title: 'The Daily Beast Podcast',
+        filename: 'daily_beast_david_rothkopf.json',
+      }
+    );
+
+    expect(resolved.speakers.speaker_2.finalName).toBe('David Rothkopf');
+    expect(resolved.speakers.speaker_2.finalName).not.toBe('Penn Station');
+    expect(resolved.speakers.speaker_2.nameProvenance).toEqual(expect.arrayContaining(['guest_intro']));
+  });
+
+  test('title-named one-off guests are not rejected as topic phrases when intro evidence exists', () => {
+    const speakerMap = {
+      speaker_1: { id: 'speaker_1', finalName: 'Max Tegmark', role: 'guest', fallbackName: 'Speaker 1', segments: [] },
+      speaker_2: { id: 'speaker_2', finalName: 'Lex Fridman', role: 'host', fallbackName: 'Speaker 2', segments: [] },
+    };
+
+    const segments: SpeakerSegment[] = [
+      {
+        speakerId: 'speaker_2',
+        initialSpeakerId: 'Speaker_B',
+        finalSpeakerId: 'speaker_2',
+        startTime: 10,
+        endTime: 90,
+        text: 'The following is a conversation with Max Tegmark, his third time on the podcast. He is a physicist and artificial intelligence researcher at MIT.',
+        confidence: 0.9,
+        status: 'confirmed',
+      },
+      {
+        speakerId: 'speaker_1',
+        initialSpeakerId: 'Speaker_A',
+        finalSpeakerId: 'speaker_1',
+        startTime: 90,
+        endTime: 150,
+        text: 'Thanks to you for putting your heart and soul into this. I know when you delve into controversial topics it is inevitable to get hit.',
+        confidence: 0.9,
+        status: 'confirmed',
+      },
+    ];
+
+    const resolved = __testUtils.resolveConversationalHumanNamesInSpeakerMap(
+      speakerMap,
+      segments,
+      {
+        projectType: 'PODCAST',
+        title: 'Max Tegmark The Case for Halting AI Development Lex Fridman Podcast',
+        filename: 'max_tegmark_lex_fridman.json',
+      }
+    );
+
+    expect(resolved.speakers.speaker_1.finalName).toBe('Max Tegmark');
+    expect(resolved.speakers.speaker_1.finalNameLocked).toBe(true);
+    expect(resolved.speakers.speaker_1.nameProvenance).toEqual(expect.arrayContaining(['guest_intro']));
+  });
+
+  test('speaker naming rule registry classifies common intro phrases and weak mentions', () => {
+    expect(matchStrongGuestIntroRules("Today we're talking to David Rothkopf about politics.")).toEqual([
+      expect.objectContaining({
+        category: 'strong_guest_intro',
+        name: 'David Rothkopf',
+      }),
+    ]);
+    expect(matchStrongGuestIntroRules('The following is a conversation with Max Tegmark, his third time on the podcast.')).toEqual([
+      expect.objectContaining({
+        category: 'strong_guest_intro',
+        name: 'Max Tegmark',
+      }),
+    ]);
+    expect(matchStrongGuestIntroRules('My guest today is Maria Chen, an economist.')).toEqual([
+      expect.objectContaining({
+        category: 'strong_guest_intro',
+        name: 'Maria Chen',
+      }),
+    ]);
+    expect(matchStrongGuestIntroRules('Joining me is Priya Shah, a reporter.')).toEqual([
+      expect.objectContaining({
+        category: 'strong_guest_intro',
+        name: 'Priya Shah',
+      }),
+    ]);
+    expect(matchStrongGuestIntroRules('David Rothkopf, welcome back to the show.')).toEqual([
+      expect.objectContaining({
+        category: 'direct_address_intro',
+        name: 'David Rothkopf',
+      }),
+    ]);
+    expect(matchWeakGuestMentionRules('I recently had a conversation with Sam Altman about model releases.')).toEqual([
+      expect.objectContaining({
+        category: 'weak_guest_mention',
+        name: 'Sam Altman',
+      }),
+    ]);
+  });
+
+  test('speaker naming rule registry classifies non-human blocker categories', () => {
+    expect(matchNonHumanSpeakerNameRules('Penn Station')).toEqual(expect.arrayContaining([
+      expect.objectContaining({ category: 'non_human_location' }),
+    ]));
+    expect(matchNonHumanSpeakerNameRules('Dulles Airport')).toEqual(expect.arrayContaining([
+      expect.objectContaining({ category: 'non_human_location' }),
+    ]));
+    expect(matchNonHumanSpeakerNameRules('United States')).toEqual(expect.arrayContaining([
+      expect.objectContaining({ category: 'non_human_geopolitical' }),
+    ]));
+    expect(matchNonHumanSpeakerNameRules('General Assembly')).toEqual(expect.arrayContaining([
+      expect.objectContaining({ category: 'non_human_institution' }),
+    ]));
+    expect(matchNonHumanSpeakerNameRules('Human Services Secretary')).toEqual(expect.arrayContaining([
+      expect.objectContaining({ category: 'non_human_title_or_role' }),
+    ]));
+    expect(matchNonHumanSpeakerNameRules('Versailles Peace Treaty')).toEqual(expect.arrayContaining([
+      expect.objectContaining({ category: 'non_human_topic_or_law' }),
+    ]));
+    expect(matchNonHumanSpeakerNameRules('Nobel')).toEqual(expect.arrayContaining([
+      expect.objectContaining({ category: 'non_human_topic_or_law' }),
+    ]));
+    expect(matchNonHumanSpeakerNameRules('SoFi')).toEqual(expect.arrayContaining([
+      expect.objectContaining({ category: 'non_human_sponsor_product' }),
+    ]));
+  });
+
+  test('panel intro rule registry captures explicit panel enumeration only', () => {
+    expect(matchPanelIntroRules('We have Caroline Steele, host of Crowd Science.')).toEqual([
+      expect.objectContaining({
+        category: 'panel_intro',
+        name: 'Caroline Steele',
+      }),
+    ]);
+    expect(matchPanelIntroRules("We've got Penn Station and Dulles Airport in the news.")).toEqual([
+      expect.objectContaining({
+        category: 'panel_intro',
+        name: 'Penn Station',
+      }),
+    ]);
   });
 
   test('ezra guest intro is not overwritten by treaties or institutions', () => {

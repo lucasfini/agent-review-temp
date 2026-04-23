@@ -1,4 +1,5 @@
 import type { SpeakerRole, SpeakerSegment } from '@/lib/types';
+import { matchNonHumanSpeakerNameRules } from './speaker-naming-rules';
 
 export type ShowRosterEntry = {
   name: string;
@@ -535,13 +536,7 @@ export function isLikelyNonHumanConversationalNameCandidate(
   const normalizedCandidate = normalizeText(candidate);
   if (!normalizedCandidate) return true;
 
-  if (
-    /\b(?:markets?|podcast|show|tour|newsletter|episode|promo|advertiser|sponsor)\b/.test(normalizedCandidate) ||
-    /\b(?:school|university|college|law\s+school|institute|center|centre|department|ministry|foundation|magazine|newspaper|news|opinion|world\s+service|radio|network|press|times|bloomberg|bbc|vox\s+media|general\s+assembly|security\s+council|nobel(?:\s+prize)?)\b/.test(normalizedCandidate) ||
-    /\b(?:united\s+states|united\s+kingdom|u\.?s\.?|u\.?k\.?|america|israel|palestinians?|iran|russia|ukraine|china|canada|europe|european\s+union|united\s+nations|u\.?n\.?)\b/.test(normalizedCandidate) ||
-    /\b(?:secretary|minister|president|prime\s+minister|senator|governor|chief\s+of\s+staff|human\s+services|department\s+of|treaty|resolution|accord|agreement|act|bill|law)\b/.test(normalizedCandidate) ||
-    /\b[a-z0-9-]+\.(?:com|org|net|io|co)\b/.test(normalizedCandidate)
-  ) {
+  if (matchNonHumanSpeakerNameRules(candidate).length > 0) {
     return true;
   }
 

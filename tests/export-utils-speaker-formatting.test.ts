@@ -265,4 +265,64 @@ describe('export speaker formatting', () => {
 
     expect(parsed.projects[0].coreContent.conversation.debug).toBeUndefined();
   });
+
+  test('json export excludes unselected projects instead of emitting id-title stubs', () => {
+    const selectedProject = {
+      id: 'project_1',
+      title: 'Selected Project',
+      outputs: [],
+      speaker_data: {
+        speakers: {
+          speaker_1: {
+            finalName: 'Host One',
+            role: 'host',
+          },
+        },
+        segments: [
+          {
+            speakerId: 'speaker_1',
+            finalSpeakerId: 'speaker_1',
+            startTime: 0,
+            endTime: 4,
+            text: 'Welcome back.',
+            segmentKind: 'conversation',
+          },
+        ],
+      },
+    };
+
+    const unselectedProject = {
+      id: 'project_2',
+      title: 'Unselected Project',
+      outputs: [],
+      speaker_data: {
+        speakers: {
+          speaker_1: {
+            finalName: 'Should Not Export',
+            role: 'host',
+          },
+        },
+        segments: [
+          {
+            speakerId: 'speaker_1',
+            finalSpeakerId: 'speaker_1',
+            startTime: 0,
+            endTime: 4,
+            text: 'This should not be in the file.',
+            segmentKind: 'conversation',
+          },
+        ],
+      },
+    };
+
+    const json = __testUtils.formatAsJSON(
+      [selectedProject as any, unselectedProject as any],
+      [{ projectId: 'project_1', projectTitle: 'Selected Project', selectedBlockIds: [], selectedCoreContent: ['conversation'] }]
+    );
+    const parsed = JSON.parse(json);
+
+    expect(parsed.projects).toHaveLength(1);
+    expect(parsed.projects[0].id).toBe('project_1');
+    expect(parsed.projects[0].coreContent.conversation.speakers.speaker_1.finalName).toBe('Host One');
+  });
 });

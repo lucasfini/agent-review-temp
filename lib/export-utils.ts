@@ -743,9 +743,11 @@ function formatAsJSON(
   manifest: ExportManifestItem[],
   options: ExportOptions = {}
 ): string {
+  const selectedProjectIds = new Set(manifest.map(item => item.projectId));
+  const selectedProjects = projects.filter(project => selectedProjectIds.has(project.id));
   const exportData = {
     exportedAt: new Date().toISOString(),
-    projects: projects.map(project => {
+    projects: selectedProjects.map(project => {
       const manifestItem = manifest.find(m => m.projectId === project.id);
       const selectedIds = manifestItem?.selectedBlockIds;
       const selectedCore = manifestItem?.selectedCoreContent || [];
