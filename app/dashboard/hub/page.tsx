@@ -462,7 +462,9 @@ export default function ProjectHubPage() {
     setBulkDeleting(true);
     try {
       const { data: { session } } = await supabase.auth.getSession();
-      const headers = session?.access_token ? { Authorization: `Bearer ${session.access_token}` } : {};
+      const headers: HeadersInit | undefined = session?.access_token
+        ? { Authorization: `Bearer ${session.access_token}` }
+        : undefined;
 
       const results = await Promise.allSettled(
         projectIds.map(async (projectId) => {
