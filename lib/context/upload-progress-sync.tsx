@@ -9,6 +9,7 @@ import { calculateOverallProgress, type ProcessingStage } from '@/lib/tier-progr
 import type { TierLevel } from '@/lib/tier-config';
 import type { AnalysisOptions } from '@/lib/analysis-options';
 import { normalizeAnalysisOptions } from '@/lib/analysis-options';
+import { ESTIMATED_BITRATE_BPS } from '@/lib/upload-constants';
 import { loadPersistedQueuedUploads, persistQueuedUploads } from '@/lib/upload-queue-storage';
 import { toast } from 'sonner';
 
@@ -87,21 +88,38 @@ async function getMediaDurationSeconds(file: File): Promise<number | undefined> 
 
   try {
     const duration = await new Promise<number>((resolve, reject) => {
+      let finished = false;
       const cleanup = () => {
         media.removeAttribute('src');
         media.load();
         URL.revokeObjectURL(objectUrl);
       };
+      const finish = (callback: () => void) => {
+        if (finished) return;
+        finished = true;
+        window.clearTimeout(timeoutId);
+        callback();
+      };
+      const timeoutId = window.setTimeout(() => {
+        finish(() => {
+          cleanup();
+          reject(new Error('Timed out while reading media metadata'));
+        });
+      }, 5000);
 
       media.onloadedmetadata = () => {
         const nextDuration = Number.isFinite(media.duration) ? Math.round(media.duration) : 0;
-        cleanup();
-        resolve(nextDuration);
+        finish(() => {
+          cleanup();
+          resolve(nextDuration);
+        });
       };
 
       media.onerror = () => {
-        cleanup();
-        reject(new Error('Failed to read media metadata'));
+        finish(() => {
+          cleanup();
+          reject(new Error('Failed to read media metadata'));
+        });
       };
     });
 
@@ -110,6 +128,10 @@ async function getMediaDurationSeconds(file: File): Promise<number | undefined> 
     URL.revokeObjectURL(objectUrl);
     return undefined;
   }
+}
+
+function estimateDurationSecondsFromFileSize(file: File): number {
+  return Math.max(1, Math.round(file.size / (ESTIMATED_BITRATE_BPS / 8)));
 }
 
 export function UploadProgressSyncProvider({ children }: { children: ReactNode }) {
@@ -331,7 +353,6 @@ export function UploadProgressSyncProvider({ children }: { children: ReactNode }
 
       const fileProcessingTier = uploadedFile.processingTier;
       const fileAnalysisOptions = normalizeAnalysisOptions(uploadedFile.analysisOptions);
-      const estimatedDurationSeconds = uploadedFile.estimatedDurationSeconds || await getMediaDurationSeconds(uploadedFile.file);
       setUploadedFiles(prev =>
         prev.map(f => f.id === uploadedFile.id ? {
           ...f,
@@ -342,6 +363,9 @@ export function UploadProgressSyncProvider({ children }: { children: ReactNode }
           progress: calculateOverallProgress(f.processingTier, 'uploading', 0),
         } : f)
       );
+      const estimatedDurationSeconds = uploadedFile.estimatedDurationSeconds
+        || await getMediaDurationSeconds(uploadedFile.file)
+        || estimateDurationSecondsFromFileSize(uploadedFile.file);
 
       const payload: any = {
         fileName: uploadedFile.file.name,
