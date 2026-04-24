@@ -325,4 +325,62 @@ describe('export speaker formatting', () => {
     expect(parsed.projects[0].id).toBe('project_1');
     expect(parsed.projects[0].coreContent.conversation.speakers.speaker_1.finalName).toBe('Host One');
   });
+
+  test('json export preserves final speaker-level confidence from attached trust summary', () => {
+    const project = {
+      id: 'project_1',
+      title: 'Daily Beast',
+      outputs: [],
+      speaker_data: {
+        speakers: {
+          speaker_1: {
+            finalName: 'Joanna Coles',
+            role: 'host',
+            assignmentConfidence: 0.91,
+            assignmentContradictions: [],
+            requiresReview: false,
+          },
+          speaker_2: {
+            finalName: 'David Rothkopf',
+            role: 'guest',
+            assignmentConfidence: 0.88,
+            assignmentContradictions: [],
+            requiresReview: false,
+          },
+        },
+        segments: [
+          {
+            speakerId: 'speaker_1',
+            finalSpeakerId: 'speaker_1',
+            startTime: 0,
+            endTime: 5,
+            text: 'David, how seriously should we take this?',
+            segmentKind: 'conversation',
+          },
+          {
+            speakerId: 'speaker_2',
+            finalSpeakerId: 'speaker_2',
+            startTime: 5,
+            endTime: 25,
+            text: 'Very seriously. The threat to institutions is real.',
+            segmentKind: 'conversation',
+          },
+        ],
+        detectionMetadata: {
+          speakerAssignmentConfidence: 0.919,
+        },
+      },
+    };
+
+    const json = __testUtils.formatAsJSON(
+      [project as any],
+      [{ projectId: 'project_1', projectTitle: 'Daily Beast', selectedBlockIds: [], selectedCoreContent: ['conversation'] }]
+    );
+    const parsed = JSON.parse(json);
+    const conversation = parsed.projects[0].coreContent.conversation;
+
+    expect(conversation.speakers.speaker_1.assignmentConfidence).toBe(0.91);
+    expect(conversation.speakers.speaker_2.assignmentConfidence).toBe(0.88);
+    expect(conversation.speakerRoster.find((speaker: any) => speaker.id === 'speaker_2').assignmentConfidence).toBe(0.88);
+  });
 });

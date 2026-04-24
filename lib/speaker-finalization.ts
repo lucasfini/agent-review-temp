@@ -46,7 +46,14 @@ export type SpeakerAssignmentTrustSummary = {
     contradictions: string[];
     reviewReasons: string[];
     confirmedSegmentCount: number;
+    ownershipStable?: boolean;
+    panelCorroborated?: boolean;
+    suppressedBoundaryCount?: number;
   }>;
+  calibrationSummary?: {
+    boundarySuppressedCount: number;
+    panelCorroborationApplied: boolean;
+  };
 };
 
 function normalizeSpeakerName(name: string): string {
@@ -114,6 +121,110 @@ function isConfirmedReviewSegment(segment: SpeakerSegment): boolean {
 
 function getSegmentWordCount(segment: SpeakerSegment): number {
   return String(segment.text || '').split(/\s+/).filter(Boolean).length;
+}
+
+function getSegmentDuration(segment: SpeakerSegment): number {
+  return Math.max(0, (segment.endTime || 0) - (segment.startTime || 0));
+}
+
+function hasPanelStyleIntro(segments: SpeakerSegment[]): boolean {
+  return segments.some((segment) => {
+    if (!isConversationalSegment(segment)) return false;
+    if ((segment.startTime || 0) > 120) return false;
+    const text = String(segment.text || '');
+    return /\b(?:our\s+usual\s+panel|our\s+panel\s+includes|we\s+have|we(?:'ve|\s+have)\s+got|and\s+our\s+very\s+own)\b/i.test(text);
+  });
+}
+
+function isAcknowledgementLikeSegment(segment: SpeakerSegment): boolean {
+  const text = String(segment.text || '').trim();
+  if (!text) return true;
+  const normalized = text.toLowerCase().replace(/[^\w\s']/g, '').trim();
+  if (!normalized) return true;
+  const words = normalized.split(/\s+/).filter(Boolean);
+  if (words.length > 8 || getSegmentDuration(segment) > 4.5) return false;
+  if (/\?$/.test(text)) return false;
+  return /^(?:yeah|yes|yep|right|sure|okay|ok|mmhmm|hi|hello|thanks|thank you|nice to be here|lovely to be here|great to be here|good to be here|no problem|exactly|totally|absolutely|i agree|thats right|that's right|fair enough|sounds good)(?:\b|$)/i.test(normalized);
+}
+
+type SpeakerOwnershipStability = {
+  substantiveTurns: number;
+  conversationalDuration: number;
+  stableOwnership: boolean;
+  panelCorroborated: boolean;
+  boundaryUncertainIndices: number[];
+  isolatedBoundaryIndices: number[];
+  onlyBoundaryRisk: boolean;
+  derivedAssignmentConfidence: number | null;
+};
+
+function assessSpeakerOwnershipStability(
+  ownedSegments: Array<{ segment: SpeakerSegment; index: number }>,
+  options: {
+    finalName: string | null;
+    assignmentConfidence: number | null;
+    contradictions: string[];
+    requiresReview: boolean;
+    anonymous: boolean;
+    panelEpisode: boolean;
+    namedConversationalSpeakerCount: number;
+  }
+): SpeakerOwnershipStability {
+  const substantiveTurns = ownedSegments.filter(({ segment }) => {
+    const duration = getSegmentDuration(segment);
+    const words = getSegmentWordCount(segment);
+    return words >= 12 || duration >= 8;
+  }).length;
+  const conversationalDuration = ownedSegments.reduce((sum, { segment }) => sum + getSegmentDuration(segment), 0);
+  const uncertainSegments = ownedSegments.filter(({ segment }) => (
+    segment.status === 'uncertain' &&
+    isRiskySegmentReason(segment.confidenceReason) &&
+    !isConfirmedReviewSegment(segment)
+  ));
+  const boundaryUncertain = uncertainSegments.filter(({ segment }) => segment.confidenceReason === 'transition_short');
+  const nonBoundaryUncertain = uncertainSegments.filter(({ segment }) => segment.confidenceReason !== 'transition_short');
+  const isolatedBoundaryIndices = boundaryUncertain
+    .filter(({ segment }) => isAcknowledgementLikeSegment(segment))
+    .map(({ index }) => index);
+  const corroboratedNamedSpeaker = !options.anonymous && options.namedConversationalSpeakerCount >= 2;
+  const panelStableOwnership = options.panelEpisode &&
+    options.namedConversationalSpeakerCount >= 3 &&
+    substantiveTurns >= 1 &&
+    conversationalDuration >= 20;
+  const stableOwnership = corroboratedNamedSpeaker &&
+    !options.requiresReview &&
+    options.contradictions.length === 0 &&
+    (options.assignmentConfidence == null || options.assignmentConfidence >= 0.75) &&
+    ((substantiveTurns >= 2 || conversationalDuration >= 40) || panelStableOwnership);
+  const panelCorroborated = stableOwnership &&
+    options.panelEpisode &&
+    options.namedConversationalSpeakerCount >= 3 &&
+    substantiveTurns >= 1;
+  const onlyBoundaryRisk = uncertainSegments.length > 0 && nonBoundaryUncertain.length === 0;
+
+  let derivedAssignmentConfidence: number | null = options.assignmentConfidence;
+  if (derivedAssignmentConfidence == null && !options.anonymous) {
+    if (stableOwnership && onlyBoundaryRisk) {
+      derivedAssignmentConfidence = panelCorroborated ? 0.9 : 0.88;
+    } else if (stableOwnership) {
+      derivedAssignmentConfidence = 0.84;
+    } else if (substantiveTurns >= 1 && conversationalDuration >= 20 && options.contradictions.length === 0) {
+      derivedAssignmentConfidence = 0.72;
+    }
+  }
+
+  return {
+    substantiveTurns,
+    conversationalDuration,
+    stableOwnership,
+    panelCorroborated,
+    boundaryUncertainIndices: boundaryUncertain.map(({ index }) => index),
+    isolatedBoundaryIndices,
+    onlyBoundaryRisk,
+    derivedAssignmentConfidence: derivedAssignmentConfidence == null
+      ? null
+      : Number(Math.max(0, Math.min(1, derivedAssignmentConfidence)).toFixed(2)),
+  };
 }
 
 function buildMergeSpeakerStats(segments: SpeakerSegment[]): Map<string, MergeSpeakerStats> {
@@ -453,6 +564,9 @@ function buildTargetedReviewIndicesForSpeaker(
     assignmentConfidence: number | null;
     contradictions: string[];
     anonymous: boolean;
+    stableOwnership?: boolean;
+    panelCorroborated?: boolean;
+    boundaryReviewBudget?: number;
   }
 ): number[] {
   const hasUnresolvedUncertainSegments = ownedSegments.some(({ segment }) => (
@@ -485,6 +599,12 @@ function buildTargetedReviewIndicesForSpeaker(
 
   for (const { segment, index } of sortedOwnedSegments) {
     if (segment.status === 'uncertain' && isRiskySegmentReason(segment.confidenceReason)) {
+      if (options.stableOwnership &&
+        segment.confidenceReason === 'transition_short' &&
+        isAcknowledgementLikeSegment(segment)
+      ) {
+        continue;
+      }
       addCandidate(index, 100, `uncertain:${segment.confidenceReason || 'unknown'}`);
     }
     if (contradictionAliases.length > 0 && segmentContainsAlias(segment, contradictionAliases)) {
@@ -496,8 +616,10 @@ function buildTargetedReviewIndicesForSpeaker(
     }
   }
 
-  for (const { index } of sortedOwnedSegments.slice(0, 2)) {
-    addCandidate(index, 65, 'early_turn');
+  if (!options.stableOwnership) {
+    for (const { index } of sortedOwnedSegments.slice(0, 2)) {
+      addCandidate(index, 65, 'early_turn');
+    }
   }
 
   const substantiveSegments = sortedOwnedSegments
@@ -514,8 +636,10 @@ function buildTargetedReviewIndicesForSpeaker(
       return a.index - b.index;
     });
 
-  for (const candidate of substantiveSegments.slice(0, 2)) {
-    addCandidate(candidate.index, 55, 'representative_substantive');
+  if (!options.stableOwnership || !options.panelCorroborated) {
+    for (const candidate of substantiveSegments.slice(0, 2)) {
+      addCandidate(candidate.index, 55, 'representative_substantive');
+    }
   }
 
   if (options.anonymous && sortedOwnedSegments.length > 0) {
@@ -527,7 +651,7 @@ function buildTargetedReviewIndicesForSpeaker(
       if (b[1].score !== a[1].score) return b[1].score - a[1].score;
       return a[0] - b[0];
     })
-    .slice(0, 5)
+    .slice(0, options.boundaryReviewBudget ?? 5)
     .map(([index]) => index)
     .sort((a, b) => a - b);
 }
@@ -540,6 +664,9 @@ function buildTargetedReviewItemsForSpeaker(
     assignmentConfidence: number | null;
     contradictions: string[];
     anonymous: boolean;
+    stableOwnership?: boolean;
+    panelCorroborated?: boolean;
+    boundaryReviewBudget?: number;
   }
 ): Array<{ index: number; speakerId: string; reasons: string[]; primaryReason: string }> {
   const hasUnresolvedUncertainSegments = ownedSegments.some(({ segment }) => (
@@ -572,6 +699,12 @@ function buildTargetedReviewItemsForSpeaker(
 
   for (const { segment, index } of sortedOwnedSegments) {
     if (segment.status === 'uncertain' && isRiskySegmentReason(segment.confidenceReason)) {
+      if (options.stableOwnership &&
+        segment.confidenceReason === 'transition_short' &&
+        isAcknowledgementLikeSegment(segment)
+      ) {
+        continue;
+      }
       addCandidate(index, 100, `uncertain:${segment.confidenceReason || 'unknown'}`);
     }
     if (contradictionAliases.length > 0 && segmentContainsAlias(segment, contradictionAliases)) {
@@ -583,8 +716,10 @@ function buildTargetedReviewItemsForSpeaker(
     }
   }
 
-  for (const { index } of sortedOwnedSegments.slice(0, 2)) {
-    addCandidate(index, 65, 'early_turn');
+  if (!options.stableOwnership) {
+    for (const { index } of sortedOwnedSegments.slice(0, 2)) {
+      addCandidate(index, 65, 'early_turn');
+    }
   }
 
   const substantiveSegments = sortedOwnedSegments
@@ -601,8 +736,10 @@ function buildTargetedReviewItemsForSpeaker(
       return a.index - b.index;
     });
 
-  for (const candidate of substantiveSegments.slice(0, 2)) {
-    addCandidate(candidate.index, 55, 'representative_substantive');
+  if (!options.stableOwnership || !options.panelCorroborated) {
+    for (const candidate of substantiveSegments.slice(0, 2)) {
+      addCandidate(candidate.index, 55, 'representative_substantive');
+    }
   }
 
   if (options.anonymous && sortedOwnedSegments.length > 0) {
@@ -614,7 +751,7 @@ function buildTargetedReviewItemsForSpeaker(
       if (b[1].score !== a[1].score) return b[1].score - a[1].score;
       return a[0] - b[0];
     })
-    .slice(0, 5)
+    .slice(0, options.boundaryReviewBudget ?? 5)
     .map(([index, value]) => ({
       index,
       speakerId,
@@ -651,6 +788,16 @@ export function computeSpeakerAssignmentTrust(
 
   let penalty = 0;
   let confirmedReviewCount = 0;
+  let boundarySuppressedCount = 0;
+  const panelEpisode = hasPanelStyleIntro(segments);
+  const namedConversationalSpeakerCount = Array.from(new Set(
+    conversationalSegments
+      .map(({ segment }) => ((segment as any).finalSpeakerId || segment.speakerId))
+      .filter((speakerId): speakerId is string => typeof speakerId === 'string' && !!speakers?.[speakerId])
+      .filter((speakerId) => !isAnonymousConversationalSpeakerName(
+        speakers[speakerId]?.finalName || speakers[speakerId]?.name || speakers[speakerId]?.fallbackName || null
+      ))
+  )).length;
 
   for (const [speakerId, rawSpeaker] of Object.entries(speakers || {})) {
     const speaker = rawSpeaker as any;
@@ -669,6 +816,16 @@ export function computeSpeakerAssignmentTrust(
       : [];
     const anonymous = isAnonymousConversationalSpeakerName(finalName);
     const requiresReview = Boolean(speaker.requiresReview);
+    const ownership = assessSpeakerOwnershipStability(ownedSegments, {
+      finalName,
+      assignmentConfidence,
+      contradictions,
+      requiresReview,
+      anonymous,
+      panelEpisode,
+      namedConversationalSpeakerCount,
+    });
+    const effectiveAssignmentConfidence = ownership.derivedAssignmentConfidence;
     const reviewReasons = new Set<string>();
     const confirmedSegments = ownedSegments.filter(({ segment }) => isConfirmedReviewSegment(segment));
     const confirmedSegmentCount = confirmedSegments.length;
@@ -681,10 +838,10 @@ export function computeSpeakerAssignmentTrust(
       penalty += 0.45 * segmentShare;
     }
 
-    if (assignmentConfidence != null && assignmentConfidence < 0.75) {
+    if (effectiveAssignmentConfidence != null && effectiveAssignmentConfidence < 0.75) {
       reviewReasons.add('low_assignment_confidence');
       incrementReasonCount(reasonCounts, 'low_assignment_confidence');
-      penalty += (0.75 - assignmentConfidence) * 0.35 * Math.max(0.75, segmentShare);
+      penalty += (0.75 - effectiveAssignmentConfidence) * 0.35 * Math.max(0.75, segmentShare);
     }
 
     if (contradictions.length > 0) {
@@ -705,27 +862,50 @@ export function computeSpeakerAssignmentTrust(
       if (uncertain) {
         reviewReasons.add('uncertain_segment');
         incrementReasonCount(reasonCounts, 'uncertain_segment');
-        penalty += 0.14 / totalConversationalSegments;
+        const boundaryOnly = reason === 'transition_short';
+        const lowValueBoundary = boundaryOnly && isAcknowledgementLikeSegment(segment);
+        if (ownership.stableOwnership && boundaryOnly && lowValueBoundary) {
+          penalty += 0.02 / totalConversationalSegments;
+          boundarySuppressedCount += 1;
+          incrementReasonCount(reasonCounts, 'suppressed_transition_short');
+        } else if (ownership.stableOwnership && boundaryOnly) {
+          penalty += 0.06 / totalConversationalSegments;
+          boundarySuppressedCount += 1;
+          incrementReasonCount(reasonCounts, 'suppressed_transition_short');
+        } else {
+          penalty += 0.14 / totalConversationalSegments;
+        }
       }
+      void index;
       if (isConfirmedReviewSegment(segment)) {
         incrementReasonCount(reasonCounts, 'confirmed_review');
       }
     }
 
+    const boundaryReviewBudget = ownership.stableOwnership
+      ? (ownership.panelCorroborated ? 2 : 3)
+      : 5;
+
     const targetedReviewIndices = buildTargetedReviewIndicesForSpeaker(ownedSegments, {
       requiresReview,
-      assignmentConfidence,
+      assignmentConfidence: effectiveAssignmentConfidence,
       contradictions,
       anonymous,
+      stableOwnership: ownership.stableOwnership,
+      panelCorroborated: ownership.panelCorroborated,
+      boundaryReviewBudget,
     });
     for (const index of targetedReviewIndices) {
       reviewIndices.add(index);
     }
     const targetedReviewItems = buildTargetedReviewItemsForSpeaker(speakerId, ownedSegments, {
       requiresReview,
-      assignmentConfidence,
+      assignmentConfidence: effectiveAssignmentConfidence,
       contradictions,
       anonymous,
+      stableOwnership: ownership.stableOwnership,
+      panelCorroborated: ownership.panelCorroborated,
+      boundaryReviewBudget,
     });
     for (const item of targetedReviewItems) {
       const existing = reviewItems.get(item.index);
@@ -748,20 +928,29 @@ export function computeSpeakerAssignmentTrust(
       speakerId,
       finalName,
       role: speaker.role || null,
-      assignmentConfidence,
+      assignmentConfidence: effectiveAssignmentConfidence,
       requiresReview,
       segmentCount: ownedSegments.length,
       anonymous,
       contradictions,
       reviewReasons: Array.from(reviewReasons),
       confirmedSegmentCount,
+      ownershipStable: ownership.stableOwnership,
+      panelCorroborated: ownership.panelCorroborated,
+      suppressedBoundaryCount: ownership.stableOwnership ? ownership.boundaryUncertainIndices.length : 0,
     });
   }
 
+  const effectiveReviewCount = Math.max(0, reviewIndices.size - (boundarySuppressedCount * 0.8));
   const reviewRatio = reviewIndices.size / totalConversationalSegments;
+  const effectiveReviewRatio = effectiveReviewCount / totalConversationalSegments;
   let confidence = Math.max(0.2, Math.min(0.99, 0.98 - Math.max(0, penalty)));
   if (reviewIndices.size > 0) {
-    confidence = Math.min(confidence, 0.93 - Math.min(0.35, reviewRatio * 0.45));
+    const reviewCapBase = boundarySuppressedCount > 0 ? 0.96 : 0.93;
+    const reviewCapPenalty = boundarySuppressedCount > 0
+      ? Math.min(0.22, effectiveReviewRatio * 0.3)
+      : Math.min(0.35, reviewRatio * 0.45);
+    confidence = Math.min(confidence, reviewCapBase - reviewCapPenalty);
   }
 
   return {
@@ -779,6 +968,10 @@ export function computeSpeakerAssignmentTrust(
       .sort((a, b) => a.index - b.index),
     reasonCounts,
     speakerSummaries: speakerSummaries.sort((a, b) => b.segmentCount - a.segmentCount),
+    calibrationSummary: {
+      boundarySuppressedCount,
+      panelCorroborationApplied: panelEpisode,
+    },
   };
 }
 
@@ -817,9 +1010,26 @@ export function attachSpeakerAssignmentMetadata(
           : snapshot?.conversationalNaming,
       }))
     : existingDiagnostics?.finalizationSnapshots;
+  const pipelineDiagnosticsBase = existingDiagnostics || {};
+  const speakerSummaryById = new Map(summary.speakerSummaries.map((speaker) => [speaker.speakerId, speaker]));
+  const speakersWithFinalTrust = Object.fromEntries(
+    Object.entries(speakerData?.speakers || {}).map(([speakerId, speaker]: [string, any]) => {
+      const summaryEntry = speakerSummaryById.get(speakerId);
+      if (!summaryEntry) {
+        return [speakerId, speaker];
+      }
+      return [speakerId, {
+        ...speaker,
+        assignmentConfidence: summaryEntry.assignmentConfidence,
+        requiresReview: summaryEntry.requiresReview,
+        assignmentContradictions: summaryEntry.contradictions,
+      }];
+    })
+  );
 
   return {
     ...speakerData,
+    speakers: speakersWithFinalTrust,
     detectionMetadata: {
       ...(speakerData?.detectionMetadata || {}),
       speakerAssignmentConfidence: summary.confidence,
@@ -831,8 +1041,8 @@ export function attachSpeakerAssignmentMetadata(
         reasonCounts: summary.reasonCounts,
         speakerSummaries: summary.speakerSummaries,
       },
-      pipelineDiagnostics: existingDiagnostics ? {
-        ...existingDiagnostics,
+      pipelineDiagnostics: {
+        ...pipelineDiagnosticsBase,
         finalizationSnapshots,
         finalNameProvenance,
         finalAssignmentConfidence: summary.confidence,
@@ -840,12 +1050,14 @@ export function attachSpeakerAssignmentMetadata(
           reviewCount: summary.reviewCount,
           confirmedReviewCount: summary.confirmedReviewCount,
           reasonCounts: summary.reasonCounts,
+          calibrationSummary: summary.calibrationSummary,
           reviewSpeakerIds: summary.speakerSummaries
             .filter((speaker) => speaker.reviewReasons.length > 0)
             .map((speaker) => speaker.speakerId),
         },
         finalRecurringOwnership,
-      } : existingDiagnostics,
+        calibrationSummary: summary.calibrationSummary,
+      },
     },
   };
 }

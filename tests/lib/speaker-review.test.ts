@@ -357,4 +357,207 @@ describe('speaker review trust helpers', () => {
       })
     );
   });
+
+  test('stable interview speakers with repeated short boundaries keep high trust and narrow review', () => {
+    const speakerData = attachSpeakerAssignmentMetadata({
+      segments: [
+        {
+          speakerId: 'speaker_1',
+          finalSpeakerId: 'speaker_1',
+          startTime: 0,
+          endTime: 7,
+          text: 'David, how seriously should we take these threats?',
+          status: 'confirmed',
+        },
+        {
+          speakerId: 'speaker_2',
+          finalSpeakerId: 'speaker_2',
+          startTime: 7.2,
+          endTime: 9,
+          text: 'Right.',
+          status: 'uncertain',
+          confidenceReason: 'transition_short',
+        },
+        {
+          speakerId: 'speaker_2',
+          finalSpeakerId: 'speaker_2',
+          startTime: 9,
+          endTime: 42,
+          text: 'Very serious. The reality is that they know they are going to lose and they are trying to put their thumb on the scale in every conceivable way.',
+          status: 'confirmed',
+        },
+        {
+          speakerId: 'speaker_2',
+          finalSpeakerId: 'speaker_2',
+          startTime: 42.2,
+          endTime: 43.4,
+          text: 'Yeah.',
+          status: 'uncertain',
+          confidenceReason: 'transition_short',
+        },
+        {
+          speakerId: 'speaker_1',
+          finalSpeakerId: 'speaker_1',
+          startTime: 43.5,
+          endTime: 50,
+          text: 'What about the Democrats?',
+          status: 'confirmed',
+        },
+        {
+          speakerId: 'speaker_2',
+          finalSpeakerId: 'speaker_2',
+          startTime: 50,
+          endTime: 84,
+          text: 'They need to understand that the institutions are only as strong as the people willing to defend them in public.',
+          status: 'confirmed',
+        },
+      ],
+      speakers: {
+        speaker_1: {
+          finalName: 'Joanna Coles',
+          role: 'host',
+          assignmentConfidence: 0.9,
+          assignmentContradictions: [],
+          requiresReview: false,
+        },
+        speaker_2: {
+          finalName: 'David Rothkopf',
+          role: 'guest',
+          assignmentContradictions: [],
+          requiresReview: false,
+        },
+      },
+      detectionMetadata: {},
+    });
+
+    expect(speakerData.speakers.speaker_2.assignmentConfidence).toBeGreaterThanOrEqual(0.88);
+    expect(speakerData.detectionMetadata.speakerAssignmentConfidence).toBeGreaterThan(0.9);
+    expect(speakerData.detectionMetadata.speakerAssignmentReviewCount).toBeLessThanOrEqual(2);
+  });
+
+  test('panel intros with corroborated ownership suppress repeated acknowledgement review noise', () => {
+    const speakerData = attachSpeakerAssignmentMetadata({
+      segments: [
+        {
+          speakerId: 'speaker_1',
+          finalSpeakerId: 'speaker_1',
+          startTime: 0,
+          endTime: 42,
+          text: "Hello and welcome. I'm Greer Jackson, and today we have Caroline Steele, Akshat Vohrati, and Justin Rowlett on the panel.",
+          status: 'confirmed',
+        },
+        {
+          speakerId: 'speaker_2',
+          finalSpeakerId: 'speaker_2',
+          startTime: 42.1,
+          endTime: 43.2,
+          text: 'Hi.',
+          status: 'uncertain',
+          confidenceReason: 'transition_short',
+        },
+        {
+          speakerId: 'speaker_1',
+          finalSpeakerId: 'speaker_1',
+          startTime: 43.3,
+          endTime: 47,
+          text: 'Caroline, tell us about the new series.',
+          status: 'confirmed',
+        },
+        {
+          speakerId: 'speaker_2',
+          finalSpeakerId: 'speaker_2',
+          startTime: 47,
+          endTime: 78,
+          text: "I've spent the last few months trying to find somewhere on Earth unaffected by humans, and the search taught me a lot about how we define untouched nature.",
+          status: 'confirmed',
+        },
+        {
+          speakerId: 'speaker_3',
+          finalSpeakerId: 'speaker_3',
+          startTime: 78.2,
+          endTime: 79.3,
+          text: 'Lovely to be here.',
+          status: 'uncertain',
+          confidenceReason: 'transition_short',
+        },
+        {
+          speakerId: 'speaker_1',
+          finalSpeakerId: 'speaker_1',
+          startTime: 79.4,
+          endTime: 82,
+          text: 'Akshat, good to have you here.',
+          status: 'confirmed',
+        },
+        {
+          speakerId: 'speaker_3',
+          finalSpeakerId: 'speaker_3',
+          startTime: 82,
+          endTime: 112,
+          text: 'Nice to be here. The green jobs market is changing because adaptation work is expanding faster than many people expected.',
+          status: 'confirmed',
+        },
+        {
+          speakerId: 'speaker_4',
+          finalSpeakerId: 'speaker_4',
+          startTime: 112.2,
+          endTime: 113.1,
+          text: 'Yeah.',
+          status: 'uncertain',
+          confidenceReason: 'transition_short',
+        },
+        {
+          speakerId: 'speaker_1',
+          finalSpeakerId: 'speaker_1',
+          startTime: 113.2,
+          endTime: 116,
+          text: 'Justin, what do you think?',
+          status: 'confirmed',
+        },
+        {
+          speakerId: 'speaker_4',
+          finalSpeakerId: 'speaker_4',
+          startTime: 116,
+          endTime: 150,
+          text: 'I think the most important part is that climate reporting now requires domain expertise in science, policy, and labor markets at the same time.',
+          status: 'confirmed',
+        },
+      ],
+      speakers: {
+        speaker_1: {
+          finalName: 'Greer Jackson',
+          role: 'host',
+          assignmentConfidence: 0.92,
+          assignmentContradictions: [],
+          requiresReview: false,
+        },
+        speaker_2: {
+          finalName: 'Caroline Steele',
+          role: 'guest',
+          assignmentContradictions: [],
+          requiresReview: false,
+        },
+        speaker_3: {
+          finalName: 'Akshat Vohrati',
+          role: 'guest',
+          assignmentContradictions: [],
+          requiresReview: false,
+        },
+        speaker_4: {
+          finalName: 'Justin Rowlett',
+          role: 'guest',
+          assignmentContradictions: [],
+          requiresReview: false,
+        },
+      },
+      detectionMetadata: {},
+    });
+
+    expect(speakerData.detectionMetadata.speakerAssignmentConfidence).toBeGreaterThan(0.85);
+    expect(speakerData.detectionMetadata.speakerAssignmentReviewCount).toBeLessThanOrEqual(3);
+    expect(speakerData.detectionMetadata.pipelineDiagnostics.finalReviewSummary.calibrationSummary).toEqual(
+      expect.objectContaining({
+        panelCorroborationApplied: true,
+      })
+    );
+  });
 });
