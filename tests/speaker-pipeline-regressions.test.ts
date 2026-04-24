@@ -19,6 +19,7 @@ import {
   mergeShowRosterEntries,
 } from '@/lib/show-speaker-memory';
 import {
+  matchCreditContextNameRules,
   matchNonHumanSpeakerNameRules,
   matchPanelIntroRules,
   matchStrongGuestIntroRules,
@@ -554,52 +555,52 @@ describe('speaker pipeline regressions', () => {
   test('discovers generic recurring shows from repeated titles and reuses learned host/co-host memory', () => {
     const priorProjects = [
       {
-        title: 'Hard Fork - OpenAI, Apple, and the Future of Search',
+        title: 'The Daily Beast Podcast - OpenAI, Apple, and the Future of Search',
         metadata: {
-          originalFileName: 'Hard_Fork_OpenAI_Apple_future_of_search.mp3',
-          fileName: 'Hard_Fork_OpenAI_Apple_future_of_search.mp3',
+          originalFileName: 'The_Daily_Beast_Podcast_OpenAI_Apple_future_of_search.mp3',
+          fileName: 'The_Daily_Beast_Podcast_OpenAI_Apple_future_of_search.mp3',
         },
         processing_completed_at: '2026-04-10T12:00:00.000Z',
         speaker_data: {
           speakers: {
-            speaker_1: { finalName: 'Kevin Roose', role: 'host' },
-            speaker_2: { finalName: 'Casey Newton', role: 'co_host' },
+            speaker_1: { finalName: 'Joanna Coles', role: 'host' },
+            speaker_2: { finalName: 'David Rothkopf', role: 'co_host' },
           },
         },
       },
       {
-        title: 'Hard Fork - The AI Copyright Mess',
+        title: 'The Daily Beast Podcast - The AI Copyright Mess',
         metadata: {
-          originalFileName: 'Hard_Fork_AI_Copyright_Mess.mp3',
-          fileName: 'Hard_Fork_AI_Copyright_Mess.mp3',
+          originalFileName: 'The_Daily_Beast_Podcast_AI_Copyright_Mess.mp3',
+          fileName: 'The_Daily_Beast_Podcast_AI_Copyright_Mess.mp3',
         },
         processing_completed_at: '2026-04-14T12:00:00.000Z',
         speaker_data: {
           speakers: {
-            speaker_1: { finalName: 'Kevin Roose', role: 'host' },
-            speaker_2: { finalName: 'Casey Newton', role: 'co_host' },
+            speaker_1: { finalName: 'Joanna Coles', role: 'host' },
+            speaker_2: { finalName: 'David Rothkopf', role: 'co_host' },
           },
         },
       },
     ];
 
     const genericIdentity = detectGenericShowIdentityFromProjects({
-      title: 'Hard Fork - Google’s Antitrust Problem',
-      filename: 'Hard_Fork_Google_Antitrust_Problem.mp3',
+      title: 'The Daily Beast Podcast - Google’s Antitrust Problem',
+      filename: 'The_Daily_Beast_Podcast_Google_Antitrust_Problem.mp3',
       projects: priorProjects as any,
     });
 
     expect(genericIdentity).toEqual(
       expect.objectContaining({
         id: expect.stringContaining('generic_'),
-        displayName: 'Hard Fork',
+        displayName: 'The Daily Beast',
       })
     );
 
     const learned = extractLearnedShowRosterFromProjects(priorProjects as any, genericIdentity);
     expect(learned).toEqual([
-      expect.objectContaining({ name: 'Kevin Roose', role: 'host', confidenceSource: 'auto_learned' }),
-      expect.objectContaining({ name: 'Casey Newton', role: 'co_host', confidenceSource: 'auto_learned' }),
+      expect.objectContaining({ name: 'Joanna Coles', role: 'host', confidenceSource: 'auto_learned' }),
+      expect.objectContaining({ name: 'David Rothkopf', role: 'co_host', confidenceSource: 'auto_learned' }),
     ]);
   });
 
@@ -1791,6 +1792,24 @@ describe('speaker pipeline regressions', () => {
     expect(matchNonHumanSpeakerNameRules('SoFi')).toEqual(expect.arrayContaining([
       expect.objectContaining({ category: 'non_human_sponsor_product' }),
     ]));
+    expect(matchNonHumanSpeakerNameRules('West Coast')).toEqual(expect.arrayContaining([
+      expect.objectContaining({ category: 'non_human_location' }),
+    ]));
+  });
+
+  test('speaker naming rule registry detects credit and boilerplate names as non-participant evidence', () => {
+    expect(matchCreditContextNameRules('This episode was produced by Mike Labczyk and Lauren Buell.')).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          category: 'credit_or_boilerplate_context',
+          name: 'Mike Labczyk',
+        }),
+        expect.objectContaining({
+          category: 'credit_or_boilerplate_context',
+          name: 'Lauren Buell',
+        }),
+      ])
+    );
   });
 
   test('panel intro rule registry captures explicit panel enumeration only', () => {
@@ -1806,6 +1825,222 @@ describe('speaker pipeline regressions', () => {
         name: 'Penn Station',
       }),
     ]);
+  });
+
+  test('detects newly seeded recurring shows from title context', () => {
+    expect(detectShowIdentityFromContext({
+      title: 'The Future of Google  EP 126 - Hard Fork',
+      filename: 'Hard_Fork_EP_126.json',
+    })?.displayName).toBe('Hard Fork');
+    expect(detectShowIdentityFromContext({
+      title: 'Social Isolation is the Highest It’s Ever Been in America - Offline with Jon Favreau',
+      filename: 'Offline_with_Jon_Favreau.json',
+    })?.displayName).toBe('Offline with Jon Favreau');
+    expect(detectShowIdentityFromContext({
+      title: 'Malala Yousafzai on Afghan Women Resisting the Taliban - Pod Save the World',
+      filename: 'Pod_Save_the_World_episode.json',
+    })?.displayName).toBe('Pod Save the World');
+    expect(detectShowIdentityFromContext({
+      title: "Trump's Unhinged State of the Union Was a Gift to Democrats - What A Day",
+      filename: 'What_A_Day_episode.json',
+    })?.displayName).toBe('What A Day');
+  });
+
+  test('odd lots guest does not keep West Coast as a conversational speaker name', () => {
+    const speakerMap = {
+      speaker_1: { id: 'speaker_1', finalName: 'Joe Weisenthal', role: 'host', segments: [] },
+      speaker_2: { id: 'speaker_2', finalName: 'Tracy Alloway', role: 'co_host', segments: [] },
+      speaker_3: { id: 'speaker_3', finalName: 'West Coast', role: 'guest', segments: [] },
+    };
+
+    const segments: SpeakerSegment[] = [
+      {
+        speakerId: 'speaker_1',
+        initialSpeakerId: 'Speaker_A',
+        finalSpeakerId: 'speaker_1',
+        startTime: 0,
+        endTime: 20,
+        text: "Welcome to Odd Lots. I'm Joe Weisenthal.",
+        status: 'confirmed',
+      },
+      {
+        speakerId: 'speaker_2',
+        initialSpeakerId: 'Speaker_B',
+        finalSpeakerId: 'speaker_2',
+        startTime: 20,
+        endTime: 36,
+        text: "And I'm Tracy Alloway. Joining us today is Travis Kavulla. Travis, thanks for being here.",
+        status: 'confirmed',
+      },
+      {
+        speakerId: 'speaker_3',
+        initialSpeakerId: 'Speaker_C',
+        finalSpeakerId: 'speaker_3',
+        startTime: 36,
+        endTime: 80,
+        text: 'Great to be here. Electricity bills have gone up for a few different reasons, including natural gas and transmission costs.',
+        status: 'confirmed',
+      },
+    ];
+
+    const resolved = __testUtils.resolveConversationalHumanNamesInSpeakerMap(
+      speakerMap,
+      segments,
+      {
+        projectType: 'PODCAST',
+        title: 'Travis Kavulla Explains Why Electric Bills Shot Up  Odd Lots',
+        filename: 'Odd_Lots_episode.json',
+      }
+    );
+
+    expect(resolved.speakers.speaker_3.finalName).not.toBe('West Coast');
+  });
+
+  test('what a day recurring host aliases converge to a single canonical host name', () => {
+    const speakerMap = {
+      speaker_2: { id: 'speaker_2', finalName: 'Jane Koston', role: 'host', segments: [] },
+      speaker_5: { id: 'speaker_5', finalName: 'Jane Kostin', role: 'guest', segments: [] },
+    };
+
+    const segments: SpeakerSegment[] = [
+      {
+        speakerId: 'speaker_5',
+        initialSpeakerId: 'Speaker_A',
+        finalSpeakerId: 'speaker_5',
+        startTime: 0,
+        endTime: 18,
+        text: "It's Wednesday, February 25th. I'm Jane Kostin, and this is What a Day.",
+        status: 'confirmed',
+      },
+      {
+        speakerId: 'speaker_2',
+        initialSpeakerId: 'Speaker_A',
+        finalSpeakerId: 'speaker_2',
+        startTime: 18,
+        endTime: 42,
+        text: 'Greg, you are currently speaking with us from the Capitol. What is the vibe?',
+        status: 'confirmed',
+      },
+    ];
+
+    const resolved = __testUtils.resolveConversationalHumanNamesInSpeakerMap(
+      speakerMap,
+      segments,
+      {
+        projectType: 'PODCAST',
+        title: "Trump's Unhinged State of the Union Was a Gift to Democrats - What A Day",
+        filename: 'What_A_Day_episode.json',
+        showIdentity: detectShowIdentityFromContext({
+          title: "Trump's Unhinged State of the Union Was a Gift to Democrats - What A Day",
+          filename: 'What_A_Day_episode.json',
+        }),
+      }
+    );
+
+    expect(resolved.speakers.speaker_2.finalName).toBe('Jane Coaston');
+    expect(resolved.speakers.speaker_5.finalName).toBe('Jane Coaston');
+  });
+
+  test('hard fork credit names do not survive as conversational speakers', () => {
+    const speakerMap = {
+      speaker_1: { id: 'speaker_1', finalName: 'Kevin Roose', role: 'host', segments: [] },
+      speaker_2: { id: 'speaker_2', finalName: 'Casey Newton', role: 'co_host', segments: [] },
+      speaker_3: { id: 'speaker_3', finalName: 'Mike Labczyk', role: 'unknown', segments: [] },
+      speaker_4: { id: 'speaker_4', finalName: 'Lauren Buell', role: 'unknown', segments: [] },
+    };
+
+    const segments: SpeakerSegment[] = [
+      {
+        speakerId: 'speaker_1',
+        initialSpeakerId: 'Speaker_A',
+        finalSpeakerId: 'speaker_1',
+        startTime: 0,
+        endTime: 12,
+        text: "I'm Kevin Roose.",
+        status: 'confirmed',
+      },
+      {
+        speakerId: 'speaker_2',
+        initialSpeakerId: 'Speaker_B',
+        finalSpeakerId: 'speaker_2',
+        startTime: 12,
+        endTime: 22,
+        text: "And I'm Casey Newton. This is Hard Fork.",
+        status: 'confirmed',
+      },
+      {
+        speakerId: 'speaker_3',
+        initialSpeakerId: 'Speaker_C',
+        finalSpeakerId: 'speaker_3',
+        startTime: 22,
+        endTime: 30,
+        text: 'This episode was produced by Mike Labczyk and Lauren Buell.',
+        status: 'confirmed',
+      },
+    ];
+
+    const resolved = __testUtils.resolveConversationalHumanNamesInSpeakerMap(
+      speakerMap,
+      segments,
+      {
+        projectType: 'PODCAST',
+        title: 'The Future of Google  EP 126 - Hard Fork',
+        filename: 'Hard_Fork_EP_126.json',
+      }
+    );
+
+    expect(resolved.speakers.speaker_3.finalName).toMatch(/^Speaker/i);
+    expect(resolved.info.join('\n')).toContain('unsupported conversational name');
+  });
+
+  test('offline cold open does not prevent later host and guest attribution', () => {
+    const speakerMap = {
+      speaker_1: { id: 'speaker_1', finalName: 'Speaker 1', role: 'unknown', segments: [] },
+      speaker_3: { id: 'speaker_3', finalName: 'Speaker 3', role: 'unknown', segments: [] },
+    };
+
+    const segments: SpeakerSegment[] = [
+      {
+        speakerId: 'speaker_3',
+        initialSpeakerId: 'Speaker_B',
+        finalSpeakerId: 'speaker_3',
+        startTime: 0,
+        endTime: 30,
+        text: 'These podcasts and viral morning videos present the perfect life.',
+        status: 'confirmed',
+      },
+      {
+        speakerId: 'speaker_1',
+        initialSpeakerId: 'Speaker_A',
+        finalSpeakerId: 'speaker_1',
+        startTime: 40,
+        endTime: 63,
+        text: 'We are back. Joining me is Derek Thompson. Derek is the host of Plain English and a staff writer at The Atlantic.',
+        status: 'confirmed',
+      },
+      {
+        speakerId: 'speaker_3',
+        initialSpeakerId: 'Speaker_B',
+        finalSpeakerId: 'speaker_3',
+        startTime: 63,
+        endTime: 120,
+        text: "It's great to see you. I think social isolation has become the defining problem of a lot of modern life.",
+        status: 'confirmed',
+      },
+    ];
+
+    const resolved = __testUtils.resolveConversationalHumanNamesInSpeakerMap(
+      speakerMap,
+      segments,
+      {
+        projectType: 'PODCAST',
+        title: 'Social Isolation is the Highest It’s Ever Been in America - Offline with Jon Favreau',
+        filename: 'Offline_with_Jon_Favreau_episode.json',
+      }
+    );
+
+    expect(resolved.speakers.speaker_1.finalName).toBe('Jon Favreau');
+    expect(resolved.speakers.speaker_3.finalName).toBe('Derek Thompson');
   });
 
   test('ezra guest intro is not overwritten by treaties or institutions', () => {

@@ -92,6 +92,108 @@ const KNOWN_SHOW_PROFILES: KnownShowProfile[] = [
       },
     ],
   },
+  {
+    id: 'hard_fork',
+    displayName: 'Hard Fork',
+    titlePatterns: [
+      /\bhard\s+fork\b/i,
+    ],
+    filenamePatterns: [
+      /\bhard[_\s-]+fork\b/i,
+    ],
+    transcriptPatterns: [
+      /\bthis\s+is\s+hard\s+fork\b/i,
+      /\bwelcome\s+to\s+hard\s+fork\b/i,
+    ],
+    roster: [
+      {
+        name: 'Kevin Roose',
+        role: 'host',
+        aliases: ['Kevin'],
+        confidenceSource: 'built_in',
+      },
+      {
+        name: 'Casey Newton',
+        role: 'co_host',
+        aliases: ['Casey'],
+        confidenceSource: 'built_in',
+      },
+    ],
+  },
+  {
+    id: 'offline_with_jon_favreau',
+    displayName: 'Offline with Jon Favreau',
+    titlePatterns: [
+      /\boffline\b/i,
+      /\boffline\s+with\s+jon\s+favreau\b/i,
+    ],
+    filenamePatterns: [
+      /\boffline\b/i,
+      /\boffline[_\s-]+with[_\s-]+jon[_\s-]+favreau\b/i,
+    ],
+    transcriptPatterns: [
+      /\bthis\s+is\s+offline\b/i,
+      /\boffline\s+with\s+jon\s+favreau\b/i,
+    ],
+    roster: [
+      {
+        name: 'Jon Favreau',
+        role: 'host',
+        aliases: ['Jon'],
+        confidenceSource: 'built_in',
+      },
+    ],
+  },
+  {
+    id: 'pod_save_the_world',
+    displayName: 'Pod Save the World',
+    titlePatterns: [
+      /\bpod\s+save\s+the\s+world\b/i,
+    ],
+    filenamePatterns: [
+      /\bpod[_\s-]+save[_\s-]+the[_\s-]+world\b/i,
+    ],
+    transcriptPatterns: [
+      /\bthis\s+is\s+pod\s+save\s+the\s+world\b/i,
+      /\bwelcome\s+to\s+pod\s+save\s+the\s+world\b/i,
+    ],
+    roster: [
+      {
+        name: 'Tommy Vietor',
+        role: 'host',
+        aliases: ['Tommy'],
+        confidenceSource: 'built_in',
+      },
+      {
+        name: 'Ben Rhodes',
+        role: 'co_host',
+        aliases: ['Ben'],
+        confidenceSource: 'built_in',
+      },
+    ],
+  },
+  {
+    id: 'what_a_day',
+    displayName: 'What A Day',
+    titlePatterns: [
+      /\bwhat\s+a\s+day\b/i,
+    ],
+    filenamePatterns: [
+      /\bwhat[_\s-]+a[_\s-]+day\b/i,
+    ],
+    transcriptPatterns: [
+      /\bthis\s+is\s+what\s+a\s+day\b/i,
+      /\bwhat\s+a\s+day,\s+the\s+show\b/i,
+    ],
+    roster: [
+      {
+        name: 'Jane Coaston',
+        role: 'host',
+        aliases: ['Jane', 'Jane Koston', 'Jane Kostin'],
+        confidenceSource: 'built_in',
+      },
+    ],
+  },
 ];
 
 function normalizeText(value: string): string {
@@ -547,6 +649,13 @@ export function isLikelyNonHumanConversationalNameCandidate(
 
   const candidateTokens = normalizedCandidate.split(' ').filter((token) => token.length > 2);
   if (showIdentity) {
+    const rosterAliases = showIdentity.roster.flatMap((entry) => [
+      entry.name,
+      ...(entry.aliases || []),
+    ]).map((value) => normalizeText(value));
+    if (rosterAliases.includes(normalizedCandidate)) {
+      return false;
+    }
     const showTokens = normalizeText(showIdentity.displayName).split(' ').filter((token) => token.length > 2);
     const overlap = candidateTokens.filter((token) => showTokens.includes(token)).length;
     if (overlap >= Math.min(2, showTokens.length)) {

@@ -31,6 +31,7 @@ import {
   type ShowRosterEntry,
 } from './show-speaker-memory';
 import {
+  matchCreditContextNameRules,
   matchNonHumanSpeakerNameRules,
   matchPanelIntroRules,
   matchStrongGuestIntroRules,
@@ -1595,6 +1596,7 @@ type IntroAnchoredNamingCandidate = {
 
 export type ConversationalNamingInspection = {
   showIdentity: string | null;
+  finalShowIdentity?: { id: string; displayName: string; matchedBy: 'title' | 'filename' | 'transcript' } | null;
   normalizedShowIdentity: { id: string; displayName: string; matchedBy: 'title' | 'filename' | 'transcript' } | null;
   knownHostName: string | null;
   knownHostReason: string | null;
@@ -1605,6 +1607,7 @@ export type ConversationalNamingInspection = {
   guestSpeakerId: string | null;
   recurringAnchors: Array<{ name: string; role?: SpeakerRole; speakerId: string; evidence: string[] }>;
   rejectedHumanNameCandidates: string[];
+  creditNameRejections?: Array<{ name: string; matchedText: string; reason: string }>;
   rejectedNamePromotions: string[];
   rejectedNamePromotionReasons?: Array<{ speakerId: string; name: string; reasons: string[] }>;
   ruleMatches?: {
@@ -1647,6 +1650,8 @@ export type ConversationalNamingInspection = {
   }>;
   swapDetected: boolean;
   swapApplied: boolean;
+  coldOpenGatingApplied?: boolean;
+  aliasMergeDecisions?: Array<{ canonicalName: string; mergedSpeakerIds: string[]; rejectedSpeakerIds?: string[] }>;
   collapsePreventionApplied: boolean;
   collapsePreventionResolved: boolean;
 };
@@ -1748,19 +1753,36 @@ function findCorroboratedKnownHost(
   });
 
   if (showIdentity) {
-    const showHost = (options.showRoster || showIdentity.roster || []).find((entry) => entry.role === 'host');
+    const showRoster = options.showRoster || showIdentity.roster || [];
+    const showHost = showRoster.find((entry) => entry.role === 'host');
+    const showCoHosts = showRoster.filter((entry) => entry.role === 'co_host');
     if (showHost?.name) {
       const aliases = buildRecurringAliasSet(showHost);
       const directAddressCount = conversationalSegments.reduce((count, segment) => {
         const text = segment.text || '';
         return count + (containsVocativeAlias(text, aliases) ? 1 : 0);
       }, 0);
+      const openingGate = detectColdOpenGate(segments);
+      const singleHostShow = showCoHosts.length === 0;
+      const hostSetupSegment = conversationalSegments.find((segment) => {
+        const startTime = segment.startTime || 0;
+        if (startTime < openingGate.startTimeSeconds) return false;
+        const text = segment.text || '';
+        return /\b(?:(?:we'?re|we\s+are)\s+back|hello\s+and\s+welcome|welcome\s+to|this\s+is|joining\s+me\s+is|joining\s+us\s+is|i'?m\s+[A-Z][a-z]+(?:\s+[A-Z][a-z]+){1,2})\b/i.test(text);
+      });
 
       if (directAddressCount > 0 && distinctConversationalSpeakers.size >= 2) {
         return {
           fullName: showHost.name,
           firstName: aliases[0] || showHost.name.split(/\s+/)[0] || showHost.name,
           reason: `show_identity:${showIdentity.id}`,
+        };
+      }
+      if (singleHostShow && hostSetupSegment && distinctConversationalSpeakers.size >= 2) {
+        return {
+          fullName: showHost.name,
+          firstName: aliases[0] || showHost.name.split(/\s+/)[0] || showHost.name,
+          reason: `show_identity_single_host:${showIdentity.id}`,
         };
       }
     }
@@ -1847,9 +1869,15 @@ function findHostIntroSpeakerId(
     const speakerId = segment.finalSpeakerId || segment.speakerId;
     if (!speakerId) continue;
     const text = getSegText(segment);
+    if (expectedHostName) {
+      const expectedAliases = [expectedHostName, expectedHostFirstName].filter(Boolean) as string[];
+      if (containsVocativeAlias(text, expectedAliases)) {
+        continue;
+      }
+    }
     let score = 0;
 
-    if (/\b(?:welcome\s+(?:to|back)|this\s+is\s+the|from\s+.+,\s+this\s+is\s+the)\b/i.test(text)) {
+    if (/\b(?:welcome\s+(?:to|back)|(?:we'?re|we\s+are)\s+back|this\s+is(?:\s+the)?|from\s+.+,\s+this\s+is(?:\s+the)?|joining\s+(?:me|us)\s+is)\b/i.test(text)) {
       score += 5;
     }
     if (/\b(?:i'm|i am|my name is)\s+[A-Z][a-z]+(?:\s+[A-Z][a-z]+){1,2}\b/.test(text)) {
@@ -2864,6 +2892,7 @@ function getConversationalNameRejectionReasons(
 ): string[] {
   const reasons = new Set<string>();
   const ruleMatches = matchNonHumanSpeakerNameRules(name);
+  const creditContextNames = collectCreditContextNames(segments);
 
   if (ruleMatches.length > 0 || isLikelyNonHumanConversationalNameCandidate(name, {
     showIdentity: options.showIdentity,
@@ -2884,6 +2913,9 @@ function getConversationalNameRejectionReasons(
   }
   const participantSupported = hasParticipantStyleEvidence(name, provenance) ||
     hasParticipantStyleProvenanceReasons(getSpeakerNameProvenance(speaker));
+  if (creditContextNames.has(normalizeSpeakerName(name)) && !participantSupported) {
+    reasons.add('credit_or_boilerplate');
+  }
   if (!participantSupported) {
     reasons.add('unsupported_provenance');
   }
@@ -2969,9 +3001,10 @@ function enforceConversationalNameProvenanceInSpeakerMap(
     }
 
     const normalized = normalizeSpeakerName(currentName);
-    const supported = provenance.has(normalized);
+    const supported = provenance.has(normalized) || hasParticipantStyleProvenanceReasons(getSpeakerNameProvenance(speaker));
     const nonHuman = rejectionReasons.some((reason) => (
       reason === 'mentioned_entity_only' ||
+      reason === 'credit_or_boilerplate' ||
       reason === 'institution_or_body' ||
       reason === 'non_human_location' ||
       reason === 'title_or_role_phrase' ||
@@ -3794,6 +3827,7 @@ export function inspectConversationalNamingState(
   if (normalizedProjectType === 'DEBATE') {
     return {
       showIdentity: null,
+      finalShowIdentity: null,
       normalizedShowIdentity: null,
       knownHostName: null,
       knownHostReason: null,
@@ -3804,6 +3838,7 @@ export function inspectConversationalNamingState(
       guestSpeakerId: null,
       recurringAnchors: [],
       rejectedHumanNameCandidates: [],
+      creditNameRejections: [],
       rejectedNamePromotions: [],
       rejectedNamePromotionReasons: [],
       ruleMatches: {
@@ -3820,6 +3855,8 @@ export function inspectConversationalNamingState(
       clusterOwnershipCandidates: [],
       swapDetected: false,
       swapApplied: false,
+      coldOpenGatingApplied: false,
+      aliasMergeDecisions: [],
       collapsePreventionApplied: false,
       collapsePreventionResolved: false,
     };
@@ -3899,6 +3936,13 @@ export function inspectConversationalNamingState(
     ...options,
     showIdentity: recurringAssignments.showIdentity || options.showIdentity,
   });
+  const creditContextRejections = collectCreditContextNameMatches(segments)
+    .map((match) => ({
+      name: match.name || '',
+      matchedText: match.matchedText,
+      reason: match.reason,
+    }))
+    .filter((entry) => entry.name.length > 0);
   const nameProvenance = roster.map((speaker) => ({
     speakerId: speaker.id,
     finalName: typeof speaker?.name === 'string' ? speaker.name : null,
@@ -3911,9 +3955,27 @@ export function inspectConversationalNamingState(
   );
   const collapsePreventionResolved = collapsePreventionApplied &&
     nameProvenance.some((entry) => entry.finalNameLocked && !/^Speaker\s+\d+$/i.test(entry.finalName || ''));
+  const aliasMergeDecisions = canonicalizeNearMatchSpeakerNames(
+    Object.fromEntries(roster.map((speaker) => [speaker.id, {
+      finalName: speaker.name,
+      role: speaker.role,
+      roleConfidence: speaker.confidence,
+      source: speaker.source,
+      finalNameLocked: isFinalNameLocked(speaker),
+      nameProvenance: getSpeakerNameProvenance(speaker),
+    }])),
+    segments,
+    options
+  ).decisions;
+  const openingGate = detectColdOpenGate(segments);
 
   return {
     showIdentity: recurringAssignments.showIdentity?.displayName || null,
+    finalShowIdentity: recurringAssignments.showIdentity ? {
+      id: recurringAssignments.showIdentity.id,
+      displayName: recurringAssignments.showIdentity.displayName,
+      matchedBy: recurringAssignments.showIdentity.matchedBy,
+    } : null,
     normalizedShowIdentity: recurringAssignments.showIdentity ? {
       id: recurringAssignments.showIdentity.id,
       displayName: recurringAssignments.showIdentity.displayName,
@@ -3931,6 +3993,7 @@ export function inspectConversationalNamingState(
       ...recurringAssignments.rejectedCandidates,
       ...clearedNonHuman.rejectedCandidates,
     ],
+    creditNameRejections: creditContextRejections,
     rejectedNamePromotions,
     rejectedNamePromotionReasons,
     ruleMatches,
@@ -3943,6 +4006,8 @@ export function inspectConversationalNamingState(
     clusterOwnershipCandidates: recurringOwnership.entries,
     swapDetected: recurringOwnership.swapDetected,
     swapApplied: recurringOwnership.swapApplied,
+    coldOpenGatingApplied: openingGate.applied,
+    aliasMergeDecisions,
     collapsePreventionApplied,
     collapsePreventionResolved,
   };
@@ -4090,8 +4155,13 @@ export function resolveConversationalHumanNamesInSpeakerMap(
     segments,
     options
   );
-  const provenanceVerified = enforceConversationalNameProvenanceInSpeakerMap(
+  const aliasCanonicalized = canonicalizeNearMatchSpeakerNames(
     postRecurringGuestClusterRepair,
+    segments,
+    options
+  );
+  const provenanceVerified = enforceConversationalNameProvenanceInSpeakerMap(
+    aliasCanonicalized.speakers,
     segments,
     options
   );
@@ -4104,7 +4174,12 @@ export function resolveConversationalHumanNamesInSpeakerMap(
   return {
     speakers: finalPanelRepairedSpeakers,
     assigned: resolved.assigned,
-    info: [...resolved.info, ...verifiedRecurringOwnership.info, ...provenanceVerified.info],
+    info: [
+      ...resolved.info,
+      ...verifiedRecurringOwnership.info,
+      ...aliasCanonicalized.decisions.map((decision) => `[ALIAS MERGE] ${decision.mergedSpeakerIds.join(', ')} -> ${decision.canonicalName}`),
+      ...provenanceVerified.info,
+    ],
   };
 }
 
@@ -4174,7 +4249,8 @@ function repairSpeakerMapWithKnownHostIntro(
     Object.entries(speakers).map(([id, speaker]) => [id, { ...speaker }])
   );
   const targetSpeaker = updatedSpeakers[hostSpeakerId];
-  if (!canOverwriteSpeakerIdentity(targetSpeaker, knownHost.fullName, options)) {
+  const singleHostShowAnchor = knownHost.reason.startsWith('show_identity_single_host:');
+  if (!singleHostShowAnchor && !canOverwriteSpeakerIdentity(targetSpeaker, knownHost.fullName, options)) {
     return speakers;
   }
   const currentName = typeof targetSpeaker.finalName === 'string' ? targetSpeaker.finalName.trim() : '';
@@ -4219,7 +4295,6 @@ function repairSpeakerMapWithKnownHostIntro(
       lockFinalName: true,
     }
   );
-
   return updatedSpeakers;
 }
 
@@ -4529,6 +4604,173 @@ function repairSpeakerMapWithDominantGuestClusters(
   return updatedSpeakers;
 }
 
+function canonicalizeNearMatchSpeakerNames(
+  speakers: Record<string, any>,
+  segments: SpeakerSegment[],
+  options: ConversationalNamingOptions
+): { speakers: Record<string, any>; decisions: Array<{ canonicalName: string; mergedSpeakerIds: string[]; rejectedSpeakerIds?: string[] }> } {
+  const updatedSpeakers = Object.fromEntries(
+    Object.entries(speakers).map(([id, speaker]) => [id, { ...speaker }])
+  );
+  const decisions: Array<{ canonicalName: string; mergedSpeakerIds: string[]; rejectedSpeakerIds?: string[] }> = [];
+  const entries = Object.entries(updatedSpeakers)
+    .map(([speakerId, speaker]) => ({
+      speakerId,
+      speaker,
+      name: typeof speaker.finalName === 'string' ? speaker.finalName.trim() : '',
+    }))
+    .filter((entry) => entry.name.length > 0 && !/^Speaker\s+\d+$/i.test(entry.name));
+  const openingGate = detectColdOpenGate(segments);
+  const showIdentity = options.showIdentity || detectShowIdentityFromContext({
+    title: options.title,
+    filename: options.filename,
+    segments,
+  });
+  const recurringNames = new Set(
+    ((options.showRoster && options.showRoster.length > 0) ? options.showRoster : showIdentity?.roster || [])
+      .map((entry) => normalizeSpeakerName(entry.name))
+  );
+  const recurringEntries = ((options.showRoster && options.showRoster.length > 0) ? options.showRoster : showIdentity?.roster || []);
+  const decisionsByCanonical = new Map<string, Set<string>>();
+
+  for (const entry of entries) {
+    const rosterMatch = recurringEntries.find((rosterEntry) => {
+      const aliases = buildRecurringAliasSet(rosterEntry);
+      return aliases.some((alias) => normalizeSpeakerName(alias) === normalizeSpeakerName(entry.name)) ||
+        aliases.some((alias) => areConservativeAliasMatches(alias, entry.name)) ||
+        areConservativeAliasMatches(rosterEntry.name, entry.name);
+    });
+    if (!rosterMatch) continue;
+    const rosterAliases = buildRecurringAliasSet(rosterMatch).map((alias) => normalizeSpeakerName(alias));
+    const currentNormalized = normalizeSpeakerName(entry.name);
+    const sameRosterIdentity =
+      rosterAliases.includes(currentNormalized) ||
+      rosterAliases.some((alias) => areConservativeAliasMatches(alias, entry.name));
+    if (!sameRosterIdentity && !canOverwriteSpeakerIdentity(updatedSpeakers[entry.speakerId], rosterMatch.name, options)) continue;
+
+    updatedSpeakers[entry.speakerId] = setSpeakerIdentityWithProvenance(
+      updatedSpeakers[entry.speakerId],
+      rosterMatch.name,
+      {
+        role: rosterMatch.role || updatedSpeakers[entry.speakerId].role,
+        confidence: Math.max(updatedSpeakers[entry.speakerId].roleConfidence || 0, updatedSpeakers[entry.speakerId].confidence || 0, 0.86),
+        source: updatedSpeakers[entry.speakerId].source,
+        context: 'Recurring alias canonicalization',
+        provenance: ['recurring_roster', ...getSpeakerNameProvenance(updatedSpeakers[entry.speakerId])],
+        lockFinalName: true,
+      }
+    );
+    if (normalizeSpeakerName(entry.name) !== normalizeSpeakerName(rosterMatch.name)) {
+      if (!decisionsByCanonical.has(rosterMatch.name)) {
+        decisionsByCanonical.set(rosterMatch.name, new Set<string>());
+      }
+      decisionsByCanonical.get(rosterMatch.name)!.add(entry.speakerId);
+    }
+  }
+
+  const normalizedEntries = Object.entries(updatedSpeakers)
+    .map(([speakerId, speaker]) => ({
+      speakerId,
+      speaker,
+      name: typeof speaker.finalName === 'string' ? speaker.finalName.trim() : '',
+    }))
+    .filter((entry) => entry.name.length > 0 && !/^Speaker\s+\d+$/i.test(entry.name));
+
+  for (let i = 0; i < normalizedEntries.length; i++) {
+    for (let j = i + 1; j < normalizedEntries.length; j++) {
+      const left = normalizedEntries[i];
+      const right = normalizedEntries[j];
+      if (!areConservativeAliasMatches(left.name, right.name)) continue;
+      const leftNormalized = normalizeSpeakerName(left.name);
+      const rightNormalized = normalizeSpeakerName(right.name);
+      const leftProtected = recurringNames.has(leftNormalized);
+      const rightProtected = recurringNames.has(rightNormalized);
+      const leftRole = left.speaker.role || 'unknown';
+      const rightRole = right.speaker.role || 'unknown';
+      const roleCompatible = leftRole === rightRole ||
+        leftRole === 'unknown' ||
+        rightRole === 'unknown' ||
+        ((leftRole === 'host' || leftRole === 'co_host' || leftRole === 'guest') &&
+          (rightRole === 'host' || rightRole === 'co_host' || rightRole === 'guest'));
+      if (!roleCompatible) continue;
+
+      const leftFirstEarly = segments.some((segment) => (
+        ((segment.finalSpeakerId || segment.speakerId) === left.speakerId) &&
+        (segment.startTime || 0) <= Math.max(300, openingGate.startTimeSeconds + 240)
+      ));
+      const rightFirstEarly = segments.some((segment) => (
+        ((segment.finalSpeakerId || segment.speakerId) === right.speakerId) &&
+        (segment.startTime || 0) <= Math.max(300, openingGate.startTimeSeconds + 240)
+      ));
+      if (!leftFirstEarly || !rightFirstEarly) continue;
+
+      const chooseLeft = leftProtected ||
+        (!rightProtected && left.name.length >= right.name.length);
+      let canonical = chooseLeft ? left : right;
+      const duplicate = chooseLeft ? right : left;
+      const rosterCanonical = recurringEntries.find((entry) => {
+        const aliases = buildRecurringAliasSet(entry);
+        return aliases.some((alias) => alias.toLowerCase() === canonical.name.split(/\s+/)[0]?.toLowerCase()) &&
+          areConservativeAliasMatches(entry.name, canonical.name);
+      });
+      if (rosterCanonical) {
+        canonical = {
+          ...canonical,
+          name: rosterCanonical.name,
+          speaker: {
+            ...canonical.speaker,
+            role: rosterCanonical.role || canonical.speaker.role,
+          },
+        };
+      }
+      if (!canOverwriteSpeakerIdentity(duplicate.speaker, canonical.name, options)) continue;
+
+      updatedSpeakers[canonical.speakerId] = setSpeakerIdentityWithProvenance(
+        updatedSpeakers[canonical.speakerId],
+        canonical.name,
+        {
+          role: updatedSpeakers[canonical.speakerId].role || updatedSpeakers[duplicate.speakerId].role,
+          confidence: Math.max(updatedSpeakers[canonical.speakerId].roleConfidence || 0, updatedSpeakers[duplicate.speakerId].roleConfidence || 0, 0.84),
+          source: updatedSpeakers[canonical.speakerId].source || updatedSpeakers[duplicate.speakerId].source,
+          context: 'Alias merge repair',
+          provenance: ['recurring_roster', ...getSpeakerNameProvenance(updatedSpeakers[canonical.speakerId]), ...getSpeakerNameProvenance(updatedSpeakers[duplicate.speakerId])],
+          lockFinalName: true,
+        }
+      );
+      updatedSpeakers[duplicate.speakerId] = {
+        ...updatedSpeakers[duplicate.speakerId],
+        finalName: canonical.name,
+        role: updatedSpeakers[canonical.speakerId].role || updatedSpeakers[duplicate.speakerId].role,
+        finalNameLocked: true,
+        nameProvenance: Array.from(new Set([
+          ...getSpeakerNameProvenance(updatedSpeakers[duplicate.speakerId]),
+          ...getSpeakerNameProvenance(updatedSpeakers[canonical.speakerId]),
+          'recurring_roster',
+        ])),
+      };
+      decisions.push({
+        canonicalName: canonical.name,
+        mergedSpeakerIds: [canonical.speakerId, duplicate.speakerId],
+      });
+      if (!decisionsByCanonical.has(canonical.name)) {
+        decisionsByCanonical.set(canonical.name, new Set<string>());
+      }
+      decisionsByCanonical.get(canonical.name)!.add(canonical.speakerId);
+      decisionsByCanonical.get(canonical.name)!.add(duplicate.speakerId);
+    }
+  }
+
+  for (const [canonicalName, speakerIds] of decisionsByCanonical.entries()) {
+    if (speakerIds.size < 2) continue;
+    decisions.push({
+      canonicalName,
+      mergedSpeakerIds: Array.from(speakerIds).sort(),
+    });
+  }
+
+  return { speakers: updatedSpeakers, decisions };
+}
+
 function getNumberedSpeakerFallbackName(speakerId: string, speaker: Record<string, any>): string {
   if (typeof speaker.fallbackName === 'string' && speaker.fallbackName.trim()) {
     return speaker.fallbackName.trim();
@@ -4718,8 +4960,10 @@ function detectIntroWindowEndTime(
   }
   let questionStart = Infinity;
   let markerMatched = false;
+  const openingGate = detectColdOpenGate(segments);
 
-  for (const seg of segments) {
+  for (let index = openingGate.startIndex; index < segments.length; index++) {
+    const seg = segments[index];
     const text = getSegText(seg);
     if (INTRO_QUESTION_PATTERNS.some(p => p.test(text))) {
       const startSeconds = getSegStartSeconds(seg) ?? 0;
@@ -4743,6 +4987,103 @@ function detectIntroWindowEndTime(
   const lastSeg = segments.length ? segments[segments.length - 1] : null;
   const lastEnd = lastSeg ? (lastSeg as any).endTime ?? maxWindow : maxWindow;
   return { endTimeSeconds: Math.min(maxWindow, lastEnd || maxWindow), reason: 'time_cap' };
+}
+
+function detectColdOpenGate(
+  segments: SpeakerSegment[]
+): { startIndex: number; startTimeSeconds: number; applied: boolean; reason: string } {
+  const firstWindow = segments.slice(0, 12);
+  const candidateIndex = firstWindow.findIndex((segment, index) => {
+    const text = getSegText(segment);
+    if (index === 0 && text.length < 40) return false;
+    if (extractFullNameSelfIdentifiedName(text)) return true;
+    if (/\b(?:hello\s+and\s+welcome|welcome\s+to|this\s+is)\b/i.test(text)) return true;
+    if (/\b(?:we'?re\s+back|coming\s+up|the\s+following\s+is)\b/i.test(text)) return true;
+    return false;
+  });
+
+  if (candidateIndex <= 0) {
+    return {
+      startIndex: 0,
+      startTimeSeconds: getSegStartSeconds(segments[0] || null as any) ?? 0,
+      applied: false,
+      reason: 'none',
+    };
+  }
+
+  const preSegments = firstWindow.slice(0, candidateIndex);
+  const clipLikePreSegments = preSegments.filter((segment) => {
+    const text = getSegText(segment);
+    return getSegmentDuration(segment) >= 12 ||
+      /\b(?:foreign language|mr\. president|tonight|we are in negotiations|people are asking me)\b/i.test(text) ||
+      countQuestionMarks(text) === 0;
+  });
+
+  if (clipLikePreSegments.length < 1) {
+    return {
+      startIndex: 0,
+      startTimeSeconds: getSegStartSeconds(segments[0] || null as any) ?? 0,
+      applied: false,
+      reason: 'none',
+    };
+  }
+
+  return {
+    startIndex: candidateIndex,
+    startTimeSeconds: getSegStartSeconds(segments[candidateIndex]) ?? 0,
+    applied: true,
+    reason: 'cold_open_clip_first',
+  };
+}
+
+function collectCreditContextNameMatches(segments: SpeakerSegment[]): SpeakerNamingRuleMatch[] {
+  const matches: SpeakerNamingRuleMatch[] = [];
+  for (const segment of segments) {
+    const text = getSegText(segment);
+    matches.push(...matchCreditContextNameRules(text));
+  }
+  return matches;
+}
+
+function collectCreditContextNames(segments: SpeakerSegment[]): Map<string, SpeakerNamingRuleMatch[]> {
+  const byName = new Map<string, SpeakerNamingRuleMatch[]>();
+  for (const match of collectCreditContextNameMatches(segments)) {
+    if (!match.name) continue;
+    const normalized = normalizeSpeakerName(match.name);
+    const current = byName.get(normalized) || [];
+    current.push(match);
+    byName.set(normalized, current);
+  }
+  return byName;
+}
+
+function levenshteinDistance(a: string, b: string): number {
+  const rows = a.length + 1;
+  const cols = b.length + 1;
+  const dp = Array.from({ length: rows }, () => Array<number>(cols).fill(0));
+  for (let i = 0; i < rows; i++) dp[i][0] = i;
+  for (let j = 0; j < cols; j++) dp[0][j] = j;
+  for (let i = 1; i < rows; i++) {
+    for (let j = 1; j < cols; j++) {
+      const cost = a[i - 1] === b[j - 1] ? 0 : 1;
+      dp[i][j] = Math.min(
+        dp[i - 1][j] + 1,
+        dp[i][j - 1] + 1,
+        dp[i - 1][j - 1] + cost
+      );
+    }
+  }
+  return dp[a.length][b.length];
+}
+
+function areConservativeAliasMatches(a: string, b: string): boolean {
+  const aParts = a.trim().split(/\s+/);
+  const bParts = b.trim().split(/\s+/);
+  if (aParts.length < 2 || bParts.length < 2) return false;
+  if (aParts[0].toLowerCase() !== bParts[0].toLowerCase()) return false;
+  const aLast = aParts[aParts.length - 1].toLowerCase();
+  const bLast = bParts[bParts.length - 1].toLowerCase();
+  return levenshteinDistance(aLast, bLast) <= 2;
 }
 
 function normalizeSpeakerName(name: string): string {
@@ -6555,7 +6896,8 @@ function extractStrongInterviewIntroNames(
   const seen = new Set(existing.map((candidate) => normalizeSpeakerName(candidate.name)));
   const candidates = [...existing];
 
-  for (let i = 0; i < segments.length; i++) {
+  const openingGate = detectColdOpenGate(segments);
+  for (let i = openingGate.startIndex; i < segments.length; i++) {
     const seg = segments[i];
     const startSeconds = getSegStartSeconds(seg);
     if (startSeconds != null && startSeconds > endTimeSeconds) break;
@@ -6630,7 +6972,8 @@ function findDirectAddressedFullNameIntroCandidate(
   segments: SpeakerSegment[],
   endTimeSeconds: number
 ): { name: string; segmentIndex: number } | null {
-  for (let i = 0; i < segments.length; i++) {
+  const openingGate = detectColdOpenGate(segments);
+  for (let i = openingGate.startIndex; i < segments.length; i++) {
     const seg = segments[i];
     const startSeconds = getSegStartSeconds(seg);
     if (startSeconds != null && startSeconds > endTimeSeconds) break;

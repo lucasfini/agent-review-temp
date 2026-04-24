@@ -4,6 +4,7 @@ export type SpeakerNamingRuleCategory =
   | 'host_self_id'
   | 'panel_intro'
   | 'weak_guest_mention'
+  | 'credit_or_boilerplate_context'
   | 'non_human_location'
   | 'non_human_institution'
   | 'non_human_title_or_role'
@@ -26,6 +27,10 @@ type NamedRule = {
   reason: string;
   pattern: RegExp;
   nameGroup?: number;
+};
+
+type MultiNamedRule = NamedRule & {
+  splitNames?: boolean;
 };
 
 const NAME_CAPTURE = '([A-Z][a-z]+(?:\\s+[A-Z][a-z]+){1,3})';
@@ -122,6 +127,16 @@ const WEAK_GUEST_MENTION_RULES: NamedRule[] = [
   },
 ];
 
+const CREDIT_CONTEXT_RULES: MultiNamedRule[] = [
+  {
+    category: 'credit_or_boilerplate_context',
+    confidence: 0.96,
+    reason: 'production or contributor credit is not participant evidence',
+    pattern: /\b(?:hosted\s+by|produced\s+by|edited\s+by|engineered\s+by|mixed\s+by|fact\s*checking\s+by|video\s+production\s+by|research\s+by|music\s+by|special\s+thanks\s+to|thanks\s+to|our\s+producer\s+is|our\s+producers\s+are)\s+([A-Z][a-z]+(?:\s+[A-Z][a-z]+)+(?:\s*(?:,|and|&)\s*[A-Z][a-z]+(?:\s+[A-Z][a-z]+)+)*)/gi,
+    splitNames: true,
+  },
+];
+
 const NON_HUMAN_RULES: NamedRule[] = [
   {
     category: 'non_human_show_or_promo',
@@ -133,7 +148,7 @@ const NON_HUMAN_RULES: NamedRule[] = [
     category: 'non_human_location',
     confidence: 0.94,
     reason: 'location or transport hub is not a human speaker',
-    pattern: /\b(?:station|airport|terminal|transport\s+hub|city|beach|international)\b/gi,
+    pattern: /\b(?:station|airport|terminal|transport\s+hub|city|beach|international|west\s+coast|east\s+coast)\b/gi,
   },
   {
     category: 'non_human_institution',
@@ -214,6 +229,35 @@ function matchesNamedRules(text: string, rules: NamedRule[]): SpeakerNamingRuleM
   return matches;
 }
 
+function matchesMultiNamedRules(text: string, rules: MultiNamedRule[]): SpeakerNamingRuleMatch[] {
+  const matches: SpeakerNamingRuleMatch[] = [];
+
+  for (const rule of rules) {
+    let match: RegExpExecArray | null;
+    const pattern = reset(rule.pattern);
+    while ((match = pattern.exec(text)) !== null) {
+      const rawValue = match[rule.nameGroup ?? 1];
+      if (!rawValue) continue;
+      const rawNames = rule.splitNames
+        ? rawValue.split(/\s*(?:,| and | & )\s*/i).filter(Boolean)
+        : [rawValue];
+      for (const rawName of rawNames) {
+        const name = cleanCapturedRuleName(rawName);
+        if (!name) continue;
+        matches.push({
+          category: rule.category,
+          confidence: rule.confidence,
+          matchedText: match[0],
+          reason: rule.reason,
+          name,
+        });
+      }
+    }
+  }
+
+  return matches;
+}
+
 export function matchStrongGuestIntroRules(text: string): SpeakerNamingRuleMatch[] {
   return matchesNamedRules(text, [...STRONG_GUEST_INTRO_RULES, ...DIRECT_ADDRESS_INTRO_RULES]);
 }
@@ -224,6 +268,10 @@ export function matchPanelIntroRules(text: string): SpeakerNamingRuleMatch[] {
 
 export function matchWeakGuestMentionRules(text: string): SpeakerNamingRuleMatch[] {
   return matchesNamedRules(text, WEAK_GUEST_MENTION_RULES);
+}
+
+export function matchCreditContextNameRules(text: string): SpeakerNamingRuleMatch[] {
+  return matchesMultiNamedRules(text, CREDIT_CONTEXT_RULES);
 }
 
 export function matchNonHumanSpeakerNameRules(candidate: string): SpeakerNamingRuleMatch[] {
