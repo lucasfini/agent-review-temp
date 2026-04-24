@@ -261,6 +261,8 @@ export default function ProjectsPage() {
   // Export selection state
   const [selectionMode, setSelectionMode] = useState(false);
   const [selectedProjectIds, setSelectedProjectIds] = useState<Set<string>>(new Set());
+  const [pendingBulkDeleteProjects, setPendingBulkDeleteProjects] = useState(false);
+  const [bulkDeletingProjects, setBulkDeletingProjects] = useState(false);
   const [showExportModal, setShowExportModal] = useState(false);
   const [exportProjects, setExportProjects] = useState<Array<Project & { outputs: Output[] }>>([]);
 
@@ -1630,6 +1632,80 @@ export default function ProjectsPage() {
     exitSelectionMode();
   };
 
+  const confirmBulkDeleteProjects = async () => {
+    const projectIds = Array.from(selectedProjectIds);
+    if (projectIds.length === 0 || !user?.id) return;
+
+    setBulkDeletingProjects(true);
+    try {
+      const { data: { session } } = await supabase.auth.getSession();
+      const headers: HeadersInit | undefined = session?.access_token
+        ? { Authorization: `Bearer ${session.access_token}` }
+        : undefined;
+
+      const results = await Promise.allSettled(
+        projectIds.map(async (projectId) => {
+          try {
+            await fetch(`/api/projects/${projectId}/cleanup-cache`, {
+              method: 'POST',
+            });
+          } catch (cacheError) {
+            console.warn('[DELETE] Cache cleanup failed (non-fatal):', cacheError);
+          }
+
+          const response = await fetch(`/api/projects/${projectId}`, {
+            method: 'DELETE',
+            headers,
+          });
+
+          if (!response.ok) {
+            const data = await response.json().catch(() => ({ error: 'Failed to delete project. Please try again.' }));
+            throw new Error(data.error || 'Failed to delete project. Please try again.');
+          }
+
+          return projectId;
+        })
+      );
+
+      const deletedIds = results
+        .filter((result): result is PromiseFulfilledResult<string> => result.status === 'fulfilled')
+        .map((result) => result.value);
+      const failedCount = results.length - deletedIds.length;
+      const deletedIdSet = new Set(deletedIds);
+
+      deletedIds.forEach((projectId) => {
+        emitProjectMutation({ projectId, action: 'deleted' });
+      });
+
+      if (deletedIds.length > 0) {
+        setProjects((prev) => prev.filter((project) => !deletedIdSet.has(project.id)));
+        setSelectedProjectIds((prev) => {
+          const next = new Set(prev);
+          deletedIds.forEach((projectId) => next.delete(projectId));
+          return next;
+        });
+
+        if (selectedProject?.id && deletedIdSet.has(selectedProject.id)) {
+          setSelectedProject(null);
+          setOutputs([]);
+        }
+      }
+
+      if (failedCount > 0) {
+        showToast(`Deleted ${deletedIds.length} project${deletedIds.length === 1 ? '' : 's'}; ${failedCount} failed`);
+      } else {
+        showToast(`Deleted ${deletedIds.length} project${deletedIds.length === 1 ? '' : 's'}`, 'success');
+        exitSelectionMode();
+      }
+    } catch (error) {
+      console.error('Bulk delete failed:', error);
+      showToast('Failed to delete selected projects');
+    } finally {
+      setBulkDeletingProjects(false);
+      setPendingBulkDeleteProjects(false);
+    }
+  };
+
   // Run Coverage Analysis for a project
   const handleRunCoverage = async (project: Project) => {
     if (isDemoMode) {
@@ -1710,6 +1786,12 @@ export default function ProjectsPage() {
 
       // Remove project from local state
       setProjects(prev => prev.filter(p => p.id !== projectId));
+      setSelectedProjectIds(prev => {
+        if (!prev.has(projectId)) return prev;
+        const next = new Set(prev);
+        next.delete(projectId);
+        return next;
+      });
 
       // Clear selected project if it was the deleted one
       if (selectedProject?.id === projectId) {
@@ -2800,6 +2882,15 @@ export default function ProjectsPage() {
         confirmText="Delete"
         isDestructive
       />
+      <ConfirmModal
+        isOpen={pendingBulkDeleteProjects}
+        onClose={() => setPendingBulkDeleteProjects(false)}
+        onConfirm={confirmBulkDeleteProjects}
+        title={`Delete ${selectedProjectIds.size} Project${selectedProjectIds.size === 1 ? '' : 's'}`}
+        description="This will permanently delete the selected projects and all their generated content. This cannot be undone."
+        confirmText={`Delete ${selectedProjectIds.size}`}
+        isDestructive
+      />
       {projects.length === 0 ? (
         <div className="flex-1 overflow-hidden">
           {studioEmptyState}
@@ -2893,15 +2984,30 @@ export default function ProjectsPage() {
                       </button>
                     )}
                   </div>
-                  {/* Export Button - shown when projects are selected */}
+                  {/* Bulk actions - shown when projects are selected */}
                   {selectedProjectIds.size > 0 && (
-                    <button
-                      onClick={handleBulkExport}
-                      className="w-full inline-flex items-center justify-center px-4 py-2.5 bg-gradient-to-r from-blue-600 to-blue-700 text-white text-sm font-medium rounded-lg hover:from-blue-700 hover:to-blue-800 transition-all shadow-sm"
-                    >
-                      <Download className="w-4 h-4 mr-2" />
-                      Export {selectedProjectIds.size} Project{selectedProjectIds.size !== 1 ? 's' : ''}
-                    </button>
+                    <div className="grid grid-cols-2 gap-2">
+                      <button
+                        onClick={handleBulkExport}
+                        disabled={bulkDeletingProjects}
+                        className="inline-flex items-center justify-center px-4 py-2.5 bg-gradient-to-r from-blue-600 to-blue-700 text-white text-sm font-medium rounded-lg hover:from-blue-700 hover:to-blue-800 transition-all shadow-sm disabled:cursor-not-allowed disabled:opacity-50"
+                      >
+                        <Download className="w-4 h-4 mr-2" />
+                        Export
+                      </button>
+                      <button
+                        onClick={() => setPendingBulkDeleteProjects(true)}
+                        disabled={bulkDeletingProjects}
+                        className="inline-flex items-center justify-center px-4 py-2.5 bg-red-600 text-white text-sm font-medium rounded-lg hover:bg-red-700 transition-all shadow-sm disabled:cursor-not-allowed disabled:opacity-50"
+                      >
+                        {bulkDeletingProjects ? (
+                          <Loader2 className="w-4 h-4 mr-2 animate-spin" />
+                        ) : (
+                          <Trash2 className="w-4 h-4 mr-2" />
+                        )}
+                        Delete
+                      </button>
+                    </div>
                   )}
                 </div>
               )}

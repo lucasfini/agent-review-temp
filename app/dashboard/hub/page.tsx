@@ -9,6 +9,7 @@ import {
   AlertCircle,
   Loader2,
   Upload,
+  Download,
   Search,
   Filter,
   ChevronDown,
@@ -36,9 +37,11 @@ import { cn } from '@/lib/utils';
 import { emitProjectMutation } from '@/lib/project-events';
 import { toast } from 'sonner';
 import ConfirmModal from '@/components/ui/confirm-modal';
+import ExportModal, { type ExportPayload } from '@/components/ExportModal';
 import { useUserPrefs } from '@/lib/hooks/useUserPrefs';
 import { DashboardLoadErrorState } from '@/components/dashboard/load-error-state';
 import { getDashboardErrorMessage, logDashboardLoad } from '@/lib/dashboard-load-state';
+import { exportContent } from '@/lib/export-utils';
 
 // ============================================================================
 // TYPES
@@ -71,6 +74,28 @@ interface Output {
   platform: string;
   status: string;
   created_at: string;
+}
+
+interface ExportOutputRecord {
+  id: string;
+  title: string;
+  content: string;
+  status: string;
+  metadata?: any;
+  type: string;
+  platform: string;
+  created_at: string;
+}
+
+interface ExportProjectRecord extends Project {
+  outputs: ExportOutputRecord[];
+  transcription_text?: string;
+  ai_summary?: string;
+  chapters?: any[];
+  key_takeaways?: any[];
+  social_quotes?: any[];
+  insights?: any[];
+  speaker_data?: any;
 }
 
 interface Stats {
@@ -217,6 +242,8 @@ export default function ProjectHubPage() {
   const [selectedProjectIds, setSelectedProjectIds] = useState<Set<string>>(new Set());
   const [pendingBulkDelete, setPendingBulkDelete] = useState(false);
   const [bulkDeleting, setBulkDeleting] = useState(false);
+  const [showExportModal, setShowExportModal] = useState(false);
+  const [exportProjects, setExportProjects] = useState<ExportProjectRecord[]>([]);
   const [hubPage, setHubPage] = useState(1);
 
   // Fetch data
@@ -518,6 +545,148 @@ export default function ProjectHubPage() {
     }
   };
 
+  const prepareExportForProjects = async (projectIds: string[]) => {
+    try {
+      const projectsWithOutputs = await Promise.all(
+        projectIds.map(async (projectId) => {
+          const fallbackProject = projects.find((project) => project.id === projectId);
+          if (!fallbackProject) return null;
+
+          const { data: projectData, error: projectError } = await supabase
+            .from('projects')
+            .select('id, title, transcription_text, ai_summary, chapters, key_takeaways, social_quotes, speaker_data')
+            .eq('id', projectId)
+            .single();
+
+          if (projectError) {
+            throw new Error(projectError.message || 'Failed to load project for export');
+          }
+
+          const { data: insightsData, error: insightsError } = await supabase
+            .from('insights')
+            .select('*')
+            .eq('project_id', projectId)
+            .order('created_at', { ascending: true });
+
+          if (insightsError && insightsError.code !== 'PGRST116') {
+            throw new Error(insightsError.message || 'Failed to load insights for export');
+          }
+
+          const { data: outputsData, error: outputsError } = await supabase
+            .from('outputs')
+            .select('id, title, content, platform, type, created_at, metadata')
+            .eq('project_id', projectId)
+            .order('created_at', { ascending: false });
+
+          if (outputsError) {
+            throw new Error(outputsError.message || 'Failed to load outputs for export');
+          }
+
+          const buildPersonProfile = (insight: any) => {
+            const relationships = Array.isArray(insight.relationships) ? insight.relationships : [];
+            const getSection = (type: string) =>
+              relationships.find((relationship: any) => relationship?.type === type)?.description;
+
+            const whoTheyAre = getSection('person_summary') || insight.simple_definition || '';
+            const currentWork = getSection('current_work') || '';
+            const notableBackground = getSection('notable_background') || '';
+            const whyRelevant = getSection('episode_relevance') || insight.why_it_matters || '';
+
+            if (!whoTheyAre && !currentWork && !notableBackground && !whyRelevant) {
+              return undefined;
+            }
+
+            return {
+              who_they_are: whoTheyAre,
+              current_work: currentWork,
+              notable_background: notableBackground,
+              why_relevant: whyRelevant,
+            };
+          };
+
+          return {
+            ...fallbackProject,
+            transcription_text: (projectData as any).transcription_text,
+            ai_summary: (projectData as any).ai_summary,
+            chapters: (projectData as any).chapters,
+            key_takeaways: (projectData as any).key_takeaways,
+            social_quotes: (projectData as any).social_quotes,
+            speaker_data: (projectData as any).speaker_data,
+            insights: (insightsData || []).map((insight: any) => ({
+              ...insight,
+              person_profile: buildPersonProfile(insight),
+            })),
+            outputs: (outputsData || []).map((output: any) => ({
+              id: output.id,
+              title: output.title || output.type || 'Untitled output',
+              content: output.content || '',
+              status: output.status || 'completed',
+              metadata: output.metadata,
+              type: output.type,
+              platform: output.platform,
+              created_at: output.created_at,
+            })),
+          };
+        })
+      );
+
+      const validProjects = projectsWithOutputs.filter(Boolean) as ExportProjectRecord[];
+
+      if (validProjects.length === 0) {
+        toast.error('Nothing available to export');
+        return;
+      }
+
+      setExportProjects(validProjects);
+      setShowExportModal(true);
+    } catch (error: any) {
+      console.error('[EXPORT] Failed to prepare export:', error);
+      toast.error(error?.message || 'Failed to prepare export');
+    }
+  };
+
+  const handleBulkExport = async () => {
+    if (selectedProjectIds.size === 0) return;
+    await prepareExportForProjects(Array.from(selectedProjectIds));
+  };
+
+  const handleExport = async (payload: ExportPayload) => {
+    const projectsForExport = exportProjects.map((project) => ({
+      id: project.id,
+      title: project.title,
+      outputs: project.outputs.map((output) => ({
+        id: output.id,
+        title: output.title,
+        content: output.content,
+        platform: output.platform,
+        type: output.type,
+        created_at: output.created_at,
+        metadata: output.metadata,
+      })),
+      transcription_text: (project as any).transcription_text,
+      ai_summary: (project as any).ai_summary,
+      chapters: (project as any).chapters,
+      key_takeaways: (project as any).key_takeaways,
+      social_quotes: (project as any).social_quotes,
+      insights: (project as any).insights,
+      speaker_data: (project as any).speaker_data,
+    }));
+
+    const result = await exportContent(
+      projectsForExport,
+      payload.export_manifest,
+      payload.format,
+      { debug: payload.debug }
+    );
+
+    if (!result.success) {
+      toast.error(`Export failed: ${result.message}`);
+      return;
+    }
+
+    exitSelectionMode();
+  };
+
   // Loading state
   if (loading) {
     return (
@@ -568,6 +737,15 @@ export default function ProjectHubPage() {
         description="This will permanently delete the selected projects and all their generated content. This cannot be undone."
         confirmText={`Delete ${selectedProjectCount}`}
         isDestructive
+      />
+      <ExportModal
+        isOpen={showExportModal}
+        onClose={() => {
+          setShowExportModal(false);
+          setExportProjects([]);
+        }}
+        projects={exportProjects}
+        onExport={handleExport}
       />
       <div className="max-w-7xl mx-auto space-y-6">
         {/* Header */}
@@ -772,15 +950,26 @@ export default function ProjectHubPage() {
                     </button>
                   )}
                 </div>
-                <button
-                  type="button"
-                  onClick={() => setPendingBulkDelete(true)}
-                  disabled={selectedProjectCount === 0 || bulkDeleting}
-                  className="inline-flex items-center justify-center gap-2 rounded-lg bg-red-600 px-3 py-2 text-sm font-medium text-white transition-colors hover:bg-red-700 disabled:cursor-not-allowed disabled:opacity-50"
-                >
-                  {bulkDeleting ? <Loader2 className="h-4 w-4 animate-spin" /> : <Trash2 className="h-4 w-4" />}
-                  Delete selected
-                </button>
+                <div className="flex items-center gap-2">
+                  <button
+                    type="button"
+                    onClick={handleBulkExport}
+                    disabled={selectedProjectCount === 0 || bulkDeleting}
+                    className="inline-flex items-center justify-center gap-2 rounded-lg bg-blue-600 px-3 py-2 text-sm font-medium text-white transition-colors hover:bg-blue-700 disabled:cursor-not-allowed disabled:opacity-50"
+                  >
+                    <Download className="h-4 w-4" />
+                    Export selected
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => setPendingBulkDelete(true)}
+                    disabled={selectedProjectCount === 0 || bulkDeleting}
+                    className="inline-flex items-center justify-center gap-2 rounded-lg bg-red-600 px-3 py-2 text-sm font-medium text-white transition-colors hover:bg-red-700 disabled:cursor-not-allowed disabled:opacity-50"
+                  >
+                    {bulkDeleting ? <Loader2 className="h-4 w-4 animate-spin" /> : <Trash2 className="h-4 w-4" />}
+                    Delete selected
+                  </button>
+                </div>
               </div>
             </div>
           )}
