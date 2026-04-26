@@ -95,6 +95,344 @@ function formatAnalysisSummary(options: AnalysisOptions): string {
     .join(' · ');
 }
 
+function UploadActivitySection({
+  uploadedFiles,
+  queuedFiles,
+  selectedQueuedFileId,
+  setSelectedQueuedFileId,
+  removeFile,
+  cancelUploadedFile,
+  filteredActiveProjects,
+  activeProjectsLoading,
+  deleteActiveProject,
+  formatFileSize,
+}: {
+  uploadedFiles: UploadedFile[];
+  queuedFiles: UploadedFile[];
+  selectedQueuedFileId: string | null;
+  setSelectedQueuedFileId: (id: string) => void;
+  removeFile: (id: string) => void;
+  cancelUploadedFile: (uploadedFile: UploadedFile) => Promise<void>;
+  filteredActiveProjects: Array<any>;
+  activeProjectsLoading: boolean;
+  deleteActiveProject: (projectId: string) => Promise<void>;
+  formatFileSize: (bytes: number) => string;
+}) {
+  if (uploadedFiles.length === 0 && filteredActiveProjects.length === 0) {
+    return null;
+  }
+
+  return (
+    <div className="border-b border-slate-200 dark:border-slate-800 px-5 py-5">
+      <div className="mb-4 flex items-center justify-between gap-4">
+        <div>
+          <h3 className="text-sm font-semibold text-slate-900 dark:text-slate-50">Queued and processing files</h3>
+          <p className="mt-1 text-xs text-slate-500 dark:text-slate-400">
+            Upload activity appears here before the processing options so you can track progress without leaving the form.
+          </p>
+        </div>
+        {queuedFiles.length > 1 && (
+          <span className="rounded-full border border-amber-200 bg-amber-50 px-2.5 py-1 text-xs font-medium text-amber-700 dark:border-amber-800/30 dark:bg-amber-900/20 dark:text-amber-300">
+            {queuedFiles.length} queued
+          </span>
+        )}
+      </div>
+
+      {uploadedFiles.length > 0 && (
+        <div className="space-y-3">
+          {uploadedFiles.map((uploadedFile) => {
+            const isActive = ['queued', 'pending', 'extracting', 'uploading', 'processing'].includes(uploadedFile.status);
+            const isProcessing = ['pending', 'extracting', 'uploading', 'processing'].includes(uploadedFile.status);
+            const isSelectedQueued = uploadedFile.status === 'queued' && uploadedFile.id === selectedQueuedFileId;
+            const displayName = uploadedFile.displayName || uploadedFile.file?.name || 'Untitled';
+            const fileSize = uploadedFile.file?.size;
+            const queuePosition = uploadedFile.status === 'queued'
+              ? queuedFiles.findIndex(f => f.id === uploadedFile.id) + 1
+              : 0;
+            const queueTotal = queuedFiles.length;
+
+            return (
+              <div
+                key={uploadedFile.id}
+                onClick={() => {
+                  if (uploadedFile.status === 'queued') {
+                    setSelectedQueuedFileId(uploadedFile.id);
+                  }
+                }}
+                className={`rounded-lg border p-4 shadow-sm transition-colors ${
+                  isSelectedQueued
+                    ? 'border-blue-300 bg-blue-50/70 ring-1 ring-blue-200 dark:border-blue-700 dark:bg-blue-950/20 dark:ring-blue-900/50'
+                    : 'border-slate-200 bg-white dark:border-slate-700 dark:bg-slate-900'
+                } ${uploadedFile.status === 'queued' ? 'cursor-pointer hover:border-slate-300 dark:hover:border-slate-600' : ''}`}
+              >
+                <div className="flex items-start gap-3">
+                  <div className="flex-shrink-0 mt-0.5">
+                    {uploadedFile.status === 'extracting' ? (
+                      <FileVideo className="h-7 w-7 text-purple-500 animate-pulse" />
+                    ) : uploadedFile.status === 'queued' ? (
+                      <Clock className="h-7 w-7 text-amber-400" />
+                    ) : (
+                      <FileAudio className="h-7 w-7 text-blue-500" />
+                    )}
+                  </div>
+                  <div className="flex-1 min-w-0">
+                    <p className="text-sm font-medium text-slate-900 dark:text-slate-50 truncate" title={displayName}>
+                      {displayName}
+                    </p>
+                    <p className="text-xs text-slate-500 dark:text-slate-400">
+                      {typeof fileSize === 'number' && fileSize > 0
+                        ? formatFileSize(fileSize)
+                        : uploadedFile.sourceType === 'youtube'
+                          ? 'YouTube import'
+                          : uploadedFile.sourceType === 'direct'
+                            ? 'URL import'
+                            : 'Processing'}
+                    </p>
+                  </div>
+                  {isProcessing ? (
+                    <button
+                      onClick={(event) => {
+                        event.stopPropagation();
+                        void cancelUploadedFile(uploadedFile);
+                      }}
+                      className="flex-shrink-0 p-1 rounded text-amber-400 hover:text-amber-300 hover:bg-amber-900/20 transition-colors"
+                      title="Cancel upload"
+                    >
+                      <X className="h-4 w-4" />
+                    </button>
+                  ) : (
+                    <button
+                      onClick={(event) => {
+                        event.stopPropagation();
+                        removeFile(uploadedFile.id);
+                      }}
+                      className="flex-shrink-0 p-1 rounded text-slate-500 hover:text-slate-600 dark:hover:text-slate-400 hover:bg-slate-100 dark:hover:bg-slate-800 transition-colors"
+                      title={uploadedFile.status === 'queued' ? 'Remove from queue' : 'Remove file'}
+                    >
+                      <X className="h-4 w-4" />
+                    </button>
+                  )}
+                </div>
+
+                <div className="mt-2 ml-10 flex items-center gap-2 flex-wrap">
+                  <div className="flex items-center space-x-2 flex-wrap">
+                    {uploadedFile.status === 'queued' && (
+                      <div className="flex items-center space-x-1">
+                        <Clock className="h-3.5 w-3.5 text-amber-500" />
+                        <span className="text-xs px-2 py-1 rounded-full bg-amber-100 dark:bg-amber-900/20 text-amber-700 dark:text-amber-400 font-medium">
+                          {queueTotal > 1 ? `Queued (${queuePosition} of ${queueTotal})` : 'Queued'}
+                        </span>
+                        {isSelectedQueued && (
+                          <span className="text-xs px-2 py-1 rounded-full bg-blue-100 text-blue-700 font-medium dark:bg-blue-900/20 dark:text-blue-300">
+                            Editing
+                          </span>
+                        )}
+                      </div>
+                    )}
+                    {uploadedFile.status === 'pending' && (
+                      <span className="text-xs px-2 py-1 rounded-full bg-slate-100 dark:bg-slate-800 text-slate-500 dark:text-slate-400 font-medium">Starting…</span>
+                    )}
+                    {uploadedFile.status === 'extracting' && (
+                      <span className="text-xs px-2 py-1 rounded-full bg-blue-100 dark:bg-blue-900/20 text-blue-700 dark:text-blue-400 font-medium">Extracting audio</span>
+                    )}
+                    {uploadedFile.status === 'uploading' && (
+                      <span className="text-xs px-2 py-1 rounded-full bg-blue-100 dark:bg-blue-900/20 text-blue-700 dark:text-blue-400 font-medium">Uploading</span>
+                    )}
+                    {uploadedFile.status === 'processing' && uploadedFile.processingStage && (
+                      <>
+                        {uploadedFile.processingStage === 'transcribing' && (
+                          <span className="text-xs px-2 py-1 rounded-full bg-blue-100 dark:bg-blue-900/20 text-blue-700 dark:text-blue-400 font-medium">Transcribing</span>
+                        )}
+                        {(['diarization', 'name_extraction'] as ProcessingStage[]).includes(uploadedFile.processingStage) && (
+                          <span className="text-xs px-2 py-1 rounded-full bg-blue-100 dark:bg-blue-900/20 text-blue-700 dark:text-blue-400 font-medium">Analyzing speakers</span>
+                        )}
+                        {(['summary', 'role_classification', 'chapters', 'takeaways', 'quotes', 'finalizing'] as ProcessingStage[]).includes(uploadedFile.processingStage) && (
+                          <span className="text-xs px-2 py-1 rounded-full bg-blue-100 dark:bg-blue-900/20 text-blue-700 dark:text-blue-400 font-medium">Generating insights</span>
+                        )}
+                        {!(['transcribing', 'diarization', 'name_extraction', 'summary', 'role_classification', 'chapters', 'takeaways', 'quotes', 'finalizing'] as ProcessingStage[]).includes(uploadedFile.processingStage) && (
+                          <span className="text-xs px-2 py-1 rounded-full bg-blue-100 dark:bg-blue-900/20 text-blue-700 dark:text-blue-400 font-medium">Processing</span>
+                        )}
+                      </>
+                    )}
+                    {uploadedFile.status === 'completed' && (
+                      <div className="flex items-center space-x-1">
+                        <CheckCircle className="h-4 w-4 text-green-500" />
+                        <span className="text-xs px-2 py-1 rounded-full bg-emerald-100 dark:bg-emerald-900/20 text-emerald-700 dark:text-emerald-300 font-medium hidden sm:inline">Complete</span>
+                      </div>
+                    )}
+                    {uploadedFile.status === 'error' && (
+                      <div className="flex items-center space-x-1">
+                        <AlertCircle className="h-4 w-4 text-red-500" />
+                        <span className="text-xs px-2 py-1 rounded-full bg-red-100 dark:bg-red-900/20 text-red-600 dark:text-red-300 font-medium hidden sm:inline">Error</span>
+                      </div>
+                    )}
+                  </div>
+
+                  <span className="text-[10px] uppercase tracking-wide text-slate-600 dark:text-slate-300 border border-slate-300 dark:border-slate-700/70 bg-slate-100 dark:bg-slate-800/60 px-2 py-0.5 rounded">
+                    {formatAnalysisSummary(uploadedFile.analysisOptions)}
+                  </span>
+
+                  {uploadedFile.status === 'completed' && uploadedFile.projectId && (
+                    <a
+                      href={`/dashboard/projects?id=${uploadedFile.projectId}`}
+                      className="inline-flex items-center gap-1.5 px-2.5 py-1 text-xs font-semibold text-white bg-blue-600 hover:bg-blue-700 rounded-lg flex-shrink-0 transition-colors"
+                    >
+                      <Eye className="h-3.5 w-3.5" />
+                      View
+                    </a>
+                  )}
+                </div>
+
+                {isActive && uploadedFile.status !== 'queued' && (
+                  <>
+                    <div className="mt-3">
+                      <div className="w-full bg-slate-200 dark:bg-slate-700 rounded-full h-1.5">
+                        <div
+                          className={`h-1.5 rounded-full transition-all duration-300 ${uploadedFile.status === 'extracting' ? 'bg-purple-500' : 'bg-blue-600'}`}
+                          style={{ width: `${uploadedFile.status === 'extracting' ? uploadedFile.extractionProgress : uploadedFile.progress}%` }}
+                        />
+                      </div>
+                    </div>
+                    {(uploadedFile.processingStage || uploadedFile.processingMessage) && (
+                      <div className="mt-2 flex flex-col gap-1 text-xs text-slate-500 dark:text-slate-400 sm:flex-row sm:items-center sm:justify-between">
+                        <div className="flex items-center gap-2">
+                          {uploadedFile.processingStage && (
+                            <span className="font-medium text-slate-500 dark:text-slate-400">
+                              {uploadedFile.status === 'extracting' ? 'Extracting audio' : getStageDisplayName(uploadedFile.processingTier, uploadedFile.processingStage)}
+                            </span>
+                          )}
+                          <span className="font-semibold text-blue-400">
+                            {Math.min(100, Math.max(0, Math.round(uploadedFile.status === 'extracting'
+                              ? uploadedFile.extractionProgress || 0
+                              : uploadedFile.progress)))}%
+                          </span>
+                        </div>
+                        {uploadedFile.processingMessage && (
+                          <span className="text-slate-400 dark:text-slate-500 sm:text-right">
+                            {uploadedFile.status === 'extracting'
+                              ? uploadedFile.processingMessage
+                              : getUserFacingProcessingMessage(
+                                  uploadedFile.processingTier,
+                                  uploadedFile.processingStage || 'pending',
+                                  uploadedFile.processingMessage
+                                )}
+                          </span>
+                        )}
+                      </div>
+                    )}
+                  </>
+                )}
+
+                {uploadedFile.status === 'error' && uploadedFile.error && (
+                  <div className="mt-3 p-3 bg-red-900/20 border border-red-800/30 rounded-md">
+                    <p className="text-xs text-red-300 break-words">{uploadedFile.error}</p>
+                  </div>
+                )}
+              </div>
+            );
+          })}
+        </div>
+      )}
+
+      {filteredActiveProjects.length > 0 && (
+        <div className={uploadedFiles.length > 0 ? 'mt-5 border-t border-slate-200 pt-5 dark:border-slate-800' : ''}>
+          <div className="mb-3 flex items-center justify-between">
+            <h4 className="text-sm font-semibold text-slate-600 dark:text-slate-300">Processing projects</h4>
+            {activeProjectsLoading && (
+              <span className="text-xs text-slate-500">Refreshing...</span>
+            )}
+          </div>
+          <div className="space-y-3">
+            {filteredActiveProjects.map((project) => {
+              const stage = project.processing_stage ||
+                (project.status === 'uploading' ? 'uploading' : 'transcribing');
+              const stageProgress = typeof project.processing_progress === 'number'
+                ? project.processing_progress
+                : 0;
+              const tier = normalizeTier((project.performance_level as string) || 'content_kit');
+              const progress = calculateOverallProgress(
+                tier,
+                stage as ProcessingStage,
+                stageProgress
+              );
+              const message = getUserFacingProcessingMessage(
+                tier,
+                stage as ProcessingStage,
+                project.processing_message
+              );
+
+              return (
+                <div key={project.id} className="bg-white dark:bg-slate-900 p-4 rounded-lg border border-slate-200 dark:border-slate-700 shadow-sm">
+                  <div className="flex items-center justify-between">
+                    <div className="flex items-center space-x-3 flex-1 min-w-0">
+                      <div className="flex-shrink-0">
+                        {project.status === 'processing' ? (
+                          <Loader2 className="h-8 w-8 text-yellow-500 animate-spin" />
+                        ) : (
+                          <FileAudio className="h-8 w-8 text-blue-500" />
+                        )}
+                      </div>
+                      <div className="flex-1 min-w-0 max-w-xs sm:max-w-sm md:max-w-md lg:max-w-lg">
+                        <p className="text-sm font-medium text-slate-900 dark:text-slate-50 truncate" title={project.title}>
+                          {project.title}
+                        </p>
+                        <p className="text-xs text-slate-500 dark:text-slate-400">
+                          {project.audio_file_size ? formatFileSize(project.audio_file_size) : 'Processing'}
+                        </p>
+                      </div>
+                    </div>
+                    <div className="flex items-center space-x-2 flex-shrink-0">
+                      <span className="text-xs px-2 py-1 rounded-full bg-amber-100 dark:bg-amber-900/20 text-amber-700 dark:text-amber-300 font-medium">
+                        {getStageDisplayName(normalizeTier((project.performance_level as string) || 'content_kit'), stage as ProcessingStage)}
+                      </span>
+                      {project.performance_level && (
+                        <span className="text-[10px] uppercase tracking-wide text-slate-600 dark:text-slate-300 border border-slate-300 dark:border-slate-700/70 bg-slate-100 dark:bg-slate-800/60 px-2 py-0.5 rounded">
+                          {formatAnalysisSummary(normalizeAnalysisOptions(project.metadata?.analysis_options))}
+                        </span>
+                      )}
+                      <span className="text-xs font-semibold text-blue-400">
+                        {progress}%
+                      </span>
+                      <a
+                        href={`/dashboard/projects?id=${project.id}`}
+                        className="p-1.5 text-blue-600 hover:text-blue-500 hover:bg-blue-50 dark:hover:bg-blue-900/20 rounded transition-colors"
+                        title="View project"
+                      >
+                        <Eye className="h-4 w-4" />
+                      </a>
+                      <button
+                        type="button"
+                        onClick={() => void deleteActiveProject(project.id)}
+                        className="p-1.5 text-red-400 hover:text-red-300 hover:bg-red-900/20 rounded transition-colors"
+                        title="Delete project"
+                      >
+                        <Trash2 className="h-4 w-4" />
+                      </button>
+                    </div>
+                  </div>
+                  <div className="mt-3">
+                    <div className="w-full bg-slate-200 dark:bg-slate-700 rounded-full h-1.5">
+                      <div
+                        className="h-1.5 rounded-full bg-blue-600 transition-all duration-300"
+                        style={{ width: `${Math.min(100, Math.max(0, progress))}%` }}
+                      />
+                    </div>
+                  </div>
+                  {message && (
+                    <div className="mt-2 text-xs text-slate-500 dark:text-slate-400">
+                      {message}
+                    </div>
+                  )}
+                </div>
+              );
+            })}
+          </div>
+        </div>
+      )}
+    </div>
+  );
+}
+
 const ANALYSIS_HELP_COPY: Record<keyof AnalysisOptions, { description: string; bestFor: string }> = {
   namedSpeakers: {
     description: 'Attempts to replace numbered speaker labels with real names and roles like host or guest.',
@@ -801,217 +1139,6 @@ export default function UploadPage() {
             </div>
 
             <div className="mb-6 rounded-2xl border border-slate-200 dark:border-slate-800 bg-white dark:bg-slate-900">
-              {uploadedFiles.length > 0 && (
-                <div className="border-b border-slate-200 dark:border-slate-800 px-5 py-5">
-                  <div className="mb-4 flex items-center justify-between">
-                    <div>
-                      <h3 className="text-sm font-semibold text-slate-900 dark:text-slate-50">Files</h3>
-                      <p className="mt-1 text-xs text-slate-500 dark:text-slate-400">
-                        Queued and active uploads appear here. Click a queued file to edit its options before it starts.
-                      </p>
-                    </div>
-                    {queuedFiles.length > 1 && (
-                      <span className="rounded-full border border-amber-200 bg-amber-50 px-2.5 py-1 text-xs font-medium text-amber-700 dark:border-amber-800/30 dark:bg-amber-900/20 dark:text-amber-300">
-                        {queuedFiles.length} queued
-                      </span>
-                    )}
-                  </div>
-
-                  <div className="space-y-3">
-                    {uploadedFiles.map((uploadedFile) => {
-                      const isActive = ['queued', 'pending', 'extracting', 'uploading', 'processing'].includes(uploadedFile.status);
-                      const isProcessing = ['pending', 'extracting', 'uploading', 'processing'].includes(uploadedFile.status);
-                      const isSelectedQueued = uploadedFile.status === 'queued' && uploadedFile.id === selectedQueuedFileId;
-                      const displayName = uploadedFile.displayName || uploadedFile.file?.name || 'Untitled';
-                      const fileSize = uploadedFile.file?.size;
-                      const queuePosition = uploadedFile.status === 'queued'
-                        ? queuedFiles.findIndex(f => f.id === uploadedFile.id) + 1
-                        : 0;
-                      const queueTotal = queuedFiles.length;
-                      return (
-                        <div
-                          key={uploadedFile.id}
-                          onClick={() => {
-                            if (uploadedFile.status === 'queued') {
-                              setSelectedQueuedFileId(uploadedFile.id);
-                            }
-                          }}
-                          className={`rounded-lg border p-4 shadow-sm transition-colors ${
-                            isSelectedQueued
-                              ? 'border-blue-300 bg-blue-50/70 ring-1 ring-blue-200 dark:border-blue-700 dark:bg-blue-950/20 dark:ring-blue-900/50'
-                              : 'border-slate-200 bg-white dark:border-slate-700 dark:bg-slate-900'
-                          } ${uploadedFile.status === 'queued' ? 'cursor-pointer hover:border-slate-300 dark:hover:border-slate-600' : ''}`}
-                        >
-                          <div className="flex items-start gap-3">
-                            <div className="flex-shrink-0 mt-0.5">
-                              {uploadedFile.status === 'extracting' ? (
-                                <FileVideo className="h-7 w-7 text-purple-500 animate-pulse" />
-                              ) : uploadedFile.status === 'queued' ? (
-                                <Clock className="h-7 w-7 text-amber-400" />
-                              ) : (
-                                <FileAudio className="h-7 w-7 text-blue-500" />
-                              )}
-                            </div>
-                            <div className="flex-1 min-w-0">
-                              <p className="text-sm font-medium text-slate-900 dark:text-slate-50 truncate" title={displayName}>
-                                {displayName}
-                              </p>
-                              <p className="text-xs text-slate-500 dark:text-slate-400">
-                                {typeof fileSize === 'number' && fileSize > 0
-                                  ? formatFileSize(fileSize)
-                                  : uploadedFile.sourceType === 'youtube'
-                                    ? 'YouTube import'
-                                    : uploadedFile.sourceType === 'direct'
-                                      ? 'URL import'
-                                      : 'Processing'}
-                              </p>
-                            </div>
-                            {isProcessing ? (
-                              <button
-                                onClick={(event) => {
-                                  event.stopPropagation();
-                                  cancelUploadedFile(uploadedFile);
-                                }}
-                                className="flex-shrink-0 p-1 rounded text-amber-400 hover:text-amber-300 hover:bg-amber-900/20 transition-colors"
-                                title="Cancel upload"
-                              >
-                                <X className="h-4 w-4" />
-                              </button>
-                            ) : (
-                              <button
-                                onClick={(event) => {
-                                  event.stopPropagation();
-                                  removeFile(uploadedFile.id);
-                                }}
-                                className="flex-shrink-0 p-1 rounded text-slate-500 hover:text-slate-600 dark:hover:text-slate-400 hover:bg-slate-100 dark:hover:bg-slate-800 transition-colors"
-                                title={uploadedFile.status === 'queued' ? 'Remove from queue' : 'Remove file'}
-                              >
-                                <X className="h-4 w-4" />
-                              </button>
-                            )}
-                          </div>
-
-                          <div className="mt-2 ml-10 flex items-center gap-2 flex-wrap">
-                            <div className="flex items-center space-x-2 flex-wrap">
-                              {uploadedFile.status === 'queued' && (
-                                <div className="flex items-center space-x-1">
-                                  <Clock className="h-3.5 w-3.5 text-amber-500" />
-                                  <span className="text-xs px-2 py-1 rounded-full bg-amber-100 dark:bg-amber-900/20 text-amber-700 dark:text-amber-400 font-medium">
-                                    {queueTotal > 1 ? `Queued (${queuePosition} of ${queueTotal})` : 'Queued'}
-                                  </span>
-                                  {isSelectedQueued && (
-                                    <span className="text-xs px-2 py-1 rounded-full bg-blue-100 text-blue-700 font-medium dark:bg-blue-900/20 dark:text-blue-300">
-                                      Editing
-                                    </span>
-                                  )}
-                                </div>
-                              )}
-                              {uploadedFile.status === 'pending' && (
-                                <span className="text-xs px-2 py-1 rounded-full bg-slate-100 dark:bg-slate-800 text-slate-500 dark:text-slate-400 font-medium">Starting…</span>
-                              )}
-                              {uploadedFile.status === 'extracting' && (
-                                <span className="text-xs px-2 py-1 rounded-full bg-blue-100 dark:bg-blue-900/20 text-blue-700 dark:text-blue-400 font-medium">Extracting audio</span>
-                              )}
-                              {uploadedFile.status === 'uploading' && (
-                                <span className="text-xs px-2 py-1 rounded-full bg-blue-100 dark:bg-blue-900/20 text-blue-700 dark:text-blue-400 font-medium">Uploading</span>
-                              )}
-                              {uploadedFile.status === 'processing' && uploadedFile.processingStage && (
-                                <>
-                                  {uploadedFile.processingStage === 'transcribing' && (
-                                    <span className="text-xs px-2 py-1 rounded-full bg-blue-100 dark:bg-blue-900/20 text-blue-700 dark:text-blue-400 font-medium">Transcribing</span>
-                                  )}
-                                  {(['diarization', 'name_extraction'] as ProcessingStage[]).includes(uploadedFile.processingStage) && (
-                                    <span className="text-xs px-2 py-1 rounded-full bg-blue-100 dark:bg-blue-900/20 text-blue-700 dark:text-blue-400 font-medium">Analyzing speakers</span>
-                                  )}
-                                  {(['summary', 'role_classification', 'chapters', 'takeaways', 'quotes', 'finalizing'] as ProcessingStage[]).includes(uploadedFile.processingStage) && (
-                                    <span className="text-xs px-2 py-1 rounded-full bg-blue-100 dark:bg-blue-900/20 text-blue-700 dark:text-blue-400 font-medium">Generating insights</span>
-                                  )}
-                                  {!(['transcribing', 'diarization', 'name_extraction', 'summary', 'role_classification', 'chapters', 'takeaways', 'quotes', 'finalizing'] as ProcessingStage[]).includes(uploadedFile.processingStage) && (
-                                    <span className="text-xs px-2 py-1 rounded-full bg-blue-100 dark:bg-blue-900/20 text-blue-700 dark:text-blue-400 font-medium">Processing</span>
-                                  )}
-                                </>
-                              )}
-                              {uploadedFile.status === 'completed' && (
-                                <div className="flex items-center space-x-1">
-                                  <CheckCircle className="h-4 w-4 text-green-500" />
-                                  <span className="text-xs px-2 py-1 rounded-full bg-emerald-100 dark:bg-emerald-900/20 text-emerald-700 dark:text-emerald-300 font-medium hidden sm:inline">Complete</span>
-                                </div>
-                              )}
-                              {uploadedFile.status === 'error' && (
-                                <div className="flex items-center space-x-1">
-                                  <AlertCircle className="h-4 w-4 text-red-500" />
-                                  <span className="text-xs px-2 py-1 rounded-full bg-red-100 dark:bg-red-900/20 text-red-600 dark:text-red-300 font-medium hidden sm:inline">Error</span>
-                                </div>
-                              )}
-                            </div>
-
-                            <span className="text-[10px] uppercase tracking-wide text-slate-600 dark:text-slate-300 border border-slate-300 dark:border-slate-700/70 bg-slate-100 dark:bg-slate-800/60 px-2 py-0.5 rounded">
-                              {formatAnalysisSummary(uploadedFile.analysisOptions)}
-                            </span>
-
-                            {uploadedFile.status === 'completed' && uploadedFile.projectId && (
-                              <a
-                                href={`/dashboard/projects?id=${uploadedFile.projectId}`}
-                                className="inline-flex items-center gap-1.5 px-2.5 py-1 text-xs font-semibold text-white bg-blue-600 hover:bg-blue-700 rounded-lg flex-shrink-0 transition-colors"
-                              >
-                                <Eye className="h-3.5 w-3.5" />
-                                View
-                              </a>
-                            )}
-                          </div>
-
-                          {isActive && uploadedFile.status !== 'queued' && (
-                            <>
-                              <div className="mt-3">
-                                <div className="w-full bg-slate-200 dark:bg-slate-700 rounded-full h-1.5">
-                                  <div
-                                    className={`h-1.5 rounded-full transition-all duration-300 ${uploadedFile.status === 'extracting' ? 'bg-purple-500' : 'bg-blue-600'}`}
-                                    style={{ width: `${uploadedFile.status === 'extracting' ? uploadedFile.extractionProgress : uploadedFile.progress}%` }}
-                                  />
-                                </div>
-                              </div>
-                              {(uploadedFile.processingStage || uploadedFile.processingMessage) && (
-                                <div className="mt-2 flex flex-col gap-1 text-xs text-slate-500 dark:text-slate-400 sm:flex-row sm:items-center sm:justify-between">
-                                  <div className="flex items-center gap-2">
-                                    {uploadedFile.processingStage && (
-                                      <span className="font-medium text-slate-500 dark:text-slate-400">
-                                        {uploadedFile.status === 'extracting' ? 'Extracting audio' : getStageDisplayName(uploadedFile.processingTier, uploadedFile.processingStage)}
-                                      </span>
-                                    )}
-                                    <span className="font-semibold text-blue-400">
-                                      {Math.min(100, Math.max(0, Math.round(uploadedFile.status === 'extracting'
-                                        ? uploadedFile.extractionProgress || 0
-                                        : uploadedFile.progress)))}%
-                                    </span>
-                                  </div>
-                                  {uploadedFile.processingMessage && (
-                                    <span className="text-slate-400 dark:text-slate-500 sm:text-right">
-                                      {uploadedFile.status === 'extracting'
-                                        ? uploadedFile.processingMessage
-                                        : getUserFacingProcessingMessage(
-                                            uploadedFile.processingTier,
-                                            uploadedFile.processingStage || 'pending',
-                                            uploadedFile.processingMessage
-                                          )}
-                                    </span>
-                                  )}
-                                </div>
-                              )}
-                            </>
-                          )}
-
-                          {uploadedFile.status === 'error' && uploadedFile.error && (
-                            <div className="mt-3 p-3 bg-red-900/20 border border-red-800/30 rounded-md">
-                              <p className="text-xs text-red-300 break-words">{uploadedFile.error}</p>
-                            </div>
-                          )}
-                        </div>
-                      );
-                    })}
-                  </div>
-                </div>
-              )}
-
               <div className="border-b border-slate-200 dark:border-slate-800 px-5 py-5">
                 {activeTab === 'local' && (
                   <div data-tour="upload-zone">
@@ -1188,6 +1315,18 @@ export default function UploadPage() {
                   </div>
                 )}
               </div>
+              <UploadActivitySection
+                uploadedFiles={uploadedFiles}
+                queuedFiles={queuedFiles}
+                selectedQueuedFileId={selectedQueuedFileId}
+                setSelectedQueuedFileId={setSelectedQueuedFileId}
+                removeFile={removeFile}
+                cancelUploadedFile={cancelUploadedFile}
+                filteredActiveProjects={filteredActiveProjects}
+                activeProjectsLoading={activeProjectsLoading}
+                deleteActiveProject={deleteActiveProject}
+                formatFileSize={formatFileSize}
+              />
               <div className="border-b border-slate-200 dark:border-slate-800 px-5 py-4">
                 <div className="flex items-start justify-between gap-4">
                   <div>
@@ -1370,102 +1509,6 @@ export default function UploadPage() {
                 </div>
               )}
             </div>
-
-            {/* Active Processing (imports + non-local uploads) */}
-            {filteredActiveProjects.length > 0 && (
-              <div className="mt-6">
-                <div className="flex items-center justify-between mb-3">
-                  <h3 className="text-sm font-semibold text-slate-600 dark:text-slate-300">Active Processing</h3>
-                  {activeProjectsLoading && (
-                    <span className="text-xs text-slate-500">Refreshing...</span>
-                  )}
-                </div>
-                <div className="space-y-3">
-                  {filteredActiveProjects.map((project) => {
-                    const stage = project.processing_stage ||
-                      (project.status === 'uploading' ? 'uploading' : 'transcribing');
-                    const stageProgress = typeof project.processing_progress === 'number'
-                      ? project.processing_progress
-                      : 0;
-                    const tier = normalizeTier((project.performance_level as string) || 'content_kit');
-                    const progress = calculateOverallProgress(
-                      tier,
-                      stage as ProcessingStage,
-                      stageProgress
-                    );
-                    const message = getUserFacingProcessingMessage(
-                      tier,
-                      stage as ProcessingStage,
-                      project.processing_message
-                    );
-                    return (
-                      <div key={project.id} className="bg-white dark:bg-slate-900 p-4 rounded-lg border border-slate-200 dark:border-slate-700 shadow-sm">
-                        <div className="flex items-center justify-between">
-                          <div className="flex items-center space-x-3 flex-1 min-w-0">
-                            <div className="flex-shrink-0">
-                              {project.status === 'processing' ? (
-                                <Loader2 className="h-8 w-8 text-yellow-500 animate-spin" />
-                              ) : (
-                                <FileAudio className="h-8 w-8 text-blue-500" />
-                              )}
-                            </div>
-                            <div className="flex-1 min-w-0 max-w-xs sm:max-w-sm md:max-w-md lg:max-w-lg">
-                              <p className="text-sm font-medium text-slate-900 dark:text-slate-50 truncate" title={project.title}>
-                                {project.title}
-                              </p>
-                              <p className="text-xs text-slate-500 dark:text-slate-400">
-                                {project.audio_file_size ? formatFileSize(project.audio_file_size) : 'Processing'}
-                              </p>
-                            </div>
-                          </div>
-                          <div className="flex items-center space-x-2 flex-shrink-0">
-                            <span className="text-xs px-2 py-1 rounded-full bg-amber-100 dark:bg-amber-900/20 text-amber-700 dark:text-amber-300 font-medium">
-                              {getStageDisplayName(normalizeTier((project.performance_level as string) || 'content_kit'), stage as ProcessingStage)}
-                            </span>
-                            {project.performance_level && (
-                              <span className="text-[10px] uppercase tracking-wide text-slate-600 dark:text-slate-300 border border-slate-300 dark:border-slate-700/70 bg-slate-100 dark:bg-slate-800/60 px-2 py-0.5 rounded">
-                                {formatAnalysisSummary(normalizeAnalysisOptions(project.metadata?.analysis_options))}
-                              </span>
-                            )}
-                            <span className="text-xs font-semibold text-blue-400">
-                              {progress}%
-                            </span>
-                            <a
-                              href={`/dashboard/projects?id=${project.id}`}
-                              className="p-1.5 text-blue-600 hover:text-blue-500 hover:bg-blue-50 dark:hover:bg-blue-900/20 rounded transition-colors"
-                              title="View project"
-                            >
-                              <Eye className="h-4 w-4" />
-                            </a>
-                            <button
-                              type="button"
-                              onClick={() => deleteActiveProject(project.id)}
-                              className="p-1.5 text-red-400 hover:text-red-300 hover:bg-red-900/20 rounded transition-colors"
-                              title="Delete project"
-                            >
-                              <Trash2 className="h-4 w-4" />
-                            </button>
-                          </div>
-                        </div>
-                        <div className="mt-3">
-                          <div className="w-full bg-slate-200 dark:bg-slate-700 rounded-full h-1.5">
-                            <div
-                              className="h-1.5 rounded-full bg-blue-600 transition-all duration-300"
-                              style={{ width: `${Math.min(100, Math.max(0, progress))}%` }}
-                            />
-                          </div>
-                        </div>
-                        {message && (
-                          <div className="mt-2 text-xs text-slate-500 dark:text-slate-400">
-                            {message}
-                          </div>
-                        )}
-                      </div>
-                    );
-                  })}
-                </div>
-              </div>
-            )}
 
             {/* Upload History */}
             <div className="mt-8" data-tour="upload-history">

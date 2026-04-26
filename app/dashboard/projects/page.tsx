@@ -197,6 +197,14 @@ function mergeProjectContentGuidance(metadata: any, guidanceByType: ContentGuida
   };
 }
 
+function getGenerationJobLabel(job: ProjectGenerationJob): string {
+  if (job.kind === 'analysis') {
+    return ANALYSIS_OPTION_CONFIG.find((option) => option.key === job.target_key)?.label || 'Analysis';
+  }
+
+  return CONTENT_TYPES.find((contentType) => contentType.id === job.target_key)?.name || 'Content';
+}
+
 export default function ProjectsPage() {
   const [projects, setProjects] = useState<ProjectListItem[]>([]);
   const [selectedProject, setSelectedProject] = useState<Project | null>(null);
@@ -2397,6 +2405,7 @@ export default function ProjectsPage() {
     const currentStatuses = new Map<string, string>();
     let shouldRefreshOutputs = false;
     let shouldRefreshDetail = false;
+    const completedLabels: string[] = [];
 
     for (const job of generationJobs) {
       currentStatuses.set(job.id, job.status);
@@ -2408,6 +2417,9 @@ export default function ProjectsPage() {
 
       if (!transitionedToTerminal) continue;
 
+      if (job.status === 'completed') {
+        completedLabels.push(getGenerationJobLabel(job));
+      }
       if (job.kind === 'content') {
         shouldRefreshOutputs = true;
       }
@@ -2416,13 +2428,25 @@ export default function ProjectsPage() {
 
     previousGenerationJobStatusesRef.current = currentStatuses;
 
+    if (completedLabels.length === 1) {
+      showToast(`${completedLabels[0]} is ready.`, 'success');
+    } else if (completedLabels.length > 1) {
+      const [first, second, ...rest] = completedLabels;
+      showToast(
+        rest.length > 0
+          ? `${first}, ${second}, and ${rest.length} more are ready.`
+          : `${first} and ${second} are ready.`,
+        'success'
+      );
+    }
+
     const selectedId = selectedProjectRef.current;
     if (!selectedId) return;
 
     if (shouldRefreshOutputs || shouldRefreshDetail) {
       void refreshSelectedProjectArtifacts(selectedId, 'job-transition');
     }
-  }, [generationJobs, refreshSelectedProjectArtifacts]);
+  }, [generationJobs, refreshSelectedProjectArtifacts, showToast]);
 
   useEffect(() => {
     const currentActiveJobCount = activeGenerationJobs.length;

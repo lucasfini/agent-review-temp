@@ -142,6 +142,7 @@ export function UploadProgressSyncProvider({ children }: { children: ReactNode }
   const uploadRequestRef = useRef<Map<string, XMLHttpRequest>>(new Map());
   const pollTimeoutsRef = useRef<Map<string, ReturnType<typeof setTimeout>>>(new Map());
   const cancelledUploadsRef = useRef<Set<string>>(new Set());
+  const completedUploadNotificationsRef = useRef<Set<string>>(new Set());
   const queueProcessingRef = useRef(false);
   const { session, isDemoMode } = useAuth();
   const { extractAudio } = useAudioExtractor();
@@ -205,7 +206,7 @@ export function UploadProgressSyncProvider({ children }: { children: ReactNode }
     }
   }, [getAuthHeaders]);
 
-  const pollForProgress = useCallback((fileId: string, projectId: string, fallbackTier?: TierLevel) => {
+  const pollForProgress = useCallback((fileId: string, projectId: string, fallbackTier?: TierLevel, displayName?: string) => {
     const poll = async () => {
       if (cancelledUploadsRef.current.has(fileId)) {
         clearTrackedUploadState(fileId);
@@ -255,6 +256,11 @@ export function UploadProgressSyncProvider({ children }: { children: ReactNode }
 
         if (status.status === 'completed' || status.status === 'failed') {
           if (status.status === 'completed') {
+            const notificationKey = `${projectId}:${fileId}`;
+            if (!completedUploadNotificationsRef.current.has(notificationKey)) {
+              completedUploadNotificationsRef.current.add(notificationKey);
+              toast.success(`${displayName || 'Your file'} is ready.`);
+            }
             emitProjectMutation({ projectId, action: 'updated' });
           }
           clearTrackedUploadState(fileId);
@@ -489,7 +495,7 @@ export function UploadProgressSyncProvider({ children }: { children: ReactNode }
         } : f)
       );
 
-      pollForProgress(uploadedFile.id, projectId, uploadedFile.processingTier);
+      pollForProgress(uploadedFile.id, projectId, uploadedFile.processingTier, uploadedFile.displayName);
     } catch (error) {
       console.error('Upload error:', error);
 
@@ -648,7 +654,7 @@ export function UploadProgressSyncProvider({ children }: { children: ReactNode }
       const withoutExisting = prev.filter(f => f.id !== entry.id);
       return [entry, ...withoutExisting];
     });
-    pollForProgress(entry.id, projectId, fallbackTier);
+    pollForProgress(entry.id, projectId, fallbackTier, entry.displayName);
   }, [pollForProgress]);
 
   useEffect(() => {
