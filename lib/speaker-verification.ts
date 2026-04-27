@@ -70,6 +70,12 @@ type SpeakerVerificationDiagnostics = {
   error?: string;
 };
 
+type ProposalValidationResult = {
+  ok: boolean;
+  reason: string;
+  mode?: 'cluster' | 'segment';
+};
+
 type SpeakerVerificationResult = {
   segments: SpeakerSegment[];
   speakers: Record<string, any>;
@@ -220,6 +226,55 @@ function isHumanConversationalSpeaker(speaker: any): boolean {
     !isBlockedConversationalHumanName(name);
 }
 
+function isGenericSpeakerName(name: string | null | undefined): boolean {
+  if (!name) return true;
+  return /^speaker\s+\d+$/i.test(name.trim()) || /^quoted audio$/i.test(name.trim());
+}
+
+function isProtectedParticipantSpeaker(speaker: any): boolean {
+  const role = speaker?.role || 'unknown';
+  const provenance = Array.isArray(speaker?.nameProvenance) ? speaker.nameProvenance : [];
+  return role === 'host' ||
+    role === 'co_host' ||
+    Boolean(speaker?.finalNameLocked) ||
+    provenance.some((reason: unknown) => (
+      typeof reason === 'string' &&
+      /recurring_roster|known_host_intro|self_id|guest_intro|direct_intro|panel_intro|dominant_reply_after_intro/.test(reason)
+    ));
+}
+
+function isAdLikeText(text: string | null | undefined): boolean {
+  return /\b(?:sponsor|sponsored|brought to you by|use code|promo code|checkout|limited time|subscribe|newsletter|advertiser|visit|dot com|free trial|offer|save|discount)\b/i.test(String(text || ''));
+}
+
+function isQuotedLikeText(text: string | null | undefined): boolean {
+  return /\b(?:\[foreign language\]|\[speaker\]|clip|tape|audio|speech|said|quote|president|trump|biden|taliban|podium|rally|address|legislator|administration|congress|white house|sanctuary cities|nuclear weapon)\b/i.test(String(text || ''));
+}
+
+function getEvidenceIndexSet(proposal: SpeakerVerificationRepairProposal): Set<number> {
+  return new Set(
+    (Array.isArray(proposal.evidenceSegmentIndices) ? proposal.evidenceSegmentIndices : [])
+      .filter((index): index is number => Number.isInteger(index) && index >= 0)
+  );
+}
+
+function getOwnedSegmentItems(segments: SpeakerSegment[], speakerId: string): Array<{ segment: SpeakerSegment; index: number }> {
+  return segments
+    .map((segment, index) => ({ segment, index }))
+    .filter(({ segment }) => ((segment as any).finalSpeakerId || segment.speakerId) === speakerId);
+}
+
+function getTargetedOwnedSegmentItems(
+  proposal: SpeakerVerificationRepairProposal,
+  segments: SpeakerSegment[],
+  speakerId: string
+): Array<{ segment: SpeakerSegment; index: number }> {
+  const evidence = getEvidenceIndexSet(proposal);
+  const owned = getOwnedSegmentItems(segments, speakerId);
+  if (evidence.size === 0) return owned;
+  return owned.filter(({ index }) => evidence.has(index));
+}
+
 function findDominantConversationalCluster(
   stats: SpeakerClusterStats[],
   excludeIds = new Set<string>()
@@ -317,6 +372,17 @@ function applySpeakerName(
 
 function clearSpeakerHumanName(speakerId: string, speaker: any, reason: string, role?: SpeakerRole): any {
   const fallbackName = getFallbackName(speakerId);
+  if (role === 'advertiser' && speaker?.role === 'advertiser' && !isGenericSpeakerName(getDisplayName(speaker))) {
+    return {
+      ...speaker,
+      role: 'advertiser',
+      assignmentConfidence: Math.max(speaker?.assignmentConfidence || 0, 0.72),
+      requiresReview: false,
+      assignmentContradictions: Array.isArray(speaker?.assignmentContradictions)
+        ? speaker.assignmentContradictions
+        : [],
+    };
+  }
   return {
     ...speaker,
     finalName: fallbackName,
@@ -716,10 +782,11 @@ function validateProposal(
   segments: SpeakerSegment[],
   speakers: Record<string, any>,
   statsById: Map<string, SpeakerClusterStats>
-): { ok: boolean; reason: string } {
+): ProposalValidationResult {
   const targetId = proposal.targetSpeakerId || proposal.sourceSpeakerId;
   if (!targetId || !speakers[targetId]) return { ok: false, reason: 'missing_target_speaker' };
   const targetStats = statsById.get(targetId);
+  const targetSpeaker = speakers[targetId];
   const repairType = proposal.repairType;
   const confidence = typeof proposal.confidence === 'number' ? proposal.confidence : 0;
   if (confidence < 0.68 && repairType !== 'splitRecommendation') {
@@ -764,14 +831,53 @@ function validateProposal(
     }
   }
 
-  void segments;
+  if (repairType === 'classifyQuotedAudio') {
+    const owned = getOwnedSegmentItems(segments, targetId);
+    const targeted = getTargetedOwnedSegmentItems(proposal, segments, targetId);
+    const quotedLikeTargets = targeted.filter(({ segment }) => (
+      segment.segmentKind === 'quoted_audio' || isQuotedLikeText(segment.text)
+    ));
+    const quotedShare = owned.length > 0
+      ? owned.filter(({ segment }) => segment.segmentKind === 'quoted_audio' || isQuotedLikeText(segment.text)).length / owned.length
+      : 0;
+    const entireClusterQuoted = owned.length > 0 && quotedShare >= 0.8;
+
+    if (isProtectedParticipantSpeaker(targetSpeaker)) {
+      if (quotedLikeTargets.length === 0) {
+        return { ok: false, reason: 'protected_recurring_speaker_cluster' };
+      }
+      return { ok: true, reason: 'accepted_segment_level_quoted_audio_for_protected_speaker', mode: 'segment' };
+    }
+
+    if (entireClusterQuoted) {
+      return { ok: true, reason: 'accepted_cluster_quoted_audio', mode: 'cluster' };
+    }
+
+    if (quotedLikeTargets.length > 0) {
+      return { ok: true, reason: 'accepted_segment_level_quoted_audio', mode: 'segment' };
+    }
+
+    return { ok: false, reason: 'quoted_audio_evidence_not_supported' };
+  }
+
+  if (repairType === 'clearName' || repairType === 'demote') {
+    const proposedRole = proposal.proposedRole || 'unknown';
+    if (proposedRole === 'advertiser') {
+      return { ok: true, reason: 'accepted_advertiser_demotion', mode: 'segment' };
+    }
+    if (targetSpeaker?.role === 'advertiser' && !isGenericSpeakerName(getDisplayName(targetSpeaker))) {
+      return { ok: true, reason: 'advertiser_name_preserved', mode: 'segment' };
+    }
+  }
+
   return { ok: true, reason: 'accepted' };
 }
 
 function applyAcceptedProposal(
   proposal: SpeakerVerificationRepairProposal,
   segments: SpeakerSegment[],
-  speakers: Record<string, any>
+  speakers: Record<string, any>,
+  validationMode?: 'cluster' | 'segment'
 ): { segments: SpeakerSegment[]; speakers: Record<string, any> } {
   const updatedSpeakers: Record<string, any> = Object.fromEntries(
     Object.entries(speakers).map(([id, speaker]) => [id, { ...speaker }])
@@ -790,30 +896,78 @@ function applyAcceptedProposal(
       [proposal.repairType === 'bindIntroName' ? 'verifier_intro_binding' : 'verifier_rename']
     );
   } else if ((proposal.repairType === 'clearName' || proposal.repairType === 'demote') && targetId) {
-    updatedSpeakers[targetId] = clearSpeakerHumanName(
-      targetId,
-      updatedSpeakers[targetId],
-      `verifier_${proposal.repairType}`,
-      proposal.proposedRole || 'unknown'
-    );
+    if (proposal.proposedRole === 'advertiser') {
+      const currentName = getDisplayName(updatedSpeakers[targetId]);
+      const preserveAdvertiserName = updatedSpeakers[targetId]?.role === 'advertiser' &&
+        currentName &&
+        !isGenericSpeakerName(currentName);
+      updatedSpeakers[targetId] = preserveAdvertiserName
+        ? {
+            ...updatedSpeakers[targetId],
+            role: 'advertiser',
+            assignmentConfidence: Math.max(updatedSpeakers[targetId]?.assignmentConfidence || 0, proposal.confidence || 0.72),
+            requiresReview: false,
+          }
+        : clearSpeakerHumanName(
+            targetId,
+            updatedSpeakers[targetId],
+            `verifier_${proposal.repairType}`,
+            'advertiser'
+          );
+      const evidence = getEvidenceIndexSet(proposal);
+      updatedSegments = segments.map((segment, index) => {
+        const speakerId = (segment as any).finalSpeakerId || segment.speakerId;
+        if (speakerId !== targetId) return segment;
+        if (evidence.size > 0 && !evidence.has(index) && !isAdLikeText(segment.text)) return segment;
+        if (!isAdLikeText(segment.text) && !segment.sponsorName && evidence.size === 0) return segment;
+        return {
+          ...segment,
+          segmentKind: 'ad_read',
+          status: segment.status || 'tentative',
+          confidenceReason: segment.confidenceReason || 'verifier_ad_demotion',
+        };
+      });
+    } else {
+      updatedSpeakers[targetId] = clearSpeakerHumanName(
+        targetId,
+        updatedSpeakers[targetId],
+        `verifier_${proposal.repairType}`,
+        proposal.proposedRole || 'unknown'
+      );
+    }
   } else if (proposal.repairType === 'classifyQuotedAudio' && targetId) {
-    updatedSpeakers[targetId] = {
-      ...updatedSpeakers[targetId],
-      role: 'quoted_audio',
-      finalName: updatedSpeakers[targetId]?.finalName && !isAnonymousName(updatedSpeakers[targetId].finalName)
-        ? updatedSpeakers[targetId].finalName
-        : 'Quoted Audio',
-      fallbackName: 'Quoted Audio',
-      assignmentConfidence: Math.max(updatedSpeakers[targetId]?.assignmentConfidence || 0, proposal.confidence || 0.8),
-      requiresReview: false,
-      nameProvenance: Array.from(new Set([
-        ...(Array.isArray(updatedSpeakers[targetId]?.nameProvenance) ? updatedSpeakers[targetId].nameProvenance : []),
-        'verifier_quoted_audio',
-      ])),
-    };
-    updatedSegments = segments.map((segment) => {
+    const segmentLevel = validationMode === 'segment';
+    if (!segmentLevel) {
+      updatedSpeakers[targetId] = {
+        ...updatedSpeakers[targetId],
+        role: 'quoted_audio',
+        finalName: updatedSpeakers[targetId]?.finalName && !isAnonymousName(updatedSpeakers[targetId].finalName)
+          ? updatedSpeakers[targetId].finalName
+          : 'Quoted Audio',
+        fallbackName: 'Quoted Audio',
+        assignmentConfidence: Math.max(updatedSpeakers[targetId]?.assignmentConfidence || 0, proposal.confidence || 0.8),
+        requiresReview: false,
+        nameProvenance: Array.from(new Set([
+          ...(Array.isArray(updatedSpeakers[targetId]?.nameProvenance) ? updatedSpeakers[targetId].nameProvenance : []),
+          'verifier_quoted_audio',
+        ])),
+      };
+    } else {
+      updatedSpeakers[targetId] = {
+        ...updatedSpeakers[targetId],
+        assignmentConfidence: Math.max(updatedSpeakers[targetId]?.assignmentConfidence || 0, proposal.confidence || 0.75),
+        nameProvenance: Array.from(new Set([
+          ...(Array.isArray(updatedSpeakers[targetId]?.nameProvenance) ? updatedSpeakers[targetId].nameProvenance : []),
+          'verifier_segment_quoted_audio',
+        ])),
+      };
+    }
+    const evidence = getEvidenceIndexSet(proposal);
+    updatedSegments = segments.map((segment, index) => {
       const speakerId = (segment as any).finalSpeakerId || segment.speakerId;
       if (speakerId !== targetId) return segment;
+      if (segmentLevel && evidence.size > 0 && !evidence.has(index)) return segment;
+      if (segmentLevel && evidence.size === 0 && !isQuotedLikeText(segment.text)) return segment;
       return { ...segment, segmentKind: 'quoted_audio' };
     });
   } else if (proposal.repairType === 'merge') {
@@ -860,7 +1014,7 @@ function applyVerifierProposals(
       rejected.push({ proposal, reason: validation.reason });
       continue;
     }
-    const result = applyAcceptedProposal(proposal, currentSegments, currentSpeakers);
+    const result = applyAcceptedProposal(proposal, currentSegments, currentSpeakers, validation.mode);
     currentSegments = result.segments;
     currentSpeakers = result.speakers;
     accepted.push({ proposal, reason: validation.reason });

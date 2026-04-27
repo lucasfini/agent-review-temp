@@ -280,4 +280,191 @@ describe('controlled speaker verification', () => {
       delete process.env.SPEAKER_VERIFIER_MODEL;
     }
   });
+
+  test('keeps protected host identity when verifier flags only some host segments as quoted audio', async () => {
+    mockCreate.mockResolvedValueOnce(mockJsonResponse('gpt-5.2', {
+      overallConfidence: 0.86,
+      proposals: [{
+        repairType: 'classifyQuotedAudio',
+        targetSpeakerId: 'speaker_1',
+        proposedName: 'Jane Coaston',
+        proposedRole: 'host',
+        evidenceSegmentIndices: [1],
+        confidence: 0.8,
+        reason: 'One segment is Trump podium audio inside the host cluster.',
+      }],
+    }));
+    const segments = [
+      seg('speaker_1', 0, "I'm Jane Coaston and this is What A Day.", 0, 12),
+      seg('speaker_1', 1, 'Tonight, I am inviting every legislator to join with my administration.', 20, 40),
+      seg('speaker_2', 2, 'This is a substantive response from another guest participant in the discussion.', 45, 70),
+      seg('speaker_2', 3, 'Another substantive answer from the same guest keeps the file risky enough for verification.', 75, 105),
+    ];
+    const speakers = {
+      speaker_1: namedSpeaker('speaker_1', 'Jane Coaston', 'host', 0.95),
+      speaker_2: { id: 'speaker_2', finalName: 'Speaker 2', fallbackName: 'Speaker 2', role: 'unknown', assignmentConfidence: 0.6, requiresReview: true },
+    };
+
+    const result = await runControlledSpeakerVerification(segments, speakers, {
+      title: 'What A Day State of the Union',
+      filename: 'what-a-day.mp3',
+      openaiApiKey: 'test-key',
+    });
+
+    expect(result.speakers.speaker_1.finalName).toBe('Jane Coaston');
+    expect(result.speakers.speaker_1.role).toBe('host');
+    expect(result.segments[1].segmentKind).toBe('quoted_audio');
+    expect(result.segments[0].segmentKind).toBe('conversation');
+    expect(result.diagnostics.acceptedRepairs[0]?.reason).toBe('accepted_segment_level_quoted_audio_for_protected_speaker');
+  });
+
+  test('allows whole-cluster quoted audio classification for anonymous clip clusters', async () => {
+    mockCreate.mockResolvedValueOnce(mockJsonResponse('gpt-5.2', {
+      overallConfidence: 0.88,
+      proposals: [{
+        repairType: 'classifyQuotedAudio',
+        targetSpeakerId: 'speaker_3',
+        proposedName: null,
+        proposedRole: 'quoted_audio',
+        evidenceSegmentIndices: [1, 2],
+        confidence: 0.86,
+        reason: 'Anonymous cluster is entirely quoted rally audio.',
+      }],
+    }));
+    const segments = [
+      seg('speaker_1', 0, 'The show starts with a host setup and then quoted tape.', 0, 12),
+      seg('speaker_3', 1, 'President Trump said this at the rally and the crowd responded.', 15, 35),
+      seg('speaker_3', 2, 'This quote from the podium continued for several sentences.', 35, 55),
+      seg('speaker_2', 3, 'This is a separate substantive anonymous guest response that keeps verification triggered.', 60, 90),
+      seg('speaker_2', 4, 'Another substantive guest response follows.', 95, 120),
+    ];
+    const speakers = {
+      speaker_1: namedSpeaker('speaker_1', 'Host Person', 'host', 0.95),
+      speaker_2: { id: 'speaker_2', finalName: 'Speaker 2', fallbackName: 'Speaker 2', role: 'unknown', assignmentConfidence: 0.6, requiresReview: true },
+      speaker_3: { id: 'speaker_3', finalName: 'Speaker 3', fallbackName: 'Speaker 3', role: 'unknown', assignmentConfidence: 0.6, requiresReview: true },
+    };
+
+    const result = await runControlledSpeakerVerification(segments, speakers, {
+      title: 'Clip Test',
+      filename: 'clip.mp3',
+      openaiApiKey: 'test-key',
+    });
+
+    expect(result.speakers.speaker_3.role).toBe('quoted_audio');
+    expect(result.segments[1].segmentKind).toBe('quoted_audio');
+    expect(result.segments[2].segmentKind).toBe('quoted_audio');
+  });
+
+  test('preserves advertiser names when verifier clears advertiser clusters', async () => {
+    mockCreate.mockResolvedValueOnce(mockJsonResponse('gpt-5.2', {
+      overallConfidence: 0.9,
+      proposals: [{
+        repairType: 'clearName',
+        targetSpeakerId: 'speaker_5',
+        proposedName: null,
+        proposedRole: 'advertiser',
+        evidenceSegmentIndices: [2],
+        confidence: 0.93,
+        reason: 'Sponsor read should not become a human participant.',
+      }],
+    }));
+    const segments = [
+      seg('speaker_1', 0, 'Host setup for this episode.', 0, 10),
+      seg('speaker_2', 1, 'This is a substantive anonymous guest answer that triggers verification.', 10, 40),
+      seg('speaker_5', 2, 'This episode is brought to you by Smalls. Visit smalls dot com and use code podcast.', 50, 80, {
+        segmentKind: 'ad_read',
+        sponsorName: 'Smalls',
+      }),
+      seg('speaker_2', 3, 'Another substantive anonymous guest answer continues here.', 90, 120),
+    ];
+    const speakers = {
+      speaker_1: namedSpeaker('speaker_1', 'Jane Coaston', 'host', 0.95),
+      speaker_2: { id: 'speaker_2', finalName: 'Speaker 2', fallbackName: 'Speaker 2', role: 'unknown', assignmentConfidence: 0.6, requiresReview: true },
+      speaker_5: { id: 'speaker_5', finalName: 'Smalls', fallbackName: 'Smalls', name: 'Smalls', role: 'advertiser', assignmentConfidence: 0.8 },
+    };
+
+    const result = await runControlledSpeakerVerification(segments, speakers, {
+      title: 'Advertiser Test',
+      filename: 'ad.mp3',
+      openaiApiKey: 'test-key',
+    });
+
+    expect(result.speakers.speaker_5.finalName).toBe('Smalls');
+    expect(result.speakers.speaker_5.role).toBe('advertiser');
+    expect(result.segments[2].segmentKind).toBe('ad_read');
+    expect(result.diagnostics.acceptedRepairs[0]?.reason).toBe('accepted_advertiser_demotion');
+  });
+
+  test('marks demoted advertiser cluster segments as ad reads', async () => {
+    mockCreate.mockResolvedValueOnce(mockJsonResponse('gpt-5.2', {
+      overallConfidence: 0.9,
+      proposals: [{
+        repairType: 'demote',
+        targetSpeakerId: 'speaker_2',
+        proposedName: null,
+        proposedRole: 'advertiser',
+        evidenceSegmentIndices: [2, 3],
+        confidence: 0.86,
+        reason: 'Cluster is sponsor copy.',
+      }],
+    }));
+    const segments = [
+      seg('speaker_1', 0, 'Joining me today is Derek Thompson.', 0, 10),
+      seg('speaker_3', 1, 'This is the substantive guest answer.', 10, 40),
+      seg('speaker_2', 2, 'This episode is brought to you by 3 Day Blinds with a limited time offer.', 45, 70),
+      seg('speaker_2', 3, 'Use code podcast at checkout to save on your order.', 70, 90),
+      seg('speaker_3', 4, 'Another substantive guest answer keeps the dominant cluster clear.', 95, 125),
+    ];
+    const speakers = {
+      speaker_1: namedSpeaker('speaker_1', 'Jon Favreau', 'host', 0.95),
+      speaker_2: { id: 'speaker_2', finalName: 'Speaker 2', fallbackName: 'Speaker 2', role: 'unknown', assignmentConfidence: 0.55, requiresReview: true },
+      speaker_3: namedSpeaker('speaker_3', 'Derek Thompson', 'guest', 0.88),
+    };
+
+    const result = await runControlledSpeakerVerification(segments, speakers, {
+      title: 'Offline with Jon Favreau',
+      filename: 'offline.mp3',
+      openaiApiKey: 'test-key',
+    });
+
+    expect(result.speakers.speaker_2.role).toBe('advertiser');
+    expect(result.segments[2].segmentKind).toBe('ad_read');
+    expect(result.segments[3].segmentKind).toBe('ad_read');
+  });
+
+  test('accepts residual second guest binding when verifier has clean enough evidence', async () => {
+    mockCreate.mockResolvedValueOnce(mockJsonResponse('gpt-5.2', {
+      overallConfidence: 0.86,
+      proposals: [{
+        repairType: 'bindIntroName',
+        targetSpeakerId: 'speaker_4',
+        proposedName: 'Matt Berg',
+        proposedRole: 'guest',
+        evidenceSegmentIndices: [0, 3],
+        confidence: 0.72,
+        reason: 'Intro names Greg Walters and Matt Berg; Greg is already bound and speaker_4 is the remaining substantive guest cluster.',
+      }],
+    }));
+    const segments = [
+      seg('speaker_1', 0, 'I spoke with my colleagues Greg Walters and Matt Berg.', 0, 12),
+      seg('speaker_2', 1, 'Thanks for having us.', 12, 15),
+      seg('speaker_4', 2, 'Thanks for having us.', 15, 18),
+      seg('speaker_4', 3, 'This is a substantive answer from the remaining second guest cluster.', 20, 50),
+      seg('speaker_4', 4, 'Another substantive answer follows from the same second guest.', 55, 90),
+    ];
+    const speakers = {
+      speaker_1: namedSpeaker('speaker_1', 'Jane Coaston', 'host', 0.95),
+      speaker_2: namedSpeaker('speaker_2', 'Greg Walters', 'guest', 0.8),
+      speaker_4: { id: 'speaker_4', finalName: 'Speaker 4', fallbackName: 'Speaker 4', role: 'unknown', assignmentConfidence: 0.6, requiresReview: true },
+    };
+
+    const result = await runControlledSpeakerVerification(segments, speakers, {
+      title: 'What A Day',
+      filename: 'what-a-day.mp3',
+      openaiApiKey: 'test-key',
+    });
+
+    expect(result.speakers.speaker_4.finalName).toBe('Matt Berg');
+    expect(result.speakers.speaker_4.role).toBe('guest');
+  });
 });
