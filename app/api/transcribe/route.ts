@@ -47,6 +47,7 @@ import {
   mergeShowRosterEntries,
   type ShowRosterEntry,
 } from '@/lib/show-speaker-memory';
+import { runControlledSpeakerVerification } from '@/lib/speaker-verification';
 
 const sleep = (ms: number) => new Promise<void>(resolve => setTimeout(resolve, ms));
 
@@ -1437,7 +1438,82 @@ export async function POST(request: NextRequest) {
       pipelineDiagnostics.finalizationSnapshots.push(finalHumanNaming.snapshot);
     }
 
-    const speakersFromSegments = finalHumanNaming.speakerDataSpeakers;
+    let speakersFromSegments = finalHumanNaming.speakerDataSpeakers;
+    if (features.nameExtraction) {
+      try {
+        console.log('[SPEAKER VERIFICATION] Running controlled post-finalization verifier...');
+        const verification = await runControlledSpeakerVerification(
+          finalSegments,
+          speakersFromSegments,
+          {
+            title: existingProject?.title || undefined,
+            filename: fileName,
+            showIdentity: inferredShowContext.showIdentity,
+            showRoster: effectivePresetRoster,
+            openaiApiKey: openaiApiKey ?? undefined,
+            userId: existingProject?.user_id,
+            projectId,
+            reservationId: uploadReservationId,
+          }
+        );
+        finalSegments = enforceFinalSpeakerIdContract(
+          verification.segments,
+          '[SPEAKER VERIFICATION] post-verification'
+        );
+        speakersFromSegments = verification.speakers;
+        speakersWithNames = verification.speakers as typeof speakersWithNames;
+        if (pipelineDiagnostics) {
+          pipelineDiagnostics = {
+            ...pipelineDiagnostics,
+            speakerVerification: verification.diagnostics,
+          };
+          if (Array.isArray(pipelineDiagnostics.finalizationSnapshots)) {
+            pipelineDiagnostics.finalizationSnapshots.push(
+              collectSpeakerPipelineSnapshot(
+                'post-speaker-verification',
+                finalSegments,
+                speakersFromSegments,
+                {
+                  projectType,
+                  title: existingProject?.title || undefined,
+                  filename: fileName,
+                  showIdentity: inferredShowContext.showIdentity,
+                  showRoster: effectivePresetRoster,
+                }
+              )
+            );
+          }
+        }
+        if (verification.diagnostics.skipped) {
+          console.log('[SPEAKER VERIFICATION] Skipped: no high-risk speaker assignment signals');
+        } else {
+          console.log(
+            `[SPEAKER VERIFICATION] Complete: ${verification.diagnostics.acceptedRepairs.length} accepted, ` +
+            `${verification.diagnostics.rejectedRepairs.length} rejected, model=${verification.diagnostics.modelUsed || 'deterministic-only'}`
+          );
+        }
+      } catch (verificationError: any) {
+        console.error('[SPEAKER VERIFICATION] Non-fatal verifier failure:', verificationError?.message || verificationError);
+        if (pipelineDiagnostics) {
+          pipelineDiagnostics = {
+            ...pipelineDiagnostics,
+            speakerVerification: {
+              skipped: false,
+              triggerReasons: ['verifier_exception'],
+              modelsAttempted: [],
+              modelUsed: null,
+              escalationReason: null,
+              acceptedRepairs: [],
+              rejectedRepairs: [],
+              deterministicRepairs: [],
+              proposals: [],
+              finalTrustDelta: null,
+              error: verificationError?.message || 'Verifier failed',
+            },
+          };
+        }
+      }
+    }
 
     const rawSpeakerData: any = {
       segments: finalSegments,
