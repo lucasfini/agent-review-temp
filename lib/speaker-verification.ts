@@ -76,8 +76,26 @@ type SpeakerVerificationResult = {
   diagnostics: SpeakerVerificationDiagnostics;
 };
 
-const MEDIUM_VERIFIER_MODEL = 'gpt-5.5-medium';
-const HEAVY_VERIFIER_MODEL = 'gpt-5.5-heavy';
+const DEFAULT_VERIFIER_MODEL = 'gpt-5.2';
+const DEFAULT_HEAVY_VERIFIER_MODEL = 'gpt-5';
+const SAFE_VERIFIER_FALLBACK_MODEL = 'gpt-5';
+
+function getMediumVerifierModel(): string {
+  return process.env.SPEAKER_VERIFIER_MODEL ||
+    process.env.OPENAI_SPEAKER_VERIFIER_MODEL ||
+    DEFAULT_VERIFIER_MODEL;
+}
+
+function getHeavyVerifierModel(): string {
+  return process.env.SPEAKER_VERIFIER_HEAVY_MODEL ||
+    process.env.OPENAI_SPEAKER_VERIFIER_HEAVY_MODEL ||
+    DEFAULT_HEAVY_VERIFIER_MODEL;
+}
+
+function isModelUnavailableError(error: any): boolean {
+  const message = String(error?.message || '');
+  return /model_not_found|does not exist|not_found|do not have access|404/i.test(message);
+}
 
 function normalizeName(name: string | null | undefined): string {
   return String(name || '').toLowerCase().trim().replace(/\s+/g, ' ');
@@ -662,6 +680,37 @@ async function callVerifierModel(
   };
 }
 
+async function callVerifierModelWithFallback(
+  requestedModel: string,
+  fallbackModel: string,
+  dossier: any,
+  context: SpeakerVerificationContext
+): Promise<{
+  proposals: SpeakerVerificationRepairProposal[];
+  overallConfidence: number;
+  raw: any;
+  responseModel: string;
+  attemptedModels: string[];
+  fallbackReason: string | null;
+}> {
+  const attemptedModels = [requestedModel];
+  try {
+    const result = await callVerifierModel(requestedModel, dossier, context);
+    return { ...result, attemptedModels, fallbackReason: null };
+  } catch (error: any) {
+    if (!isModelUnavailableError(error) || requestedModel === fallbackModel) {
+      throw error;
+    }
+    attemptedModels.push(fallbackModel);
+    const result = await callVerifierModel(fallbackModel, dossier, context);
+    return {
+      ...result,
+      attemptedModels,
+      fallbackReason: `model_unavailable:${requestedModel}`,
+    };
+  }
+}
+
 function validateProposal(
   proposal: SpeakerVerificationRepairProposal,
   segments: SpeakerSegment[],
@@ -886,8 +935,17 @@ export async function runControlledSpeakerVerification(
 
   try {
     const dossier = buildVerifierDossier(currentSegments, currentSpeakers, postDeterministicStats, context, remainingTriggers);
-    diagnostics.modelsAttempted.push(MEDIUM_VERIFIER_MODEL);
-    const medium = await callVerifierModel(MEDIUM_VERIFIER_MODEL, dossier, context);
+    const mediumRequestedModel = getMediumVerifierModel();
+    const medium = await callVerifierModelWithFallback(
+      mediumRequestedModel,
+      SAFE_VERIFIER_FALLBACK_MODEL,
+      dossier,
+      context
+    );
+    diagnostics.modelsAttempted.push(...medium.attemptedModels);
+    if (medium.fallbackReason) {
+      diagnostics.escalationReason = medium.fallbackReason;
+    }
     diagnostics.modelUsed = medium.responseModel;
     diagnostics.proposals = medium.proposals;
     let applied = applyVerifierProposals(currentSegments, currentSpeakers, medium.proposals);
@@ -903,12 +961,23 @@ export async function runControlledSpeakerVerification(
       applied.rejected.length
     );
     if (escalationReason) {
-      diagnostics.escalationReason = escalationReason;
+      diagnostics.escalationReason = diagnostics.escalationReason
+        ? `${diagnostics.escalationReason};${escalationReason}`
+        : escalationReason;
       const heavyStats = buildClusterStats(currentSegments, currentSpeakers);
       const heavyTriggers = detectRiskTriggers(currentSegments, currentSpeakers, heavyStats);
       const heavyDossier = buildVerifierDossier(currentSegments, currentSpeakers, heavyStats, context, heavyTriggers.length ? heavyTriggers : remainingTriggers);
-      diagnostics.modelsAttempted.push(HEAVY_VERIFIER_MODEL);
-      const heavy = await callVerifierModel(HEAVY_VERIFIER_MODEL, heavyDossier, context);
+      const heavyRequestedModel = getHeavyVerifierModel();
+      const heavy = await callVerifierModelWithFallback(
+        heavyRequestedModel,
+        SAFE_VERIFIER_FALLBACK_MODEL,
+        heavyDossier,
+        context
+      );
+      diagnostics.modelsAttempted.push(...heavy.attemptedModels);
+      if (heavy.fallbackReason) {
+        diagnostics.escalationReason = `${diagnostics.escalationReason};${heavy.fallbackReason}`;
+      }
       diagnostics.modelUsed = heavy.responseModel;
       diagnostics.proposals.push(...heavy.proposals);
       applied = applyVerifierProposals(currentSegments, currentSpeakers, heavy.proposals);
@@ -936,4 +1005,3 @@ export async function runControlledSpeakerVerification(
     diagnostics,
   };
 }
-

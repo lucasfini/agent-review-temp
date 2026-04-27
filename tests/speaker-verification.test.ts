@@ -118,7 +118,7 @@ describe('controlled speaker verification', () => {
   });
 
   test('accepts a safe medium verifier rename for an anonymous substantive guest cluster', async () => {
-    mockCreate.mockResolvedValueOnce(mockJsonResponse('gpt-5.5-medium', {
+    mockCreate.mockResolvedValueOnce(mockJsonResponse('gpt-5.2', {
       overallConfidence: 0.91,
       proposals: [{
         repairType: 'rename',
@@ -150,12 +150,12 @@ describe('controlled speaker verification', () => {
 
     expect(result.speakers.speaker_3.finalName).toBe('Travis Kavulla');
     expect(result.speakers.speaker_3.role).toBe('guest');
-    expect(result.diagnostics.modelsAttempted).toEqual(['gpt-5.5-medium']);
+    expect(result.diagnostics.modelsAttempted).toEqual(['gpt-5.2']);
     expect(result.diagnostics.acceptedRepairs).toHaveLength(1);
   });
 
   test('rejects unsafe verifier proposals that put human names on ad-heavy clusters', async () => {
-    mockCreate.mockResolvedValueOnce(mockJsonResponse('gpt-5.5-medium', {
+    mockCreate.mockResolvedValueOnce(mockJsonResponse('gpt-5.2', {
       overallConfidence: 0.9,
       proposals: [{
         repairType: 'rename',
@@ -198,11 +198,11 @@ describe('controlled speaker verification', () => {
 
   test('escalates to heavy when medium finds no repair for a high-risk anonymous guest case', async () => {
     mockCreate
-      .mockResolvedValueOnce(mockJsonResponse('gpt-5.5-medium', {
+      .mockResolvedValueOnce(mockJsonResponse('gpt-5.2', {
         overallConfidence: 0.95,
         proposals: [],
       }))
-      .mockResolvedValueOnce(mockJsonResponse('gpt-5.5-heavy', {
+      .mockResolvedValueOnce(mockJsonResponse('gpt-5', {
         overallConfidence: 0.9,
         proposals: [{
           repairType: 'rename',
@@ -235,8 +235,49 @@ describe('controlled speaker verification', () => {
       openaiApiKey: 'test-key',
     });
 
-    expect(result.diagnostics.modelsAttempted).toEqual(['gpt-5.5-medium', 'gpt-5.5-heavy']);
+    expect(result.diagnostics.modelsAttempted).toEqual(['gpt-5.2', 'gpt-5']);
     expect(result.diagnostics.escalationReason).toBe('medium_no_repair_for_high_risk_case');
     expect(result.speakers.speaker_4.finalName).toBe('Malala Yousafzai');
+  });
+
+  test('falls back to gpt-5 when a configured verifier model is unavailable', async () => {
+    process.env.SPEAKER_VERIFIER_MODEL = 'gpt-5.5-medium';
+    mockCreate
+      .mockRejectedValueOnce(new Error('404 The model `gpt-5.5-medium` does not exist or you do not have access to it.'))
+      .mockResolvedValueOnce(mockJsonResponse('gpt-5', {
+        overallConfidence: 0.91,
+        proposals: [{
+          repairType: 'rename',
+          targetSpeakerId: 'speaker_3',
+          proposedName: 'Travis Kavulla',
+          proposedRole: 'guest',
+          evidenceSegmentIndices: [0, 2],
+          confidence: 0.86,
+          reason: 'Fallback verifier assigns safe title guest.',
+        }],
+      }));
+    const segments = [
+      seg('speaker_1', 0, 'Today our perfect guest joins us to explain electricity prices.', 0, 10),
+      seg('speaker_3', 1, 'It is great to be here. This is a long answer about utility regulation and electric bills.', 18, 45),
+      seg('speaker_3', 2, 'Another substantive answer continues the same guest perspective on the grid.', 52, 84),
+    ];
+    const speakers = {
+      speaker_1: namedSpeaker('speaker_1', 'Joe Weisenthal', 'host', 0.9),
+      speaker_3: { id: 'speaker_3', finalName: 'Speaker 3', fallbackName: 'Speaker 3', role: 'unknown', assignmentConfidence: 0.62, requiresReview: true },
+    };
+
+    try {
+      const result = await runControlledSpeakerVerification(segments, speakers, {
+        title: 'Odd Lots Electricity Prices',
+        filename: 'odd-lots.mp3',
+        openaiApiKey: 'test-key',
+      });
+
+      expect(result.diagnostics.modelsAttempted).toEqual(['gpt-5.5-medium', 'gpt-5']);
+      expect(result.diagnostics.escalationReason).toBe('model_unavailable:gpt-5.5-medium');
+      expect(result.speakers.speaker_3.finalName).toBe('Travis Kavulla');
+    } finally {
+      delete process.env.SPEAKER_VERIFIER_MODEL;
+    }
   });
 });
