@@ -3,7 +3,7 @@ import { supabaseAdmin } from '@/lib/supabase/server';
 import { isAuthorizedMaintenanceRequest } from '@/lib/maintenance-auth';
 import { getInternalAppBaseUrl } from '@/lib/app-url';
 import { createReservation, failReservation, InsufficientCreditError } from '@/lib/billing/credit';
-import { estimateAnalysisJobCost, estimateContentGenerationCost } from '@/lib/billing/cost-map';
+import { estimateAnalysisJobCostAsync, estimateContentGenerationCostAsync } from '@/lib/billing/cost-map';
 import { isDemoUser } from '@/lib/demo-mode';
 import { estimateReservationAmount } from '@/lib/billing/reserve-amount';
 import {
@@ -170,11 +170,11 @@ export async function POST(
         }
 
         const estimatedCost = job.kind === 'analysis'
-          ? estimateAnalysisJobCost({
+          ? await estimateAnalysisJobCostAsync({
               targetKey: job.target_key,
               estimatedTranscriptLength: project.transcription_text.length,
             })
-          : estimateContentGenerationCost([job.target_key]);
+          : await estimateContentGenerationCostAsync([job.target_key]);
 
         if (job.kind === 'analysis') {
           if (!isAnalysisJobKey(job.target_key)) {

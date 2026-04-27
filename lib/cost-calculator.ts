@@ -42,11 +42,11 @@ export const PRICING = {
     name: 'OpenAI Whisper API'
   },
   ASSEMBLYAI_UNIVERSAL: {
-    perHour: 0.37, // $0.37 per hour (Universal-3 / slam-1)
-    perMinute: 0.006167, // $0.006167 per minute
-    perSecond: 0.000102778, // $0.000102778 per second
+    perHour: 0.21, // $0.21 per hour (Universal-3 Pro)
+    perMinute: 0.0035, // $0.0035 per minute
+    perSecond: 0.21 / 3600,
     speakerDiarization: 0.0, // INCLUDED in base price
-    name: 'AssemblyAI Universal-3'
+    name: 'AssemblyAI Universal-3 Pro'
   },
 
   // AI Processing (OpenAI GPT-4o-mini)

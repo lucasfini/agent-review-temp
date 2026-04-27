@@ -3,7 +3,7 @@ import { supabaseAdmin } from '@/lib/supabase/server';
 import { trackOpenAIUsage } from '@/lib/billing/track-usage';
 import { billingErrorResponse, requireCredits } from '@/lib/billing/middleware';
 import { aiRatelimit } from '@/lib/rate-limit';
-import { calculateBlocksCost, normalizeCustomGuidance, type ContentBlock, type OutputType } from '@/lib/content-types';
+import { normalizeCustomGuidance, type ContentBlock, type OutputType } from '@/lib/content-types';
 import { getThemeById, type ContentTheme } from '@/lib/content-themes';
 import { enforceContentLimit, PLATFORM_PSYCHOLOGY } from '@/lib/content-psychology';
 import { preProcessTranscript, type NarrativeMetadata } from '@/lib/content-generators/pre-processor';
@@ -19,6 +19,7 @@ import { getOpenAIApiKeyForUser } from '@/lib/openai/consent';
 import { createReservation, failReservation, settleReservationAmount } from '@/lib/billing/credit';
 import { isAuthorizedMaintenanceRequest } from '@/lib/maintenance-auth';
 import { estimateReservationAmount } from '@/lib/billing/reserve-amount';
+import { estimateContentBlocksCostAsync } from '@/lib/billing/cost-map';
 
 /**
  * Parse JSON response from AI, stripping markdown code fences and conversational filler
@@ -607,7 +608,11 @@ export async function POST(request: NextRequest) {
       }
     }
 
-    const estimatedGenerationCost = Number(calculateBlocksCost(blocks).toFixed(6));
+    const estimatedGenerationCost = await estimateContentBlocksCostAsync(
+      blocks
+        .filter((block: ContentBlock) => block.enabled !== false)
+        .map((block: ContentBlock) => block.contentTypeId)
+    );
     if (userId && estimatedGenerationCost > 0) {
       const estimatedHold = estimateReservationAmount(estimatedGenerationCost, 'content_generation');
       await requireCredits(userId, estimatedHold);

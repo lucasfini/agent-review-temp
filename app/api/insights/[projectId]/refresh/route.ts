@@ -7,10 +7,9 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { processInsightsForProject } from '@/lib/insight-extraction';
 import { RouteAccessError, requireProjectOwner } from '@/lib/api/route-auth';
-import { estimateAnalysisJobCost } from '@/lib/billing/cost-map';
+import { estimateAnalysisJobCostAsync } from '@/lib/billing/cost-map';
 import { billingErrorResponse, requireCredits } from '@/lib/billing/middleware';
 import { createReservation, failReservation, settleReservation } from '@/lib/billing/credit';
-import { isDemoUser } from '@/lib/demo-mode';
 import { aiRatelimit } from '@/lib/rate-limit';
 import { estimateReservationAmount } from '@/lib/billing/reserve-amount';
 
@@ -21,6 +20,8 @@ interface RouteContext {
 }
 
 export async function POST(request: NextRequest, context: RouteContext) {
+  let reservation: Awaited<ReturnType<typeof createReservation>> | null = null;
+
   try {
     const { projectId } = await context.params;
 
@@ -34,10 +35,6 @@ export async function POST(request: NextRequest, context: RouteContext) {
       'performance_level, transcription_text'
     );
 
-    if (isDemoUser(user)) {
-      return NextResponse.json({ error: 'Demo account is read-only' }, { status: 403 });
-    }
-
     const { success } = await aiRatelimit.limit(user.id);
     if (!success) {
       return NextResponse.json(
@@ -50,7 +47,7 @@ export async function POST(request: NextRequest, context: RouteContext) {
       return NextResponse.json({ error: 'Project transcription not available' }, { status: 400 });
     }
 
-    const estimatedCost = estimateAnalysisJobCost({
+    const estimatedCost = await estimateAnalysisJobCostAsync({
       targetKey: 'insights',
       estimatedTranscriptLength: project.transcription_text.length,
     });
@@ -59,19 +56,19 @@ export async function POST(request: NextRequest, context: RouteContext) {
       await requireCredits(user.id, estimatedHold);
     }
 
-    const reservation = estimatedHold > 0
+    reservation = estimatedHold > 0
       ? await createReservation({
-          userId: user.id,
-          projectId,
-          workflowType: 'analysis_job',
-          amount: estimatedHold,
-          metadata: {
-            targetKey: 'insights',
-            source: 'insights_refresh',
-            estimatedCost,
-          },
-          expiresAt: new Date(Date.now() + (60 * 60 * 1000)).toISOString(),
-        })
+        userId: user.id,
+        projectId,
+        workflowType: 'analysis_job',
+        amount: estimatedHold,
+        metadata: {
+          targetKey: 'insights',
+          source: 'insights_refresh',
+          estimatedCost,
+        },
+        expiresAt: new Date(Date.now() + (60 * 60 * 1000)).toISOString(),
+      })
       : null;
 
     console.log(`[Insights Refresh] Starting for project ${projectId}`);
@@ -112,6 +109,14 @@ export async function POST(request: NextRequest, context: RouteContext) {
     const billingResponse = billingErrorResponse(error);
     if (billingResponse.status === 402) {
       return billingResponse;
+    }
+    if (reservation?.id) {
+      await failReservation(
+        reservation.id,
+        error instanceof Error ? error.message : 'Unexpected insights refresh error'
+      ).catch((billingError) => {
+        console.error('[Insights Refresh] Failed to fail reservation after unexpected error:', billingError);
+      });
     }
     return NextResponse.json(
       {

@@ -6,7 +6,7 @@
  * - Billed rates where applicable
  * - Unit types and conversion helpers
  *
- * Pricing verified as of January 2025
+ * Pricing verified as of April 2026
  */
 
 import { CONTENT_TYPES } from '@/lib/content-types';
@@ -14,6 +14,7 @@ import { getFeaturesFromAnalysisOptions, normalizeAnalysisOptions, type Analysis
 import { ANALYSIS_PRICE_RULES, BASE_TRANSCRIPTION_PRICE_PER_HOUR } from '@/lib/pricing-config';
 import { normalizeTier } from '@/lib/tier-config';
 import { prompts } from '@/lib/prompts/loader';
+import { getEditablePriceConfig, type EditablePriceConfig } from '@/lib/billing/pricing-overrides';
 
 export type UnitType =
   | 'seconds'
@@ -63,12 +64,12 @@ export const COST_MAP: Record<string, ServiceCost> = {
     serviceName: 'AssemblyAI Transcription',
     provider: 'assemblyai',
     unitType: 'seconds',
-    providerRate: 0.000102778, // $0.37/hour = $0.000102778/second (Universal-3)
-    providerRateDisplay: '$0.37/hour',
-    marginPercent: 5.41,
+    providerRate: 0.21 / 3600, // $0.21/hour (Universal-3 Pro)
+    providerRateDisplay: '$0.21/hour',
+    marginPercent: 85.71,
     billedRate: BASE_TRANSCRIPTION_PRICE_PER_HOUR / 3600,
     billedRateDisplay: '$0.39/hour',
-    notes: 'Universal-3 (universal-3-pro) model. Highest accuracy. Includes speaker diarization.',
+    notes: 'Universal-3 Pro model. Highest accuracy. Includes speaker diarization.',
   },
 
   // ============================================================================
@@ -157,11 +158,11 @@ export const COST_MAP: Record<string, ServiceCost> = {
     serviceName: 'GPT-5 Input Tokens',
     provider: 'openai',
     unitType: 'input_tokens',
-    providerRate: 5.00 / 1_000_000, // $5.00 per 1M tokens
-    providerRateDisplay: '$5.00/1M tokens',
+    providerRate: 1.25 / 1_000_000, // $1.25 per 1M tokens
+    providerRateDisplay: '$1.25/1M tokens',
     marginPercent: 45,
-    billedRate: (5.00 / 1_000_000) * 1.45,
-    billedRateDisplay: '$7.25/1M tokens',
+    billedRate: (1.25 / 1_000_000) * 1.45,
+    billedRateDisplay: '$1.8125/1M tokens',
   },
 
   openai_gpt5_output: {
@@ -169,11 +170,23 @@ export const COST_MAP: Record<string, ServiceCost> = {
     serviceName: 'GPT-5 Output Tokens',
     provider: 'openai',
     unitType: 'output_tokens',
-    providerRate: 20.00 / 1_000_000, // $20.00 per 1M tokens
-    providerRateDisplay: '$20.00/1M tokens',
+    providerRate: 10.00 / 1_000_000, // $10.00 per 1M tokens
+    providerRateDisplay: '$10.00/1M tokens',
     marginPercent: 45,
-    billedRate: (20.00 / 1_000_000) * 1.45,
-    billedRateDisplay: '$29.00/1M tokens',
+    billedRate: (10.00 / 1_000_000) * 1.45,
+    billedRateDisplay: '$14.50/1M tokens',
+  },
+
+  openai_gpt5_cached_input: {
+    serviceKey: 'openai_gpt5_cached_input',
+    serviceName: 'GPT-5 Cached Input Tokens',
+    provider: 'openai',
+    unitType: 'input_tokens',
+    providerRate: 0.125 / 1_000_000, // $0.125 per 1M tokens
+    providerRateDisplay: '$0.125/1M tokens',
+    marginPercent: 45,
+    billedRate: (0.125 / 1_000_000) * 1.45,
+    billedRateDisplay: '$0.18125/1M tokens',
   },
 
   // ============================================================================
@@ -184,11 +197,11 @@ export const COST_MAP: Record<string, ServiceCost> = {
     serviceName: 'GPT-5-mini Input Tokens',
     provider: 'openai',
     unitType: 'input_tokens',
-    providerRate: 0.80 / 1_000_000, // $0.80 per 1M tokens
-    providerRateDisplay: '$0.80/1M tokens',
+    providerRate: 0.25 / 1_000_000, // $0.25 per 1M tokens
+    providerRateDisplay: '$0.25/1M tokens',
     marginPercent: 45,
-    billedRate: (0.80 / 1_000_000) * 1.45,
-    billedRateDisplay: '$1.16/1M tokens',
+    billedRate: (0.25 / 1_000_000) * 1.45,
+    billedRateDisplay: '$0.3625/1M tokens',
   },
 
   openai_gpt5_mini_output: {
@@ -196,11 +209,23 @@ export const COST_MAP: Record<string, ServiceCost> = {
     serviceName: 'GPT-5-mini Output Tokens',
     provider: 'openai',
     unitType: 'output_tokens',
-    providerRate: 3.20 / 1_000_000, // $3.20 per 1M tokens
-    providerRateDisplay: '$3.20/1M tokens',
+    providerRate: 2.00 / 1_000_000, // $2.00 per 1M tokens
+    providerRateDisplay: '$2.00/1M tokens',
     marginPercent: 45,
-    billedRate: (3.20 / 1_000_000) * 1.45,
-    billedRateDisplay: '$4.64/1M tokens',
+    billedRate: (2.00 / 1_000_000) * 1.45,
+    billedRateDisplay: '$2.90/1M tokens',
+  },
+
+  openai_gpt5_mini_cached_input: {
+    serviceKey: 'openai_gpt5_mini_cached_input',
+    serviceName: 'GPT-5-mini Cached Input Tokens',
+    provider: 'openai',
+    unitType: 'input_tokens',
+    providerRate: 0.025 / 1_000_000, // $0.025 per 1M tokens
+    providerRateDisplay: '$0.025/1M tokens',
+    marginPercent: 45,
+    billedRate: (0.025 / 1_000_000) * 1.45,
+    billedRateDisplay: '$0.03625/1M tokens',
   },
 
   // ============================================================================
@@ -211,11 +236,11 @@ export const COST_MAP: Record<string, ServiceCost> = {
     serviceName: 'GPT-5-nano Input Tokens',
     provider: 'openai',
     unitType: 'input_tokens',
-    providerRate: 0.20 / 1_000_000, // $0.20 per 1M tokens
-    providerRateDisplay: '$0.20/1M tokens',
+    providerRate: 0.05 / 1_000_000, // $0.05 per 1M tokens
+    providerRateDisplay: '$0.05/1M tokens',
     marginPercent: 45,
-    billedRate: (0.20 / 1_000_000) * 1.45,
-    billedRateDisplay: '$0.29/1M tokens',
+    billedRate: (0.05 / 1_000_000) * 1.45,
+    billedRateDisplay: '$0.0725/1M tokens',
   },
 
   openai_gpt5_nano_output: {
@@ -223,11 +248,23 @@ export const COST_MAP: Record<string, ServiceCost> = {
     serviceName: 'GPT-5-nano Output Tokens',
     provider: 'openai',
     unitType: 'output_tokens',
-    providerRate: 0.80 / 1_000_000, // $0.80 per 1M tokens
-    providerRateDisplay: '$0.80/1M tokens',
+    providerRate: 0.40 / 1_000_000, // $0.40 per 1M tokens
+    providerRateDisplay: '$0.40/1M tokens',
     marginPercent: 45,
-    billedRate: (0.80 / 1_000_000) * 1.45,
-    billedRateDisplay: '$1.16/1M tokens',
+    billedRate: (0.40 / 1_000_000) * 1.45,
+    billedRateDisplay: '$0.58/1M tokens',
+  },
+
+  openai_gpt5_nano_cached_input: {
+    serviceKey: 'openai_gpt5_nano_cached_input',
+    serviceName: 'GPT-5-nano Cached Input Tokens',
+    provider: 'openai',
+    unitType: 'input_tokens',
+    providerRate: 0.005 / 1_000_000, // $0.005 per 1M tokens
+    providerRateDisplay: '$0.005/1M tokens',
+    marginPercent: 45,
+    billedRate: (0.005 / 1_000_000) * 1.45,
+    billedRateDisplay: '$0.00725/1M tokens',
   },
 
   // ============================================================================
@@ -317,6 +354,15 @@ function applyAnalysisPriceRule(targetKey: keyof typeof ANALYSIS_PRICE_RULES, ra
   return Number(Math.max(rawEstimate * multiplier, minimumCharge).toFixed(6));
 }
 
+function applyAnalysisPriceRuleWithConfig(
+  config: EditablePriceConfig,
+  targetKey: keyof typeof ANALYSIS_PRICE_RULES,
+  rawEstimate: number
+): number {
+  const rule = config.analysis[targetKey] || ANALYSIS_PRICE_RULES[targetKey];
+  return Number(Math.max(rawEstimate * rule.multiplier, rule.minimumCharge).toFixed(6));
+}
+
 /**
  * Calculate cost for a service given units consumed
  */
@@ -348,6 +394,34 @@ export function calculateServiceCost(
   };
 }
 
+export async function calculateServiceCostAsync(
+  serviceKey: string,
+  units: number
+): Promise<ReturnType<typeof calculateServiceCost>> {
+  const service = COST_MAP[serviceKey];
+
+  if (!service) {
+    throw new Error(`Unknown service key: ${serviceKey}`);
+  }
+
+  const config = await getEditablePriceConfig();
+  const override = config.services[serviceKey];
+  const providerRate = override?.providerRate ?? service.providerRate;
+  const marginPercent = override?.marginPercent ?? service.marginPercent;
+  const billedRate = override?.billedRate ?? providerRate * (1 + marginPercent / 100);
+
+  const rawCost = units * providerRate;
+  const billedCost = units * billedRate;
+
+  return {
+    rawCost: Number(rawCost.toFixed(6)),
+    billedCost: Number(billedCost.toFixed(6)),
+    marginPercent,
+    unitType: service.unitType,
+    serviceName: service.serviceName,
+  };
+}
+
 /**
  * Calculate combined cost for input + output tokens (for LLMs)
  */
@@ -366,6 +440,33 @@ export function calculateTokenCost(
 } {
   const inputCost = calculateServiceCost(inputServiceKey, inputTokens);
   const outputCost = calculateServiceCost(outputServiceKey, outputTokens);
+
+  return {
+    rawCost: Number((inputCost.rawCost + outputCost.rawCost).toFixed(6)),
+    billedCost: Number((inputCost.billedCost + outputCost.billedCost).toFixed(6)),
+    breakdown: {
+      input: {
+        units: inputTokens,
+        rawCost: inputCost.rawCost,
+        billedCost: inputCost.billedCost,
+      },
+      output: {
+        units: outputTokens,
+        rawCost: outputCost.rawCost,
+        billedCost: outputCost.billedCost,
+      },
+    },
+  };
+}
+
+export async function calculateTokenCostAsync(
+  inputServiceKey: string,
+  outputServiceKey: string,
+  inputTokens: number,
+  outputTokens: number
+): Promise<ReturnType<typeof calculateTokenCost>> {
+  const inputCost = await calculateServiceCostAsync(inputServiceKey, inputTokens);
+  const outputCost = await calculateServiceCostAsync(outputServiceKey, outputTokens);
 
   return {
     rawCost: Number((inputCost.rawCost + outputCost.rawCost).toFixed(6)),
@@ -470,19 +571,27 @@ export function estimateTranscriptionCost(params: {
     : Math.ceil(durationSeconds * 3); // Fallback: ~3 tokens per second of audio
 
   if (features.nameExtraction) {
-    // Speaker Intelligence (gpt-5): full transcript input, ~500 output
+    // Speaker names plus roles are exposed as one "Named speakers" add-on.
     const speakerIntel = calculateTokenCost(
       'openai_gpt5_input',
       'openai_gpt5_output',
       estimatedTokens + 500,
       500
     );
+    const roleClassification = features.roleClassification
+      ? calculateTokenCost(
+          'openai_gpt5_nano_input',
+          'openai_gpt5_nano_output',
+          500,
+          50
+        )
+      : { billedCost: 0 };
     const pricedSpeakerIntel = applyAnalysisPriceRule(
       'namedSpeakers',
-      speakerIntel.billedCost
+      speakerIntel.billedCost + roleClassification.billedCost
     );
     aiProcessingCost += pricedSpeakerIntel;
-    breakdown.push({ service: 'Speaker Intelligence', cost: pricedSpeakerIntel });
+    breakdown.push({ service: 'Named Speakers', cost: pricedSpeakerIntel });
   }
 
   if (features.aiSummary) {
@@ -498,7 +607,7 @@ export function estimateTranscriptionCost(params: {
     breakdown.push({ service: 'AI Summary', cost: pricedSummary });
   }
 
-  if (features.roleClassification) {
+  if (features.roleClassification && !features.nameExtraction) {
     // Role classification (gpt-5-nano): ~500 input, ~50 output
     const roleClassification = calculateTokenCost(
       'openai_gpt5_nano_input',
@@ -584,6 +693,152 @@ export function estimateTranscriptionCost(params: {
 
   if (features.contentGeneration && normalizedTier === 'repurpose_pack') {
     const generationCost = CONTENT_TYPES.reduce((sum, type) => sum + (type.estimatedCostUSD || 0), 0);
+    aiProcessingCost += generationCost;
+    breakdown.push({ service: 'Repurpose Pack Content Generation', cost: generationCost });
+  }
+
+  const total = transcriptionCost + aiProcessingCost;
+
+  return {
+    transcription: Number(transcriptionCost.toFixed(6)),
+    aiProcessing: Number(aiProcessingCost.toFixed(6)),
+    total: Number(total.toFixed(6)),
+    breakdown,
+  };
+}
+
+export async function estimateTranscriptionCostAsync(params: {
+  durationSeconds: number;
+  tier: string;
+  analysisOptions?: AnalysisOptions | Record<string, unknown> | null;
+  estimatedTranscriptLength?: number;
+}): Promise<ReturnType<typeof estimateTranscriptionCost>> {
+  const { durationSeconds, tier, analysisOptions, estimatedTranscriptLength } = params;
+  const normalizedTier = normalizeTier(tier);
+  const normalizedOptions = normalizeAnalysisOptions(analysisOptions);
+  const features = getFeaturesFromAnalysisOptions(normalizedOptions);
+  const config = await getEditablePriceConfig();
+
+  const transcriptionCost = (await calculateServiceCostAsync(
+    'assemblyai_transcription',
+    durationSeconds
+  )).billedCost;
+
+  let aiProcessingCost = 0;
+  const breakdown: Array<{ service: string; cost: number }> = [
+    { service: 'AssemblyAI Transcription', cost: transcriptionCost },
+  ];
+
+  const estimatedTokens = estimatedTranscriptLength
+    ? Math.ceil(estimatedTranscriptLength / 4)
+    : Math.ceil(durationSeconds * 3);
+
+  if (features.nameExtraction) {
+    const speakerIntel = await calculateTokenCostAsync(
+      'openai_gpt5_input',
+      'openai_gpt5_output',
+      estimatedTokens + 500,
+      500
+    );
+    const roleClassification = features.roleClassification
+      ? await calculateTokenCostAsync(
+          'openai_gpt5_nano_input',
+          'openai_gpt5_nano_output',
+          500,
+          50
+        )
+      : { billedCost: 0 };
+    const pricedSpeakerIntel = applyAnalysisPriceRuleWithConfig(
+      config,
+      'namedSpeakers',
+      speakerIntel.billedCost + roleClassification.billedCost
+    );
+    aiProcessingCost += pricedSpeakerIntel;
+    breakdown.push({ service: 'Named Speakers', cost: pricedSpeakerIntel });
+  }
+
+  if (features.aiSummary) {
+    const summary = await calculateTokenCostAsync(
+      'openai_gpt5_mini_input',
+      'openai_gpt5_mini_output',
+      estimatedTokens,
+      500
+    );
+    const pricedSummary = applyAnalysisPriceRuleWithConfig(config, 'summary', summary.billedCost);
+    aiProcessingCost += pricedSummary;
+    breakdown.push({ service: 'AI Summary', cost: pricedSummary });
+  }
+
+  if (features.roleClassification && !features.nameExtraction) {
+    const roleClassification = await calculateTokenCostAsync(
+      'openai_gpt5_nano_input',
+      'openai_gpt5_nano_output',
+      500,
+      50
+    );
+    aiProcessingCost += roleClassification.billedCost;
+    breakdown.push({ service: 'Role Classification', cost: roleClassification.billedCost });
+  }
+
+  if (features.chapterDetection) {
+    const chapters = await calculateTokenCostAsync(
+      'openai_gpt5_nano_input',
+      'openai_gpt5_nano_output',
+      estimatedTokens,
+      400
+    );
+    const pricedChapters = applyAnalysisPriceRuleWithConfig(config, 'chapters', chapters.billedCost);
+    aiProcessingCost += pricedChapters;
+    breakdown.push({ service: 'Chapter Detection', cost: pricedChapters });
+  }
+
+  if (features.keyTakeaways) {
+    const takeaways = await calculateTokenCostAsync(
+      'openai_gpt5_nano_input',
+      'openai_gpt5_nano_output',
+      estimatedTokens,
+      300
+    );
+    const pricedTakeaways = applyAnalysisPriceRuleWithConfig(config, 'takeaways', takeaways.billedCost);
+    aiProcessingCost += pricedTakeaways;
+    breakdown.push({ service: 'Key Takeaways', cost: pricedTakeaways });
+  }
+
+  if (features.quotesExtraction) {
+    const quotes = await calculateTokenCostAsync(
+      'openai_gpt5_mini_input',
+      'openai_gpt5_mini_output',
+      estimatedTokens,
+      400
+    );
+    const pricedQuotes = applyAnalysisPriceRuleWithConfig(config, 'quotes', quotes.billedCost);
+    aiProcessingCost += pricedQuotes;
+    breakdown.push({ service: 'Social Quotes', cost: pricedQuotes });
+  }
+
+  if (features.insights) {
+    const model = prompts.audioRepurpose.insightExtraction.model;
+    const serviceKeys = model.includes('gpt-5-nano')
+      ? { input: 'openai_gpt5_nano_input', output: 'openai_gpt5_nano_output' }
+      : model.includes('gpt-5-mini')
+        ? { input: 'openai_gpt5_mini_input', output: 'openai_gpt5_mini_output' }
+        : model.includes('gpt-5')
+          ? { input: 'openai_gpt5_input', output: 'openai_gpt5_output' }
+          : { input: 'openai_gpt4o_mini_input', output: 'openai_gpt4o_mini_output' };
+
+    const insights = await calculateTokenCostAsync(
+      serviceKeys.input,
+      serviceKeys.output,
+      estimatedTokens,
+      1200
+    );
+    const pricedInsights = applyAnalysisPriceRuleWithConfig(config, 'insights', insights.billedCost);
+    aiProcessingCost += pricedInsights;
+    breakdown.push({ service: 'Insights Extraction', cost: pricedInsights });
+  }
+
+  if (features.contentGeneration && normalizedTier === 'repurpose_pack') {
+    const generationCost = Object.values(config.contentOutputs).reduce((sum, cost) => sum + Number(cost || 0), 0);
     aiProcessingCost += generationCost;
     breakdown.push({ service: 'Repurpose Pack Content Generation', cost: generationCost });
   }
@@ -693,10 +948,119 @@ export function estimateAnalysisJobCost(params: {
   }
 }
 
+export async function estimateAnalysisJobCostAsync(params: {
+  targetKey: string;
+  estimatedTranscriptLength?: number;
+  durationSeconds?: number;
+}): Promise<number> {
+  const { targetKey, estimatedTranscriptLength, durationSeconds = 0 } = params;
+  const estimatedTokens = estimatedTranscriptLength
+    ? Math.ceil(estimatedTranscriptLength / 4)
+    : Math.ceil(durationSeconds * 3);
+  const config = await getEditablePriceConfig();
+
+  switch (targetKey) {
+    case 'namedSpeakers': {
+      const speakerIntel = await calculateTokenCostAsync(
+        'openai_gpt5_input',
+        'openai_gpt5_output',
+        estimatedTokens + 500,
+        500
+      );
+      const roleClassification = await calculateTokenCostAsync(
+        'openai_gpt5_nano_input',
+        'openai_gpt5_nano_output',
+        500,
+        50
+      );
+      return applyAnalysisPriceRuleWithConfig(
+        config,
+        'namedSpeakers',
+        speakerIntel.billedCost + roleClassification.billedCost
+      );
+    }
+    case 'summary': {
+      return applyAnalysisPriceRuleWithConfig(config, 'summary', (await calculateTokenCostAsync(
+        'openai_gpt5_mini_input',
+        'openai_gpt5_mini_output',
+        estimatedTokens,
+        500
+      )).billedCost);
+    }
+    case 'chapters': {
+      return applyAnalysisPriceRuleWithConfig(config, 'chapters', (await calculateTokenCostAsync(
+        'openai_gpt5_nano_input',
+        'openai_gpt5_nano_output',
+        estimatedTokens,
+        400
+      )).billedCost);
+    }
+    case 'takeaways': {
+      return applyAnalysisPriceRuleWithConfig(config, 'takeaways', (await calculateTokenCostAsync(
+        'openai_gpt5_nano_input',
+        'openai_gpt5_nano_output',
+        estimatedTokens,
+        300
+      )).billedCost);
+    }
+    case 'quotes': {
+      return applyAnalysisPriceRuleWithConfig(config, 'quotes', (await calculateTokenCostAsync(
+        'openai_gpt5_mini_input',
+        'openai_gpt5_mini_output',
+        estimatedTokens,
+        400
+      )).billedCost);
+    }
+    case 'insights': {
+      const model = prompts.audioRepurpose.insightExtraction.model;
+      const serviceKeys = model.includes('gpt-5-nano')
+        ? { input: 'openai_gpt5_nano_input', output: 'openai_gpt5_nano_output' }
+        : model.includes('gpt-5-mini')
+          ? { input: 'openai_gpt5_mini_input', output: 'openai_gpt5_mini_output' }
+          : model.includes('gpt-5')
+            ? { input: 'openai_gpt5_input', output: 'openai_gpt5_output' }
+            : { input: 'openai_gpt4o_mini_input', output: 'openai_gpt4o_mini_output' };
+
+      return applyAnalysisPriceRuleWithConfig(config, 'insights', (await calculateTokenCostAsync(
+        serviceKeys.input,
+        serviceKeys.output,
+        estimatedTokens,
+        1200
+      )).billedCost);
+    }
+    default:
+      return 0;
+  }
+}
+
 export function estimateContentGenerationCost(contentTypeIds: string[]): number {
   const total = contentTypeIds.reduce((sum, contentTypeId) => {
     const contentType = CONTENT_TYPES.find((item) => item.id === contentTypeId);
     return sum + Number(contentType?.estimatedCostUSD || 0);
+  }, 0);
+
+  return Number(total.toFixed(6));
+}
+
+export async function estimateContentGenerationCostAsync(contentTypeIds: string[]): Promise<number> {
+  const config = await getEditablePriceConfig();
+  const total = contentTypeIds.reduce((sum, contentTypeId) => {
+    const contentType = CONTENT_TYPES.find((item) => item.id === contentTypeId);
+    if (!contentType) return sum;
+    const defaultCost = Number(contentType.estimatedCostUSD || 0);
+    return sum + Number(config.contentOutputs[contentTypeId] ?? defaultCost);
+  }, 0);
+
+  return Number(total.toFixed(6));
+}
+
+export async function estimateContentBlocksCostAsync(contentTypeIds: string[]): Promise<number> {
+  const config = await getEditablePriceConfig();
+  const total = contentTypeIds.reduce((sum, contentTypeId) => {
+    const contentType = CONTENT_TYPES.find((item) => item.id === contentTypeId);
+    if (!contentType) return sum;
+    const typeCost = Number(config.contentOutputs[contentTypeId] ?? contentType.estimatedCostUSD ?? 0);
+    return sum + (typeCost / Math.max(1, contentType.count));
   }, 0);
 
   return Number(total.toFixed(6));

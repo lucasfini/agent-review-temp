@@ -10,7 +10,7 @@ import {
   extractAudioFromVideoBuffer
 } from '@/lib/url-importer';
 import { billingErrorResponse, requireCredits } from '@/lib/billing/middleware';
-import { estimateTranscriptionCost } from '@/lib/billing/cost-map';
+import { estimateTranscriptionCostAsync } from '@/lib/billing/cost-map';
 import { getProcessingTierForAnalysis, normalizeAnalysisOptions } from '@/lib/analysis-options';
 import { createReservation, releaseReservation } from '@/lib/billing/credit';
 import { estimateReservationAmount } from '@/lib/billing/reserve-amount';
@@ -69,7 +69,7 @@ export async function POST(request: NextRequest) {
     const estimatedDurationSeconds = typeof body?.estimatedDurationSeconds === 'number'
       ? Math.max(1, Math.round(body.estimatedDurationSeconds))
       : 60 * 60;
-    const estimatedCost = estimateTranscriptionCost({
+    const estimatedCost = await estimateTranscriptionCostAsync({
       durationSeconds: estimatedDurationSeconds,
       tier: processingTier,
       analysisOptions,

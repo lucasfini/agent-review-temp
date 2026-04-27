@@ -1,10 +1,12 @@
 // AssemblyAI Speaker Diarization Integration
 // Fast, cloud-based transcription + speaker diarization
-// Processing: 2-hour podcast in ~2 minutes | Cost: $0.15/hour | Accuracy: 97%+
+// Processing: 2-hour podcast in ~2 minutes | Cost: $0.21/hour | Accuracy: 97%+
 
 import { AssemblyAI, Transcript } from 'assemblyai';
 import { promises as fs } from 'fs';
 import { TranscriptionSegment, SpeakerSegment } from './types';
+
+const ASSEMBLYAI_UNIVERSAL_3_PRO_RATE_PER_HOUR = 0.21;
 
 export interface AssemblyAIConfig {
   apiKey?: string;
@@ -300,8 +302,8 @@ function convertAssemblyAIResponse(
       confidence: transcript.confidence || 0,
       speech_model: transcript.speech_model || undefined,
       cost_usd: actualDuration !== undefined
-        ? (actualDuration / 3600) * 0.37  // $0.37 per hour (Universal-3)
-        : ((transcript.audio_duration || 0) / 3600) * 0.37
+        ? (actualDuration / 3600) * ASSEMBLYAI_UNIVERSAL_3_PRO_RATE_PER_HOUR
+        : ((transcript.audio_duration || 0) / 3600) * ASSEMBLYAI_UNIVERSAL_3_PRO_RATE_PER_HOUR
     }
   };
 }
@@ -329,14 +331,14 @@ To enable fast cloud-based transcription with AssemblyAI:
 Benefits of AssemblyAI:
 - Speed: 2-hour podcast processed in ~2 minutes
 - Accuracy: 97%+ speaker diarization accuracy
-- Cost: $0.37/hour of audio ($0.74 for 2-hour podcast)
+- Cost: $0.21/hour of audio ($0.42 for 2-hour podcast)
 - Zero infrastructure: No Python, no GPU, no dependencies
 - Word-level timestamps included automatically
 - Supports 99 languages with diarization in 95
 
 Pricing:
 - Free tier: $50 credits + 60 minutes/month
-- Pay as you go: $0.37/hour of audio (Universal-3 / slam-1)
+- Pay as you go: $0.21/hour of audio (Universal-3 Pro)
 - No hidden costs, includes all features
 
 Processing time:
@@ -359,7 +361,7 @@ export function estimateAssemblyAICost(audioDurationSeconds: number): {
   estimatedProcessingSeconds: number;
 } {
   const durationHours = audioDurationSeconds / 3600;
-  const costUSD = durationHours * 0.37; // $0.37/hour (Universal-3)
+  const costUSD = durationHours * ASSEMBLYAI_UNIVERSAL_3_PRO_RATE_PER_HOUR;
   const estimatedProcessingSeconds = audioDurationSeconds * 0.008; // 0.008x RTF
 
   return {

@@ -7,8 +7,7 @@ import { DEFAULT_THEME_ID } from '@/lib/content-themes';
 import { normalizeCustomGuidance } from '@/lib/content-types';
 import { isAnalysisJobKey } from '@/lib/project-generation-jobs';
 import { billingErrorResponse, requireCredits } from '@/lib/billing/middleware';
-import { estimateAnalysisJobCost, estimateContentGenerationCost } from '@/lib/billing/cost-map';
-import { isDemoUser } from '@/lib/demo-mode';
+import { estimateAnalysisJobCostAsync, estimateContentGenerationCostAsync } from '@/lib/billing/cost-map';
 import { aiRatelimit } from '@/lib/rate-limit';
 import { estimateReservationAmount } from '@/lib/billing/reserve-amount';
 
@@ -34,10 +33,6 @@ export async function POST(
     const { data: { user }, error: authError } = await supabaseAdmin.auth.getUser(token);
     if (authError || !user) {
       return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
-    }
-
-    if (isDemoUser(user)) {
-      return NextResponse.json({ error: 'Demo account is read-only' }, { status: 403 });
     }
 
     const { success } = await aiRatelimit.limit(user.id);
@@ -81,24 +76,20 @@ export async function POST(
       return NextResponse.json({ error: 'No valid generation items provided' }, { status: 400 });
     }
 
-    const estimatedCost = normalizedItems.reduce((sum, item) => {
+    const itemCosts = await Promise.all(normalizedItems.map((item) => {
       if (item.kind === 'analysis') {
-        return sum + estimateAnalysisJobCost({
+        return estimateAnalysisJobCostAsync({
           targetKey: item.targetKey,
           estimatedTranscriptLength: project.transcription_text?.length || 0,
         });
       }
-      return sum + estimateContentGenerationCost([item.targetKey]);
-    }, 0);
+      return estimateContentGenerationCostAsync([item.targetKey]);
+    }));
 
-    const estimatedReserveAmount = normalizedItems.reduce((sum, item) => {
-      const itemCost = item.kind === 'analysis'
-        ? estimateAnalysisJobCost({
-            targetKey: item.targetKey,
-            estimatedTranscriptLength: project.transcription_text?.length || 0,
-          })
-        : estimateContentGenerationCost([item.targetKey]);
+    const estimatedCost = itemCosts.reduce((sum, cost) => sum + cost, 0);
 
+    const estimatedReserveAmount = normalizedItems.reduce((sum, item, index) => {
+      const itemCost = itemCosts[index] || 0;
       return Number((sum + estimateReservationAmount(itemCost, item.kind === 'analysis' ? 'analysis_job' : 'content_generation')).toFixed(4));
     }, 0);
 

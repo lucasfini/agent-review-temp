@@ -5,7 +5,7 @@
  * Provides simple functions to instrument OpenAI (gpt-5, gpt-5-mini, gpt-5-nano, gpt-4o, gpt-4o-mini) and AssemblyAI calls.
  */
 
-import { calculateServiceCost, calculateTokenCost } from './cost-map';
+import { calculateServiceCostAsync, calculateTokenCostAsync } from './cost-map';
 import { logUsageEvent, debitCredit } from './credit';
 
 // ============================================================================
@@ -44,14 +44,14 @@ export function extractOpenAIUsage(response: any): OpenAIUsage {
  * More-specific checks (gpt-5-nano, gpt-5-mini) must come before the
  * catch-all (gpt-5) because all three strings contain "gpt-5".
  */
-function getOpenAIServiceKeys(modelName: string): { input: string; output: string } {
-  if (modelName.includes('gpt-5-nano')) return { input: 'openai_gpt5_nano_input', output: 'openai_gpt5_nano_output' };
-  if (modelName.includes('gpt-5-mini')) return { input: 'openai_gpt5_mini_input', output: 'openai_gpt5_mini_output' };
-  if (modelName.includes('gpt-5'))      return { input: 'openai_gpt5_input',      output: 'openai_gpt5_output' };
-  if (modelName.includes('gpt-4o-mini')) return { input: 'openai_gpt4o_mini_input', output: 'openai_gpt4o_mini_output' };
-  if (modelName.includes('gpt-4o'))      return { input: 'openai_gpt4o_input',      output: 'openai_gpt4o_output' };
+function getOpenAIServiceKeys(modelName: string): { input: string; cachedInput: string; output: string } {
+  if (modelName.includes('gpt-5-nano')) return { input: 'openai_gpt5_nano_input', cachedInput: 'openai_gpt5_nano_cached_input', output: 'openai_gpt5_nano_output' };
+  if (modelName.includes('gpt-5-mini')) return { input: 'openai_gpt5_mini_input', cachedInput: 'openai_gpt5_mini_cached_input', output: 'openai_gpt5_mini_output' };
+  if (modelName.includes('gpt-5'))      return { input: 'openai_gpt5_input',      cachedInput: 'openai_gpt5_cached_input',      output: 'openai_gpt5_output' };
+  if (modelName.includes('gpt-4o-mini')) return { input: 'openai_gpt4o_mini_input', cachedInput: 'openai_gpt4o_mini_cached_input', output: 'openai_gpt4o_mini_output' };
+  if (modelName.includes('gpt-4o'))      return { input: 'openai_gpt4o_input',      cachedInput: 'openai_gpt4o_cached_input',      output: 'openai_gpt4o_output' };
   // Fallback: cheapest known rate to avoid over-billing
-  return { input: 'openai_gpt4o_mini_input', output: 'openai_gpt4o_mini_output' };
+  return { input: 'openai_gpt4o_mini_input', cachedInput: 'openai_gpt4o_mini_cached_input', output: 'openai_gpt4o_mini_output' };
 }
 
 /**
@@ -99,16 +99,14 @@ export async function trackOpenAIUsage(params: {
   const usage = extractOpenAIUsage(response);
 
   // Determine service keys based on model
-  const { input: inputServiceKey, output: outputServiceKey } = getOpenAIServiceKeys(modelName);
-  // Cached input tokens use the same rate key (50% discount applied in calculateServiceCost)
-  const cachedInputServiceKey = inputServiceKey;
+  const { input: inputServiceKey, cachedInput: cachedInputServiceKey, output: outputServiceKey } = getOpenAIServiceKeys(modelName);
 
   // Calculate costs for uncached input, cached input, and output separately
-  const uncachedInputCost = calculateServiceCost(inputServiceKey, usage.uncachedTokens);
+  const uncachedInputCost = await calculateServiceCostAsync(inputServiceKey, usage.uncachedTokens);
   const cachedInputCost = usage.cachedTokens > 0
-    ? calculateServiceCost(cachedInputServiceKey, usage.cachedTokens)
+    ? await calculateServiceCostAsync(cachedInputServiceKey, usage.cachedTokens)
     : { rawCost: 0, billedCost: 0 };
-  const outputCost = calculateServiceCost(outputServiceKey, usage.completionTokens);
+  const outputCost = await calculateServiceCostAsync(outputServiceKey, usage.completionTokens);
 
   const totalRawCost = Number((uncachedInputCost.rawCost + cachedInputCost.rawCost + outputCost.rawCost).toFixed(6));
   const totalBilledCost = Number((uncachedInputCost.billedCost + cachedInputCost.billedCost + outputCost.billedCost).toFixed(6));
@@ -230,7 +228,7 @@ export async function trackAnthropicUsage(params: {
   const outputServiceKey = isSonnet ? 'claude_sonnet_output' : 'claude_haiku_output';
 
   // Calculate costs
-  const costResult = calculateTokenCost(
+  const costResult = await calculateTokenCostAsync(
     inputServiceKey,
     outputServiceKey,
     usage.inputTokens,
@@ -341,7 +339,7 @@ export async function trackAssemblyAIUsage(params: {
   const { userId, projectId, reservationId, durationSeconds, metadata, shouldDebit = reservationId ? false : true, strictBilling = false } = params;
 
   // Calculate costs
-  const costResult = calculateServiceCost('assemblyai_transcription', durationSeconds);
+  const costResult = await calculateServiceCostAsync('assemblyai_transcription', durationSeconds);
 
   // Log usage event
   let usageEventId = '';

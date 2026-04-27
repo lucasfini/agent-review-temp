@@ -21,7 +21,7 @@ import { promises as fs } from 'fs';
 import * as path from 'path';
 import * as os from 'os';
 import type { SpeakerSegment, TranscriptionSegment } from '@/lib/types';
-import { estimateTranscriptionCost } from '@/lib/billing/cost-map';
+import { estimateTranscriptionCostAsync } from '@/lib/billing/cost-map';
 import { trackAssemblyAIUsage, requireSufficientCredit } from '@/lib/billing/track-usage';
 import { InsufficientCreditError, failReservation, settleReservation } from '@/lib/billing/credit';
 import { aiRatelimit } from '@/lib/rate-limit';
@@ -707,7 +707,7 @@ export async function POST(request: NextRequest) {
         try {
           // Estimate transcription cost based on file size (rough estimate: 1MB ≈ 60 seconds)
           const estimatedDurationSeconds = Math.ceil((fileSize / 1024 / 1024) * 60);
-          const estimatedCost = estimateTranscriptionCost({
+          const estimatedCost = await estimateTranscriptionCostAsync({
             durationSeconds: estimatedDurationSeconds,
             tier,
             analysisOptions,

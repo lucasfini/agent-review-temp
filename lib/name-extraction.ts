@@ -4,8 +4,7 @@ import { getAICompletion, AICompletionResponse } from '@/lib/ai-providers/multi-
 import { SpeakerSegment, DetectedSpeaker, SpeakerRole } from './types';
 import { getPrompt, prompts } from '@/lib/prompts/loader';
 import type { SpeakerNameExtractionVars } from '@/lib/prompts/types';
-import { logUsageEvent, debitCredit } from '@/lib/billing/credit';
-import { calculateTokenCost } from '@/lib/billing/cost-map';
+import { trackOpenAIUsage } from '@/lib/billing/track-usage';
 
 export interface ExtractedName {
   name: string;
@@ -626,77 +625,28 @@ async function runStructuredLLMExtraction(
 
     // Track usage if userId/projectId provided
     if (options?.userId && options?.projectId) {
-      const inputTokens = response.usage?.inputTokens || Math.ceil((config.system.length + userPrompt.length) / 4);
-      const outputTokens = response.usage?.outputTokens || Math.ceil((response.content?.length || 0) / 4);
-
-      const costResult = calculateTokenCost(
-        'openai_gpt4_input',
-        'openai_gpt4_output',
-        inputTokens,
-        outputTokens
-      );
-
-      // Log input tokens
-      await logUsageEvent({
-        userId: options.userId,
-        projectId: options.projectId,
-        reservationId: options.reservationId,
-        serviceKey: 'openai_gpt4_input',
-        serviceName: 'GPT-4o Input (Speaker Extraction)',
-        provider: 'openai',
-        units: inputTokens,
-        unitType: 'input_tokens',
-        rawCost: costResult.breakdown.input.rawCost,
-        marginPercent: 35,
-        billedCost: costResult.breakdown.input.billedCost,
-        metadata: {
-          model: config.model,
-          feature: 'speaker_name_extraction_gpt'
-        },
-        status: options.reservationId ? 'pending' : 'completed',
-        workflowStep: 'Speaker Name Extraction'
-      });
-
-      // Log output tokens
-      await logUsageEvent({
-        userId: options.userId,
-        projectId: options.projectId,
-        reservationId: options.reservationId,
-        serviceKey: 'openai_gpt4_output',
-        serviceName: 'GPT-4o Output (Speaker Extraction)',
-        provider: 'openai',
-        units: outputTokens,
-        unitType: 'output_tokens',
-        rawCost: costResult.breakdown.output.rawCost,
-        marginPercent: 35,
-        billedCost: costResult.breakdown.output.billedCost,
-        metadata: {
-          model: config.model,
-          feature: 'speaker_name_extraction_gpt'
-        },
-        status: options.reservationId ? 'pending' : 'completed',
-        workflowStep: 'Speaker Name Extraction'
-      });
-
-      // Debit user credits (don't throw on billing errors)
-      if (!options.reservationId) {
-        try {
-          await debitCredit(
-            options.userId,
-            costResult.billedCost,
-            undefined,
-            {
-              reason: `Speaker name extraction (GPT) - ${unnamedSpeakers.length} speakers`,
-              metadata: {
-                projectId: options.projectId,
-                feature: 'speaker_name_extraction',
-                speakers: unnamedSpeakers.length
-              }
-            }
-          );
-        } catch (billingError) {
-          console.error('[NAME EXTRACTION] Billing debit failed:', billingError);
-        }
+      try {
+        await trackOpenAIUsage({
+          userId: options.userId,
+          projectId: options.projectId,
+          reservationId: options.reservationId,
+          response: {
+            usage: {
+              prompt_tokens: response.usage?.inputTokens || Math.ceil((config.system.length + userPrompt.length) / 4),
+              completion_tokens: response.usage?.outputTokens || Math.ceil((response.content?.length || 0) / 4),
+              total_tokens: response.usage?.totalTokens || 0,
+            },
+          },
+          modelName: response.model || config.model,
+          purpose: 'Speaker Name Extraction',
+          metadata: {
+            feature: 'speaker_name_extraction_gpt',
+            speakers: unnamedSpeakers.length,
+          },
+          shouldDebit: options.reservationId ? false : true,
+        });
+      } catch (billingError) {
+        console.error('[NAME EXTRACTION] Billing tracking failed:', billingError);
       }
     }
 

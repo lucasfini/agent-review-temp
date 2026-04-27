@@ -10,6 +10,7 @@ const ADMIN_LINKS = [
   { label: 'Overview', href: '/admin' },
   { label: 'Users', href: '/admin/users' },
   { label: 'Billing Ops', href: '/admin/billing-ops' },
+  { label: 'Prices', href: '/admin/prices' },
   { label: 'Monitoring', href: '/admin/monitoring' },
   { label: 'Payments', href: '/admin/payments' },
 ];

@@ -29,9 +29,18 @@ describe('COST_MAP', () => {
 
   test('should keep transcription positioned as a low-friction entry price', () => {
     const assemblyai = COST_MAP.assemblyai_transcription;
-    expect(assemblyai.providerRateDisplay).toBe('$0.37/hour');
+    expect(assemblyai.providerRateDisplay).toBe('$0.21/hour');
     expect(assemblyai.billedRateDisplay).toBe('$0.39/hour');
     expect(assemblyai.billedRate).toBeCloseTo(0.39 / 3600, 10);
+  });
+
+  test('should use current GPT-5 family rates', () => {
+    expect(COST_MAP.openai_gpt5_input.providerRate).toBeCloseTo(1.25 / 1_000_000, 12);
+    expect(COST_MAP.openai_gpt5_output.providerRate).toBeCloseTo(10 / 1_000_000, 12);
+    expect(COST_MAP.openai_gpt5_mini_input.providerRate).toBeCloseTo(0.25 / 1_000_000, 12);
+    expect(COST_MAP.openai_gpt5_mini_output.providerRate).toBeCloseTo(2 / 1_000_000, 12);
+    expect(COST_MAP.openai_gpt5_nano_input.providerRate).toBeCloseTo(0.05 / 1_000_000, 12);
+    expect(COST_MAP.openai_gpt5_nano_output.providerRate).toBeCloseTo(0.4 / 1_000_000, 12);
   });
 });
 
@@ -40,7 +49,7 @@ describe('calculateServiceCost', () => {
     const durationSeconds = 3600; // 1 hour
     const result = calculateServiceCost('assemblyai_transcription', durationSeconds);
 
-    expect(result.rawCost).toBeCloseTo(0.37, 4);
+    expect(result.rawCost).toBeCloseTo(0.21, 4);
     expect(result.billedCost).toBeCloseTo(0.39, 4);
     expect(result.unitType).toBe('seconds');
   });
@@ -207,7 +216,7 @@ describe('estimateAnalysisJobCost', () => {
     });
     const longEstimate = estimateAnalysisJobCost({
       targetKey: 'namedSpeakers',
-      estimatedTranscriptLength: 48000,
+      estimatedTranscriptLength: 400000,
     });
 
     expect(longEstimate).toBeGreaterThan(shortEstimate);
