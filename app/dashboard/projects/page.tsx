@@ -26,7 +26,12 @@ import { emitProjectMutation } from '@/lib/project-events';
 import { ANALYSIS_OPTION_CONFIG, getProjectAnalysisOptions, normalizeAnalysisOptions, type AnalysisOptionKey } from '@/lib/analysis-options';
 import type { ProjectGenerationJob } from '@/lib/project-generation-jobs';
 import { getDashboardErrorMessage, logDashboardLoad } from '@/lib/dashboard-load-state';
-import { getReviewItemsFromSpeakerData, getReviewSegmentIndicesFromSpeakerData, getSpeakerAssignmentConfidencePercent } from '@/lib/speaker-review';
+import {
+  getReviewItemsFromSpeakerData,
+  getReviewSegmentIndicesFromSpeakerData,
+  getSpeakerAssignmentConfidencePercent,
+  getSpeakerSuggestionsFromSpeakerData,
+} from '@/lib/speaker-review';
 
 type ProjectType = 'DEBATE' | 'INTERVIEW' | 'PODCAST' | 'MONOLOGUE' | 'OTHER';
 type MobileStudioTab = 'projects' | 'conversation' | 'content';
@@ -854,6 +859,10 @@ export default function ProjectsPage() {
   );
   const reviewItems = useMemo(
     () => getReviewItemsFromSpeakerData(parsedSpeakerData),
+    [parsedSpeakerData]
+  );
+  const speakerSuggestions = useMemo(
+    () => getSpeakerSuggestionsFromSpeakerData(parsedSpeakerData),
     [parsedSpeakerData]
   );
 
@@ -3735,6 +3744,7 @@ export default function ProjectsPage() {
             projectId={selectedProject?.id}
             segments={parsedSpeakerData?.segments}
             reviewItems={reviewItems}
+            speakerSuggestions={speakerSuggestions}
             reviewSegmentIndices={reviewSegmentIndices}
             selectedSegments={selectedSegments}
             hasUncertainSegments={hasUncertainSegments}

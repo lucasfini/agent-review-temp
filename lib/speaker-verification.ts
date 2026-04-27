@@ -209,11 +209,69 @@ function isLikelyHumanName(name: string | null | undefined): boolean {
   return true;
 }
 
+function isLikelyFirstName(name: string | null | undefined): boolean {
+  const trimmed = String(name || '').trim();
+  return /^[A-Z][A-Za-z'.-]{2,}$/.test(trimmed);
+}
+
+function proposalReasonText(proposal: SpeakerVerificationRepairProposal): string {
+  return String(proposal.reason || '').toLowerCase();
+}
+
 function isBlockedConversationalHumanName(name: string | null | undefined): boolean {
   const trimmed = String(name || '').trim();
   if (!trimmed) return true;
   if (!isLikelyHumanName(trimmed)) return true;
   return /\b(?:station|airport|terminal|assembly|council|department|secretary|minister|senator|president|government|administration|united states|america|treaty|resolution|act|bill|law|nobel|university|college|school|institute|foundation|studio|media|podcast|show|newsletter|tour|labs?|llc|inc|corp|company)\b/i.test(trimmed);
+}
+
+function isListenerSelfIdProposal(
+  proposal: SpeakerVerificationRepairProposal,
+  targetStats: SpeakerClusterStats | undefined
+): boolean {
+  const confidence = typeof proposal.confidence === 'number' ? proposal.confidence : 0;
+  if (confidence < 0.9) return false;
+  if (!isLikelyFirstName(proposal.proposedName) && !isLikelyHumanName(proposal.proposedName)) return false;
+  const reason = proposalReasonText(proposal);
+  if (!/\b(?:self-identif|my name is|this is|listener|voicemail|submission|caller)\b/.test(reason)) return false;
+  if ((targetStats?.adRatio || 0) >= 0.2) return false;
+  if ((targetStats?.conversationalSegmentCount || 0) > 4) return false;
+  if ((targetStats?.conversationalDuration || 0) > 75) return false;
+  return true;
+}
+
+function isResidualMultiGuestBindingProposal(
+  proposal: SpeakerVerificationRepairProposal,
+  targetSpeaker: any,
+  targetStats: SpeakerClusterStats | undefined,
+  speakers: Record<string, any>,
+  statsById: Map<string, SpeakerClusterStats>
+): boolean {
+  const confidence = typeof proposal.confidence === 'number' ? proposal.confidence : 0;
+  if (proposal.repairType !== 'bindIntroName') return false;
+  if (confidence < 0.52) return false;
+  if (!proposal.proposedName || isBlockedConversationalHumanName(proposal.proposedName)) return false;
+  if (!targetStats || (targetStats.adRatio || 0) >= 0.2) return false;
+  if ((targetStats.substantiveTurns || 0) < 2 && (targetStats.conversationalDuration || 0) < 45) return false;
+  if (!isAnonymousName(getDisplayName(targetSpeaker))) return false;
+
+  const reason = proposalReasonText(proposal);
+  if (!/\b(?:remaining|only other|unbound|second guest|multi-guest|introduced|intro names)\b/.test(reason)) return false;
+
+  const anonymousSubstantive = Array.from(statsById.values()).filter((entry) => {
+    const speaker = speakers[entry.speakerId];
+    return isAnonymousName(getDisplayName(speaker)) &&
+      (entry.adRatio || 0) < 0.2 &&
+      (entry.substantiveTurns >= 2 || entry.conversationalDuration >= 45);
+  });
+  if (anonymousSubstantive.length !== 1 || anonymousSubstantive[0].speakerId !== targetStats.speakerId) return false;
+
+  const namedGuests = Object.values(speakers).filter((speaker: any) => (
+    speaker?.role === 'guest' &&
+    !isAnonymousName(getDisplayName(speaker)) &&
+    !isBlockedConversationalHumanName(getDisplayName(speaker))
+  ));
+  return namedGuests.length >= 1;
 }
 
 function isHumanConversationalSpeaker(speaker: any): boolean {
@@ -245,6 +303,15 @@ function isProtectedParticipantSpeaker(speaker: any): boolean {
 
 function isAdLikeText(text: string | null | undefined): boolean {
   return /\b(?:sponsor|sponsored|brought to you by|use code|promo code|checkout|limited time|subscribe|newsletter|advertiser|visit|dot com|free trial|offer|save|discount)\b/i.test(String(text || ''));
+}
+
+function isShortSpilloverText(text: string | null | undefined): boolean {
+  const normalized = String(text || '').trim();
+  if (!normalized) return false;
+  if (wordCount(normalized) <= 4 && /^(?:sure|yeah|yes|right|okay|ok|exactly|thanks?|thank you)[.!?]*$/i.test(normalized)) {
+    return true;
+  }
+  return wordCount(normalized) <= 3 && normalized.length <= 18;
 }
 
 function isQuotedLikeText(text: string | null | undefined): boolean {
@@ -790,11 +857,20 @@ function validateProposal(
   const repairType = proposal.repairType;
   const confidence = typeof proposal.confidence === 'number' ? proposal.confidence : 0;
   if (confidence < 0.68 && repairType !== 'splitRecommendation') {
+    if (isResidualMultiGuestBindingProposal(proposal, targetSpeaker, targetStats, speakers, statsById)) {
+      return { ok: true, reason: 'accepted_residual_multi_guest_binding' };
+    }
+    if ((repairType === 'rename' || repairType === 'bindIntroName') && isListenerSelfIdProposal(proposal, targetStats)) {
+      return { ok: true, reason: 'accepted_listener_self_id' };
+    }
     return { ok: false, reason: 'proposal_confidence_below_threshold' };
   }
 
   if (repairType === 'rename' || repairType === 'bindIntroName') {
     if (!proposal.proposedName || isBlockedConversationalHumanName(proposal.proposedName)) {
+      if (isListenerSelfIdProposal(proposal, targetStats)) {
+        return { ok: true, reason: 'accepted_listener_self_id' };
+      }
       return { ok: false, reason: 'blocked_or_invalid_human_name' };
     }
     if ((targetStats?.adRatio || 0) >= 0.35) {
@@ -886,14 +962,19 @@ function applyAcceptedProposal(
   const targetId = proposal.targetSpeakerId || proposal.sourceSpeakerId;
 
   if ((proposal.repairType === 'rename' || proposal.repairType === 'bindIntroName') && targetId && proposal.proposedName) {
+    const listenerSelfId = validationMode === 'segment' || isLikelyFirstName(proposal.proposedName);
     updatedSpeakers[targetId] = applySpeakerName(
       updatedSpeakers[targetId],
       proposal.proposedName,
-      proposal.proposedRole && proposal.proposedRole !== 'advertiser' && proposal.proposedRole !== 'quoted_audio'
+      listenerSelfId
+        ? 'unknown'
+        : proposal.proposedRole && proposal.proposedRole !== 'advertiser' && proposal.proposedRole !== 'quoted_audio'
         ? proposal.proposedRole
         : 'guest',
       Math.max(0.78, proposal.confidence || 0.78),
-      [proposal.repairType === 'bindIntroName' ? 'verifier_intro_binding' : 'verifier_rename']
+      listenerSelfId
+        ? ['verifier_listener_self_id']
+        : [proposal.repairType === 'bindIntroName' ? 'verifier_intro_binding' : 'verifier_rename']
     );
   } else if ((proposal.repairType === 'clearName' || proposal.repairType === 'demote') && targetId) {
     if (proposal.proposedRole === 'advertiser') {
@@ -918,8 +999,8 @@ function applyAcceptedProposal(
       updatedSegments = segments.map((segment, index) => {
         const speakerId = (segment as any).finalSpeakerId || segment.speakerId;
         if (speakerId !== targetId) return segment;
-        if (evidence.size > 0 && !evidence.has(index) && !isAdLikeText(segment.text)) return segment;
-        if (!isAdLikeText(segment.text) && !segment.sponsorName && evidence.size === 0) return segment;
+        if (evidence.size > 0 && !evidence.has(index) && !isAdLikeText(segment.text) && !isShortSpilloverText(segment.text)) return segment;
+        if (!isAdLikeText(segment.text) && !segment.sponsorName && !isShortSpilloverText(segment.text) && evidence.size === 0) return segment;
         return {
           ...segment,
           segmentKind: 'ad_read',

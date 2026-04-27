@@ -4,6 +4,7 @@ import {
   getReviewItemsFromSpeakerData,
   getReviewSegmentIndicesFromSpeakerData,
   getSpeakerAssignmentConfidencePercent,
+  getSpeakerSuggestionsFromSpeakerData,
   isReviewSegment,
 } from '@/lib/speaker-review';
 
@@ -137,6 +138,128 @@ describe('speaker review trust helpers', () => {
         role: 'host',
       }),
     ]);
+  });
+
+  test('surfaces low-confidence verifier names as speaker suggestions instead of final names', () => {
+    const speakerData = attachSpeakerAssignmentMetadata({
+      segments: [
+        {
+          speakerId: 'speaker_4',
+          finalSpeakerId: 'speaker_4',
+          startTime: 30,
+          endTime: 62,
+          text: 'This is the remaining substantive answer from the second introduced guest.',
+          status: 'confirmed',
+        },
+      ],
+      speakers: {
+        speaker_4: {
+          id: 'speaker_4',
+          finalName: 'Speaker 4',
+          fallbackName: 'Speaker 4',
+          role: 'unknown',
+          assignmentConfidence: 0.6,
+          requiresReview: true,
+        },
+      },
+      detectionMetadata: {
+        pipelineDiagnostics: {
+          speakerVerification: {
+            rejectedRepairs: [
+              {
+                reason: 'proposal_confidence_below_threshold',
+                proposal: {
+                  repairType: 'bindIntroName',
+                  targetSpeakerId: 'speaker_4',
+                  proposedName: 'Matt Berg',
+                  proposedRole: 'guest',
+                  confidence: 0.55,
+                  reason: 'Intro names Greg Walters and Matt Berg; speaker_4 is the remaining substantive cluster.',
+                  evidenceSegmentIndices: [3, 7],
+                },
+              },
+            ],
+          },
+        },
+      },
+    });
+
+    const suggestions = getSpeakerSuggestionsFromSpeakerData(speakerData);
+    expect(suggestions).toEqual([
+      expect.objectContaining({
+        speakerId: 'speaker_4',
+        suggestedName: 'Matt Berg',
+        suggestedRole: 'guest',
+        confidence: 0.55,
+        source: 'verifier_intro_binding',
+      }),
+    ]);
+    expect(speakerData.detectionMetadata.speakerAssignmentBreakdown.speakerSuggestions).toHaveLength(1);
+    expect(speakerData.speakers.speaker_4.finalName).toBe('Speaker 4');
+  });
+
+  test('short advertiser spillover fragments do not drag speaker trust into review', () => {
+    const speakerData = attachSpeakerAssignmentMetadata({
+      segments: [
+        {
+          speakerId: 'speaker_1',
+          finalSpeakerId: 'speaker_1',
+          startTime: 0,
+          endTime: 15,
+          text: 'Welcome back. My guest is here to discuss social isolation.',
+          status: 'confirmed',
+        },
+        {
+          speakerId: 'speaker_2',
+          finalSpeakerId: 'speaker_2',
+          startTime: 15,
+          endTime: 40,
+          text: 'This is a substantive guest answer with enough detail to be stable.',
+          status: 'confirmed',
+        },
+        {
+          speakerId: 'speaker_3',
+          finalSpeakerId: 'speaker_3',
+          startTime: 41,
+          endTime: 42,
+          text: 'Sure.',
+          status: 'uncertain',
+          confidenceReason: 'transition_short',
+          segmentKind: 'conversation',
+        },
+      ],
+      speakers: {
+        speaker_1: {
+          id: 'speaker_1',
+          finalName: 'Jon Favreau',
+          role: 'host',
+          assignmentConfidence: 0.95,
+          requiresReview: false,
+          assignmentContradictions: [],
+        },
+        speaker_2: {
+          id: 'speaker_2',
+          finalName: 'Derek Thompson',
+          role: 'guest',
+          assignmentConfidence: 0.9,
+          requiresReview: false,
+          assignmentContradictions: [],
+        },
+        speaker_3: {
+          id: 'speaker_3',
+          finalName: 'Speaker 3',
+          role: 'advertiser',
+          assignmentConfidence: 0.65,
+          requiresReview: true,
+          assignmentContradictions: ['verifier_demote'],
+        },
+      },
+      detectionMetadata: {},
+    });
+
+    expect(speakerData.detectionMetadata.speakerAssignmentReviewCount).toBe(0);
+    expect(getReviewSegmentIndicesFromSpeakerData(speakerData)).toEqual([]);
+    expect(speakerData.detectionMetadata.speakerAssignmentConfidence).toBeGreaterThan(0.9);
   });
 
   test('finalization diagnostics preserve final speaker name provenance', () => {

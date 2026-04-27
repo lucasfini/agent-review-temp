@@ -34,6 +34,16 @@ export type SpeakerAssignmentTrustSummary = {
     reasons: string[];
     primaryReason: string;
   }>;
+  speakerSuggestions?: Array<{
+    speakerId: string;
+    suggestedName: string;
+    suggestedRole?: string | null;
+    confidence: number;
+    reason: string;
+    source: string;
+    rejectedReason?: string;
+    evidenceSegmentIndices?: number[];
+  }>;
   reasonCounts: Record<string, number>;
   speakerSummaries: Array<{
     speakerId: string;
@@ -99,6 +109,24 @@ function isConversationalSegment(segment: SpeakerSegment): boolean {
   return true;
 }
 
+function isShortAcknowledgementText(text: string | null | undefined): boolean {
+  const normalized = String(text || '').trim();
+  if (!normalized) return false;
+  const words = normalized.split(/\s+/).filter(Boolean).length;
+  return words <= 4 && /^(?:sure|yeah|yes|right|okay|ok|exactly|thanks?|thank you)[.!?]*$/i.test(normalized);
+}
+
+function isConversationTrustEligibleSegment(segment: SpeakerSegment, speakers: Record<string, any>): boolean {
+  if (!isConversationalSegment(segment)) return false;
+  const speakerId = (segment as any).finalSpeakerId || segment.speakerId;
+  const speaker = speakerId ? speakers?.[speakerId] : null;
+  const role = speaker?.role;
+  if ((role === 'advertiser' || role === 'quoted_audio' || role === 'narrator') && isShortAcknowledgementText(segment.text)) {
+    return false;
+  }
+  return true;
+}
+
 function isRiskySegmentReason(reason: string | null | undefined): boolean {
   return reason === 'acoustic_only' ||
     reason === 'transition_short' ||
@@ -109,6 +137,77 @@ function isRiskySegmentReason(reason: string | null | undefined): boolean {
 function isAnonymousConversationalSpeakerName(name: string | null | undefined): boolean {
   if (!name) return true;
   return /^speaker\s+\d+$/i.test(name.trim());
+}
+
+function normalizeSuggestionName(name: string): string {
+  return name.toLowerCase().trim().replace(/\s+/g, ' ');
+}
+
+function isValidSuggestedSpeakerName(name: string | null | undefined): name is string {
+  const trimmed = String(name || '').trim();
+  if (!trimmed || trimmed.length < 3) return false;
+  if (/^speaker\s+\d+$/i.test(trimmed)) return false;
+  return /[A-Za-z]/.test(trimmed);
+}
+
+function buildSpeakerNameSuggestions(speakerData: any): SpeakerAssignmentTrustSummary['speakerSuggestions'] {
+  const existing = speakerData?.detectionMetadata?.speakerAssignmentBreakdown?.speakerSuggestions;
+  if (Array.isArray(existing) && existing.length > 0) {
+    return existing.filter((suggestion: any) => (
+      typeof suggestion?.speakerId === 'string' &&
+      isValidSuggestedSpeakerName(suggestion?.suggestedName) &&
+      typeof suggestion?.confidence === 'number'
+    ));
+  }
+
+  const rejectedRepairs = speakerData?.detectionMetadata?.pipelineDiagnostics?.speakerVerification?.rejectedRepairs;
+  if (!Array.isArray(rejectedRepairs)) return [];
+
+  const speakers = speakerData?.speakers || {};
+  const suggestions = new Map<string, NonNullable<SpeakerAssignmentTrustSummary['speakerSuggestions']>[number]>();
+
+  for (const item of rejectedRepairs) {
+    const proposal = item?.proposal;
+    const repairType = proposal?.repairType;
+    if (repairType !== 'rename' && repairType !== 'bindIntroName') continue;
+    if (item?.reason !== 'proposal_confidence_below_threshold') continue;
+    if (!isValidSuggestedSpeakerName(proposal?.proposedName)) continue;
+
+    const speakerId = proposal?.targetSpeakerId || proposal?.sourceSpeakerId;
+    if (typeof speakerId !== 'string' || !speakerId) continue;
+
+    const currentName = speakers[speakerId]?.finalName || speakers[speakerId]?.name || speakers[speakerId]?.fallbackName;
+    if (currentName && !isAnonymousConversationalSpeakerName(currentName)) {
+      continue;
+    }
+
+    const confidence = Math.max(0, Math.min(1, Number(proposal?.confidence || 0)));
+    if (confidence < 0.45) continue;
+
+    const suggestion = {
+      speakerId,
+      suggestedName: proposal.proposedName.trim(),
+      suggestedRole: proposal?.proposedRole || null,
+      confidence,
+      reason: proposal?.reason || 'Low-confidence speaker name candidate',
+      source: repairType === 'bindIntroName' ? 'verifier_intro_binding' : 'verifier_rename',
+      rejectedReason: item?.reason,
+      evidenceSegmentIndices: Array.isArray(proposal?.evidenceSegmentIndices)
+        ? proposal.evidenceSegmentIndices.filter((index: unknown): index is number => typeof index === 'number' && Number.isInteger(index) && index >= 0)
+        : [],
+    };
+
+    const key = `${speakerId}:${normalizeSuggestionName(suggestion.suggestedName)}`;
+    const existingSuggestion = suggestions.get(key);
+    if (!existingSuggestion || suggestion.confidence > existingSuggestion.confidence) {
+      suggestions.set(key, suggestion);
+    }
+  }
+
+  return Array.from(suggestions.values()).sort((a, b) => {
+    if (b.confidence !== a.confidence) return b.confidence - a.confidence;
+    return a.speakerId.localeCompare(b.speakerId);
+  });
 }
 
 function incrementReasonCount(counts: Record<string, number>, reason: string) {
@@ -767,7 +866,7 @@ export function computeSpeakerAssignmentTrust(
 ): SpeakerAssignmentTrustSummary {
   const conversationalSegments = segments
     .map((segment, index) => ({ segment, index }))
-    .filter(({ segment }) => isConversationalSegment(segment));
+    .filter(({ segment }) => isConversationTrustEligibleSegment(segment, speakers));
   const totalConversationalSegments = conversationalSegments.length;
   const reasonCounts: Record<string, number> = {};
   const reviewIndices = new Set<number>();
@@ -1012,6 +1111,7 @@ export function attachSpeakerAssignmentMetadata(
     : existingDiagnostics?.finalizationSnapshots;
   const pipelineDiagnosticsBase = existingDiagnostics || {};
   const speakerSummaryById = new Map(summary.speakerSummaries.map((speaker) => [speaker.speakerId, speaker]));
+  const speakerSuggestions = buildSpeakerNameSuggestions(speakerData);
   const speakersWithFinalTrust = Object.fromEntries(
     Object.entries(speakerData?.speakers || {}).map(([speakerId, speaker]: [string, any]) => {
       const summaryEntry = speakerSummaryById.get(speakerId);
@@ -1038,6 +1138,7 @@ export function attachSpeakerAssignmentMetadata(
       speakerAssignmentBreakdown: {
         segmentReviewIndices: summary.segmentReviewIndices,
         reviewItems: summary.reviewItems,
+        speakerSuggestions,
         reasonCounts: summary.reasonCounts,
         speakerSummaries: summary.speakerSummaries,
       },

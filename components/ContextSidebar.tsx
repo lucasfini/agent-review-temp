@@ -38,7 +38,7 @@ import type { SpeakerSegment, SpeakerRole } from '@/lib/types';
 import { SPEAKER_ROLE_LABELS, SPEAKER_ROLES } from '@/lib/types';
 import { cn } from '@/lib/utils';
 import { getSpeakerDisplayName, getSpeakerColor } from '@/lib/name-extraction';
-import { formatReviewReason } from '@/lib/speaker-review';
+import { formatReviewReason, type SpeakerSuggestion } from '@/lib/speaker-review';
 import { InsightsSidebar, type Insight } from '@/components/insights';
 import InlineContentStudio from '@/components/project/InlineContentStudio';
 import { ANALYSIS_OPTION_CONFIG, type AnalysisOptionKey } from '@/lib/analysis-options';
@@ -231,7 +231,7 @@ interface ContextSidebarProps {
   onSpeakerClick?: (speakerId: string) => void;
   activeSpeakerId?: string | null;
   projectId?: string;
-  onSpeakerRename?: (speakerId: string, newName: string) => void;
+  onSpeakerRename?: (speakerId: string, newName: string) => Promise<void> | void;
   onSpeakerMerge?: (sourceSpeakerId: string, targetSpeakerId: string) => void;
   onSpeakerAdd?: (name: string, role: SpeakerRole) => Promise<void>;
   onSpeakerDelete?: (speakerId: string, action: 'reassign' | 'delete', targetId?: string) => Promise<void>;
@@ -269,6 +269,7 @@ interface ContextSidebarProps {
     primaryReason?: string;
     label?: string;
   }>;
+  speakerSuggestions?: SpeakerSuggestion[];
   reviewSegmentIndices?: number[];
   selectedSegments?: Set<number>;
   hasUncertainSegments?: boolean;
@@ -360,6 +361,7 @@ export function ContextSidebar({
   mobileSheet = true,
   segments = [],
   reviewItems = [],
+  speakerSuggestions = [],
   reviewSegmentIndices = [],
   selectedSegments,
   hasUncertainSegments = false,
@@ -404,6 +406,8 @@ export function ContextSidebar({
   const [activeAnalysisView, setActiveAnalysisView] = useState<AnalysisViewId>('summary');
   const [activeOutputType, setActiveOutputType] = useState<string | null>(null);
   const [contentOptionsCollapsed, setContentOptionsCollapsed] = useState(false);
+  const [dismissedSuggestionKeys, setDismissedSuggestionKeys] = useState<Set<string>>(new Set());
+  const [confirmingSuggestionKey, setConfirmingSuggestionKey] = useState<string | null>(null);
 
   // Speaker editing state
   const [editingSpeakerId, setEditingSpeakerId] = useState<string | null>(null);
@@ -425,6 +429,11 @@ export function ContextSidebar({
     document.addEventListener('mousedown', handler);
     return () => document.removeEventListener('mousedown', handler);
   }, [editingRoleSpeakerId]);
+
+  useEffect(() => {
+    setDismissedSuggestionKeys(new Set());
+    setConfirmingSuggestionKey(null);
+  }, [projectId]);
 
   // Add speaker form state
   const [addSpeakerExpanded, setAddSpeakerExpanded] = useState(false);
@@ -568,6 +577,12 @@ export function ContextSidebar({
     [reviewSegmentIndices]
   );
   const openReviewCount = reviewItems.length;
+  const activeSpeakerSuggestions = useMemo(
+    () => speakerSuggestions.filter((suggestion) => (
+      !dismissedSuggestionKeys.has(`${suggestion.speakerId}:${suggestion.suggestedName}`)
+    )),
+    [dismissedSuggestionKeys, speakerSuggestions]
+  );
   const resolvedReviewCount = useMemo(
     () => reviewItems.filter((item) => !reviewSegmentIndexSet.has(item.index)).length,
     [reviewItems, reviewSegmentIndexSet]
@@ -584,6 +599,21 @@ export function ContextSidebar({
       items: items.sort((a, b) => a.index - b.index),
     }));
   }, [reviewItems]);
+
+  const handleConfirmSpeakerSuggestion = async (suggestion: SpeakerSuggestion) => {
+    if (!onSpeakerRename) return;
+    const key = `${suggestion.speakerId}:${suggestion.suggestedName}`;
+    setConfirmingSuggestionKey(key);
+    try {
+      await onSpeakerRename(suggestion.speakerId, suggestion.suggestedName);
+      if (suggestion.suggestedRole && onSpeakerRoleChange) {
+        await onSpeakerRoleChange(suggestion.speakerId, suggestion.suggestedRole as SpeakerRole);
+      }
+      setDismissedSuggestionKeys((prev) => new Set(prev).add(key));
+    } finally {
+      setConfirmingSuggestionKey(null);
+    }
+  };
 
   // Auto-select uncertain segments when the Review tab is opened with nothing selected
   useEffect(() => {
@@ -614,7 +644,9 @@ export function ContextSidebar({
         id: 'review' as const,
         label: 'Review',
         icon: <ListChecks className="w-4 h-4" />,
-        count: openReviewCount > 0 ? openReviewCount : undefined,
+        count: openReviewCount + activeSpeakerSuggestions.length > 0
+          ? openReviewCount + activeSpeakerSuggestions.length
+          : undefined,
       },
       {
         id: 'generate' as const,
@@ -631,7 +663,7 @@ export function ContextSidebar({
         count: outputs.length + (summary ? 1 : 0) + (insights.length ? 1 : 0) + (chapters.length ? 1 : 0) + (takeaways.length ? 1 : 0) + (quotes.length ? 1 : 0) || undefined,
       },
     ],
-    [speakerList.length, openReviewCount, analysisStates, generatingContentTypes.size, outputs.length, summary, insights.length, chapters.length, takeaways.length, quotes.length]
+    [speakerList.length, openReviewCount, activeSpeakerSuggestions.length, analysisStates, generatingContentTypes.size, outputs.length, summary, insights.length, chapters.length, takeaways.length, quotes.length]
   );
 
   const availableAnalysisViews = useMemo(() => {
@@ -1274,6 +1306,10 @@ export function ContextSidebar({
                   <span className="text-slate-500 dark:text-slate-400">{openReviewCount}</span>
                 </div>
                 <div className="flex items-center justify-between text-xs">
+                  <span className="font-medium text-slate-700 dark:text-slate-200">Speaker suggestions</span>
+                  <span className="text-slate-500 dark:text-slate-400">{activeSpeakerSuggestions.length}</span>
+                </div>
+                <div className="flex items-center justify-between text-xs">
                   <span className="font-medium text-slate-700 dark:text-slate-200">Resolved this session</span>
                   <span className="text-slate-500 dark:text-slate-400">{resolvedReviewCount}</span>
                 </div>
@@ -1640,6 +1676,94 @@ export function ContextSidebar({
                   >
                     Discard
                   </button>
+                </div>
+              </div>
+            )}
+
+            {activeSpeakerSuggestions.length > 0 && (
+              <div className="space-y-2">
+                <div className="flex items-center justify-between px-1">
+                  <p className="text-xs font-medium text-slate-500 dark:text-slate-400 uppercase tracking-wide">Suggested speakers</p>
+                  <p className="text-[11px] text-slate-500 dark:text-slate-400">
+                    {activeSpeakerSuggestions.length} suggestion{activeSpeakerSuggestions.length !== 1 ? 's' : ''}
+                  </p>
+                </div>
+                <div className="space-y-2">
+                  {activeSpeakerSuggestions.map((suggestion) => {
+                    const key = `${suggestion.speakerId}:${suggestion.suggestedName}`;
+                    const speaker = (speakers as Record<string, any>)[suggestion.speakerId];
+                    const currentName = getSpeakerDisplayName(speaker) || suggestion.speakerId;
+                    const evidence = Array.isArray(suggestion.evidenceSegmentIndices)
+                      ? suggestion.evidenceSegmentIndices.slice(0, 3)
+                      : [];
+                    const confirming = confirmingSuggestionKey === key;
+                    return (
+                      <div
+                        key={key}
+                        className="rounded-xl border border-blue-200 bg-blue-50/70 p-3 text-xs dark:border-blue-900/40 dark:bg-blue-950/20"
+                      >
+                        <div className="flex items-start justify-between gap-2">
+                          <div className="min-w-0">
+                            <p className="font-semibold text-slate-800 dark:text-slate-100">
+                              {currentName} may be {suggestion.suggestedName}
+                            </p>
+                            <p className="mt-1 text-[11px] text-slate-500 dark:text-slate-400">
+                              {Math.round(suggestion.confidence * 100)}% suggested confidence
+                              {suggestion.suggestedRole ? ` · ${SPEAKER_ROLE_LABELS[suggestion.suggestedRole as SpeakerRole] || suggestion.suggestedRole}` : ''}
+                            </p>
+                          </div>
+                          <button
+                            type="button"
+                            onClick={() => setDismissedSuggestionKeys((prev) => new Set(prev).add(key))}
+                            className="rounded-md p-1 text-slate-400 transition-colors hover:bg-white/70 hover:text-slate-600 dark:hover:bg-slate-900/50 dark:hover:text-slate-200"
+                            title="Dismiss suggestion"
+                            aria-label="Dismiss suggestion"
+                          >
+                            <X className="h-3.5 w-3.5" />
+                          </button>
+                        </div>
+                        {suggestion.reason ? (
+                          <p className="mt-2 line-clamp-3 text-[11px] leading-relaxed text-slate-600 dark:text-slate-300">
+                            {suggestion.reason}
+                          </p>
+                        ) : null}
+                        {evidence.length > 0 ? (
+                          <div className="mt-2 flex flex-wrap gap-1.5">
+                            {evidence.map((index) => (
+                              <button
+                                key={`${key}-${index}`}
+                                type="button"
+                                onClick={() => onScrollToSegment?.(index)}
+                                className="rounded-full border border-blue-200 bg-white/80 px-2 py-0.5 text-[10px] font-medium text-blue-700 hover:bg-blue-100 dark:border-blue-900/50 dark:bg-slate-900/50 dark:text-blue-300"
+                              >
+                                Segment {index + 1}
+                              </button>
+                            ))}
+                          </div>
+                        ) : null}
+                        {!readOnly && onSpeakerRename ? (
+                          <div className="mt-3 flex gap-2">
+                            <button
+                              type="button"
+                              onClick={() => handleConfirmSpeakerSuggestion(suggestion)}
+                              disabled={confirming}
+                              className="inline-flex flex-1 items-center justify-center gap-1 rounded-lg bg-blue-600 px-2.5 py-1.5 text-[11px] font-semibold text-white transition-colors hover:bg-blue-700 disabled:cursor-not-allowed disabled:bg-blue-300"
+                            >
+                              {confirming ? <Loader2 className="h-3 w-3 animate-spin" /> : <Check className="h-3 w-3" />}
+                              Confirm name
+                            </button>
+                            <button
+                              type="button"
+                              onClick={() => setDismissedSuggestionKeys((prev) => new Set(prev).add(key))}
+                              className="rounded-lg border border-slate-200 bg-white px-2.5 py-1.5 text-[11px] font-medium text-slate-600 transition-colors hover:bg-slate-50 dark:border-slate-700 dark:bg-slate-900 dark:text-slate-300 dark:hover:bg-slate-800"
+                            >
+                              Not this person
+                            </button>
+                          </div>
+                        ) : null}
+                      </div>
+                    );
+                  })}
                 </div>
               </div>
             )}

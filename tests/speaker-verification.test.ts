@@ -413,7 +413,8 @@ describe('controlled speaker verification', () => {
       seg('speaker_3', 1, 'This is the substantive guest answer.', 10, 40),
       seg('speaker_2', 2, 'This episode is brought to you by 3 Day Blinds with a limited time offer.', 45, 70),
       seg('speaker_2', 3, 'Use code podcast at checkout to save on your order.', 70, 90),
-      seg('speaker_3', 4, 'Another substantive guest answer keeps the dominant cluster clear.', 95, 125),
+      seg('speaker_2', 4, 'Sure.', 91, 92),
+      seg('speaker_3', 5, 'Another substantive guest answer keeps the dominant cluster clear.', 95, 125),
     ];
     const speakers = {
       speaker_1: namedSpeaker('speaker_1', 'Jon Favreau', 'host', 0.95),
@@ -430,6 +431,7 @@ describe('controlled speaker verification', () => {
     expect(result.speakers.speaker_2.role).toBe('advertiser');
     expect(result.segments[2].segmentKind).toBe('ad_read');
     expect(result.segments[3].segmentKind).toBe('ad_read');
+    expect(result.segments[4].segmentKind).toBe('ad_read');
   });
 
   test('accepts residual second guest binding when verifier has clean enough evidence', async () => {
@@ -441,7 +443,7 @@ describe('controlled speaker verification', () => {
         proposedName: 'Matt Berg',
         proposedRole: 'guest',
         evidenceSegmentIndices: [0, 3],
-        confidence: 0.72,
+        confidence: 0.55,
         reason: 'Intro names Greg Walters and Matt Berg; Greg is already bound and speaker_4 is the remaining substantive guest cluster.',
       }],
     }));
@@ -466,5 +468,43 @@ describe('controlled speaker verification', () => {
 
     expect(result.speakers.speaker_4.finalName).toBe('Matt Berg');
     expect(result.speakers.speaker_4.role).toBe('guest');
+    expect(result.diagnostics.acceptedRepairs[0]?.reason).toBe('accepted_residual_multi_guest_binding');
+  });
+
+  test('accepts first-name listener self IDs without treating them as normal guests', async () => {
+    mockCreate.mockResolvedValueOnce(mockJsonResponse('gpt-5.2', {
+      overallConfidence: 0.84,
+      proposals: [{
+        repairType: 'rename',
+        targetSpeakerId: 'speaker_5',
+        proposedName: 'Zach',
+        proposedRole: 'guest',
+        evidenceSegmentIndices: [2],
+        confidence: 0.97,
+        reason: 'Self-identifies: my name is Zach in a listener voicemail submission.',
+      }],
+    }));
+    const segments = [
+      seg('speaker_1', 0, 'Welcome back to the show. We have some listener questions.', 0, 10),
+      seg('speaker_2', 1, 'This substantive co-host turn keeps verification active.', 10, 35),
+      seg('speaker_5', 2, 'Hi, my name is Zach. My question is about search and AI products.', 40, 58),
+      seg('speaker_2', 3, 'That is a good listener question and here is the answer.', 60, 85),
+    ];
+    const speakers = {
+      speaker_1: namedSpeaker('speaker_1', 'Kevin Roose', 'host', 0.95),
+      speaker_2: namedSpeaker('speaker_2', 'Casey Newton', 'co_host', 0.95),
+      speaker_5: { id: 'speaker_5', finalName: 'Speaker 5', fallbackName: 'Speaker 5', role: 'unknown', assignmentConfidence: 0.6, requiresReview: true },
+    };
+
+    const result = await runControlledSpeakerVerification(segments, speakers, {
+      title: 'Hard Fork',
+      filename: 'hard-fork.mp3',
+      openaiApiKey: 'test-key',
+    });
+
+    expect(result.speakers.speaker_5.finalName).toBe('Zach');
+    expect(result.speakers.speaker_5.role).toBe('unknown');
+    expect(result.speakers.speaker_5.nameProvenance).toContain('verifier_listener_self_id');
+    expect(result.diagnostics.acceptedRepairs[0]?.reason).toBe('accepted_listener_self_id');
   });
 });

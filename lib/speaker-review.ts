@@ -13,11 +13,41 @@ type SpeakerDataLike = {
         reasons?: string[];
         primaryReason?: string;
       }>;
+      speakerSuggestions?: SpeakerSuggestion[];
+    };
+    pipelineDiagnostics?: {
+      speakerVerification?: {
+        rejectedRepairs?: Array<{
+          reason?: string;
+          proposal?: {
+            repairType?: string;
+            targetSpeakerId?: string;
+            sourceSpeakerId?: string;
+            proposedName?: string | null;
+            proposedRole?: string | null;
+            confidence?: number;
+            reason?: string;
+            evidenceSegmentIndices?: number[];
+          };
+        }>;
+      };
     };
   };
 };
 
 const REVIEW_CONFIDENCE_THRESHOLD = 0.75;
+const MIN_SUGGESTED_NAME_CONFIDENCE = 0.45;
+
+export type SpeakerSuggestion = {
+  speakerId: string;
+  suggestedName: string;
+  suggestedRole?: string | null;
+  confidence: number;
+  reason: string;
+  source: string;
+  rejectedReason?: string;
+  evidenceSegmentIndices?: number[];
+};
 
 function isConversationalSegment(segment: any): boolean {
   return segment?.segmentKind !== 'ad_read' &&
@@ -54,6 +84,86 @@ export function getStoredReviewItems(speakerData: SpeakerDataLike | null | undef
     .sort((a, b) => a.index - b.index);
 }
 
+function isGenericSpeakerName(name: string | null | undefined): boolean {
+  return /^speaker\s+\d+$/i.test(String(name || '').trim());
+}
+
+function isValidSuggestionName(name: string | null | undefined): name is string {
+  const trimmed = String(name || '').trim();
+  if (!trimmed || trimmed.length < 3) return false;
+  if (isGenericSpeakerName(trimmed)) return false;
+  if (!/[A-Za-z]/.test(trimmed)) return false;
+  return true;
+}
+
+export function getSpeakerSuggestionsFromSpeakerData(
+  speakerData: SpeakerDataLike | null | undefined
+): SpeakerSuggestion[] {
+  const stored = speakerData?.detectionMetadata?.speakerAssignmentBreakdown?.speakerSuggestions;
+  if (Array.isArray(stored)) {
+    return stored
+      .filter((suggestion): suggestion is SpeakerSuggestion => (
+        typeof suggestion?.speakerId === 'string' &&
+        isValidSuggestionName(suggestion?.suggestedName) &&
+        typeof suggestion?.confidence === 'number'
+      ))
+      .sort((a, b) => {
+        if (b.confidence !== a.confidence) return b.confidence - a.confidence;
+        return a.speakerId.localeCompare(b.speakerId);
+      });
+  }
+
+  const rejected = speakerData?.detectionMetadata?.pipelineDiagnostics?.speakerVerification?.rejectedRepairs;
+  if (!Array.isArray(rejected)) return [];
+
+  const bySpeakerAndName = new Map<string, SpeakerSuggestion>();
+  for (const item of rejected) {
+    const proposal = item?.proposal;
+    const repairType = proposal?.repairType;
+    if (repairType !== 'rename' && repairType !== 'bindIntroName') continue;
+    if (item?.reason !== 'proposal_confidence_below_threshold') continue;
+    if (!isValidSuggestionName(proposal?.proposedName)) continue;
+
+    const speakerId = proposal?.targetSpeakerId || proposal?.sourceSpeakerId;
+    if (!speakerId) continue;
+    const speaker = speakerData?.speakers?.[speakerId];
+    const currentName = speaker?.finalName || speaker?.name || speaker?.fallbackName;
+    if (currentName && !isGenericSpeakerName(currentName)) {
+      continue;
+    }
+
+    const confidence = Math.max(0, Math.min(1, Number(proposal?.confidence || 0)));
+    if (confidence < MIN_SUGGESTED_NAME_CONFIDENCE) continue;
+
+    const key = `${speakerId}:${normalizeForSuggestion(proposal!.proposedName!)}`;
+    const suggestion: SpeakerSuggestion = {
+      speakerId,
+      suggestedName: proposal!.proposedName!.trim(),
+      suggestedRole: proposal?.proposedRole || null,
+      confidence,
+      reason: proposal?.reason || 'Low-confidence speaker name candidate',
+      source: repairType === 'bindIntroName' ? 'verifier_intro_binding' : 'verifier_rename',
+      rejectedReason: item?.reason,
+      evidenceSegmentIndices: Array.isArray(proposal?.evidenceSegmentIndices)
+        ? proposal!.evidenceSegmentIndices!.filter((index): index is number => Number.isInteger(index) && index >= 0)
+        : [],
+    };
+    const existing = bySpeakerAndName.get(key);
+    if (!existing || suggestion.confidence > existing.confidence) {
+      bySpeakerAndName.set(key, suggestion);
+    }
+  }
+
+  return Array.from(bySpeakerAndName.values()).sort((a, b) => {
+    if (b.confidence !== a.confidence) return b.confidence - a.confidence;
+    return a.speakerId.localeCompare(b.speakerId);
+  });
+}
+
+function normalizeForSuggestion(name: string): string {
+  return name.toLowerCase().trim().replace(/\s+/g, ' ');
+}
+
 export function formatReviewReason(reason: string | null | undefined): string {
   if (!reason) return 'Needs review';
   if (reason.startsWith('uncertain:transition_short')) return 'Boundary segment';
@@ -75,7 +185,11 @@ export function getReviewSegmentIndicesFromSpeakerData(
   if (storedItems.length > 0) {
     return storedItems.map((item) => item.index);
   }
+  const hasStoredItems = Array.isArray(speakerData?.detectionMetadata?.speakerAssignmentBreakdown?.reviewItems);
   const stored = getStoredReviewSegmentIndices(speakerData);
+  const hasStoredIndices = Array.isArray(speakerData?.detectionMetadata?.speakerAssignmentBreakdown?.segmentReviewIndices);
+  if (hasStoredIndices) return stored;
+  if (hasStoredItems) return [];
   if (stored.length > 0) return stored;
 
   const segments = Array.isArray(speakerData?.segments) ? speakerData!.segments! : [];
@@ -158,7 +272,7 @@ export function isReviewSegment(
   index: number
 ): boolean {
   const stored = getStoredReviewSegmentIndices(speakerData);
-  if (stored.length > 0) {
+  if (Array.isArray(speakerData?.detectionMetadata?.speakerAssignmentBreakdown?.segmentReviewIndices)) {
     return stored.includes(index);
   }
 
