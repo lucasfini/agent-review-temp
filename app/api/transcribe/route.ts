@@ -1,6 +1,6 @@
 import { NextRequest, NextResponse } from 'next/server';
-import { Buffer } from 'buffer';
 import { GetObjectCommand } from '@aws-sdk/client-s3';
+import { getSignedUrl } from '@aws-sdk/s3-request-presigner';
 import { supabaseAdmin } from '@/lib/supabase/server';
 import { transcribeWithAssemblyAI, checkAssemblyAIAvailability } from '@/lib/assemblyai-integration';
 import { transcribeWithDeepgram, checkDeepgramAvailability } from '@/lib/deepgram-integration';
@@ -17,9 +17,6 @@ import { scheduleBackgroundTask } from '@/lib/background-task';
 import type { TierFeatures, TierLevel } from '@/lib/tier-config';
 import { updateProcessingProgress, markProcessingFailed } from '@/lib/progress-tracker';
 import { ProcessingStage } from '@/lib/tier-progress-config';
-import { promises as fs } from 'fs';
-import * as path from 'path';
-import * as os from 'os';
 import type { SpeakerSegment, TranscriptionSegment } from '@/lib/types';
 import { estimateTranscriptionCostAsync } from '@/lib/billing/cost-map';
 import { trackAssemblyAIUsage, requireSufficientCredit } from '@/lib/billing/track-usage';
@@ -53,102 +50,6 @@ const sleep = (ms: number) => new Promise<void>(resolve => setTimeout(resolve, m
 
 // Allow this function to run for up to 5 minutes (300 seconds)
 export const maxDuration = 300;
-
-// Global file storage for temporary solution
-declare global {
-  var uploadedFiles: Map<string, {
-    buffer: ArrayBuffer;
-    contentType: string;
-    originalName: string;
-    size: number;
-  }>;
-}
-
-const sanitizeFileName = (name: string) => {
-  const normalized = name
-    .normalize('NFKD')
-    .replace(/[\u0300-\u036f]/g, '');
-  const sanitized = normalized
-    .replace(/[^a-zA-Z0-9.-]/g, '_')
-    .replace(/_{2,}/g, '_')
-    .replace(/^_+|_+$/g, '');
-  return sanitized || 'audio_upload';
-};
-
-const buildInMemoryKeys = (fileName: string) => {
-  const keys = new Set<string>();
-  if (!fileName) return [];
-  keys.add(fileName);
-  const pathParts = fileName.split('/');
-  const base = pathParts.pop() || fileName;
-  const dir = pathParts.join('/');
-  keys.add(base);
-  const sanitizedBase = sanitizeFileName(base);
-  keys.add(sanitizedBase);
-  if (dir) {
-    keys.add(`${dir}/${base}`);
-    keys.add(`${dir}/${sanitizedBase}`);
-  }
-  return Array.from(keys).filter(Boolean);
-};
-
-const buildStorageKeys = (projectId: string, fileName: string) => {
-  const keys = new Set<string>();
-  if (!fileName) return [];
-  keys.add(fileName);
-  if (!fileName.includes('/')) {
-    keys.add(`${projectId}/${fileName}`);
-  }
-  return Array.from(keys).filter(Boolean);
-};
-
-async function loadAudioFromStorage(projectId: string, fileName: string) {
-  const candidateKeys = buildStorageKeys(projectId, fileName);
-
-  for (const key of candidateKeys) {
-    try {
-      const response = await r2Client.send(
-        new GetObjectCommand({
-          Bucket: BUCKET_NAME,
-          Key: key,
-        })
-      );
-
-      if (!response.Body) {
-        continue;
-      }
-
-      const byteArray = await response.Body.transformToByteArray();
-      const buffer = Buffer.from(byteArray);
-
-      console.log(`[TRANSCRIPTION] ✅ Loaded file from storage with key: "${key}"`);
-
-      return {
-        buffer,
-        size: buffer.byteLength,
-        contentType: response.ContentType || 'audio/mpeg',
-        originalName: key.split('/').pop() || fileName,
-        storageKey: key,
-      };
-    } catch (error: any) {
-      const isMissing =
-        error?.name === 'NoSuchKey' ||
-        error?.$metadata?.httpStatusCode === 404;
-
-      if (!isMissing) {
-        console.warn(`[TRANSCRIPTION] ⚠️ Failed loading storage key "${key}":`, error);
-      }
-    }
-  }
-
-  return null;
-}
-
-const purgeInMemoryAudio = (fileName: string | undefined) => {
-  if (!fileName || !global.uploadedFiles) return;
-  const keys = buildInMemoryKeys(fileName);
-  keys.forEach(key => global.uploadedFiles?.delete(key));
-};
 
 type AIProcessingFlags = {
   nameExtraction?: boolean;
@@ -461,7 +362,6 @@ async function runBackgroundContentTasks(params: {
 
 export async function POST(request: NextRequest) {
   const startTime = Date.now();
-  let tempAudioFilePath: string | null = null;
   let parsedProjectId: string | undefined;
 
   try {
@@ -529,7 +429,7 @@ export async function POST(request: NextRequest) {
     // Check if project already has cached transcription
     const { data: existingProject, error: projectError } = await supabaseAdmin
       .from('projects')
-      .select('transcription_text, transcription_segments, speaker_data, audio_duration, user_id, title, preset_speakers, metadata, performance_level')
+      .select('transcription_text, transcription_segments, speaker_data, audio_duration, audio_file_size, user_id, title, preset_speakers, metadata, performance_level')
       .eq('id', projectId)
       .single() as {
         data: {
@@ -537,6 +437,7 @@ export async function POST(request: NextRequest) {
           transcription_segments: any;
           speaker_data: any;
           audio_duration: number | null;
+          audio_file_size: number | null;
           user_id: string;
           title: string;
           preset_speakers: any[] | null;
@@ -657,56 +558,27 @@ export async function POST(request: NextRequest) {
       const fingerprint = payload.fingerprint as string | undefined;
       await incrementReferenceCount(fingerprint);
     } else {
-      let fileBuffer: Buffer | null = null;
-      let fileSize = 0;
+      const fileSize = existingProject.audio_file_size || 0;
+      console.log(`[TRANSCRIPTION] 📊 File size from database: ${Math.round(fileSize / 1024 / 1024 * 100) / 100}MB`);
 
-      const storageFile = await loadAudioFromStorage(projectId, fileName);
-      if (storageFile) {
-        fileBuffer = storageFile.buffer;
-        fileSize = storageFile.size;
-      } else if (global.uploadedFiles) {
-        const fileKeys = buildInMemoryKeys(fileName);
-        let fileData: {
-          buffer: ArrayBuffer;
-          contentType: string;
-          originalName: string;
-          size: number;
-        } | undefined;
-
-        for (const key of fileKeys) {
-          fileData = global.uploadedFiles.get(key);
-          if (fileData) {
-            console.log(`[TRANSCRIPTION] ✅ Found file in memory with key: "${key}"`);
-            break;
-          }
-        }
-
-        if (fileData) {
-          fileBuffer = Buffer.from(fileData.buffer);
-          fileSize = fileData.size;
-        } else {
-          throw new Error(`Audio file not found. Tried storage and in-memory keys: ${fileKeys.join(', ')}`);
-        }
-      } else {
-        throw new Error('Audio file not available for transcription.');
-      }
-
-      console.log(`[TRANSCRIPTION] 📊 File size: ${Math.round(fileSize / 1024 / 1024 * 100) / 100}MB`);
-
-      // Save audio file to temp location
-      const tempDir = os.tmpdir();
-      const tempFileName = `${diarizationProvider}_${Date.now()}_${fileName.split('/').pop()}`;
-      tempAudioFilePath = path.join(tempDir, tempFileName);
-
-      await fs.writeFile(tempAudioFilePath, fileBuffer);
-      console.log(`[TRANSCRIPTION] 📁 Temp audio file created: ${tempAudioFilePath}`);
+      // Generate a presigned GET URL for the audio file in R2
+      // This allows the transcription provider to download the file directly without routing it through our server
+      console.log(`[TRANSCRIPTION] 🔗 Generating presigned URL for handoff...`);
+      const audioUrl = await getSignedUrl(
+        r2Client,
+        new GetObjectCommand({
+          Bucket: BUCKET_NAME,
+          Key: fileName,
+        }),
+        { expiresIn: 7200 } // 2 hours is plenty for transcription
+      );
 
       // Pre-flight credit balance check
       const userId = existingProject?.user_id;
       if (userId && !uploadReservationId) {
         try {
-          // Estimate transcription cost based on file size (rough estimate: 1MB ≈ 60 seconds)
-          const estimatedDurationSeconds = Math.ceil((fileSize / 1024 / 1024) * 60);
+          // Use stored duration if available, otherwise estimate from file size
+          const estimatedDurationSeconds = existingProject.audio_duration || Math.ceil((fileSize / 1024 / 1024) * 60);
           const estimatedCost = await estimateTranscriptionCostAsync({
             durationSeconds: estimatedDurationSeconds,
             tier,
@@ -747,8 +619,6 @@ export async function POST(request: NextRequest) {
       let transcriptionDone = false;
 
       // Background drip: advance stage progress while the provider works.
-      // delayMs values are CUMULATIVE from start (not per-step).
-      // Stops as soon as the real transcription result arrives.
       const drip = (async () => {
         const steps = [
           { delayMs: 5_000,   progress: 10, message: 'Transcribing audio...' },
@@ -773,17 +643,17 @@ export async function POST(request: NextRequest) {
       })();
 
       if (diarizationProvider === 'deepgram') {
-        console.log('[TRANSCRIPTION] 📡 Starting Deepgram transcription...');
-        result = await transcribeWithDeepgram(tempAudioFilePath);
+        console.log('[TRANSCRIPTION] 📡 Starting Deepgram transcription via URL handoff...');
+        result = await transcribeWithDeepgram(audioUrl);
       } else {
-        console.log('[TRANSCRIPTION] 📡 Starting AssemblyAI transcription...');
-        result = await transcribeWithAssemblyAI(tempAudioFilePath, {
+        console.log('[TRANSCRIPTION] 📡 Starting AssemblyAI transcription via URL handoff...');
+        result = await transcribeWithAssemblyAI(audioUrl, {
           speakersExpected: speakerCount
         });
       }
 
       transcriptionDone = true;
-      void drip; // drip will exit on its next iteration check
+      void drip; 
 
       if (!result.success) {
         throw new Error(result.error || 'Transcription failed');
@@ -803,8 +673,6 @@ export async function POST(request: NextRequest) {
       // Track usage and debit credits
       if (userId && totalDuration > 0) {
         try {
-          // Use trackAssemblyAIUsage for Deepgram too for now, as it handles general time-based billing
-          // In future, we should add specific trackDeepgramUsage if costs differ significantly structure-wise
           const billingResult = await trackAssemblyAIUsage({
             userId,
             projectId,
@@ -1640,12 +1508,6 @@ export async function POST(request: NextRequest) {
       await settleReservation(uploadReservationId);
     }
 
-    // Cleanup
-    try {
-      if (tempAudioFilePath) await fs.unlink(tempAudioFilePath);
-      purgeInMemoryAudio(fileName);
-    } catch (e) { }
-
     const totalTime = (Date.now() - startTime) / 1000;
     console.log(`\n========================================`);
     console.log(`[TRANSCRIPTION] ✅ Completed in ${totalTime.toFixed(1)}s`);
@@ -1698,9 +1560,6 @@ export async function POST(request: NextRequest) {
       }
     }
 
-    if (tempAudioFilePath) {
-      try { await fs.unlink(tempAudioFilePath); } catch { }
-    }
     return NextResponse.json(
       { error: error.message || 'Transcription failed' },
       { status: 500 }

@@ -12,6 +12,7 @@ import {
   mapAnalysisJobKeyToReconcileTarget,
   type ProjectGenerationJob,
 } from '@/lib/project-generation-jobs';
+import { acquireGlobalJobLock, releaseGlobalJobLock, heartbeatGlobalJobLock } from '@/lib/concurrency';
 
 function isMissingFailureNotifiedAtColumn(error: any): boolean {
   return error?.code === 'PGRST204'
@@ -44,6 +45,7 @@ async function completeJob(jobId: string) {
     error_message: null,
     failure_notified_at: null,
   });
+  await releaseGlobalJobLock(jobId);
 }
 
 async function failJob(jobId: string, message: string) {
@@ -54,6 +56,7 @@ async function failJob(jobId: string, message: string) {
     error_message: message,
     failure_notified_at: null,
   });
+  await releaseGlobalJobLock(jobId);
 }
 
 export async function POST(
@@ -116,6 +119,23 @@ export async function POST(
 
       if (!nextJob) break;
 
+      // Check global concurrency lock
+      const lockAcquired = await acquireGlobalJobLock(nextJob.id);
+      if (!lockAcquired) {
+        console.log(`[PROJECT-GENERATE-PROCESS] Yielding due to global concurrency limit. Job ${nextJob.id} will remain queued.`);
+        
+        // Update user-facing progress to show queue status
+        await (supabaseAdmin as any)
+          .from('generation_progress')
+          .update({
+            message: 'Waiting in queue (server at capacity)...',
+            updated_at: new Date().toISOString()
+          })
+          .eq('project_id', projectId);
+
+        break; // Stop processing for this project instance for now
+      }
+
       let claim = await (supabaseAdmin as any)
         .from('project_generation_jobs')
         .update({
@@ -147,8 +167,16 @@ export async function POST(
 
       const job = claim.data as ProjectGenerationJob | null;
       if (!job) {
+        await releaseGlobalJobLock(nextJob.id);
         continue;
       }
+
+      // Start heartbeat to keep lock alive for long-running tasks
+      const heartbeat = setInterval(() => {
+        heartbeatGlobalJobLock(job.id).catch(err => 
+          console.error(`[PROJECT-GENERATE-PROCESS] Heartbeat failed for ${job.id}:`, err)
+        );
+      }, 5 * 60 * 1000); // Every 5 minutes
 
       try {
         const { data: project, error: projectError } = await (supabaseAdmin as any)
@@ -291,6 +319,8 @@ export async function POST(
           ? `Insufficient credits: need $${error.required.toFixed(4)}, have $${error.available.toFixed(4)}`
           : (error?.message || 'Generation failed');
         await failJob(job.id, message);
+      } finally {
+        clearInterval(heartbeat);
       }
     }
 
