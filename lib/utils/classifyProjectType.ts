@@ -11,6 +11,7 @@
  */
 
 import type { SpeakerSegment } from '@/lib/types';
+import { trackOpenAIUsage } from '@/lib/billing/track-usage';
 
 export type ProjectType = 'DEBATE' | 'INTERVIEW' | 'PODCAST' | 'MONOLOGUE' | 'OTHER';
 
@@ -382,6 +383,7 @@ export async function classifyProjectTypeWithAI(
     openaiApiKey?: string;
     userId?: string;
     projectId?: string;
+    reservationId?: string;
   } = {}
 ): Promise<ClassificationResult> {
   // First, get heuristic classification as baseline
@@ -432,6 +434,20 @@ Respond in JSON format only:
       max_tokens: 200,
       temperature: 0.1,
     });
+
+    if (options.userId) {
+      await trackOpenAIUsage({
+        userId: options.userId,
+        projectId: options.projectId,
+        reservationId: options.reservationId,
+        response,
+        modelName: 'gpt-4o-mini',
+        purpose: 'Project Type Classification',
+        shouldDebit: options.reservationId ? false : true,
+      }).catch((billingError) => {
+        console.error('[CLASSIFY] Billing tracking failed:', billingError);
+      });
+    }
 
     const content = response.choices[0]?.message?.content;
     if (content) {

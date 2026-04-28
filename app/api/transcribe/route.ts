@@ -921,6 +921,7 @@ export async function POST(request: NextRequest) {
           openaiApiKey: openaiApiKey ?? undefined,
           userId: existingProject?.user_id,
           projectId,
+          reservationId: uploadReservationId,
         }
       );
 

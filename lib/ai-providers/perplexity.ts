@@ -6,6 +6,7 @@
  */
 
 import { getPrompt, getSystemMessage, prompts } from '@/lib/prompts/loader';
+import { trackPerplexityUsage } from '@/lib/billing/track-usage';
 import type { ResearchLinksVars } from '@/lib/prompts/types';
 
 export interface PerplexitySource {
@@ -57,13 +58,20 @@ export interface ResearchLinksResult {
   };
 }
 
+export interface ResearchLinksBillingOptions {
+  userId?: string;
+  projectId?: string;
+  reservationId?: string;
+}
+
 /**
  * Generate research links for a given insight using Perplexity Sonar Pro
  */
 export async function generateResearchLinks(
   insightLabel: string,
   insightContext: string,
-  category: 'person' | 'concept' | 'tool'
+  category: 'person' | 'concept' | 'tool',
+  billing?: ResearchLinksBillingOptions
 ): Promise<ResearchLinksResult> {
   const apiKey = process.env.PERPLEXITY_API_KEY;
 
@@ -139,6 +147,25 @@ export async function generateResearchLinks(
     const inputCost = (data.usage.prompt_tokens / 1_000_000) * 3.00;
     const outputCost = (data.usage.completion_tokens / 1_000_000) * 15.00;
     const totalCost = inputCost + outputCost;
+
+    if (billing?.userId) {
+      await trackPerplexityUsage({
+        userId: billing.userId,
+        projectId: billing.projectId,
+        reservationId: billing.reservationId,
+        modelName: config.model,
+        inputTokens: data.usage.prompt_tokens,
+        outputTokens: data.usage.completion_tokens,
+        purpose: 'Insight Research Links',
+        metadata: {
+          insightLabel,
+          category,
+        },
+        shouldDebit: billing.reservationId ? false : true,
+      }).catch((billingError) => {
+        console.error('[PERPLEXITY] Billing tracking failed:', billingError);
+      });
+    }
 
     return {
       sources: parsed.sources,
@@ -255,7 +282,8 @@ export async function generateResearchLinksForInsights(
     context: string;
     category: 'person' | 'concept' | 'tool';
   }>,
-  maxConcurrent: number = 3
+  maxConcurrent: number = 3,
+  billing?: ResearchLinksBillingOptions
 ): Promise<Map<string, ResearchLinksResult>> {
   const results = new Map<string, ResearchLinksResult>();
 
@@ -267,7 +295,8 @@ export async function generateResearchLinksForInsights(
       const result = await generateResearchLinks(
         insight.label,
         insight.context,
-        insight.category
+        insight.category,
+        billing
       );
       return { label: insight.label, result };
     });

@@ -8,6 +8,7 @@
 
 import OpenAI from 'openai';
 import { getOpenAIApiKeyForUser } from '@/lib/openai/consent';
+import { trackOpenAIUsage } from '@/lib/billing/track-usage';
 import { SpeakerSegment } from './types';
 
 export type SpeakerRole =
@@ -108,6 +109,8 @@ export async function identifySpeakers(
     projectTitle?: string;
     projectType?: ProjectType;
     userId?: string;
+    projectId?: string;
+    reservationId?: string;
   } = {}
 ): Promise<SpeakerIntelligenceResult> {
   const apiKey = options.apiKey ?? await getOpenAIApiKeyForUser(options.userId);
@@ -148,6 +151,18 @@ Remember:
       ],
       response_format: { type: 'json_object' }
     });
+
+    if (options.userId) {
+      await trackOpenAIUsage({
+        userId: options.userId,
+        projectId: options.projectId,
+        reservationId: options.reservationId,
+        response,
+        modelName: model,
+        purpose: 'Legacy Speaker Intelligence',
+        shouldDebit: options.reservationId ? false : true,
+      });
+    }
 
     const content = response.choices[0]?.message?.content || '{}';
     const parsed = JSON.parse(content);

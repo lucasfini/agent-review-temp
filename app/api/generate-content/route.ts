@@ -631,8 +631,14 @@ export async function POST(request: NextRequest) {
       contentReservationId = reservation.id;
     }
 
-    // Use selected model or default to GPT-4o
+    // Use selected model or default to GPT-5 mini
     const modelToUse = modelId || 'gpt-5-mini';
+    if (!modelToUse.startsWith('gpt-') && !modelToUse.startsWith('o1-')) {
+      return NextResponse.json(
+        { error: `Model ${modelToUse} is not enabled for billable content generation` },
+        { status: 400 }
+      );
+    }
 
     console.log(`[GENERATION] 🚀 Starting Universal Content Engine for project ${projectId}`);
     console.log(`[GENERATION] 📦 Processing ${blocks.length} blocks with ${modelToUse}`);

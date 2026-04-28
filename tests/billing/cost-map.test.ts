@@ -35,6 +35,9 @@ describe('COST_MAP', () => {
   });
 
   test('should use current GPT-5 family rates', () => {
+    expect(COST_MAP.openai_gpt5_2_input.providerRate).toBeCloseTo(1.75 / 1_000_000, 12);
+    expect(COST_MAP.openai_gpt5_2_output.providerRate).toBeCloseTo(14 / 1_000_000, 12);
+    expect(COST_MAP.openai_gpt5_2_cached_input.providerRate).toBeCloseTo(0.175 / 1_000_000, 12);
     expect(COST_MAP.openai_gpt5_input.providerRate).toBeCloseTo(1.25 / 1_000_000, 12);
     expect(COST_MAP.openai_gpt5_output.providerRate).toBeCloseTo(10 / 1_000_000, 12);
     expect(COST_MAP.openai_gpt5_mini_input.providerRate).toBeCloseTo(0.25 / 1_000_000, 12);

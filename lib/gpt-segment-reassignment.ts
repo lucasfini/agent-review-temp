@@ -4,6 +4,7 @@
 
 import OpenAI from 'openai';
 import { getOpenAIApiKeyForUser } from '@/lib/openai/consent';
+import { trackOpenAIUsage } from '@/lib/billing/track-usage';
 import { SpeakerSegment } from './types';
 import { GPTSpeaker, isValidGPTSpeakerId } from './gpt-speaker-intelligence';
 
@@ -118,6 +119,8 @@ export async function reassignSegmentsWithGPT(
     apiKey?: string;
     model?: string;
     userId?: string;
+    projectId?: string;
+    reservationId?: string;
   } = {}
 ): Promise<GPTReassignmentResult> {
   const apiKey = options.apiKey ?? await getOpenAIApiKeyForUser(options.userId);
@@ -171,6 +174,18 @@ Return ONLY the JSON mapping object using speaker IDs (speaker_1, speaker_2, etc
       ],
       response_format: { type: 'json_object' }
     });
+
+    if (options.userId) {
+      await trackOpenAIUsage({
+        userId: options.userId,
+        projectId: options.projectId,
+        reservationId: options.reservationId,
+        response,
+        modelName: model,
+        purpose: 'Legacy Segment Reassignment',
+        shouldDebit: options.reservationId ? false : true,
+      });
+    }
 
     const content = response.choices[0]?.message?.content;
     if (!content) {

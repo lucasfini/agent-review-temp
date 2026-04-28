@@ -41,10 +41,11 @@ export function extractOpenAIUsage(response: any): OpenAIUsage {
 
 /**
  * Map a model name to the correct cost-map service keys.
- * More-specific checks (gpt-5-nano, gpt-5-mini) must come before the
- * catch-all (gpt-5) because all three strings contain "gpt-5".
+ * More-specific checks (gpt-5.2, gpt-5-nano, gpt-5-mini) must come before
+ * the catch-all (gpt-5) because all of those strings contain "gpt-5".
  */
 function getOpenAIServiceKeys(modelName: string): { input: string; cachedInput: string; output: string } {
+  if (modelName.includes('gpt-5.2')) return { input: 'openai_gpt5_2_input', cachedInput: 'openai_gpt5_2_cached_input', output: 'openai_gpt5_2_output' };
   if (modelName.includes('gpt-5-nano')) return { input: 'openai_gpt5_nano_input', cachedInput: 'openai_gpt5_nano_cached_input', output: 'openai_gpt5_nano_output' };
   if (modelName.includes('gpt-5-mini')) return { input: 'openai_gpt5_mini_input', cachedInput: 'openai_gpt5_mini_cached_input', output: 'openai_gpt5_mini_output' };
   if (modelName.includes('gpt-5'))      return { input: 'openai_gpt5_input',      cachedInput: 'openai_gpt5_cached_input',      output: 'openai_gpt5_output' };
@@ -300,6 +301,120 @@ export async function trackAnthropicUsage(params: {
     } catch (error) {
       if (strictBilling) throw error;
       console.error('[BILLING] Failed to debit Anthropic usage, continuing:', error);
+    }
+  }
+
+  return {
+    usageEventId,
+    billedCost: costResult.billedCost,
+    rawCost: costResult.rawCost,
+  };
+}
+
+// ============================================================================
+// Perplexity Usage Tracking
+// ============================================================================
+
+export async function trackPerplexityUsage(params: {
+  userId: string;
+  projectId?: string;
+  reservationId?: string;
+  modelName?: string;
+  inputTokens: number;
+  outputTokens: number;
+  purpose?: string;
+  metadata?: Record<string, unknown>;
+  shouldDebit?: boolean;
+  strictBilling?: boolean;
+}): Promise<{
+  usageEventId: string;
+  billedCost: number;
+  rawCost: number;
+}> {
+  const {
+    userId,
+    projectId,
+    reservationId,
+    modelName = 'sonar-pro',
+    inputTokens,
+    outputTokens,
+    purpose,
+    metadata,
+    shouldDebit = reservationId ? false : true,
+    strictBilling = false,
+  } = params;
+
+  const costResult = await calculateTokenCostAsync(
+    'perplexity_sonar_input',
+    'perplexity_sonar_output',
+    inputTokens,
+    outputTokens
+  );
+
+  let usageEventId = '';
+
+  try {
+    const usageEvent = await logUsageEvent({
+      userId,
+      projectId,
+      reservationId,
+      serviceKey: 'perplexity_sonar_input',
+      serviceName: `Perplexity ${modelName} Input`,
+      provider: 'perplexity',
+      units: inputTokens,
+      unitType: 'input_tokens',
+      rawCost: costResult.breakdown.input.rawCost,
+      marginPercent: 45,
+      billedCost: costResult.breakdown.input.billedCost,
+      metadata: {
+        model: modelName,
+        purpose,
+        ...metadata,
+      },
+      status: reservationId ? 'pending' : 'completed',
+      workflowStep: purpose,
+    });
+    usageEventId = usageEvent.id;
+
+    await logUsageEvent({
+      userId,
+      projectId,
+      reservationId,
+      serviceKey: 'perplexity_sonar_output',
+      serviceName: `Perplexity ${modelName} Output`,
+      provider: 'perplexity',
+      units: outputTokens,
+      unitType: 'output_tokens',
+      rawCost: costResult.breakdown.output.rawCost,
+      marginPercent: 45,
+      billedCost: costResult.breakdown.output.billedCost,
+      metadata: {
+        model: modelName,
+        purpose,
+        ...metadata,
+      },
+      status: reservationId ? 'pending' : 'completed',
+      workflowStep: purpose,
+    });
+  } catch (error) {
+    if (strictBilling) throw error;
+    console.error('[BILLING] Failed to log Perplexity usage event, continuing:', error);
+  }
+
+  if (shouldDebit) {
+    try {
+      await debitCredit(userId, costResult.billedCost, usageEventId || undefined, {
+        reason: `Perplexity ${modelName} - ${purpose || 'API call'}`,
+        metadata: {
+          projectId,
+          model: modelName,
+          inputTokens,
+          outputTokens,
+        },
+      });
+    } catch (error) {
+      if (strictBilling) throw error;
+      console.error('[BILLING] Failed to debit Perplexity usage, continuing:', error);
     }
   }
 

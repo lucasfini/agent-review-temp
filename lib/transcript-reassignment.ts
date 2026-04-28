@@ -6,6 +6,7 @@
 // - Use conversational continuity, Q&A flow, intro language
 
 import Anthropic from '@anthropic-ai/sdk';
+import { trackAnthropicUsage } from '@/lib/billing/track-usage';
 import { IntelligentSpeaker } from './speaker-intelligence';
 
 export interface ReassignedUtterance {
@@ -76,6 +77,9 @@ export async function reassignTranscript(
   options: {
     apiKey?: string;
     model?: string;
+    userId?: string;
+    projectId?: string;
+    reservationId?: string;
   } = {}
 ): Promise<TranscriptReassignmentResult> {
   const apiKey = options.apiKey || process.env.ANTHROPIC_API_KEY;
@@ -116,6 +120,18 @@ Return the mapping as JSON.`;
         { role: 'user', content: userPrompt }
       ]
     });
+
+    if (options.userId) {
+      await trackAnthropicUsage({
+        userId: options.userId,
+        projectId: options.projectId,
+        reservationId: options.reservationId,
+        response,
+        modelName: model.includes('haiku') ? 'haiku-4.5' : 'sonnet-4.5',
+        purpose: 'Legacy Transcript Reassignment',
+        shouldDebit: options.reservationId ? false : true,
+      });
+    }
 
     const content = response.content[0];
     if (content.type !== 'text') {

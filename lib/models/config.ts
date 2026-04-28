@@ -94,6 +94,32 @@ export const MODEL_PROVIDERS: Record<string, ModelProvider> = {
 export const MODEL_SPECS: ModelSpec[] = [
   // OpenAI GPT-5 Family
   {
+    id: 'gpt-5.2',
+    name: 'gpt-5.2',
+    displayName: 'GPT-5.2',
+    provider: 'openai',
+    contextLength: 400000,
+    maxOutputTokens: 128000,
+    pricing: {
+      inputCostPer1kTokens: 0.00175,
+      outputCostPer1kTokens: 0.014,
+      currency: 'USD'
+    },
+    capabilities: {
+      reasoning: 10,
+      creativity: 10,
+      speed: 7,
+      multimodal: true,
+      functionCalling: true,
+      jsonMode: true
+    },
+    description: 'Frontier model for verification, coding, and agentic tasks',
+    releaseDate: '2025-12-11',
+    deprecated: false,
+    recommended: true,
+    category: 'reasoning'
+  },
+  {
     id: 'gpt-5',
     name: 'gpt-5',
     displayName: 'GPT-5',

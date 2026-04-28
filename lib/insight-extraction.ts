@@ -153,7 +153,12 @@ export async function processInsightsForProject(
 
     if (mergedInsights.length === 0) {
       console.warn('[Insights] No insights extracted');
-      return { success: true, insightCount: 0, totalCost: extractionResult.cost_usd };
+      return {
+        success: false,
+        insightCount: 0,
+        totalCost: 0,
+        error: 'No insights were extracted',
+      };
     }
 
     console.log(`[Insights] Extracted ${mergedInsights.length} insights`);
@@ -162,7 +167,12 @@ export async function processInsightsForProject(
     console.log('[Insights] Enriching top insights with research links...');
     const enrichedInsights = await enrichTopInsightsWithResearch(
       mergedInsights,
-      5 // Top 5 insights get research links
+      5, // Top 5 insights get research links
+      {
+        userId: effectiveUserId,
+        projectId,
+        reservationId,
+      }
     );
 
     // Calculate total cost
@@ -259,8 +269,11 @@ export async function extractInsightsWithHaiku(
       responseFormat: config.response_format as { type: 'json_object' | 'text' } | undefined,
     });
 
-    // Track usage if user ID is present
-    if (userId) {
+    const insights = parseInsightsFromResponse(response.content);
+
+    // Only bill after the model response produced usable insight data. Failed
+    // parses and empty result sets should not settle a user-facing insight job.
+    if (userId && insights.length > 0) {
       if (response.provider === 'openai') {
         await trackOpenAIUsage({
           userId,
@@ -296,8 +309,6 @@ export async function extractInsightsWithHaiku(
         });
       }
     }
-
-    const insights = parseInsightsFromResponse(response.content);
 
     // Calculate cost using GPT-4o-mini rates
     const inputTokens = response.usage.inputTokens;
@@ -694,7 +705,12 @@ export function rankPersonSources(sources: PerplexitySource[]): PerplexitySource
  */
 export async function enrichTopInsightsWithResearch(
   insights: ExtractedInsight[],
-  maxCount: number = 5
+  maxCount: number = 5,
+  billing?: {
+    userId?: string;
+    projectId?: string;
+    reservationId?: string;
+  }
 ): Promise<EnrichedInsight[]> {
   // Sort by confidence and frequency (number of excerpts)
   const scored = insights.map((insight) => ({
@@ -728,7 +744,7 @@ export async function enrichTopInsightsWithResearch(
   }));
 
   // Get research links from Perplexity
-  const researchResults = await generateResearchLinksForInsights(researchRequests);
+  const researchResults = await generateResearchLinksForInsights(researchRequests, 3, billing);
 
   // Merge results
   const enriched: EnrichedInsight[] = topInsights.map((insight) => {

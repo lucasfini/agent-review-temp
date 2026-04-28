@@ -151,6 +151,45 @@ export const COST_MAP: Record<string, ServiceCost> = {
   },
 
   // ============================================================================
+  // OpenAI - GPT-5.2 (Speaker Verification)
+  // ============================================================================
+  openai_gpt5_2_input: {
+    serviceKey: 'openai_gpt5_2_input',
+    serviceName: 'GPT-5.2 Input Tokens',
+    provider: 'openai',
+    unitType: 'input_tokens',
+    providerRate: 1.75 / 1_000_000, // $1.75 per 1M tokens
+    providerRateDisplay: '$1.75/1M tokens',
+    marginPercent: 45,
+    billedRate: (1.75 / 1_000_000) * 1.45,
+    billedRateDisplay: '$2.5375/1M tokens',
+  },
+
+  openai_gpt5_2_output: {
+    serviceKey: 'openai_gpt5_2_output',
+    serviceName: 'GPT-5.2 Output Tokens',
+    provider: 'openai',
+    unitType: 'output_tokens',
+    providerRate: 14.00 / 1_000_000, // $14.00 per 1M tokens
+    providerRateDisplay: '$14.00/1M tokens',
+    marginPercent: 45,
+    billedRate: (14.00 / 1_000_000) * 1.45,
+    billedRateDisplay: '$20.30/1M tokens',
+  },
+
+  openai_gpt5_2_cached_input: {
+    serviceKey: 'openai_gpt5_2_cached_input',
+    serviceName: 'GPT-5.2 Cached Input Tokens',
+    provider: 'openai',
+    unitType: 'input_tokens',
+    providerRate: 0.175 / 1_000_000, // $0.175 per 1M tokens
+    providerRateDisplay: '$0.175/1M tokens',
+    marginPercent: 45,
+    billedRate: (0.175 / 1_000_000) * 1.45,
+    billedRateDisplay: '$0.25375/1M tokens',
+  },
+
+  // ============================================================================
   // OpenAI - GPT-5 (Speaker Intelligence)
   // ============================================================================
   openai_gpt5_input: {
@@ -660,7 +699,12 @@ export function estimateTranscriptionCost(params: {
 
   if (features.insights) {
     const model = prompts.audioRepurpose.insightExtraction.model;
-    const serviceKeys = model.includes('gpt-5-nano')
+    const serviceKeys = model.includes('gpt-5.2')
+      ? {
+          input: 'openai_gpt5_2_input',
+          output: 'openai_gpt5_2_output',
+        }
+      : model.includes('gpt-5-nano')
       ? {
           input: 'openai_gpt5_nano_input',
           output: 'openai_gpt5_nano_output',
@@ -818,7 +862,9 @@ export async function estimateTranscriptionCostAsync(params: {
 
   if (features.insights) {
     const model = prompts.audioRepurpose.insightExtraction.model;
-    const serviceKeys = model.includes('gpt-5-nano')
+    const serviceKeys = model.includes('gpt-5.2')
+      ? { input: 'openai_gpt5_2_input', output: 'openai_gpt5_2_output' }
+      : model.includes('gpt-5-nano')
       ? { input: 'openai_gpt5_nano_input', output: 'openai_gpt5_nano_output' }
       : model.includes('gpt-5-mini')
         ? { input: 'openai_gpt5_mini_input', output: 'openai_gpt5_mini_output' }
@@ -916,7 +962,12 @@ export function estimateAnalysisJobCost(params: {
     }
     case 'insights': {
       const model = prompts.audioRepurpose.insightExtraction.model;
-      const serviceKeys = model.includes('gpt-5-nano')
+      const serviceKeys = model.includes('gpt-5.2')
+        ? {
+            input: 'openai_gpt5_2_input',
+            output: 'openai_gpt5_2_output',
+          }
+        : model.includes('gpt-5-nano')
         ? {
             input: 'openai_gpt5_nano_input',
             output: 'openai_gpt5_nano_output',
@@ -1013,7 +1064,9 @@ export async function estimateAnalysisJobCostAsync(params: {
     }
     case 'insights': {
       const model = prompts.audioRepurpose.insightExtraction.model;
-      const serviceKeys = model.includes('gpt-5-nano')
+      const serviceKeys = model.includes('gpt-5.2')
+        ? { input: 'openai_gpt5_2_input', output: 'openai_gpt5_2_output' }
+        : model.includes('gpt-5-nano')
         ? { input: 'openai_gpt5_nano_input', output: 'openai_gpt5_nano_output' }
         : model.includes('gpt-5-mini')
           ? { input: 'openai_gpt5_mini_input', output: 'openai_gpt5_mini_output' }

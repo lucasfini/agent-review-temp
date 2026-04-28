@@ -42,6 +42,7 @@ export interface TwoPassOptions {
   projectType?: ProjectType;
   userId?: string;
   projectId?: string;
+  reservationId?: string;
 }
 
 /**
@@ -87,7 +88,10 @@ export async function runTwoPassAttribution(
       apiKey: options.openaiApiKey,
       model: options.gptModel,
       projectTitle: options.projectTitle,
-      projectType: options.projectType
+      projectType: options.projectType,
+      userId: options.userId,
+      projectId: options.projectId,
+      reservationId: options.reservationId
     });
 
     console.log(`\n✓ Pass 1 complete: ${pass1Result.speakers.length} speakers identified`);
@@ -141,7 +145,10 @@ export async function runTwoPassAttribution(
   try {
     pass2Result = await reassignTranscript(utterances, pass1Result.speakers, {
       apiKey: options.anthropicApiKey,
-      model: options.claudeModel
+      model: options.claudeModel,
+      userId: options.userId,
+      projectId: options.projectId,
+      reservationId: options.reservationId
     });
 
     console.log(`\n✓ Pass 2 complete: ${pass2Result.utterances.length} utterances reassigned`);
