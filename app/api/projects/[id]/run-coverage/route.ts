@@ -10,7 +10,6 @@ import { estimateCoverageAnalysisCost } from '@/lib/billing/cost-map';
 import { billingErrorResponse, requireCredits } from '@/lib/billing/middleware';
 import { createReservation, failReservation, settleReservation } from '@/lib/billing/credit';
 import { normalizeTier } from '@/lib/tier-config';
-import { isDemoUser } from '@/lib/demo-mode';
 import { aiRatelimit } from '@/lib/rate-limit';
 import { estimateReservationAmount } from '@/lib/billing/reserve-amount';
 
@@ -87,11 +86,6 @@ export async function POST(
         { error: 'You do not have permission to run coverage for this project' },
         { status: 403 }
       );
-    }
-
-    const { data: { user: projectUser } } = await supabaseAdmin.auth.admin.getUserById(userId);
-    if (isDemoUser(projectUser)) {
-      return NextResponse.json({ error: 'Demo account is read-only' }, { status: 403 });
     }
 
     if (!project.transcription_text) {

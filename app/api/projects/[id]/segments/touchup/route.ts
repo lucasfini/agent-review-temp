@@ -7,7 +7,6 @@ import { billingErrorResponse, requireCredits } from '@/lib/billing/middleware';
 import { createReservation, failReservation, settleReservation } from '@/lib/billing/credit';
 import { getOpenAIApiKeyForUser } from '@/lib/openai/consent';
 import { RouteAccessError, requireProjectOwner } from '@/lib/api/route-auth';
-import { isDemoUser } from '@/lib/demo-mode';
 import { aiRatelimit } from '@/lib/rate-limit';
 import { estimateReservationAmount } from '@/lib/billing/reserve-amount';
 import { attachSpeakerAssignmentMetadata } from '@/lib/speaker-finalization';
@@ -166,10 +165,6 @@ export async function POST(
 
     if (!projectId) {
       return NextResponse.json({ error: 'Missing projectId' }, { status: 400 });
-    }
-
-    if (isDemoUser(user)) {
-      return NextResponse.json({ error: 'Demo account is read-only' }, { status: 403 });
     }
 
     const { success } = await aiRatelimit.limit(user.id);

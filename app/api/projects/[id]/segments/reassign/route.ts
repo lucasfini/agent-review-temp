@@ -1,7 +1,6 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { supabaseAdmin } from '@/lib/supabase/server';
 import { RouteAccessError, requireProjectOwner } from '@/lib/api/route-auth';
-import { isDemoUser } from '@/lib/demo-mode';
 import { attachSpeakerAssignmentMetadata } from '@/lib/speaker-finalization';
 
 // Force dynamic to prevent caching
@@ -15,7 +14,7 @@ export async function PATCH(
   try {
     const { id: projectId } = await params;
     const { segmentIndices, newSpeakerId, confirmOnly } = await request.json();
-    const { user } = await requireProjectOwner(request, projectId, 'speaker_data, user_id');
+    await requireProjectOwner(request, projectId, 'speaker_data, user_id');
 
     if (!projectId || !Array.isArray(segmentIndices)) {
       return NextResponse.json(
@@ -29,10 +28,6 @@ export async function PATCH(
         { error: 'Missing required field: newSpeakerId' },
         { status: 400 }
       );
-    }
-
-    if (isDemoUser(user)) {
-      return NextResponse.json({ error: 'Demo account is read-only' }, { status: 403 });
     }
 
     // Fetch current project data

@@ -1,7 +1,6 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { supabaseAdmin } from '@/lib/supabase/server';
 import { RouteAccessError, requireProjectOwner } from '@/lib/api/route-auth';
-import { isDemoUser } from '@/lib/demo-mode';
 import { attachSpeakerAssignmentMetadata } from '@/lib/speaker-finalization';
 
 export const dynamic = 'force-dynamic';
@@ -14,14 +13,10 @@ export async function PATCH(
   try {
     const { id: projectId, speakerId } = await params;
     const { action, newName, newRole, reassignToSpeakerId } = await request.json();
-    const { user } = await requireProjectOwner(request, projectId, 'speaker_data');
+    await requireProjectOwner(request, projectId, 'speaker_data');
 
     if (!projectId || !speakerId || !action) {
       return NextResponse.json({ error: 'Missing required fields' }, { status: 400 });
-    }
-
-    if (isDemoUser(user)) {
-      return NextResponse.json({ error: 'Demo account is read-only' }, { status: 403 });
     }
 
     const { data: project, error: fetchError } = await supabaseAdmin
@@ -141,17 +136,13 @@ export async function DELETE(
   try {
     const { id: projectId, speakerId } = await params;
     const { action, reassignToSpeakerId } = await request.json();
-    const { user } = await requireProjectOwner(request, projectId, 'speaker_data');
+    await requireProjectOwner(request, projectId, 'speaker_data');
 
     if (!projectId || !speakerId || !action) {
       return NextResponse.json({ error: 'Missing required fields' }, { status: 400 });
     }
     if (action === 'reassign' && !reassignToSpeakerId) {
       return NextResponse.json({ error: 'Missing reassignToSpeakerId' }, { status: 400 });
-    }
-
-    if (isDemoUser(user)) {
-      return NextResponse.json({ error: 'Demo account is read-only' }, { status: 403 });
     }
 
     const { data: project, error: fetchError } = await supabaseAdmin

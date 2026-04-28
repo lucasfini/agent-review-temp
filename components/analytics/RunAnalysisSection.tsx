@@ -14,7 +14,6 @@ interface RunAnalysisSectionProps {
   selectedHasSnapshot: boolean
   runningCoverageIds: Map<string, string>
   onRunAnalysis: (projectId: string) => void
-  readOnly?: boolean
 }
 
 export function RunAnalysisSection({
@@ -23,7 +22,6 @@ export function RunAnalysisSection({
   selectedHasSnapshot,
   runningCoverageIds,
   onRunAnalysis,
-  readOnly = false,
 }: RunAnalysisSectionProps) {
   const selectedIsRunning = selectedProject ? runningCoverageIds.has(selectedProject.id) : false
 
@@ -32,9 +30,8 @@ export function RunAnalysisSection({
       <button
         type="button"
         onClick={() => selectedProject && onRunAnalysis(selectedProject.id)}
-        disabled={readOnly || !selectedProject || !selectedHasTranscript || selectedIsRunning}
+        disabled={!selectedProject || !selectedHasTranscript || selectedIsRunning}
         className="inline-flex shrink-0 items-center justify-center gap-2 rounded-lg border border-blue-600 bg-transparent px-4 py-2.5 text-sm font-semibold text-blue-600 transition-colors hover:bg-blue-50 active:bg-blue-600 active:text-white disabled:cursor-not-allowed disabled:border-slate-300 disabled:text-slate-400 dark:border-blue-400 dark:text-blue-400 dark:hover:bg-blue-950/30 dark:active:bg-blue-500 dark:active:text-white dark:disabled:border-slate-700 dark:disabled:text-slate-500 sm:min-w-[170px]"
-        title={readOnly ? 'Demo account is read-only' : undefined}
       >
         {selectedIsRunning ? (
           <>

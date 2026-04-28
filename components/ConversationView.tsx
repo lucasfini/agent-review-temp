@@ -446,7 +446,15 @@ export default function ConversationView({
   // Scroll to a segment when triggered from the review sidebar
   useEffect(() => {
     if (scrollToSegmentIndex == null) return;
-    document.getElementById(`segment-${scrollToSegmentIndex}`)?.scrollIntoView({ behavior: 'smooth', block: 'center' });
+    const container = transcriptContainerRef.current;
+    const element = document.getElementById(`segment-${scrollToSegmentIndex}`);
+    if (container && element) {
+      const containerRect = container.getBoundingClientRect();
+      const elementRect = element.getBoundingClientRect();
+      const relativeTop = elementRect.top - containerRect.top;
+      const targetScrollTop = container.scrollTop + relativeTop - (containerRect.height / 2) + (elementRect.height / 2);
+      container.scrollTo({ top: targetScrollTop, behavior: 'smooth' });
+    }
   }, [scrollToSegmentIndex]);
 
   // Track which segment is currently being spoken during audio playback
@@ -498,7 +506,15 @@ export default function ConversationView({
   useEffect(() => {
     if (activeSegmentIndex == null) return;
     if (autoScrollPaused || isUserScrollingRef.current) return;
-    document.getElementById(`segment-${activeSegmentIndex}`)?.scrollIntoView({ behavior: 'smooth', block: 'center' });
+    const container = transcriptContainerRef.current;
+    const element = document.getElementById(`segment-${activeSegmentIndex}`);
+    if (container && element) {
+      const containerRect = container.getBoundingClientRect();
+      const elementRect = element.getBoundingClientRect();
+      const relativeTop = elementRect.top - containerRect.top;
+      const targetScrollTop = container.scrollTop + relativeTop - (containerRect.height / 2) + (elementRect.height / 2);
+      container.scrollTo({ top: targetScrollTop, behavior: 'smooth' });
+    }
   }, [activeSegmentIndex, autoScrollPaused]);
 
   // Detect manual user scrolling to pause auto-scroll

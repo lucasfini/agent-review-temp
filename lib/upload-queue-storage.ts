@@ -6,8 +6,9 @@ import type { QueuedRosterSpeaker, UploadedFile } from '@/lib/context/upload-pro
 const DB_NAME = 'audio-repurpose-upload-queue';
 const DB_VERSION = 1;
 const STORE_NAME = 'queued_uploads';
+const RUNNING_FLAG_KEY = 'audio-repurpose-upload-queue-running';
 
-type PersistedQueuedUploadStatus = 'queued';
+type PersistedQueuedUploadStatus = 'queued' | 'pending' | 'extracting' | 'uploading';
 
 interface PersistedQueuedUploadRecord {
   id: string;
@@ -104,12 +105,13 @@ function requestToPromise<T>(request: IDBRequest<T>): Promise<T> {
 }
 
 function toPersistedQueuedUpload(uploadedFile: UploadedFile): PersistedQueuedUploadRecord | null {
-  if (uploadedFile.status !== 'queued') return null;
+  if (!['queued', 'pending', 'extracting', 'uploading'].includes(uploadedFile.status)) return null;
+  if (uploadedFile.projectId) return null;
 
   return {
     id: uploadedFile.id,
     file: uploadedFile.file,
-    status: 'queued',
+    status: uploadedFile.status as PersistedQueuedUploadStatus,
     progress: uploadedFile.progress,
     extractionProgress: uploadedFile.extractionProgress,
     processingStage: uploadedFile.processingStage,
@@ -129,15 +131,17 @@ function toPersistedQueuedUpload(uploadedFile: UploadedFile): PersistedQueuedUpl
 }
 
 function toUploadedFile(record: PersistedQueuedUploadRecord): UploadedFile {
+  const interrupted = record.status !== 'queued';
+
   return {
     id: record.id,
     file: record.file,
     status: 'queued',
-    progress: record.progress,
-    extractionProgress: record.extractionProgress,
-    processingStage: record.processingStage,
-    stageProgress: record.stageProgress,
-    processingMessage: record.processingMessage || 'Waiting in queue...',
+    progress: 0,
+    extractionProgress: undefined,
+    processingStage: 'pending',
+    stageProgress: 0,
+    processingMessage: interrupted ? 'Ready to retry after refresh.' : (record.processingMessage || 'Waiting in queue...'),
     processingTier: normalizeTier(record.processingTier),
     analysisOptions: normalizeAnalysisOptions(record.analysisOptions),
     displayName: record.displayName,
@@ -160,7 +164,7 @@ export async function loadPersistedQueuedUploads(): Promise<UploadedFile[]> {
     });
 
     return records
-      .filter((record) => record?.status === 'queued')
+      .filter((record) => record && ['queued', 'pending', 'extracting', 'uploading'].includes(record.status))
       .map(toUploadedFile);
   } catch (error) {
     console.warn('Failed to load persisted queued uploads:', error);
@@ -207,5 +211,29 @@ export async function clearPersistedQueuedUploads(): Promise<void> {
     await withStore('readwrite', (store) => requestToPromise(store.clear()));
   } catch (error) {
     console.warn('Failed to clear persisted queued uploads:', error);
+  }
+}
+
+export function loadPersistedQueueRunningState(): boolean {
+  if (typeof window === 'undefined') return false;
+
+  try {
+    return window.localStorage.getItem(RUNNING_FLAG_KEY) === '1';
+  } catch {
+    return false;
+  }
+}
+
+export function persistQueueRunningState(isRunning: boolean): void {
+  if (typeof window === 'undefined') return;
+
+  try {
+    if (isRunning) {
+      window.localStorage.setItem(RUNNING_FLAG_KEY, '1');
+    } else {
+      window.localStorage.removeItem(RUNNING_FLAG_KEY);
+    }
+  } catch {
+    // Ignore browser storage write failures.
   }
 }

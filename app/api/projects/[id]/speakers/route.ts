@@ -1,7 +1,6 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { supabaseAdmin } from '@/lib/supabase/server';
 import { RouteAccessError, requireProjectOwner } from '@/lib/api/route-auth';
-import { isDemoUser } from '@/lib/demo-mode';
 
 // Force dynamic to prevent caching
 export const dynamic = 'force-dynamic';
@@ -14,17 +13,13 @@ export async function POST(
   try {
     const { id: projectId } = await params;
     const { name, role } = await request.json();
-    const { user } = await requireProjectOwner(request, projectId, 'speaker_data');
+    await requireProjectOwner(request, projectId, 'speaker_data');
 
     if (!projectId || !name?.trim()) {
       return NextResponse.json(
         { error: 'Missing required fields' },
         { status: 400 }
       );
-    }
-
-    if (isDemoUser(user)) {
-      return NextResponse.json({ error: 'Demo account is read-only' }, { status: 403 });
     }
 
     // Fetch current speaker data
@@ -86,17 +81,13 @@ export async function PATCH(
   try {
     const { id: projectId } = await params;
     const { speakerId, newName, speakerData } = await request.json();
-    const { user } = await requireProjectOwner(request, projectId);
+    await requireProjectOwner(request, projectId);
 
     if (!projectId || !speakerId || !newName || !speakerData) {
       return NextResponse.json(
         { error: 'Missing required fields' },
         { status: 400 }
       );
-    }
-
-    if (isDemoUser(user)) {
-      return NextResponse.json({ error: 'Demo account is read-only' }, { status: 403 });
     }
 
     // Update the speaker data in the database

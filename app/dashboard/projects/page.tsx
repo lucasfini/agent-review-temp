@@ -2905,7 +2905,7 @@ export default function ProjectsPage() {
   );
 
   return (
-    <div className="dashboard-page flex flex-col h-screen w-full overflow-hidden bg-white dark:bg-slate-950">
+    <div className="dashboard-page flex flex-col h-full w-full overflow-hidden bg-white dark:bg-slate-950">
       <ConfirmModal
         isOpen={!!pendingDeleteProjectId}
         onClose={() => setPendingDeleteProjectId(null)}

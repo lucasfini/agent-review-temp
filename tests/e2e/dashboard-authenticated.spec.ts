@@ -73,11 +73,11 @@ test.describe('Authenticated Dashboard Flows', () => {
     await expect(page.getByRole('link', { name: /Upload/i })).toBeVisible();
   });
 
-  test('shows upload demo restrictions and supports upload method tab switching', async ({ page }) => {
+  test('allows demo uploads and supports upload method tab switching', async ({ page }) => {
     await page.goto('/dashboard/upload');
 
     await expect(page.getByRole('heading', { name: 'Upload Audio' })).toBeVisible();
-    await expect(page.getByText('Demo accounts cannot upload audio')).toBeVisible();
+    await expect(page.getByText('Demo uploads are enabled')).toBeVisible();
 
     await page.getByRole('button', { name: 'URL import' }).click();
     await expect(page.getByRole('heading', { name: 'Import from URL' })).toBeVisible();

@@ -38,6 +38,7 @@ function DashboardLayoutContent({
   const forceWelcomePreview = searchParams.get('welcome') === '1';
   const hideDemoChromeForCapture = searchParams.get('capture') === '1';
   const isUploadRoute = pathname === '/dashboard/upload';
+  const isProjectsRoute = pathname === '/dashboard/projects';
   const { activeProjects: activeUploads } = useActiveProcessingProjects(user?.id, 5, {
     pollingEnabled: !isUploadRoute,
     pollIntervalMs: 5000,
@@ -123,7 +124,7 @@ function DashboardLayoutContent({
           <div
             className={`flex flex-col min-w-0 w-full md:w-0 flex-1 transition-[margin] duration-200 ease-out ${usesDocumentFlow ? 'overflow-visible' : 'overflow-hidden'} ${isSidebarCollapsed ? 'md:ml-20' : 'md:ml-64'}`}
           >
-            <main className={`${usesDocumentFlow ? 'overflow-visible' : 'flex-1 overflow-y-auto'} relative focus:outline-none${displayedUploads.length > 0 ? ' pb-24 md:pb-16' : ''}`}>
+            <main className={`${usesDocumentFlow ? 'overflow-visible' : (isProjectsRoute ? 'flex-1 overflow-hidden' : 'flex-1 overflow-y-auto')} relative focus:outline-none${displayedUploads.length > 0 && !isProjectsRoute ? ' pb-24 md:pb-16' : ''}`}>
               {children}
             </main>
             {usesDocumentFlow && <CompactFooter inDashboard={true} />}

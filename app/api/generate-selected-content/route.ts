@@ -1,6 +1,5 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { supabaseAdmin } from '@/lib/supabase/server';
-import { isDemoUser } from '@/lib/demo-mode';
 import type { ContentBlock } from '@/lib/content-types';
 import { initializeGenerationProgress } from '@/lib/generation-progress';
 import { aiRatelimit } from '@/lib/rate-limit';
@@ -58,11 +57,6 @@ export async function POST(request: NextRequest) {
     // Ownership check
     if (project.user_id !== user.id) {
       return NextResponse.json({ error: 'Forbidden' }, { status: 403 });
-    }
-
-    // Demo account guard
-    if (isDemoUser(user)) {
-      return NextResponse.json({ error: 'Demo account is read-only' }, { status: 403 });
     }
 
     // Validate all blocks reference known content types

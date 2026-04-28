@@ -60,7 +60,7 @@ export function WelcomeModal({ isOpen, onClose }: WelcomeModalProps) {
 
         {/* Body */}
         <p className="mb-6 text-sm leading-relaxed text-slate-600 dark:text-slate-300">
-          Explore the demo account on your own. It is read-only and preloaded with example projects so you can click through the product without changing anything.
+          Explore the demo account on your own. It includes example projects and now lets you upload recordings to see the workflow, while settings and account controls stay locked.
         </p>
 
         {/* Actions */}
@@ -76,11 +76,11 @@ export function WelcomeModal({ isOpen, onClose }: WelcomeModalProps) {
 
         {/* Fine print */}
         <p className="mt-5 text-center text-xs text-slate-500 dark:text-slate-600">
-          This is a read-only account.{' '}
+          Settings stay read-only in the demo.{' '}
           <Link href="/auth/signup" className="text-blue-500 hover:text-blue-400 transition-colors">
             Sign up
           </Link>{' '}
-          to process your own audio.
+          for a full account with editable settings and permanent work.
         </p>
       </div>
     </div>

@@ -1344,11 +1344,6 @@ export default function AnalyticsPage() {
   };
 
   const handleRunCoverage = async (projectId: string) => {
-    if (isDemoMode) {
-      toast.error('Demo account is read-only.');
-      return;
-    }
-
     const title = projectTitleMap[projectId] || projectId;
     startCoverage(projectId, title);
     try {
@@ -1507,7 +1502,6 @@ export default function AnalyticsPage() {
               selectedHasSnapshot={selectedProjectHasSnapshot}
               runningCoverageIds={runningCoverageIds}
               onRunAnalysis={handleRunCoverage}
-              readOnly={isDemoMode}
             />
             <div className="inline-flex items-center gap-2">
               <span className="inline-flex items-center rounded-lg border border-slate-300 bg-transparent px-3 py-2.5 text-[11px] font-semibold uppercase tracking-[0.14em] text-slate-600 dark:border-slate-700 dark:text-slate-300">

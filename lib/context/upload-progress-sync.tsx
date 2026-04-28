@@ -10,7 +10,12 @@ import type { TierLevel } from '@/lib/tier-config';
 import type { AnalysisOptions } from '@/lib/analysis-options';
 import { normalizeAnalysisOptions } from '@/lib/analysis-options';
 import { ESTIMATED_BITRATE_BPS } from '@/lib/upload-constants';
-import { loadPersistedQueuedUploads, persistQueuedUploads } from '@/lib/upload-queue-storage';
+import {
+  loadPersistedQueueRunningState,
+  loadPersistedQueuedUploads,
+  persistQueueRunningState,
+  persistQueuedUploads,
+} from '@/lib/upload-queue-storage';
 import { toast } from 'sonner';
 
 type IntegrationProvider = 'zoom' | 'microsoft';
@@ -662,6 +667,7 @@ export function UploadProgressSyncProvider({ children }: { children: ReactNode }
 
     const hydrateQueuedUploads = async () => {
       const persistedUploads = await loadPersistedQueuedUploads();
+      const shouldResumeQueue = loadPersistedQueueRunningState();
       if (cancelled) return;
 
       if (persistedUploads.length > 0) {
@@ -670,6 +676,10 @@ export function UploadProgressSyncProvider({ children }: { children: ReactNode }
           const restored = persistedUploads.filter((file) => !currentIds.has(file.id));
           return restored.length > 0 ? [...current, ...restored] : current;
         });
+      }
+
+      if (shouldResumeQueue && persistedUploads.length > 0) {
+        setIsStartingQueuedUploads(true);
       }
 
       setHasHydratedPersistedQueue(true);
@@ -687,6 +697,16 @@ export function UploadProgressSyncProvider({ children }: { children: ReactNode }
 
     persistQueuedUploads(uploadedFiles);
   }, [hasHydratedPersistedQueue, uploadedFiles]);
+
+  useEffect(() => {
+    if (!hasHydratedPersistedQueue) return;
+
+    const hasPendingQueueWork = uploadedFiles.some((file) =>
+      ['queued', 'pending', 'extracting', 'uploading'].includes(file.status) && !file.projectId
+    );
+
+    persistQueueRunningState(isStartingQueuedUploads && hasPendingQueueWork);
+  }, [hasHydratedPersistedQueue, isStartingQueuedUploads, uploadedFiles]);
 
   useEffect(() => {
     const uploadControllers = uploadControllersRef.current;

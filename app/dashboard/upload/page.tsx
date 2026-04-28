@@ -3,7 +3,6 @@
 import { useState, useCallback, useEffect, useRef, useMemo } from 'react';
 import { useSearchParams } from 'next/navigation';
 import { Upload, FileAudio, X, AlertCircle, CheckCircle, Clock, History, Trash2, Eye, FileVideo, Loader2, ChevronDown, ChevronUp, Lightbulb, Users, Mic, Pencil, UserCircle, MoreHorizontal } from 'lucide-react';
-import Link from 'next/link';
 import { supabase } from '@/lib/supabase/client';
 import { useAuth } from '@/lib/auth/context';
 import { calculateOverallProgress, getStageDisplayName, getUserFacingProcessingMessage, type ProcessingStage } from '@/lib/tier-progress-config';
@@ -1096,20 +1095,17 @@ export default function UploadPage() {
         <div className="xl:flex xl:gap-8 xl:items-start">
           <div className="flex-1 min-w-0">
 
-            {/* Demo overlay */}
+            {/* Demo notice */}
             {isDemoMode && !hideDemoChromeForCapture && (
               <div className="mb-6 bg-amber-950/50 border border-amber-700/50 rounded-xl p-4 flex items-start gap-3">
                 <div className="flex-shrink-0 h-8 w-8 bg-amber-500/20 rounded-lg flex items-center justify-center mt-0.5">
                   <Eye className="h-4 w-4 text-amber-400" />
                 </div>
                 <div>
-                  <p className="text-sm font-semibold text-amber-300">Demo accounts cannot upload audio</p>
+                  <p className="text-sm font-semibold text-amber-300">Demo uploads are enabled</p>
                   <p className="text-xs text-amber-400/70 mt-0.5">
-                    Sign up to process your own recordings and generate content.
+                    Upload recordings to try the workflow. Settings and account controls stay read-only in the demo.
                   </p>
-                  <Link href="/auth/signup" className="inline-block mt-2 text-xs font-semibold text-white bg-amber-600 hover:bg-amber-500 px-3 py-1.5 rounded-lg transition-colors">
-                    Sign Up Free →
-                  </Link>
                 </div>
               </div>
             )}
@@ -1159,7 +1155,7 @@ export default function UploadPage() {
                       className={`relative border-2 border-dashed rounded-xl transition-all ${isDragActive
                           ? 'border-blue-400 bg-blue-50 dark:bg-blue-900/20 scale-[1.005]'
                           : 'border-slate-300 dark:border-slate-600 bg-white dark:bg-slate-900 hover:border-slate-400 dark:hover:border-slate-500 hover:bg-slate-50 dark:hover:bg-slate-800/50'
-                        } ${isDemoMode ? 'pointer-events-none opacity-50' : ''}`}
+                        }`}
                       onDragEnter={onDragEnter}
                       onDragLeave={onDragLeave}
                       onDragOver={onDragOver}
@@ -1399,7 +1395,7 @@ export default function UploadPage() {
                     disabled={
                       activeTab === 'url'
                         ? isUrlSubmitting
-                        : queuedFiles.length === 0 || isStartingQueuedUploads || isDemoMode
+                        : queuedFiles.length === 0 || isStartingQueuedUploads
                     }
                     className="inline-flex items-center justify-center rounded-lg bg-blue-600 px-4 py-2 text-sm font-medium text-white transition-colors hover:bg-blue-700 disabled:cursor-not-allowed disabled:opacity-60"
                   >
