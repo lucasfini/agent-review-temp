@@ -5170,7 +5170,8 @@ function enforcePresetRosterSpeakers(
       continue;
     }
 
-    const replacement = working.find(s =>
+    // 1. Try to match by strong heuristic (unknown, sound alike, etc)
+    let replacement = working.find(s =>
       !isPresetRosterSpeaker(s) && (
         !s.name ||
         /^speaker\s*\d+$/i.test(s.name) ||
@@ -5180,7 +5181,23 @@ function enforcePresetRosterSpeakers(
       )
     );
 
+    // 2. Try to match by explicit role (if preset role is meaningful)
+    if (!replacement && preset.role && preset.role !== 'unknown' && preset.role !== 'guest') {
+      replacement = working.find(s => !isPresetRosterSpeaker(s) && s.role === preset.role);
+    }
+
+    // 3. Fallback: take the highest confidence extracted speaker that isn't locked yet
+    if (!replacement) {
+      const unlocked = working.filter(s => !isPresetRosterSpeaker(s));
+      if (unlocked.length > 0) {
+        // Sort by confidence descending, so we overwrite the most prominent speakers first
+        unlocked.sort((a, b) => b.confidence - a.confidence);
+        replacement = unlocked[0];
+      }
+    }
+
     if (replacement) {
+      console.log(`[ENFORCE] Preset override: replacing extracted "${replacement.name || replacement.id}" with preset "${preset.name}"`);
       replacement.name = preset.name;
       if (preset.role) {
         replacement.role = preset.role;

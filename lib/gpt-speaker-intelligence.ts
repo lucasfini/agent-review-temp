@@ -6,6 +6,7 @@ import OpenAI from 'openai';
 import { getOpenAIApiKeyForUser } from '@/lib/openai/consent';
 import { SpeakerSegment, SpeakerRole, SpeakerIdentityProfile } from './types';
 import { trackOpenAIUsage } from '@/lib/billing/track-usage';
+import { sanitizeRoster } from './speaker-intelligence';
 
 export interface GPTSpeaker {
   id: string;
@@ -381,8 +382,20 @@ export async function identifySpeakersWithGPT(
       console.log(`[GPT SPEAKER INTELLIGENCE] ${speaker.id}: ${speaker.name || '(unnamed)'} (${speaker.role}, conf: ${speaker.confidence})`);
     });
 
+    // Final Sanitization & Target Count Enforcement
+    // We use 'strict' for DEBATE or when speakerCount is explicitly set
+    const sanitizeMode = options.speakerCount ? 'strict' : 'lenient';
+    
+    // Convert GPTSpeaker[] to IntelligentSpeaker[] for sanitizeRoster
+    // (They are compatible enough for the fields sanitizeRoster needs)
+    const sanitized = sanitizeRoster(speakers as any, { 
+      mode: sanitizeMode,
+      targetCount: options.speakerCount,
+      presetRoster: options.presetRoster
+    });
+
     return {
-      speakers,
+      speakers: sanitized as unknown as GPTSpeaker[],
       rawResponse,
       validationErrors
     };

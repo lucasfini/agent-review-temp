@@ -1499,7 +1499,13 @@ export default function UploadPage() {
                     </p>
                     <SpeakerRosterForm
                       speakers={rosterSpeakers}
-                      onChange={setRosterSpeakers}
+                      onChange={(updated) => {
+                        setRosterSpeakers(updated);
+                        // Auto-set speaker count if it matches the roster length and user hasn't manually set it
+                        if (updated.length >= 2 && updated.length <= 12 && !speakerCount) {
+                          setSpeakerCount(updated.length);
+                        }
+                      }}
                     />
                   </div>
                 </div>

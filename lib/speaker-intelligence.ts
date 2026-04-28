@@ -416,6 +416,12 @@ export interface SanitizeRosterOptions {
    * If provided, aggressively merges most similar speakers until this count is reached.
    */
   targetCount?: number;
+
+  /**
+   * Preset roster of expected speakers (optional)
+   * Speakers matching these names will be protected from being merged away.
+   */
+  presetRoster?: Array<{ name: string; role?: string | null }>;
 }
 
 /**
@@ -432,10 +438,14 @@ export function sanitizeRoster(
 ): IntelligentSpeaker[] {
   if (speakers.length <= 1) return speakers;
 
-  const { mode, targetCount } = options;
+  const { mode, targetCount, presetRoster } = options;
   console.log(`[ROSTER SANITIZE] Mode: ${mode.toUpperCase()}${targetCount ? `, Target: ${targetCount}` : ''}`);
+  
+  const presetNames = new Set((presetRoster || []).map(s => s.name.toLowerCase().trim()));
+  const isPreset = (name: string) => presetNames.has(name.toLowerCase().trim());
+
   console.log(`[ROSTER SANITIZE] Input: ${speakers.length} speakers`);
-  speakers.forEach(s => console.log(`[ROSTER SANITIZE]   - "${s.name}" (${s.role})`));
+  speakers.forEach(s => console.log(`[ROSTER SANITIZE]   - "${s.name}" (${s.role})${isPreset(s.name) ? ' [PRESET]' : ''}`));
 
   // --- PHASE 1: Initial Cleaning & Standard Deduplication ---
   
@@ -495,9 +505,30 @@ export function sanitizeRoster(
         }
 
         if (shouldMerge) {
-          console.log(`[ROSTER SANITIZE] Merging "${s2.name}" into "${s1.name}" (${reason})`);
-          currentRoster[i] = mergeSpeakers(s1, s2);
-          currentRoster.splice(j, 1);
+          // PROTECTION: Never merge away a preset speaker into a non-preset one.
+          // If s2 is preset but s1 is not, swap them so we keep the preset.
+          // If both are presets, we skip merging to avoid losing user-defined identities.
+          const p1 = isPreset(s1.name);
+          const p2 = isPreset(s2.name);
+
+          if (p1 && p2) {
+            console.log(`[ROSTER SANITIZE] Skipping merge of two preset speakers: "${s1.name}" and "${s2.name}"`);
+            continue;
+          }
+
+          let keeper = s1;
+          let discard = s2;
+          let discardIdx = j;
+
+          if (p2 && !p1) {
+            keeper = s2;
+            discard = s1;
+            discardIdx = i;
+          }
+
+          console.log(`[ROSTER SANITIZE] Merging "${discard.name}" into "${keeper.name}" (${reason})`);
+          currentRoster[currentRoster.indexOf(keeper)] = mergeSpeakers(keeper, discard);
+          currentRoster.splice(discardIdx, 1);
           changed = true;
           break outerLoop; // Restart loop
         }
@@ -521,6 +552,9 @@ export function sanitizeRoster(
           const s1 = currentRoster[i];
           const s2 = currentRoster[j];
           
+          // PROTECTION: Avoid force-merging two preset speakers
+          if (isPreset(s1.name) && isPreset(s2.name)) continue;
+
           const n1 = s1.name.toLowerCase().trim();
           const n2 = s2.name.toLowerCase().trim();
           
@@ -535,8 +569,16 @@ export function sanitizeRoster(
       }
 
       if (bestPair.i !== -1) {
-        const keeperIdx = bestPair.i; // Usually longer name due to sort
-        const discardIdx = bestPair.j;
+        let keeperIdx = bestPair.i; 
+        let discardIdx = bestPair.j;
+        
+        // PROTECTION: Ensure we keep the preset if one member of the pair is a preset
+        if (isPreset(currentRoster[discardIdx].name) && !isPreset(currentRoster[keeperIdx].name)) {
+          const temp = keeperIdx;
+          keeperIdx = discardIdx;
+          discardIdx = temp;
+        }
+
         const keeper = currentRoster[keeperIdx];
         const discard = currentRoster[discardIdx];
 
