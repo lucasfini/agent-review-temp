@@ -6987,7 +6987,6 @@ function extractStrongInterviewIntroNames(
     const selfIdentifiedName = extractFullNameSelfIdentifiedName(text);
     const normalizedSelfIdentifiedName = selfIdentifiedName ? normalizeSpeakerName(selfIdentifiedName) : null;
     const ruleMatches = matchStrongGuestIntroRules(text);
-    if (ruleMatches.length === 0) continue;
 
     const matches = Array.from(text.matchAll(/\b([A-Z][a-z]+(?:\s+[A-Z][a-z]+)+)\b/g));
     const validNames = matches
@@ -7022,6 +7021,8 @@ function extractStrongInterviewIntroNames(
         if (new RegExp(`\\b${escaped},\\s+(?:it'?s|its|good|great|glad|thank|thanks|welcome)\\b`, 'i').test(text)) score += 8;
         if (new RegExp(`\\b(?:here'?s|with|joined by|talking to|conversation with|our guest is)\\s+${escaped}\\b`, 'i').test(text)) score += 6;
         if (new RegExp(`\\b${escaped}\\s+(?:(?:is|was)\\s+(?:a|an)\\s+(?:author|columnist|consultant|economist|editor|founder|journalist|physicist|professor|reporter|researcher|writer)|who\\s+(?:specializes|specialises)\\s+in|specializes in|specialises in|host of|editor of|founder of|co-founder of|author of|reporter at|climate editor)\\b`, 'i').test(text)) score += 5;
+        if (new RegExp(`\\b${escaped},\\s+(?:(?:the|a|an)\\s+)?(?:author|columnist|consultant|economist|editor|founder|journalist|physicist|professor|reporter|researcher|writer|portfolio manager|strategist|chief\\s+\\w+)\\b`, 'i').test(text)) score += 6;
+        if (new RegExp(`\\b${escaped.split(/\\s+/)[0]},\\s+(?:we(?:'re|\\s+are)|we\\s+will|let'?s|gonna|going\\s+to)\\b`, 'i').test(text)) score += 2;
         if (/^(?:the\s+)/i.test(value)) score -= 6;
         return { value, score };
       })
@@ -7034,6 +7035,11 @@ function extractStrongInterviewIntroNames(
       ? validNames.find((value) => normalizeSpeakerName(value) === normalizeSpeakerName(addressedName)) ||
         validNames.find((value) => value.split(/\s+/)[0]?.toLowerCase() === addressedFirstName)
       : null;
+    const bestParticipantScore = participantScored[0]?.score || 0;
+    const allowFallbackWithoutRuleMatch = bestParticipantScore >= 6;
+    if (ruleMatches.length === 0 && !allowFallbackWithoutRuleMatch && !addressedCandidate) {
+      continue;
+    }
     const chosen = addressedCandidate || participantScored[0]?.value || [...validNames].sort((a, b) => b.split(/\s+/).length - a.split(/\s+/).length)[0];
     const normalized = normalizeSpeakerName(chosen);
     if (seen.has(normalized)) continue;

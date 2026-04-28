@@ -1728,6 +1728,49 @@ describe('speaker pipeline regressions', () => {
     expect(resolved.speakers.speaker_1.nameProvenance).toEqual(expect.arrayContaining(['guest_intro']));
   });
 
+  test('descriptor-style guest intros bind even without explicit joined-by phrasing', () => {
+    const speakerMap = {
+      speaker_1: { id: 'speaker_1', finalName: 'Ed Elson', role: 'host', fallbackName: 'Speaker 1', finalNameLocked: true, nameProvenance: ['recurring_roster'], segments: [] },
+      speaker_2: { id: 'speaker_2', finalName: 'Speaker 2', role: 'unknown', fallbackName: 'Speaker 2', segments: [] },
+    };
+
+    const segments: SpeakerSegment[] = [
+      {
+        speakerId: 'speaker_1',
+        initialSpeakerId: 'Speaker_A',
+        finalSpeakerId: 'speaker_1',
+        startTime: 978.7,
+        endTime: 1003.0,
+        text: "Patrick Boyle, professor at King's College London, former hedge fund manager. Patrick, we're gonna have to continue this discussion another time.",
+        confidence: 0.9,
+        status: 'confirmed',
+      },
+      {
+        speakerId: 'speaker_2',
+        initialSpeakerId: 'Speaker_B',
+        finalSpeakerId: 'speaker_2',
+        startTime: 1003.2,
+        endTime: 1005.0,
+        text: 'Thank you for having me on. It has been a pleasure.',
+        confidence: 0.9,
+        status: 'confirmed',
+      },
+    ];
+
+    const resolved = __testUtils.resolveConversationalHumanNamesInSpeakerMap(
+      speakerMap,
+      segments,
+      {
+        projectType: 'PODCAST',
+        title: 'The Biggest IPO In History Isn’t What You Think It Is - Prof G Markets',
+        filename: 'prof_g_markets_descriptor_intro.json',
+      }
+    );
+
+    expect(resolved.speakers.speaker_2.finalName).toBe('Patrick Boyle');
+    expect(resolved.speakers.speaker_2.nameProvenance).toEqual(expect.arrayContaining(['guest_intro']));
+  });
+
   test('speaker naming rule registry classifies common intro phrases and weak mentions', () => {
     expect(matchStrongGuestIntroRules("Today we're talking to David Rothkopf about politics.")).toEqual([
       expect.objectContaining({

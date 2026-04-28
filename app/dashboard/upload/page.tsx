@@ -566,10 +566,20 @@ export default function UploadPage() {
       return;
     }
 
+    // Do not auto-select a queued file on page return/reload.
+    // Selection should reflect explicit user intent to edit one queued item.
     setSelectedQueuedFileId((current) => {
       if (current && queuedFiles.some((file) => file.id === current)) return current;
-      return queuedFiles[0]?.id || null;
+      return null;
     });
+
+    // Reset form-side state when no queued file is selected so stale "editing"
+    // values are not shown as if tied to a specific queue item.
+    const fallbackOptions = normalizeAnalysisOptions(DEFAULT_ANALYSIS_OPTIONS);
+    analysisOptionsRef.current = fallbackOptions;
+    setAnalysisOptions(fallbackOptions);
+    setSpeakerCount(undefined);
+    setRosterSpeakers([]);
   }, [queuedFiles, selectedQueuedFile]);
 
   const handleAnalysisOptionToggle = (key: keyof AnalysisOptions) => {
