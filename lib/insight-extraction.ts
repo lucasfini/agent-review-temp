@@ -7,7 +7,7 @@
 
 import { createClient } from '@supabase/supabase-js';
 import { getAICompletion, type AIMessage } from './ai-providers/multi-provider';
-import { generateResearchLinksForInsights, type PerplexitySource, type PersonResearchProfile } from './ai-providers/perplexity';
+import { generateResearchLinksForInsights, type PerplexitySource, type PersonResearchProfile } from './ai-providers/research';
 import { getPrompt, prompts } from '@/lib/prompts/loader';
 import type { InsightExtractionVars } from '@/lib/prompts/types';
 import { trackOpenAIUsage, trackAnthropicUsage } from '@/lib/billing/track-usage';

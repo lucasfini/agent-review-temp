@@ -16,9 +16,10 @@
     "researchLinks": {
       "person": {
         "id": "research_links_person",
-        "model": "sonar-pro",
+        "model": "gpt-5.2",
         "temperature": 0.1,
-        "max_tokens": 500,
+        "max_tokens": 800,
+        "response_format": { "type": "json_object" },
         "params": {
           "recency": "month",
           "return_citations": true
@@ -28,15 +29,16 @@
       },
       "concept": {
         "id": "research_links_concept",
-        "model": "sonar-pro",
+        "model": "gpt-4o",
         "temperature": 0.1,
-        "max_tokens": 500,
+        "max_tokens": 800,
+        "response_format": { "type": "json_object" },
         "params": {
           "recency": "year",
           "return_citations": true
         },
         "system": "You are a research librarian. Find authoritative definitions. Return strictly valid JSON.",
-        "prompt": "Find 2-3 authoritative sources explaining the concept '${label}', mentioned here: \"${context}\".\n\nPrioritize: Official Documentation, University/.edu resources, or reputable Industry Whitepapers.\n\nReturn a JSON array of VALID, LIVE URLs.\n\nOutput Format:\n[ { \"title\": \"...\", \"url\": \"...\", \"type\": \"academic\" } ]"
+        "prompt": "Find 2-3 authoritative sources explaining the concept '${label}', mentioned here: \"${context}\".\n\nPrioritize: Official Documentation, University/.edu resources, or reputable Industry Whitepapers.\n\nReturn a JSON object containing a 'sources' array of VALID, LIVE URLs.\n\nOutput Format:\n{ \"sources\": [ { \"title\": \"...\", \"url\": \"...\", \"type\": \"academic\" } ] }"
       }
     },
     "contentGeneration": {
