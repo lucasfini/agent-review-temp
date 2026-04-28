@@ -2879,6 +2879,11 @@ function canOverwriteSpeakerIdentity(
   if (!isFinalNameLocked(speaker)) return true;
   const currentProvenance = getSpeakerNameProvenance(speaker);
   const nextProvenance = collectNameProvenanceReasons(nextName, options);
+  const currentHasParticipantEvidence = hasParticipantStyleProvenanceReasons(currentProvenance);
+  const nextHasParticipantEvidence = hasParticipantStyleProvenanceReasons(nextProvenance);
+  if (currentHasParticipantEvidence && !nextHasParticipantEvidence) {
+    return false;
+  }
   const currentStrength = currentProvenance.filter((reason) => reason !== 'derived').length;
   const nextStrength = nextProvenance.filter((reason) => reason !== 'derived').length;
   return nextStrength > currentStrength;
@@ -4074,6 +4079,7 @@ export function resolveConversationalHumanNamesInSpeakerMap(
 
   const resolved = resolveConversationalHumanNames(roster, segments, options);
   const rosterById = new Map(resolved.roster.map((speaker) => [speaker.id, speaker]));
+  const lockedOverwriteBlocks: string[] = [];
 
   const updatedSpeakers = Object.fromEntries(
     orderedIds.map((id) => {
@@ -4100,6 +4106,9 @@ export function resolveConversationalHumanNamesInSpeakerMap(
         isFinalNameLocked(original) &&
         !canOverwriteSpeakerIdentity(original, resolvedSpeaker.name, options)
       );
+      if (preserveOriginalLockedName && resolvedSpeaker?.name) {
+        lockedOverwriteBlocks.push(`${id}:${originalFinalName || '(unnamed)'}<=${resolvedSpeaker.name}`);
+      }
       const resolvedProvenance = resolvedSpeaker?.name
         ? collectNameProvenanceReasons(resolvedSpeaker.name, {
             ...options,
@@ -4206,6 +4215,7 @@ export function resolveConversationalHumanNamesInSpeakerMap(
       ...verifiedRecurringOwnership.info,
       ...aliasCanonicalized.decisions.map((decision) => `[ALIAS MERGE] ${decision.mergedSpeakerIds.join(', ')} -> ${decision.canonicalName}`),
       ...provenanceVerified.info,
+      ...lockedOverwriteBlocks.map((entry) => `[CONVERSATIONAL NAMING] Locked participant name preserved (${entry})`),
     ],
   };
 }
@@ -4339,6 +4349,7 @@ function extractPanelIntroParticipants(
     if (!isHumanIntroEligibleSegment(segment)) continue;
     const text = getSegText(segment);
     if (!/\b(?:panel|experts|we have|we've got|our very own|plus)\b/i.test(text)) continue;
+    if (matchCreditContextNameRules(text).length > 0) continue;
 
     for (const match of matchPanelIntroRules(text)) {
       const rawName = match.name?.trim();
@@ -4375,6 +4386,9 @@ function repairSpeakerMapWithPanelIntros(
 
   for (const participant of participants) {
     const introSegment = segments[participant.segmentIndex];
+    if (introSegment && matchCreditContextNameRules(getSegText(introSegment)).length > 0) {
+      continue;
+    }
     const hostSpeakerId = introSegment?.finalSpeakerId || introSegment?.speakerId;
     if (!hostSpeakerId) continue;
 

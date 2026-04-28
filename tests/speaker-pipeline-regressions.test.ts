@@ -1993,6 +1993,32 @@ describe('speaker pipeline regressions', () => {
     expect(resolved.info.join('\n')).toContain('unsupported conversational name');
   });
 
+  test('credit-like panel phrasing does not create panel intro participants', () => {
+    const segments: SpeakerSegment[] = [
+      {
+        speakerId: 'speaker_1',
+        initialSpeakerId: 'Speaker_A',
+        finalSpeakerId: 'speaker_1',
+        startTime: 0,
+        endTime: 16,
+        text: 'Plus this episode was produced by Mike Labczyk and edited by Lauren Buell.',
+        status: 'confirmed',
+      },
+    ];
+
+    const participants = __testUtils.extractPanelIntroParticipants(
+      segments,
+      120,
+      {
+        projectType: 'PODCAST',
+        title: 'Hard Fork',
+        filename: 'hard_fork_test.json',
+      }
+    );
+
+    expect(participants).toEqual([]);
+  });
+
   test('offline cold open does not prevent later host and guest attribution', () => {
     const speakerMap = {
       speaker_1: { id: 'speaker_1', finalName: 'Speaker 1', role: 'unknown', segments: [] },
