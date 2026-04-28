@@ -561,6 +561,8 @@ export default function UploadPage() {
       const next = normalizeAnalysisOptions(selectedQueuedFile.analysisOptions);
       analysisOptionsRef.current = next;
       setAnalysisOptions(next);
+      setSpeakerCount(selectedQueuedFile.speakerCount);
+      setRosterSpeakers((selectedQueuedFile.rosterSpeakers || []) as RosterSpeaker[]);
       return;
     }
 
@@ -588,6 +590,18 @@ export default function UploadPage() {
       return next;
     });
   };
+
+  const updateSelectedQueuedFileAdvanced = useCallback((updates: Partial<Pick<UploadedFile, 'speakerCount' | 'rosterSpeakers'>>) => {
+    if (!selectedQueuedFileId) return;
+    setUploadedFiles((currentFiles) => currentFiles.map((file) => (
+      file.id === selectedQueuedFileId && file.status === 'queued'
+        ? {
+            ...file,
+            ...updates,
+          }
+        : file
+    )));
+  }, [selectedQueuedFileId, setUploadedFiles]);
 
   useEffect(() => {
     if (user) {
@@ -1469,7 +1483,9 @@ export default function UploadPage() {
                         value={speakerCount ?? ''}
                         onChange={(e) => {
                           const value = e.target.value;
-                          setSpeakerCount(value === '' ? undefined : parseInt(value, 10));
+                          const nextSpeakerCount = value === '' ? undefined : parseInt(value, 10);
+                          setSpeakerCount(nextSpeakerCount);
+                          updateSelectedQueuedFileAdvanced({ speakerCount: nextSpeakerCount });
                         }}
                         className="block w-36 rounded-md border border-slate-300 dark:border-slate-600 px-3 py-2 text-sm shadow-sm focus:outline-none focus:ring-1 focus:ring-blue-500 focus:border-blue-500 bg-white dark:bg-slate-900 text-slate-900 dark:text-slate-200"
                       >
@@ -1482,7 +1498,10 @@ export default function UploadPage() {
                       {recommendedSpeakerCount && !speakerCount && (
                         <button
                           type="button"
-                          onClick={() => setSpeakerCount(recommendedSpeakerCount)}
+                          onClick={() => {
+                            setSpeakerCount(recommendedSpeakerCount);
+                            updateSelectedQueuedFileAdvanced({ speakerCount: recommendedSpeakerCount });
+                          }}
                           className="rounded-full border border-blue-200 bg-blue-50 px-3 py-1.5 text-xs font-medium text-blue-700 transition-colors hover:bg-blue-100 dark:border-blue-800/30 dark:bg-blue-900/20 dark:text-blue-300"
                         >
                           Use suggested: {recommendedSpeakerCount} (from filename)
@@ -1499,7 +1518,10 @@ export default function UploadPage() {
                     </p>
                     <SpeakerRosterForm
                       speakers={rosterSpeakers}
-                      onChange={setRosterSpeakers}
+                      onChange={(nextRoster) => {
+                        setRosterSpeakers(nextRoster);
+                        updateSelectedQueuedFileAdvanced({ rosterSpeakers: nextRoster as QueuedRosterSpeaker[] });
+                      }}
                     />
                   </div>
                 </div>
