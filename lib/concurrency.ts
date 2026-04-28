@@ -57,7 +57,8 @@ export async function acquireGlobalJobLock(jobId: string): Promise<boolean> {
                 } else {
                     // This is slightly inefficient but safe for low concurrency numbers
                     await redis.del(GLOBAL_CONCURRENCY_KEY);
-                    await redis.sadd(GLOBAL_CONCURRENCY_KEY, ...aliveJobIds);
+                    // Explicitly pass the first element to satisfy TypeScript rest parameter requirements
+                    await redis.sadd(GLOBAL_CONCURRENCY_KEY, aliveJobIds[0], ...aliveJobIds.slice(1));
                 }
             }
         }
