@@ -253,6 +253,14 @@ export interface RefactoredPipelineResult {
     dirtyClustersResolved?: string[];
     dirtyClusterSegmentsResolved?: number;
     segmentBalanceWarnings?: string[];
+    enforcementNotes?: string[];
+    presetPendingSuggestions?: Array<{
+      name: string;
+      role?: string | null;
+      source: 'preset_roster_pending';
+      reason: string;
+      confidence: number;
+    }>;
   };
 }
 
@@ -313,6 +321,14 @@ export async function runRefactoredSpeakerPipeline(
   let gptResult: GPTSpeakerIntelligenceResult;
   const lockedPresetEntries = normalizePresetRosterEntries(options.presetRoster);
   const lockedPresetNames = new Set(lockedPresetEntries.map(s => normalizeSpeakerName(s.name)));
+  const enforcementNotes: string[] = [];
+  let presetPendingSuggestions: Array<{
+    name: string;
+    role?: GPTSpeaker['role'] | null;
+    source: 'preset_roster_pending';
+    reason: string;
+    confidence: number;
+  }> = [];
   try {
     gptResult = await identifySpeakersWithGPT(segments, {
       apiKey: options.openaiApiKey,
@@ -352,20 +368,27 @@ export async function runRefactoredSpeakerPipeline(
   if (options.hasPresetRoster && lockedPresetEntries.length > 0) {
     const presetMerge = enforcePresetRosterSpeakers(gptResult.speakers, lockedPresetEntries);
     gptResult.speakers = presetMerge.roster;
+    presetPendingSuggestions = presetMerge.pendingSuggestions;
     console.log(`[PIPELINE] Preset roster enforcement: exact=${presetMerge.exactMatches}, replaced=${presetMerge.replacedExisting}, added=${presetMerge.added}`);
   }
 
   // --- ENFORCE ROSTER CONSTRAINTS (Garbage Filter + Dedup + Target Cap) ---
-  console.log(`\n[PIPELINE] --- ROSTER ENFORCEMENT (Target: ${options.speakerCount || 'None'}) ---`);
+  console.log(`\n[PIPELINE] --- ROSTER ENFORCEMENT (Cleanup/Dedup only; target cap deferred) ---`);
 
-  const enforcement = enforceRosterConstraints(gptResult.speakers, options.speakerCount);
+  const enforcement = enforceRosterConstraints(gptResult.speakers, undefined);
   gptResult.speakers = enforcement.roster;
+  if (options.speakerCount) {
+    enforcementNotes.push('pass1_target_count_deferred');
+  }
+  if (Array.isArray(gptResult.validationErrors) && gptResult.validationErrors.includes('sanitize_null_name_guard_applied')) {
+    enforcementNotes.push('sanitize_null_name_guard_applied');
+  }
 
   console.log(`[PIPELINE] Garbage filtered: ${enforcement.garbageRemoved} removed`);
   console.log(`[PIPELINE] Duplicates merged (hard): ${enforcement.duplicatesMerged} merged`);
   console.log(`[PIPELINE] Soft collisions: ${enforcement.softCollisions} detected`);
   if (enforcement.excessDropped > 0) {
-    console.log(`[PIPELINE] Excess speakers dropped to meet target ${options.speakerCount}: ${enforcement.excessDropped} dropped`);
+    console.log(`[PIPELINE] Unexpected early target drops detected (${enforcement.excessDropped}); target cap should be deferred`);
     console.log(`[PIPELINE] Drop mappings:`, enforcement.dropMappings);
   }
   console.log(`[PIPELINE] ✓ Roster enforced: ${gptResult.speakers.length} speakers remaining`);
@@ -1494,6 +1517,8 @@ export async function runRefactoredSpeakerPipeline(
       dirtyClustersResolved: dirtyClustersResolved.length > 0 ? dirtyClustersResolved : undefined,
       dirtyClusterSegmentsResolved: dirtyClusterSegmentsResolved > 0 ? dirtyClusterSegmentsResolved : undefined,
       segmentBalanceWarnings: segmentBalanceWarnings.length > 0 ? segmentBalanceWarnings : undefined,
+      enforcementNotes: enforcementNotes.length > 0 ? enforcementNotes : undefined,
+      presetPendingSuggestions: presetPendingSuggestions.length > 0 ? presetPendingSuggestions : undefined,
     }
   };
 }
@@ -5151,10 +5176,24 @@ function enforcePresetRosterSpeakers(
   exactMatches: number;
   replacedExisting: number;
   added: number;
+  pendingSuggestions: Array<{
+    name: string;
+    role?: GPTSpeaker['role'] | null;
+    source: 'preset_roster_pending';
+    reason: string;
+    confidence: number;
+  }>;
 } {
   let exactMatches = 0;
   let replacedExisting = 0;
   let added = 0;
+  const pendingSuggestions: Array<{
+    name: string;
+    role?: GPTSpeaker['role'] | null;
+    source: 'preset_roster_pending';
+    reason: string;
+    confidence: number;
+  }> = [];
   const working = [...roster];
 
   const findByExactName = (name: string) =>
@@ -5218,17 +5257,18 @@ function enforcePresetRosterSpeakers(
       continue;
     }
 
-    working.push({
-      id: `speaker_${working.length + 1}`,
+    pendingSuggestions.push({
       name: preset.name,
-      role: preset.role || 'guest',
-      confidence: 0.99,
-      source: 'preset_roster',
+      role: preset.role || null,
+      source: 'preset_roster_pending',
+      reason: 'Preset roster entry unmatched to any generic/phonetic candidate; awaiting participant evidence before promotion.',
+      confidence: 0.68,
     });
+    console.log(`[ENFORCE] Preset unmatched: "${preset.name}" queued as pending suggestion`);
     added++;
   }
 
-  return { roster: working, exactMatches, replacedExisting, added };
+  return { roster: working, exactMatches, replacedExisting, added, pendingSuggestions };
 }
 
 const INTRO_STOPWORDS = new Set([

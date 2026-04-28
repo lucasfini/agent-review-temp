@@ -3884,4 +3884,132 @@ describe('speaker pipeline regressions', () => {
     expect(vantaSegments.every((segment) => segment.sponsorName === 'Vanta')).toBe(true);
   });
 
+  test('defers pass-1 hard target-count enforcement and records diagnostics notes', async () => {
+    const mockedIdentify = jest.mocked(gptSpeakerIntelligence.identifySpeakersWithGPT);
+    const mockedMapSegments = jest.mocked(llmSegmentMapping.mapSegmentsWithLLM);
+
+    mockedIdentify.mockResolvedValueOnce({
+      speakers: [
+        { id: 'speaker_1', name: 'Host One', role: 'host', confidence: 0.96, source: 'test' },
+        { id: 'speaker_2', name: null, role: 'guest', confidence: 0.82, source: 'test' },
+        { id: 'speaker_3', name: null, role: 'guest', confidence: 0.8, source: 'test' },
+      ],
+      rawResponse: '{}',
+      validationErrors: ['sanitize_null_name_guard_applied'],
+      costEstimate: 0,
+    } as any);
+
+    mockedMapSegments.mockResolvedValueOnce({
+      mappings: { Speaker_A: 'speaker_1', Speaker_B: 'speaker_2', Speaker_C: 'speaker_3' },
+      confidence: { Speaker_A: 0.96, Speaker_B: 0.88, Speaker_C: 0.86 },
+      rawResponse: '{}',
+      reasoning: 'test mapping',
+    } as any);
+
+    const segments: SpeakerSegment[] = [
+      {
+        speakerId: 'Speaker_A',
+        initialSpeakerId: 'Speaker_A',
+        finalSpeakerId: 'Speaker_A',
+        startTime: 0,
+        endTime: 8,
+        text: 'Welcome back everyone.',
+        confidence: 0.92,
+        status: 'confirmed',
+      },
+      {
+        speakerId: 'Speaker_B',
+        initialSpeakerId: 'Speaker_B',
+        finalSpeakerId: 'Speaker_B',
+        startTime: 8,
+        endTime: 20,
+        text: 'Guest answer one.',
+        confidence: 0.9,
+        status: 'confirmed',
+      },
+      {
+        speakerId: 'Speaker_C',
+        initialSpeakerId: 'Speaker_C',
+        finalSpeakerId: 'Speaker_C',
+        startTime: 20,
+        endTime: 32,
+        text: 'Guest answer two.',
+        confidence: 0.9,
+        status: 'confirmed',
+      },
+    ];
+
+    const result = await runRefactoredSpeakerPipeline(segments, {
+      openAIApiKey: 'test',
+      speakerCount: 2,
+      filename: 'test-file.mp3',
+      title: 'Test File',
+    });
+
+    expect(result.diagnostics?.enforcementNotes).toEqual(
+      expect.arrayContaining(['pass1_target_count_deferred', 'sanitize_null_name_guard_applied'])
+    );
+  });
+
+  test('stores unmatched preset roster entries as pending suggestions instead of final detected speakers', async () => {
+    const mockedIdentify = jest.mocked(gptSpeakerIntelligence.identifySpeakersWithGPT);
+    const mockedMapSegments = jest.mocked(llmSegmentMapping.mapSegmentsWithLLM);
+
+    mockedIdentify.mockResolvedValueOnce({
+      speakers: [
+        { id: 'speaker_1', name: 'Jane Coaston', role: 'host', confidence: 0.95, source: 'test' },
+        { id: 'speaker_2', name: 'Greg Walters', role: 'guest', confidence: 0.81, source: 'test' },
+      ],
+      rawResponse: '{}',
+      validationErrors: [],
+      costEstimate: 0,
+    } as any);
+
+    mockedMapSegments.mockResolvedValueOnce({
+      mappings: { Speaker_A: 'speaker_1', Speaker_B: 'speaker_2' },
+      confidence: { Speaker_A: 0.95, Speaker_B: 0.9 },
+      rawResponse: '{}',
+      reasoning: 'test mapping',
+    } as any);
+
+    const segments: SpeakerSegment[] = [
+      {
+        speakerId: 'Speaker_A',
+        initialSpeakerId: 'Speaker_A',
+        finalSpeakerId: 'Speaker_A',
+        startTime: 0,
+        endTime: 10,
+        text: "I'm Jane Coaston, and this is What A Day.",
+        confidence: 0.93,
+        status: 'confirmed',
+      },
+      {
+        speakerId: 'Speaker_B',
+        initialSpeakerId: 'Speaker_B',
+        finalSpeakerId: 'Speaker_B',
+        startTime: 10,
+        endTime: 20,
+        text: 'Let me react to that quickly. Thanks for having me.',
+        confidence: 0.9,
+        status: 'confirmed',
+      },
+    ];
+
+    const result = await runRefactoredSpeakerPipeline(segments, {
+      openAIApiKey: 'test',
+      filename: 'what-a-day.mp3',
+      title: 'What A Day',
+      hasPresetRoster: true,
+      presetRoster: [{ name: 'Matt Berg', role: 'guest' }],
+    });
+
+    expect(result.speakers.some((speaker) => speaker.name === 'Matt Berg')).toBe(false);
+    expect(result.diagnostics?.presetPendingSuggestions).toEqual([
+      expect.objectContaining({
+        name: 'Matt Berg',
+        source: 'preset_roster_pending',
+      }),
+    ]);
+  });
+
 });

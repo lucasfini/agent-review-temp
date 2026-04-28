@@ -422,6 +422,7 @@ export interface SanitizeRosterOptions {
    * Speakers matching these names will be protected from being merged away.
    */
   presetRoster?: Array<{ name: string; role?: string | null }>;
+  diagnostics?: string[];
 }
 
 /**
@@ -438,14 +439,28 @@ export function sanitizeRoster(
 ): IntelligentSpeaker[] {
   if (speakers.length <= 1) return speakers;
 
-  const { mode, targetCount, presetRoster } = options;
+  const { mode, targetCount, presetRoster, diagnostics } = options;
+  const note = (message: string) => {
+    if (!Array.isArray(diagnostics)) return;
+    if (!diagnostics.includes(message)) diagnostics.push(message);
+  };
   console.log(`[ROSTER SANITIZE] Mode: ${mode.toUpperCase()}${targetCount ? `, Target: ${targetCount}` : ''}`);
   
   const presetNames = new Set((presetRoster || []).map(s => s.name.toLowerCase().trim()));
-  const isPreset = (name: string) => presetNames.has(name.toLowerCase().trim());
+  const isPreset = (name: string | null | undefined) => {
+    const normalized = typeof name === 'string' ? name.toLowerCase().trim() : '';
+    return normalized.length > 0 && presetNames.has(normalized);
+  };
+  const normalizedName = (name: string | null | undefined): string | null => {
+    if (typeof name !== 'string') return null;
+    const trimmed = name.trim();
+    return trimmed.length > 0 ? trimmed.toLowerCase() : null;
+  };
+  const nameLength = (name: string | null | undefined) => (typeof name === 'string' ? name.length : 0);
+  let nullGuardApplied = false;
 
   console.log(`[ROSTER SANITIZE] Input: ${speakers.length} speakers`);
-  speakers.forEach(s => console.log(`[ROSTER SANITIZE]   - "${s.name}" (${s.role})${isPreset(s.name) ? ' [PRESET]' : ''}`));
+  speakers.forEach(s => console.log(`[ROSTER SANITIZE]   - "${s.name ?? '(unnamed)'}" (${s.role})${isPreset(s.name) ? ' [PRESET]' : ''}`));
 
   // --- PHASE 1: Initial Cleaning & Standard Deduplication ---
   
@@ -459,8 +474,12 @@ export function sanitizeRoster(
       aliases: [...new Set([
         ...(keeper.aliases || []), 
         ...(discard.aliases || []), 
-        discard.name
-      ])].filter(a => a.toLowerCase() !== keeper.name.toLowerCase()),
+        ...(discard.name ? [discard.name] : [])
+      ])].filter(a => {
+        const normalizedAlias = normalizedName(a);
+        const normalizedKeeper = normalizedName(keeper.name);
+        return Boolean(normalizedAlias && normalizedKeeper && normalizedAlias !== normalizedKeeper);
+      }),
       // Merge evidence
       evidence: [...(keeper.evidence || []), ...(discard.evidence || [])],
       // Keep higher confidence
@@ -475,15 +494,19 @@ export function sanitizeRoster(
     changed = false;
     
     // Sort by name length descending to prioritize keeping longer names
-    currentRoster.sort((a, b) => b.name.length - a.name.length);
+    currentRoster.sort((a, b) => nameLength(b.name) - nameLength(a.name));
 
     outerLoop:
     for (let i = 0; i < currentRoster.length; i++) {
       for (let j = i + 1; j < currentRoster.length; j++) {
         const s1 = currentRoster[i];
         const s2 = currentRoster[j];
-        const n1 = s1.name.toLowerCase().trim();
-        const n2 = s2.name.toLowerCase().trim();
+        const n1 = normalizedName(s1.name);
+        const n2 = normalizedName(s2.name);
+        if (!n1 || !n2) {
+          nullGuardApplied = true;
+          continue;
+        }
 
         let shouldMerge = false;
         let reason = '';
@@ -555,8 +578,12 @@ export function sanitizeRoster(
           // PROTECTION: Avoid force-merging two preset speakers
           if (isPreset(s1.name) && isPreset(s2.name)) continue;
 
-          const n1 = s1.name.toLowerCase().trim();
-          const n2 = s2.name.toLowerCase().trim();
+          const n1 = normalizedName(s1.name);
+          const n2 = normalizedName(s2.name);
+          if (!n1 || !n2) {
+            nullGuardApplied = true;
+            continue;
+          }
           
           const maxLen = Math.max(n1.length, n2.length);
           const distance = levenshteinDistance(n1, n2);
@@ -596,9 +623,19 @@ export function sanitizeRoster(
   // Final cleanup of aliases
   currentRoster.forEach(s => {
     if (s.aliases) {
-      s.aliases = [...new Set(s.aliases)].filter(a => a.toLowerCase() !== s.name.toLowerCase());
+      const normalizedSpeaker = normalizedName(s.name);
+      s.aliases = [...new Set(s.aliases)].filter(a => {
+        const normalizedAlias = normalizedName(a);
+        if (!normalizedAlias) return false;
+        if (!normalizedSpeaker) return true;
+        return normalizedAlias !== normalizedSpeaker;
+      });
     }
   });
+
+  if (nullGuardApplied) {
+    note('sanitize_null_name_guard_applied');
+  }
 
   console.log(`[ROSTER SANITIZE] Final Output: ${currentRoster.length} speakers`);
   currentRoster.forEach(s => {

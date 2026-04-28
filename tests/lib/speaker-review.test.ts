@@ -198,6 +198,70 @@ describe('speaker review trust helpers', () => {
     expect(speakerData.speakers.speaker_4.finalName).toBe('Speaker 4');
   });
 
+  test('surfaces unmatched preset roster names as pending suggestions without promoting final speakers', () => {
+    const speakerData = attachSpeakerAssignmentMetadata({
+      segments: [
+        {
+          speakerId: 'speaker_1',
+          finalSpeakerId: 'speaker_1',
+          startTime: 0,
+          endTime: 11,
+          text: 'Welcome back to the show.',
+          status: 'confirmed',
+        },
+        {
+          speakerId: 'speaker_2',
+          finalSpeakerId: 'speaker_2',
+          startTime: 11,
+          endTime: 24,
+          text: 'Thanks for having me.',
+          status: 'confirmed',
+        },
+      ],
+      speakers: {
+        speaker_1: {
+          id: 'speaker_1',
+          finalName: 'Speaker 1',
+          role: 'unknown',
+          assignmentConfidence: 0.71,
+          requiresReview: true,
+          assignmentContradictions: [],
+        },
+        speaker_2: {
+          id: 'speaker_2',
+          finalName: 'Speaker 2',
+          role: 'unknown',
+          assignmentConfidence: 0.7,
+          requiresReview: true,
+          assignmentContradictions: [],
+        },
+      },
+      detectionMetadata: {
+        pipelineDiagnostics: {
+          presetPendingSuggestions: [
+            {
+              name: 'Matt Berg',
+              role: 'guest',
+              source: 'preset_roster_pending',
+              reason: 'Preset roster entry unmatched to any generic/phonetic candidate; awaiting participant evidence before promotion.',
+              confidence: 0.68,
+            },
+          ],
+        },
+      },
+    });
+
+    const suggestions = getSpeakerSuggestionsFromSpeakerData(speakerData);
+    expect(suggestions).toEqual([
+      expect.objectContaining({
+        suggestedName: 'Matt Berg',
+        source: 'preset_roster_pending',
+        rejectedReason: 'preset_unmatched_suggested',
+      }),
+    ]);
+    expect(Object.values(speakerData.speakers).every((speaker: any) => /^Speaker\s+\d+$/i.test(String(speaker.finalName || '')))).toBe(true);
+  });
+
   test('short advertiser spillover fragments do not drag speaker trust into review', () => {
     const speakerData = attachSpeakerAssignmentMetadata({
       segments: [

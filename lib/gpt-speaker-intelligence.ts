@@ -382,16 +382,18 @@ export async function identifySpeakersWithGPT(
       console.log(`[GPT SPEAKER INTELLIGENCE] ${speaker.id}: ${speaker.name || '(unnamed)'} (${speaker.role}, conf: ${speaker.confidence})`);
     });
 
-    // Final Sanitization & Target Count Enforcement
-    // We use 'strict' for DEBATE or when speakerCount is explicitly set
+    // Final Sanitization (Pass 1):
+    // Keep this pass cleanup-focused and defer hard target-count enforcement
+    // to the later refactored pipeline stage, where cluster ownership evidence exists.
     const sanitizeMode = options.speakerCount ? 'strict' : 'lenient';
     
     // Convert GPTSpeaker[] to IntelligentSpeaker[] for sanitizeRoster
     // (They are compatible enough for the fields sanitizeRoster needs)
     const sanitized = sanitizeRoster(speakers as any, { 
       mode: sanitizeMode,
-      targetCount: options.speakerCount,
-      presetRoster: options.presetRoster
+      targetCount: undefined,
+      presetRoster: options.presetRoster,
+      diagnostics: validationErrors,
     });
 
     return {

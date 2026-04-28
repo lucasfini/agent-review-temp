@@ -161,46 +161,97 @@ function buildSpeakerNameSuggestions(speakerData: any): SpeakerAssignmentTrustSu
   }
 
   const rejectedRepairs = speakerData?.detectionMetadata?.pipelineDiagnostics?.speakerVerification?.rejectedRepairs;
-  if (!Array.isArray(rejectedRepairs)) return [];
-
   const speakers = speakerData?.speakers || {};
   const suggestions = new Map<string, NonNullable<SpeakerAssignmentTrustSummary['speakerSuggestions']>[number]>();
 
-  for (const item of rejectedRepairs) {
-    const proposal = item?.proposal;
-    const repairType = proposal?.repairType;
-    if (repairType !== 'rename' && repairType !== 'bindIntroName') continue;
-    if (item?.reason !== 'proposal_confidence_below_threshold') continue;
-    if (!isValidSuggestedSpeakerName(proposal?.proposedName)) continue;
+  if (Array.isArray(rejectedRepairs)) {
+    for (const item of rejectedRepairs) {
+      const proposal = item?.proposal;
+      const repairType = proposal?.repairType;
+      if (repairType !== 'rename' && repairType !== 'bindIntroName') continue;
+      if (item?.reason !== 'proposal_confidence_below_threshold') continue;
+      if (!isValidSuggestedSpeakerName(proposal?.proposedName)) continue;
 
-    const speakerId = proposal?.targetSpeakerId || proposal?.sourceSpeakerId;
-    if (typeof speakerId !== 'string' || !speakerId) continue;
+      const speakerId = proposal?.targetSpeakerId || proposal?.sourceSpeakerId;
+      if (typeof speakerId !== 'string' || !speakerId) continue;
 
-    const currentName = speakers[speakerId]?.finalName || speakers[speakerId]?.name || speakers[speakerId]?.fallbackName;
-    if (currentName && !isAnonymousConversationalSpeakerName(currentName)) {
-      continue;
+      const currentName = speakers[speakerId]?.finalName || speakers[speakerId]?.name || speakers[speakerId]?.fallbackName;
+      if (currentName && !isAnonymousConversationalSpeakerName(currentName)) {
+        continue;
+      }
+
+      const confidence = Math.max(0, Math.min(1, Number(proposal?.confidence || 0)));
+      if (confidence < 0.45) continue;
+
+      const suggestion = {
+        speakerId,
+        suggestedName: proposal.proposedName.trim(),
+        suggestedRole: proposal?.proposedRole || null,
+        confidence,
+        reason: proposal?.reason || 'Low-confidence speaker name candidate',
+        source: repairType === 'bindIntroName' ? 'verifier_intro_binding' : 'verifier_rename',
+        rejectedReason: item?.reason,
+        evidenceSegmentIndices: Array.isArray(proposal?.evidenceSegmentIndices)
+          ? proposal.evidenceSegmentIndices.filter((index: unknown): index is number => typeof index === 'number' && Number.isInteger(index) && index >= 0)
+          : [],
+      };
+
+      const key = `${speakerId}:${normalizeSuggestionName(suggestion.suggestedName)}`;
+      const existingSuggestion = suggestions.get(key);
+      if (!existingSuggestion || suggestion.confidence > existingSuggestion.confidence) {
+        suggestions.set(key, suggestion);
+      }
+    }
+  }
+
+  const pendingPresetSuggestions = speakerData?.detectionMetadata?.pipelineDiagnostics?.presetPendingSuggestions;
+  if (Array.isArray(pendingPresetSuggestions) && pendingPresetSuggestions.length > 0) {
+    const bySpeakerSegmentCount = new Map<string, number>();
+    const segments: any[] = Array.isArray(speakerData?.segments) ? speakerData.segments : [];
+    for (const segment of segments) {
+      const speakerId = segment?.finalSpeakerId || segment?.speakerId;
+      if (typeof speakerId !== 'string' || !speakerId) continue;
+      bySpeakerSegmentCount.set(speakerId, (bySpeakerSegmentCount.get(speakerId) || 0) + 1);
     }
 
-    const confidence = Math.max(0, Math.min(1, Number(proposal?.confidence || 0)));
-    if (confidence < 0.45) continue;
+    const candidateSpeakerIds = Object.keys(speakers)
+      .filter((speakerId) => {
+        const speaker = speakers[speakerId];
+        const currentName = speaker?.finalName || speaker?.name || speaker?.fallbackName || null;
+        if (!isAnonymousConversationalSpeakerName(currentName)) return false;
+        const role = String(speaker?.role || '').toLowerCase();
+        if (role === 'advertiser' || role === 'listener_clip') return false;
+        return true;
+      })
+      .sort((a, b) => {
+        const diff = (bySpeakerSegmentCount.get(b) || 0) - (bySpeakerSegmentCount.get(a) || 0);
+        if (diff !== 0) return diff;
+        return a.localeCompare(b);
+      });
 
-    const suggestion = {
-      speakerId,
-      suggestedName: proposal.proposedName.trim(),
-      suggestedRole: proposal?.proposedRole || null,
-      confidence,
-      reason: proposal?.reason || 'Low-confidence speaker name candidate',
-      source: repairType === 'bindIntroName' ? 'verifier_intro_binding' : 'verifier_rename',
-      rejectedReason: item?.reason,
-      evidenceSegmentIndices: Array.isArray(proposal?.evidenceSegmentIndices)
-        ? proposal.evidenceSegmentIndices.filter((index: unknown): index is number => typeof index === 'number' && Number.isInteger(index) && index >= 0)
-        : [],
-    };
+    const assignedSpeakers = new Set<string>();
+    for (const pending of pendingPresetSuggestions) {
+      if (!isValidSuggestedSpeakerName(pending?.name)) continue;
+      const speakerId = candidateSpeakerIds.find((id) => !assignedSpeakers.has(id));
+      if (!speakerId) continue;
 
-    const key = `${speakerId}:${normalizeSuggestionName(suggestion.suggestedName)}`;
-    const existingSuggestion = suggestions.get(key);
-    if (!existingSuggestion || suggestion.confidence > existingSuggestion.confidence) {
-      suggestions.set(key, suggestion);
+      const suggestion = {
+        speakerId,
+        suggestedName: String(pending.name).trim(),
+        suggestedRole: pending?.role || null,
+        confidence: Math.max(0, Math.min(1, Number(pending?.confidence || 0.68))),
+        reason: pending?.reason || 'Preset roster name is pending participant evidence before automatic promotion.',
+        source: 'preset_roster_pending',
+        rejectedReason: 'preset_unmatched_suggested',
+        evidenceSegmentIndices: [],
+      };
+
+      const key = `${speakerId}:${normalizeSuggestionName(suggestion.suggestedName)}`;
+      const existingSuggestion = suggestions.get(key);
+      if (!existingSuggestion || suggestion.confidence > existingSuggestion.confidence) {
+        suggestions.set(key, suggestion);
+      }
+      assignedSpeakers.add(speakerId);
     }
   }
 
