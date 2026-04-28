@@ -563,6 +563,7 @@ export async function runRefactoredSpeakerPipeline(
         apiKey: options.openaiApiKey,
         userId: options.userId,
         projectId: options.projectId,
+        reservationId: options.reservationId,
       });
 
       // Update result
@@ -614,6 +615,7 @@ export async function runRefactoredSpeakerPipeline(
           apiKey: options.openaiApiKey,
           userId: options.userId,
           projectId: options.projectId,
+          reservationId: options.reservationId,
         }
       );
 

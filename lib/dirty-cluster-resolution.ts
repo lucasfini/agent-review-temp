@@ -174,6 +174,7 @@ export async function resolveDirtyCluster(
     apiKey?: string;
     userId?: string;
     projectId?: string;
+    reservationId?: string;
   } = {}
 ): Promise<DirtyClusterResolutionResult> {
   const apiKey = options.apiKey ?? await getOpenAIApiKeyForUser(options.userId);
@@ -308,10 +309,11 @@ OUTPUT (JSON only):
         await trackOpenAIUsage({
           userId: options.userId,
           projectId: options.projectId,
+          reservationId: options.reservationId,
           response,
           modelName: model,
           purpose: 'Dirty Cluster Resolution (Pass 2c)',
-          shouldDebit: true
+          shouldDebit: options.reservationId ? false : true
         });
       }
 
@@ -390,6 +392,7 @@ export async function resolveAllDirtyClusters(
     apiKey?: string;
     userId?: string;
     projectId?: string;
+    reservationId?: string;
   } = {}
 ): Promise<{
   segments: SpeakerSegment[];

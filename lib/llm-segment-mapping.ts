@@ -70,6 +70,7 @@ export async function mapSegmentsWithLLM(
     model?: string;
     userId?: string;
     projectId?: string;
+    reservationId?: string;
   } = {}
 ): Promise<LLMMappingResult> {
   const apiKey = options.apiKey ?? await getOpenAIApiKeyForUser(options.userId);
@@ -139,10 +140,11 @@ Return ONLY valid JSON.`;
       await trackOpenAIUsage({
         userId: options.userId,
         projectId: options.projectId,
+        reservationId: options.reservationId,
         response,
         modelName: model,
         purpose: 'Segment Mapping (Pass 2)',
-        shouldDebit: true
+        shouldDebit: options.reservationId ? false : true
       });
     }
 
