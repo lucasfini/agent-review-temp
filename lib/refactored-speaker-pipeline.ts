@@ -5182,22 +5182,30 @@ function enforcePresetRosterSpeakers(
     );
 
     // 2. Try to match by explicit role (if preset role is meaningful)
+    // ONLY if the candidate is still generic or nameless
     if (!replacement && preset.role && preset.role !== 'unknown' && preset.role !== 'guest') {
-      replacement = working.find(s => !isPresetRosterSpeaker(s) && s.role === preset.role);
+      replacement = working.find(s => 
+        !isPresetRosterSpeaker(s) && 
+        s.role === preset.role && 
+        (!s.name || /^speaker\s*\d+$/i.test(s.name) || s.name.toLowerCase() === 'unknown')
+      );
     }
 
-    // 3. Fallback: take the highest confidence extracted speaker that isn't locked yet
+    // 3. Fallback: ONLY replace a generic speaker (Speaker N or Unknown)
     if (!replacement) {
-      const unlocked = working.filter(s => !isPresetRosterSpeaker(s));
-      if (unlocked.length > 0) {
-        // Sort by confidence descending, so we overwrite the most prominent speakers first
-        unlocked.sort((a, b) => b.confidence - a.confidence);
-        replacement = unlocked[0];
+      const genericSpeakers = working.filter(s => 
+        !isPresetRosterSpeaker(s) && 
+        (!s.name || /^speaker\s*\d+$/i.test(s.name) || s.name.toLowerCase() === 'unknown')
+      );
+      if (genericSpeakers.length > 0) {
+        // Sort by confidence descending to replace the most prominent generic speaker
+        genericSpeakers.sort((a, b) => b.confidence - a.confidence);
+        replacement = genericSpeakers[0];
       }
     }
 
     if (replacement) {
-      console.log(`[ENFORCE] Preset override: replacing extracted "${replacement.name || replacement.id}" with preset "${preset.name}"`);
+      console.log(`[ENFORCE] Preset override: replacing generic "${replacement.name || replacement.id}" with preset "${preset.name}"`);
       replacement.name = preset.name;
       if (preset.role) {
         replacement.role = preset.role;
