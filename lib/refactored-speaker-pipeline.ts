@@ -4298,7 +4298,10 @@ export function resolveConversationalHumanNamesInSpeakerMap(
           title: options.title,
           filename: options.filename,
         }) &&
-        nameProvenance.has(normalizeSpeakerName(originalFinalName));
+        (
+          nameProvenance.has(normalizeSpeakerName(originalFinalName)) ||
+          hasParticipantStyleProvenanceReasons(getSpeakerNameProvenance(original))
+        );
       const originalRejectedName = originalFinalName.length > 0 &&
         !/^Speaker\s+\d+$/i.test(originalFinalName) &&
         !originalCanSurvive;

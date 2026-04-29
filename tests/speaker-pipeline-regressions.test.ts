@@ -4106,6 +4106,58 @@ describe('speaker pipeline regressions', () => {
     expect(resolved.speakers.speaker_3.role).toBe('guest');
   });
 
+  test('final storage naming rerun preserves mid-intro handoff name with participant provenance', () => {
+    const speakers = {
+      speaker_1: {
+        id: 'speaker_1',
+        finalName: 'Ed Elson',
+        role: 'host',
+        roleConfidence: 0.95,
+        source: 'intro_handoff',
+        finalNameLocked: true,
+        nameProvenance: ['known_host_intro', 'self_id'],
+        segments: [],
+      },
+      speaker_2: {
+        id: 'speaker_2',
+        finalName: 'Patrick Boyle',
+        role: 'guest',
+        roleConfidence: 0.9,
+        source: 'intro_handoff',
+        finalNameLocked: true,
+        nameProvenance: ['guest_intro', 'dominant_reply_after_intro'],
+        segments: [],
+      },
+      speaker_3: {
+        id: 'speaker_3',
+        finalName: 'Sid Jain',
+        role: 'guest',
+        roleConfidence: 0.89,
+        source: 'mid_intro_handoff',
+        finalNameLocked: true,
+        nameProvenance: ['mid_intro_handoff', 'guest_intro', 'dominant_reply_after_intro'],
+        segments: [],
+      },
+    };
+    const segments: SpeakerSegment[] = [
+      { speakerId: 'speaker_1', initialSpeakerId: 'Speaker_A', finalSpeakerId: 'speaker_1', startTime: 978, endTime: 1003, text: "Patrick Boyle ... thanks for joining us.", confidence: 0.9, status: 'confirmed' },
+      { speakerId: 'speaker_2', initialSpeakerId: 'Speaker_B', finalSpeakerId: 'speaker_2', startTime: 1003, endTime: 1005, text: 'Thank you for having me on.', confidence: 0.9, status: 'confirmed' },
+      { speakerId: 'speaker_1', initialSpeakerId: 'Speaker_A', finalSpeakerId: 'speaker_1', startTime: 1005, endTime: 1092, text: "We're back with Prof G Markets. We are speaking with Sid Jain, Deputy Portfolio Manager at GQG Partners.", confidence: 0.9, status: 'confirmed' },
+      { speakerId: 'speaker_3', initialSpeakerId: 'Speaker_C', finalSpeakerId: 'speaker_3', startTime: 1093, endTime: 1123, text: 'Absolutely. Emerging markets are broad and diverse.', confidence: 0.84, status: 'confirmed' },
+      { speakerId: 'speaker_1', initialSpeakerId: 'Speaker_A', finalSpeakerId: 'speaker_1', startTime: 1123, endTime: 1151, text: 'How do you think about this year?', confidence: 0.9, status: 'confirmed' },
+      { speakerId: 'speaker_3', initialSpeakerId: 'Speaker_C', finalSpeakerId: 'speaker_3', startTime: 1151, endTime: 1206, text: 'Concentration is a major driver of index movement.', confidence: 0.84, status: 'confirmed' },
+    ];
+
+    const finalized = finalizeSpeakerAttributionForStorage(speakers, segments, {
+      projectType: 'PODCAST',
+      title: 'Prof G Markets',
+      filename: 'prof-g-markets.mp3',
+    });
+
+    expect(finalized.speakerDataSpeakers.speaker_3.finalName).toBe('Sid Jain');
+    expect(finalized.snapshot.speakerMap.speaker_3.finalName).toBe('Sid Jain');
+  });
+
   test('mid-episode re-intro does not bind credit or promo context names', () => {
     const speakerMap = {
       speaker_1: { id: 'speaker_1', finalName: 'Ed Elson', role: 'host', confidence: 0.94, source: 'test', segments: [] },
