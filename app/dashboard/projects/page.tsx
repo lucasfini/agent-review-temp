@@ -1067,7 +1067,10 @@ export default function ProjectsPage() {
     try {
       const response = await fetch(`/api/projects/${selectedProject.id}/segments/touchup`, {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
+        headers: {
+          'Content-Type': 'application/json',
+          ...(session?.access_token ? { Authorization: `Bearer ${session.access_token}` } : {}),
+        },
         body: JSON.stringify({ segmentIndices: Array.from(selectedSegments), dryRun: true }),
       });
       const data = await response.json();
@@ -1079,11 +1082,11 @@ export default function ProjectsPage() {
       }
       setTouchupPreview(changed.map((r: any) => ({ ...r, accepted: true })));
     } catch (err) {
-      setAiTouchupResult('Touch-up failed — try again');
+      setAiTouchupResult(err instanceof Error ? err.message : 'Touch-up failed, try again');
     } finally {
       setAiTouchupLoading(false);
     }
-  }, [selectedProject?.id, selectedSegments]);
+  }, [selectedProject?.id, selectedSegments, session?.access_token]);
 
   const handleApplyTouchup = useCallback(async () => {
     if (!selectedProject?.id || !touchupPreview) return;
@@ -1093,7 +1096,10 @@ export default function ProjectsPage() {
     try {
       const response = await fetch(`/api/projects/${selectedProject.id}/segments/touchup`, {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
+        headers: {
+          'Content-Type': 'application/json',
+          ...(session?.access_token ? { Authorization: `Bearer ${session.access_token}` } : {}),
+        },
         body: JSON.stringify({ approvedReassignments: approved }),
       });
       const data = await response.json();
@@ -1105,11 +1111,11 @@ export default function ProjectsPage() {
       setTouchupPreview(null);
       setSelectedSegments(new Set());
     } catch (err) {
-      setAiTouchupResult('Apply failed — try again');
+      setAiTouchupResult(err instanceof Error ? err.message : 'Apply failed, try again');
     } finally {
       setApplyingTouchup(false);
     }
-  }, [selectedProject?.id, touchupPreview]);
+  }, [selectedProject?.id, touchupPreview, session?.access_token]);
 
   const handleTogglePreviewItem = useCallback((index: number) => {
     setTouchupPreview(prev =>

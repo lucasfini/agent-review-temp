@@ -1594,10 +1594,10 @@ export function ContextSidebar({
                 <button
                   onClick={onAiTouchup}
                   disabled={aiTouchupLoading || selectedCount === 0}
-                  className="w-full inline-flex items-center justify-center gap-1.5 px-3 py-1.5 rounded-lg text-white text-xs font-semibold bg-violet-600 hover:bg-violet-700 disabled:bg-violet-300 disabled:cursor-not-allowed transition-colors"
+                  className="w-full inline-flex items-center justify-center gap-1.5 px-3 py-1.5 rounded-lg border border-slate-300 bg-white text-slate-700 text-xs font-semibold shadow-sm hover:bg-slate-50 hover:border-slate-400 disabled:opacity-50 disabled:cursor-not-allowed disabled:hover:bg-white dark:border-slate-700 dark:bg-slate-900 dark:text-slate-100 dark:hover:bg-slate-800 dark:hover:border-slate-600 transition-colors"
                 >
                   {aiTouchupLoading ? (
-                    <><span className="h-3 w-3 border border-white border-t-transparent rounded-full animate-spin" /> Analyzing…</>
+                    <><span className="h-3 w-3 border border-slate-500 border-t-transparent rounded-full animate-spin dark:border-slate-300" /> Analyzing…</>
                   ) : (
                     <>✦ Suggest corrections</>
                   )}
@@ -1662,10 +1662,10 @@ export function ContextSidebar({
                   <button
                     onClick={onApplyTouchup}
                     disabled={applyingTouchup || touchupPreview.every(i => !i.accepted)}
-                    className="flex-1 inline-flex items-center justify-center gap-1 px-3 py-1.5 rounded-lg text-white text-xs font-semibold bg-violet-600 hover:bg-violet-700 disabled:bg-violet-300 disabled:cursor-not-allowed"
+                    className="flex-1 inline-flex items-center justify-center gap-1 px-3 py-1.5 rounded-lg border border-slate-300 bg-white text-slate-700 text-xs font-semibold shadow-sm hover:bg-slate-50 hover:border-slate-400 disabled:opacity-50 disabled:cursor-not-allowed disabled:hover:bg-white dark:border-slate-700 dark:bg-slate-900 dark:text-slate-100 dark:hover:bg-slate-800 dark:hover:border-slate-600 transition-colors"
                   >
                     {applyingTouchup ? (
-                      <><span className="h-3 w-3 border border-white border-t-transparent rounded-full animate-spin" /> Applying…</>
+                      <><span className="h-3 w-3 border border-slate-500 border-t-transparent rounded-full animate-spin dark:border-slate-300" /> Applying…</>
                     ) : (
                       `Apply ${touchupPreview.filter(i => i.accepted).length} change${touchupPreview.filter(i => i.accepted).length !== 1 ? 's' : ''}`
                     )}
