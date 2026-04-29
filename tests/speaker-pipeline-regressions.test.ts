@@ -4081,4 +4081,71 @@ describe('speaker pipeline regressions', () => {
     ]);
   });
 
+  test('mid-episode explicit re-intro binds second guest after segment handoff', () => {
+    const speakerMap = {
+      speaker_1: { id: 'speaker_1', finalName: 'Ed Elson', role: 'host', confidence: 0.94, source: 'test', segments: [] },
+      speaker_2: { id: 'speaker_2', finalName: 'Patrick Boyle', role: 'guest', confidence: 0.9, source: 'test', segments: [] },
+      speaker_3: { id: 'speaker_3', finalName: 'Speaker 3', role: 'unknown', confidence: 0.68, source: 'test', segments: [] },
+    };
+    const segments: SpeakerSegment[] = [
+      { speakerId: 'speaker_1', initialSpeakerId: 'Speaker_A', finalSpeakerId: 'speaker_1', startTime: 900, endTime: 960, text: 'Thanks Patrick, that was great.', confidence: 0.9, status: 'confirmed' },
+      { speakerId: 'speaker_2', initialSpeakerId: 'Speaker_B', finalSpeakerId: 'speaker_2', startTime: 960, endTime: 1000, text: 'Thank you for having me, Ed.', confidence: 0.9, status: 'confirmed' },
+      { speakerId: 'speaker_1', initialSpeakerId: 'Speaker_A', finalSpeakerId: 'speaker_1', startTime: 1001, endTime: 1092, text: "We're back with Prof G Markets. So here to help us unpack this, we are speaking with Sid Jain, Deputy Portfolio Manager at GQG Partners. Sid, thank you for joining us on the show.", confidence: 0.9, status: 'confirmed' },
+      { speakerId: 'speaker_3', initialSpeakerId: 'Speaker_C', finalSpeakerId: 'speaker_3', startTime: 1093, endTime: 1140, text: 'Absolutely. Emerging markets are broad and diverse with very different dynamics across regions.', confidence: 0.84, status: 'confirmed' },
+      { speakerId: 'speaker_1', initialSpeakerId: 'Speaker_A', finalSpeakerId: 'speaker_1', startTime: 1141, endTime: 1170, text: 'How should investors think about concentration risk in that index?', confidence: 0.9, status: 'confirmed' },
+      { speakerId: 'speaker_3', initialSpeakerId: 'Speaker_C', finalSpeakerId: 'speaker_3', startTime: 1171, endTime: 1225, text: 'A big issue is that a handful of names dominate performance while local conditions vary country by country.', confidence: 0.84, status: 'confirmed' },
+    ];
+
+    const resolved = __testUtils.resolveConversationalHumanNamesInSpeakerMap(speakerMap, segments, {
+      projectType: 'PODCAST',
+      title: 'Macro Briefing',
+      filename: 'macro-briefing.mp3',
+    });
+
+    expect(resolved.speakers.speaker_3.finalName).toBe('Sid Jain');
+    expect(resolved.speakers.speaker_3.role).toBe('guest');
+  });
+
+  test('mid-episode re-intro does not bind credit or promo context names', () => {
+    const speakerMap = {
+      speaker_1: { id: 'speaker_1', finalName: 'Ed Elson', role: 'host', confidence: 0.94, source: 'test', segments: [] },
+      speaker_2: { id: 'speaker_2', finalName: 'Speaker 2', role: 'unknown', confidence: 0.66, source: 'test', segments: [] },
+    };
+    const segments: SpeakerSegment[] = [
+      { speakerId: 'speaker_1', initialSpeakerId: 'Speaker_A', finalSpeakerId: 'speaker_1', startTime: 1000, endTime: 1070, text: "We're back with Prof G Markets. This episode was produced by Mike Labczyk and Lauren Buell.", confidence: 0.9, status: 'confirmed' },
+      { speakerId: 'speaker_2', initialSpeakerId: 'Speaker_B', finalSpeakerId: 'speaker_2', startTime: 1071, endTime: 1120, text: 'Today we are discussing bond markets and inflation expectations across developed economies.', confidence: 0.8, status: 'confirmed' },
+    ];
+
+    const resolved = __testUtils.resolveConversationalHumanNamesInSpeakerMap(speakerMap, segments, {
+      projectType: 'PODCAST',
+      title: 'Prof G Markets',
+      filename: 'prof-g-markets.mp3',
+    });
+
+    expect(resolved.speakers.speaker_2.finalName).toBe('Speaker 2');
+  });
+
+  test('mid-episode re-intro keeps Speaker N when reply cluster is ambiguous', () => {
+    const speakerMap = {
+      speaker_1: { id: 'speaker_1', finalName: 'Ed Elson', role: 'host', confidence: 0.94, source: 'test', segments: [] },
+      speaker_2: { id: 'speaker_2', finalName: 'Speaker 2', role: 'unknown', confidence: 0.66, source: 'test', segments: [] },
+      speaker_3: { id: 'speaker_3', finalName: 'Speaker 3', role: 'unknown', confidence: 0.66, source: 'test', segments: [] },
+    };
+    const segments: SpeakerSegment[] = [
+      { speakerId: 'speaker_1', initialSpeakerId: 'Speaker_A', finalSpeakerId: 'speaker_1', startTime: 1000, endTime: 1060, text: "We're back and joining us now is Sid Jain from GQG Partners. Sid, welcome.", confidence: 0.9, status: 'confirmed' },
+      { speakerId: 'speaker_2', initialSpeakerId: 'Speaker_B', finalSpeakerId: 'speaker_2', startTime: 1061, endTime: 1078, text: 'Thanks for having me. Great to be here today.', confidence: 0.76, status: 'confirmed' },
+      { speakerId: 'speaker_3', initialSpeakerId: 'Speaker_C', finalSpeakerId: 'speaker_3', startTime: 1079, endTime: 1096, text: 'Thanks Ed, happy to be here and excited for the conversation.', confidence: 0.76, status: 'confirmed' },
+      { speakerId: 'speaker_1', initialSpeakerId: 'Speaker_A', finalSpeakerId: 'speaker_1', startTime: 1097, endTime: 1120, text: 'Let us start with EM concentration and valuation.', confidence: 0.9, status: 'confirmed' },
+    ];
+
+    const resolved = __testUtils.resolveConversationalHumanNamesInSpeakerMap(speakerMap, segments, {
+      projectType: 'PODCAST',
+      title: 'Prof G Markets',
+      filename: 'prof-g-markets.mp3',
+    });
+
+    expect(resolved.speakers.speaker_2.finalName).toBe('Speaker 2');
+    expect(resolved.speakers.speaker_3.finalName).toBe('Speaker 3');
+  });
+
 });
