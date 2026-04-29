@@ -151,12 +151,12 @@ export default function ExportModal({
   // Initialize selected blocks when projects change
   useEffect(() => {
     if (isOpen && projects.length > 0) {
-      // Default to exporting all available content for the chosen projects.
+      // Start with no selections so users explicitly choose what to export.
       const initialBlocks: Record<string, Set<string>> = {};
       const initialCore: Record<string, Set<CoreContentType>> = {};
       projects.forEach(p => {
-        initialBlocks[p.id] = new Set(p.outputs.map(o => o.id));
-        initialCore[p.id] = new Set(getAvailableCoreContent(p));
+        initialBlocks[p.id] = new Set();
+        initialCore[p.id] = new Set();
       });
       setSelectedBlocks(initialBlocks);
       setSelectedCoreContent(initialCore);
@@ -439,7 +439,7 @@ export default function ExportModal({
 
   return (
     <div className="fixed inset-0 z-[60] bg-black/30 flex items-center justify-center p-0 sm:px-4 sm:py-6">
-      <div className="relative flex h-[100dvh] w-full flex-col overflow-hidden bg-slate-50 shadow-2xl dark:bg-slate-900 sm:max-h-[90vh] sm:max-w-5xl sm:rounded-xl">
+      <div className="relative flex h-[100dvh] w-full flex-col overflow-hidden bg-slate-50 shadow-2xl dark:bg-slate-900 sm:h-auto sm:max-h-[82vh] sm:max-w-3xl sm:rounded-xl">
         {/* Header */}
         <div className="flex items-start justify-between gap-4 border-b border-slate-300 px-4 py-4 dark:border-slate-700 sm:px-6">
           <div className="min-w-0">
@@ -466,7 +466,7 @@ export default function ExportModal({
         <div className="flex flex-1 min-h-0 flex-col overflow-hidden sm:flex-row">
           {/* Left Rail: Project List (only for bulk export) */}
           {isBulkExport && (
-            <div className="flex max-h-44 w-full flex-col overflow-y-auto border-b border-slate-300 bg-slate-100/80 dark:border-slate-700 dark:bg-slate-800/50 sm:max-h-none sm:w-56 sm:border-b-0 sm:border-r sm:overflow-visible">
+            <div className="flex max-h-44 w-full flex-col overflow-y-auto border-b border-slate-300 bg-slate-100/80 dark:border-slate-700 dark:bg-slate-800/50 sm:max-h-none sm:w-48 sm:border-b-0 sm:border-r sm:overflow-visible">
               <div className="px-4 py-3 border-b border-slate-300 dark:border-slate-700">
                 <div className="flex items-center justify-between">
                   <span className="text-xs font-medium text-slate-700 dark:text-slate-200 uppercase tracking-wide">
