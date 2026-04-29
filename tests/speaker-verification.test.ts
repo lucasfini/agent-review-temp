@@ -196,6 +196,42 @@ describe('controlled speaker verification', () => {
     expect(result.diagnostics.rejectedRepairs[0]?.reason).toBe('target_cluster_ad_or_promo_heavy');
   });
 
+  test('rejects verifier rename when proposed name appears only in credit context', async () => {
+    mockCreate.mockResolvedValueOnce(mockJsonResponse('gpt-5.2', {
+      overallConfidence: 0.9,
+      proposals: [{
+        repairType: 'rename',
+        targetSpeakerId: 'speaker_3',
+        proposedName: 'Mike Labczyk',
+        proposedRole: 'guest',
+        evidenceSegmentIndices: [0],
+        confidence: 0.86,
+        reason: 'Credit name appears in intro metadata.',
+      }],
+    }));
+    const segments = [
+      seg('speaker_1', 0, 'This episode was produced by Mike Labczyk and Lauren Buell.', 0, 8),
+      seg('speaker_1', 1, 'And I am Kevin Roose. This is Hard Fork.', 8, 16),
+      seg('speaker_2', 2, 'I am Casey Newton and we are diving into the latest AI policy fights.', 16, 30),
+      seg('speaker_3', 3, 'The administration announced new rules and the market reacted quickly.', 30, 55),
+    ];
+    const speakers = {
+      speaker_1: namedSpeaker('speaker_1', 'Kevin Roose', 'host', 0.94),
+      speaker_2: namedSpeaker('speaker_2', 'Casey Newton', 'co_host', 0.93),
+      speaker_3: { id: 'speaker_3', finalName: 'Speaker 3', fallbackName: 'Speaker 3', role: 'unknown', assignmentConfidence: 0.58, requiresReview: true },
+    };
+
+    const result = await runControlledSpeakerVerification(segments, speakers, {
+      title: 'Hard Fork',
+      filename: 'hard-fork.mp3',
+      openaiApiKey: 'test-key',
+    });
+
+    expect(result.speakers.speaker_3.finalName).toBe('Speaker 3');
+    expect(result.diagnostics.acceptedRepairs).toHaveLength(0);
+    expect(result.diagnostics.rejectedRepairs[0]?.reason).toBe('name_evidence_credit_context_only');
+  });
+
   test('escalates to heavy when medium finds no repair for a high-risk anonymous guest case', async () => {
     mockCreate
       .mockResolvedValueOnce(mockJsonResponse('gpt-5.2', {
@@ -432,6 +468,51 @@ describe('controlled speaker verification', () => {
     expect(result.segments[2].segmentKind).toBe('ad_read');
     expect(result.segments[3].segmentKind).toBe('ad_read');
     expect(result.segments[4].segmentKind).toBe('ad_read');
+  });
+
+  test('rejects verifier demote when speaker name is protected by mid-intro handoff provenance', async () => {
+    mockCreate.mockResolvedValueOnce(mockJsonResponse('gpt-5.2', {
+      overallConfidence: 0.88,
+      proposals: [{
+        repairType: 'demote',
+        targetSpeakerId: 'speaker_3',
+        proposedName: 'Speaker 3',
+        proposedRole: 'guest',
+        evidenceSegmentIndices: [1, 3],
+        confidence: 0.77,
+        reason: 'No direct self-ID so keep unnamed guest.',
+      }],
+    }));
+
+    const segments = [
+      seg('speaker_1', 0, "We're back with Prof G Markets. We are speaking with Sid Jain from GQG Partners. Sid, thank you for joining us.", 1005, 1092),
+      seg('speaker_3', 1, 'Absolutely. Emerging markets include a broad set of countries and concentration risk differs a lot.', 1093, 1123),
+      seg('speaker_1', 2, 'How should investors think about index composition here?', 1123, 1151),
+      seg('speaker_3', 3, 'The largest holdings can dominate performance even when country fundamentals diverge.', 1151, 1206),
+    ];
+    const speakers = {
+      speaker_1: namedSpeaker('speaker_1', 'Ed Elson', 'host', 0.95),
+      speaker_3: {
+        id: 'speaker_3',
+        finalName: 'Sid Jain',
+        fallbackName: 'Sid Jain',
+        role: 'guest',
+        assignmentConfidence: 0.9,
+        finalNameLocked: true,
+        nameProvenance: ['mid_intro_handoff', 'guest_intro', 'dominant_reply_after_intro'],
+      },
+    };
+
+    const result = await runControlledSpeakerVerification(segments, speakers, {
+      title: 'Prof G Markets',
+      filename: 'prof-g-markets.mp3',
+      openaiApiKey: 'test-key',
+    });
+
+    expect(result.speakers.speaker_3.finalName).toBe('Sid Jain');
+    expect(result.diagnostics.acceptedRepairs.some((entry) => (
+      entry.proposal?.repairType === 'demote' && entry.proposal?.targetSpeakerId === 'speaker_3'
+    ))).toBe(false);
   });
 
   test('accepts residual second guest binding when verifier has clean enough evidence', async () => {

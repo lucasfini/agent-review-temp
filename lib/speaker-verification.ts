@@ -3,6 +3,7 @@ import type { SpeakerSegment, SpeakerRole } from '@/lib/types';
 import type { ShowIdentityMatch, ShowRosterEntry } from '@/lib/show-speaker-memory';
 import { trackOpenAIUsage } from '@/lib/billing/track-usage';
 import { computeSpeakerAssignmentTrust } from '@/lib/speaker-finalization';
+import { matchCreditContextNameRules } from '@/lib/speaker-naming-rules';
 
 type SpeakerVerificationContext = {
   title?: string;
@@ -297,12 +298,48 @@ function isProtectedParticipantSpeaker(speaker: any): boolean {
     Boolean(speaker?.finalNameLocked) ||
     provenance.some((reason: unknown) => (
       typeof reason === 'string' &&
-      /recurring_roster|known_host_intro|self_id|guest_intro|direct_intro|panel_intro|dominant_reply_after_intro/.test(reason)
+      /recurring_roster|known_host_intro|self_id|guest_intro|direct_intro|panel_intro|dominant_reply_after_intro|mid_intro_handoff|intro_handoff/.test(reason)
     ));
 }
 
 function isAdLikeText(text: string | null | undefined): boolean {
   return /\b(?:sponsor|sponsored|brought to you by|use code|promo code|checkout|limited time|subscribe|newsletter|advertiser|visit|dot com|free trial|offer|save|discount)\b/i.test(String(text || ''));
+}
+
+function escapeRegex(value: string): string {
+  return value.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+}
+
+function isCreditContextOnlyNameEvidence(
+  proposedName: string,
+  targetSpeakerId: string,
+  segments: SpeakerSegment[]
+): boolean {
+  const trimmed = proposedName.trim();
+  if (!trimmed) return false;
+  const nameRegex = new RegExp(`\\b${escapeRegex(trimmed)}\\b`, 'i');
+  let creditMentions = 0;
+  let conversationalMentions = 0;
+
+  for (const segment of segments) {
+    const text = String(segment.text || '');
+    if (!nameRegex.test(text)) continue;
+    const segmentSpeakerId = (segment as any).finalSpeakerId || segment.speakerId;
+    const creditLike = matchCreditContextNameRules(text).length > 0 ||
+      segment.segmentKind === 'ad_read' ||
+      segment.segmentKind === 'promo' ||
+      Boolean(segment.sponsorName) ||
+      isAdLikeText(text);
+    if (creditLike) {
+      creditMentions++;
+      continue;
+    }
+    if (segmentSpeakerId === targetSpeakerId || isConversationalSegment(segment)) {
+      conversationalMentions++;
+    }
+  }
+
+  return creditMentions > 0 && conversationalMentions === 0;
 }
 
 function isShortSpilloverText(text: string | null | undefined): boolean {
@@ -873,6 +910,9 @@ function validateProposal(
       }
       return { ok: false, reason: 'blocked_or_invalid_human_name' };
     }
+    if (isCreditContextOnlyNameEvidence(proposal.proposedName, targetId, segments)) {
+      return { ok: false, reason: 'name_evidence_credit_context_only' };
+    }
     if ((targetStats?.adRatio || 0) >= 0.35) {
       return { ok: false, reason: 'target_cluster_ad_or_promo_heavy' };
     }
@@ -938,11 +978,19 @@ function validateProposal(
 
   if (repairType === 'clearName' || repairType === 'demote') {
     const proposedRole = proposal.proposedRole || 'unknown';
+    const currentName = getDisplayName(targetSpeaker);
+    const protectedParticipantName = isProtectedParticipantSpeaker(targetSpeaker) &&
+      currentName &&
+      !isAnonymousName(currentName) &&
+      !isGenericSpeakerName(currentName);
     if (proposedRole === 'advertiser') {
       return { ok: true, reason: 'accepted_advertiser_demotion', mode: 'segment' };
     }
     if (targetSpeaker?.role === 'advertiser' && !isGenericSpeakerName(getDisplayName(targetSpeaker))) {
       return { ok: true, reason: 'advertiser_name_preserved', mode: 'segment' };
+    }
+    if (protectedParticipantName) {
+      return { ok: false, reason: 'protected_intro_handoff_name' };
     }
   }
 
