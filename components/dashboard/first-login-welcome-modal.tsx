@@ -45,12 +45,12 @@ export function FirstLoginWelcomeModal({
 
   return (
     <Dialog open={isOpen} onOpenChange={(next) => !next && onClose()}>
-      <DialogContent className="w-[90vw] sm:w-[700px] lg:w-[740px] max-w-none overflow-hidden border-slate-200/70 bg-white/72 p-0 shadow-2xl backdrop-blur-2xl dark:border-slate-800/70 dark:bg-slate-950/70 [&>button]:bg-transparent [&>button]:text-slate-700 [&>button]:opacity-100 hover:[&>button]:bg-transparent hover:[&>button]:text-slate-950 [&>button]:ring-offset-white dark:[&>button]:text-slate-200 dark:hover:[&>button]:bg-transparent dark:hover:[&>button]:text-white dark:[&>button]:ring-offset-slate-950">
-        <div>
-          <div className="relative overflow-hidden border-b border-slate-200/80 bg-[linear-gradient(180deg,rgba(248,251,255,0.82)_0%,rgba(238,245,255,0.72)_100%)] px-6 py-6 dark:border-slate-800/80 dark:bg-[linear-gradient(180deg,rgba(15,23,42,0.84)_0%,rgba(17,24,39,0.72)_100%)] sm:px-8 sm:py-7">
+      <DialogContent className="w-[calc(100vw-1rem)] max-w-[740px] overflow-hidden border-slate-200/70 bg-white/72 p-0 shadow-2xl backdrop-blur-2xl sm:w-[min(92vw,740px)] [&>button]:right-3 [&>button]:top-3 [&>button]:bg-transparent [&>button]:text-slate-700 [&>button]:opacity-100 hover:[&>button]:bg-transparent hover:[&>button]:text-slate-950 [&>button]:ring-offset-white dark:border-slate-800/70 dark:bg-slate-950/70 dark:[&>button]:text-slate-200 dark:hover:[&>button]:bg-transparent dark:hover:[&>button]:text-white dark:[&>button]:ring-offset-slate-950">
+        <div className="max-h-[calc(100dvh-1rem)] overflow-y-auto sm:max-h-[calc(100dvh-2rem)]">
+          <div className="relative overflow-hidden border-b border-slate-200/80 bg-[linear-gradient(180deg,rgba(248,251,255,0.82)_0%,rgba(238,245,255,0.72)_100%)] px-4 py-5 dark:border-slate-800/80 dark:bg-[linear-gradient(180deg,rgba(15,23,42,0.84)_0%,rgba(17,24,39,0.72)_100%)] sm:px-8 sm:py-7">
             <div className="absolute inset-0 bg-[radial-gradient(circle_at_top_left,rgba(59,130,246,0.16),transparent_34%),radial-gradient(circle_at_80%_20%,rgba(125,211,252,0.16),transparent_28%)] dark:bg-[radial-gradient(circle_at_top_left,rgba(59,130,246,0.22),transparent_34%),radial-gradient(circle_at_80%_20%,rgba(56,189,248,0.14),transparent_28%)]" />
             <div className="relative">
-              <div className="mb-6 flex items-center gap-3">
+              <div className="mb-5 flex items-center gap-3 sm:mb-6">
                 <BrandLogo showText={false} size="lg" theme={logoTheme} />
                 <div>
                   <p className="text-[11px] font-semibold uppercase tracking-[0.22em] text-slate-500 dark:text-slate-400">
@@ -61,15 +61,15 @@ export function FirstLoginWelcomeModal({
               </div>
 
               <DialogHeader className="space-y-2 text-left">
-                <DialogTitle className="max-w-xl text-[1.75rem] font-semibold leading-tight tracking-tight text-slate-950 dark:text-slate-50 sm:text-[2rem]">
+                <DialogTitle className="max-w-xl pr-8 text-[1.5rem] font-semibold leading-tight tracking-tight text-slate-950 dark:text-slate-50 sm:text-[2rem]">
                   Welcome, {welcomeName}.
                 </DialogTitle>
-                <DialogDescription className="max-w-xl text-sm leading-7 text-slate-600 dark:text-slate-300">
+                <DialogDescription className="max-w-xl text-sm leading-6 text-slate-600 dark:text-slate-300 sm:leading-7">
                   AudioRepurpose helps you go from one recording to clean transcripts and publish-ready content without a messy workflow.
                 </DialogDescription>
               </DialogHeader>
 
-              <div className="mt-7 rounded-3xl border border-slate-200/70 bg-white/58 p-5 shadow-sm backdrop-blur-md dark:border-slate-800/80 dark:bg-slate-900/45 sm:p-6">
+              <div className="mt-6 rounded-3xl border border-slate-200/70 bg-white/58 p-4 shadow-sm backdrop-blur-md dark:border-slate-800/80 dark:bg-slate-900/45 sm:mt-7 sm:p-6">
                 <div className="flex items-start gap-4">
                   <div>
                     <p className="text-xs font-semibold uppercase tracking-[0.18em] text-slate-500 dark:text-slate-400">
@@ -84,7 +84,7 @@ export function FirstLoginWelcomeModal({
             </div>
           </div>
 
-          <div className="bg-white/42 px-6 py-6 dark:bg-slate-950/38 sm:px-8 sm:py-7">
+          <div className="bg-white/42 px-4 py-5 dark:bg-slate-950/38 sm:px-8 sm:py-7">
             <div className="mb-5">
               <p className="text-xs font-semibold uppercase tracking-[0.18em] text-slate-500 dark:text-slate-400">
                 What you can do here
@@ -94,11 +94,11 @@ export function FirstLoginWelcomeModal({
               </p>
             </div>
 
-            <div className="grid gap-2.5 md:grid-cols-3">
+            <div className="grid gap-2.5 sm:gap-3 md:grid-cols-3">
               {highlights.map(({ title, description, icon: Icon }) => (
                 <div
                   key={title}
-                  className="flex gap-3 rounded-2xl border border-slate-200/80 bg-slate-50/52 p-3.5 transition-colors dark:border-slate-800/80 dark:bg-slate-900/38"
+                  className="flex gap-3 rounded-2xl border border-slate-200/80 bg-slate-50/52 p-3 transition-colors dark:border-slate-800/80 dark:bg-slate-900/38 sm:p-3.5"
                 >
                   <div className="flex h-9 w-9 flex-shrink-0 items-center justify-center rounded-xl bg-blue-600/10 text-blue-600 dark:bg-blue-500/15 dark:text-blue-300">
                     <Icon className="h-4.5 w-4.5" />
@@ -111,11 +111,11 @@ export function FirstLoginWelcomeModal({
               ))}
             </div>
 
-            <div className="mt-6 flex flex-col gap-2 sm:flex-row">
+            <div className="mt-6 flex flex-col gap-2 sm:flex-row sm:justify-start">
               <button
                 type="button"
                 onClick={onGoToUpload}
-                className="inline-flex items-center justify-center gap-2 rounded-xl bg-blue-600 px-4 py-2.5 text-sm font-semibold text-white transition-colors hover:bg-blue-700"
+                className="inline-flex min-h-11 w-full items-center justify-center gap-2 rounded-xl bg-blue-600 px-4 py-2.5 text-sm font-semibold text-white transition-colors hover:bg-blue-700 sm:w-auto"
               >
                 Upload a file
                 <ArrowRight className="h-4 w-4" />
@@ -123,7 +123,7 @@ export function FirstLoginWelcomeModal({
               <button
                 type="button"
                 onClick={onClose}
-                className="rounded-xl border border-slate-300 bg-white px-4 py-2.5 text-sm font-medium text-slate-700 transition-colors hover:bg-slate-100 dark:border-slate-700 dark:bg-slate-900 dark:text-slate-200 dark:hover:bg-slate-800"
+                className="min-h-11 w-full rounded-xl border border-slate-300 bg-white px-4 py-2.5 text-sm font-medium text-slate-700 transition-colors hover:bg-slate-100 dark:border-slate-700 dark:bg-slate-900 dark:text-slate-200 dark:hover:bg-slate-800 sm:w-auto"
               >
                 Explore first
               </button>
