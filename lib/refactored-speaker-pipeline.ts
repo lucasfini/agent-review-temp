@@ -2847,6 +2847,8 @@ function hasParticipantStyleProvenanceReasons(reasons: string[]): boolean {
     reason === 'panel_intro' ||
     reason === 'known_host_intro' ||
     reason === 'recurring_roster' ||
+    reason === 'intro_handoff' ||
+    reason === 'mid_intro_handoff' ||
     reason === 'dominant_reply_after_intro'
   ));
 }
@@ -4405,8 +4407,13 @@ export function resolveConversationalHumanNamesInSpeakerMap(
     segments,
     options
   );
-  const finalPanelRepairedSpeakers = repairSpeakerMapWithPanelIntros(
+  const midIntroRepaired = repairSpeakerMapWithMidIntroHandoffs(
     provenanceVerified.speakers,
+    segments,
+    options
+  );
+  const finalPanelRepairedSpeakers = repairSpeakerMapWithPanelIntros(
+    midIntroRepaired.speakers,
     segments,
     options
   );
@@ -4419,6 +4426,7 @@ export function resolveConversationalHumanNamesInSpeakerMap(
       ...verifiedRecurringOwnership.info,
       ...aliasCanonicalized.decisions.map((decision) => `[ALIAS MERGE] ${decision.mergedSpeakerIds.join(', ')} -> ${decision.canonicalName}`),
       ...provenanceVerified.info,
+      ...midIntroRepaired.info,
       ...lockedOverwriteBlocks.map((entry) => `[CONVERSATIONAL NAMING] Locked participant name preserved (${entry})`),
     ],
   };
@@ -4847,6 +4855,70 @@ function repairSpeakerMapWithDominantGuestClusters(
   }
 
   return updatedSpeakers;
+}
+
+function repairSpeakerMapWithMidIntroHandoffs(
+  speakers: Record<string, any>,
+  segments: SpeakerSegment[],
+  options: ConversationalNamingOptions
+): { speakers: Record<string, any>; info: string[] } {
+  const orderedIds = Object.keys(speakers);
+  if (orderedIds.length === 0) return { speakers, info: [] };
+
+  const roster: GPTSpeaker[] = orderedIds.map((id) => {
+    const speaker = speakers[id] || {};
+    const name = typeof speaker.finalName === 'string' && !/^Speaker\s+\d+$/i.test(speaker.finalName)
+      ? speaker.finalName
+      : null;
+    return {
+      id,
+      name,
+      role: speaker.role || 'unknown',
+      confidence: speaker.roleConfidence || speaker.confidence || 0.5,
+      source: speaker.source,
+      profile: speaker.profile,
+      finalNameLocked: speaker.finalNameLocked,
+      nameProvenance: speaker.nameProvenance,
+      assignmentContradictions: speaker.assignmentContradictions,
+    };
+  });
+
+  const handoff = applyMidEpisodeReIntroHandoffNaming(roster, segments, options);
+  if (handoff.assigned <= 0) {
+    return { speakers, info: [] };
+  }
+
+  const updatedSpeakers = Object.fromEntries(
+    Object.entries(speakers).map(([id, speaker]) => [id, { ...speaker }])
+  );
+  const rosterById = new Map(handoff.roster.map((speaker) => [speaker.id, speaker]));
+
+  for (const speakerId of orderedIds) {
+    const next = rosterById.get(speakerId);
+    if (!next) continue;
+    const current = updatedSpeakers[speakerId] || {};
+    const nextName = next.name && !/^Speaker\s+\d+$/i.test(next.name) ? next.name : null;
+    if (!nextName) continue;
+
+    updatedSpeakers[speakerId] = {
+      ...current,
+      finalName: nextName,
+      role: next.role || current.role,
+      roleConfidence: Math.max(current.roleConfidence || current.confidence || 0, next.confidence || 0),
+      source: next.source || current.source,
+      finalNameLocked: isFinalNameLocked(next) || isFinalNameLocked(current),
+      nameProvenance: Array.from(new Set([
+        ...getSpeakerNameProvenance(current),
+        ...getSpeakerNameProvenance(next),
+        'mid_intro_handoff',
+      ])),
+    };
+  }
+
+  return {
+    speakers: updatedSpeakers,
+    info: handoff.info.map((line) => `[MID INTRO MAP REPAIR] ${line}`),
+  };
 }
 
 function canonicalizeNearMatchSpeakerNames(
