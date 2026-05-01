@@ -18,6 +18,15 @@ import { estimateReservationAmount } from '@/lib/billing/reserve-amount';
 export const runtime = 'nodejs';
 export const dynamic = 'force-dynamic';
 
+const enforceNamedSpeakersForRoster = (analysisOptions: any, rosterSpeakers: any[] | undefined) => {
+  if (!Array.isArray(rosterSpeakers) || rosterSpeakers.length === 0) return analysisOptions;
+  if (analysisOptions?.namedSpeakers === true) return analysisOptions;
+  return {
+    ...analysisOptions,
+    namedSpeakers: true,
+  };
+};
+
 const sanitizeTitle = (title: string) => {
   const trimmed = title.trim();
   return trimmed.length ? trimmed : 'URL import';
@@ -57,10 +66,13 @@ export async function POST(request: NextRequest) {
     const body = await request.json();
     const url = typeof body?.url === 'string' ? body.url.trim() : '';
     const titleInput = typeof body?.title === 'string' ? body.title : '';
-    const analysisOptions = normalizeAnalysisOptions(body?.analysisOptions);
+    const rosterSpeakers = Array.isArray(body?.rosterSpeakers) ? body.rosterSpeakers : undefined;
+    const analysisOptions = enforceNamedSpeakersForRoster(
+      normalizeAnalysisOptions(body?.analysisOptions),
+      rosterSpeakers
+    );
     const processingTier = getProcessingTierForAnalysis(analysisOptions);
     const speakerCount = typeof body?.speakerCount === 'number' ? body.speakerCount : undefined;
-    const rosterSpeakers = Array.isArray(body?.rosterSpeakers) ? body.rosterSpeakers : undefined;
 
     if (!url) {
       return NextResponse.json({ error: 'URL is required' }, { status: 400 });

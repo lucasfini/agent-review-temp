@@ -363,7 +363,10 @@ export function UploadProgressSyncProvider({ children }: { children: ReactNode }
       }
 
       const fileProcessingTier = uploadedFile.processingTier;
-      const fileAnalysisOptions = normalizeAnalysisOptions(uploadedFile.analysisOptions);
+      const normalizedFileAnalysisOptions = normalizeAnalysisOptions(uploadedFile.analysisOptions);
+      const fileAnalysisOptions = (uploadedFile.rosterSpeakers?.length || 0) > 0
+        ? { ...normalizedFileAnalysisOptions, namedSpeakers: true }
+        : normalizedFileAnalysisOptions;
       setUploadedFiles(prev =>
         prev.map(f => f.id === uploadedFile.id ? {
           ...f,

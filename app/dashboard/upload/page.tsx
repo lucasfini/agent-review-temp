@@ -488,6 +488,11 @@ export default function UploadPage() {
   const [isUrlSubmitting, setIsUrlSubmitting] = useState(false);
   const [selectedQueuedFileId, setSelectedQueuedFileId] = useState<string | null>(null);
   const lastActiveProjectCountRef = useRef<number | null>(null);
+  const forceNamedSpeakersForRoster = useCallback((options: AnalysisOptions, roster: RosterSpeaker[] | QueuedRosterSpeaker[] | undefined | null): AnalysisOptions => {
+    if (!roster || roster.length === 0) return options;
+    if (options.namedSpeakers) return options;
+    return { ...options, namedSpeakers: true };
+  }, []);
 
   // Fix: drag counter prevents isDragActive flickering when cursor passes over child elements
   const dragCounterRef = useRef(0);
@@ -558,7 +563,10 @@ export default function UploadPage() {
 
   useEffect(() => {
     if (selectedQueuedFile) {
-      const next = normalizeAnalysisOptions(selectedQueuedFile.analysisOptions);
+      const next = forceNamedSpeakersForRoster(
+        normalizeAnalysisOptions(selectedQueuedFile.analysisOptions),
+        selectedQueuedFile.rosterSpeakers || []
+      );
       analysisOptionsRef.current = next;
       setAnalysisOptions(next);
       setSpeakerCount(selectedQueuedFile.speakerCount);
@@ -580,11 +588,15 @@ export default function UploadPage() {
     setAnalysisOptions(fallbackOptions);
     setSpeakerCount(undefined);
     setRosterSpeakers([]);
-  }, [queuedFiles, selectedQueuedFile]);
+  }, [queuedFiles, selectedQueuedFile, forceNamedSpeakersForRoster]);
 
   const handleAnalysisOptionToggle = (key: keyof AnalysisOptions) => {
+    if (key === 'namedSpeakers' && rosterSpeakers.length > 0 && analysisOptions.namedSpeakers) {
+      return;
+    }
     setAnalysisOptions(prev => {
-      const next = { ...prev, [key]: !prev[key] };
+      const toggled = { ...prev, [key]: !prev[key] };
+      const next = forceNamedSpeakersForRoster(toggled, rosterSpeakers);
       analysisOptionsRef.current = next;
       if (selectedQueuedFileId) {
         setUploadedFiles((currentFiles) => currentFiles.map((file) => (
@@ -717,7 +729,10 @@ export default function UploadPage() {
     sourceType: 'zoom' | 'microsoft';
     importPayload: Record<string, unknown>;
   }) => {
-    const selectedAnalysisOptions = normalizeAnalysisOptions(analysisOptionsRef.current);
+    const selectedAnalysisOptions = forceNamedSpeakersForRoster(
+      normalizeAnalysisOptions(analysisOptionsRef.current),
+      rosterSpeakers
+    );
     const selectedProcessingTier = getProcessingTierForAnalysis(selectedAnalysisOptions);
 
     const queuedImport: UploadedFile = {
@@ -952,6 +967,11 @@ export default function UploadPage() {
     setUrlError(null);
     setIsUrlSubmitting(true);
 
+    const enforcedAnalysisOptions = forceNamedSpeakersForRoster(
+      normalizeAnalysisOptions(analysisOptions),
+      rosterSpeakers
+    );
+
     try {
       const accessToken = await getAccessToken();
       const res = await fetch('/api/upload/url', {
@@ -963,7 +983,7 @@ export default function UploadPage() {
         body: JSON.stringify({
           url: trimmed,
           title: urlTitle.trim() || undefined,
-          analysisOptions,
+          analysisOptions: enforcedAnalysisOptions,
           speakerCount,
           rosterSpeakers
         })
@@ -985,7 +1005,7 @@ export default function UploadPage() {
         stageProgress: 0,
         processingMessage: 'Import complete. Starting transcription...',
         processingTier,
-        analysisOptions: normalizeAnalysisOptions(analysisOptions),
+        analysisOptions: enforcedAnalysisOptions,
         displayName,
         sourceUrl: trimmed,
         sourceType,
@@ -1006,7 +1026,10 @@ export default function UploadPage() {
   };
 
   const handleFiles = (files: File[]) => {
-    const selectedAnalysisOptions = normalizeAnalysisOptions(analysisOptionsRef.current);
+    const selectedAnalysisOptions = forceNamedSpeakersForRoster(
+      normalizeAnalysisOptions(analysisOptionsRef.current),
+      rosterSpeakers
+    );
     const selectedProcessingTier = getProcessingTierForAnalysis(selectedAnalysisOptions);
 
     const AUDIO_EXTENSIONS = ['.mp3', '.wav', '.m4a', '.flac', '.ogg', '.webm'];
@@ -1385,11 +1408,12 @@ export default function UploadPage() {
                     <button
                       type="button"
                       onClick={() => handleAnalysisOptionToggle(option.key)}
+                      disabled={option.key === 'namedSpeakers' && rosterSpeakers.length > 0 && analysisOptions.namedSpeakers}
                       className={`w-full rounded-xl border p-4 pr-10 text-left transition-colors ${
                         analysisOptions[option.key]
                           ? 'border-blue-500 bg-blue-50 dark:bg-blue-900/20'
                           : 'border-slate-200 dark:border-slate-800 bg-slate-50/70 dark:bg-slate-950 hover:border-slate-300 dark:hover:border-slate-700'
-                      }`}
+                      } ${(option.key === 'namedSpeakers' && rosterSpeakers.length > 0 && analysisOptions.namedSpeakers) ? 'cursor-not-allowed opacity-85' : ''}`}
                     >
                       <div className="flex items-start gap-3">
                         <div className={`mt-0.5 flex h-5 w-5 items-center justify-center rounded border ${
@@ -1526,11 +1550,33 @@ export default function UploadPage() {
                       <Pencil className="w-3 h-3 flex-shrink-0" />
                       <span>Assigning names and roles here (e.g., Host, Guest) helps the AI match voices to identities from the very first second.</span>
                     </p>
+                    {rosterSpeakers.length > 0 && (
+                      <p className="text-xs text-blue-700 dark:text-blue-300 mb-3">
+                        Named Speakers stays on while a roster is set so your provided names are applied reliably.
+                      </p>
+                    )}
                     <SpeakerRosterForm
                       speakers={rosterSpeakers}
                       onChange={(nextRoster) => {
                         setRosterSpeakers(nextRoster);
                         updateSelectedQueuedFileAdvanced({ rosterSpeakers: nextRoster as QueuedRosterSpeaker[] });
+                        const currentOptions = normalizeAnalysisOptions(analysisOptionsRef.current);
+                        const enforcedOptions = forceNamedSpeakersForRoster(currentOptions, nextRoster);
+                        if (enforcedOptions.namedSpeakers !== currentOptions.namedSpeakers) {
+                          analysisOptionsRef.current = enforcedOptions;
+                          setAnalysisOptions(enforcedOptions);
+                          if (selectedQueuedFileId) {
+                            setUploadedFiles((currentFiles) => currentFiles.map((file) => (
+                              file.id === selectedQueuedFileId && file.status === 'queued'
+                                ? {
+                                    ...file,
+                                    analysisOptions: enforcedOptions,
+                                    processingTier: getProcessingTierForAnalysis(enforcedOptions),
+                                  }
+                                : file
+                            )));
+                          }
+                        }
                       }}
                     />
                   </div>

@@ -457,9 +457,17 @@ export async function POST(request: NextRequest) {
       return NextResponse.json({ error: 'Forbidden' }, { status: 403 });
     }
 
-    const analysisOptions = existingProject
+    const normalizedProjectAnalysisOptions = existingProject
       ? getProjectAnalysisOptions(existingProject)
       : normalizeAnalysisOptions(payloadAnalysisOptions);
+    const hasPresetRoster = Array.isArray(existingProject?.preset_speakers) && existingProject!.preset_speakers!.length > 0;
+    const rosterForcedNamedSpeakers = hasPresetRoster && normalizedProjectAnalysisOptions.namedSpeakers !== true;
+    const analysisOptions = hasPresetRoster
+      ? {
+          ...normalizedProjectAnalysisOptions,
+          namedSpeakers: true,
+        }
+      : normalizedProjectAnalysisOptions;
     const uploadReservationId: string | undefined = existingProject?.metadata?.billing?.uploadReservationId;
     const tier: TierLevel = getProcessingTierForAnalysis(analysisOptions);
     const features = getFeaturesFromAnalysisOptions(analysisOptions);
@@ -892,6 +900,7 @@ export async function POST(request: NextRequest) {
           pipelineDiagnostics = pipelineResult.diagnostics;
           pipelineDiagnostics = {
             ...(pipelineDiagnostics || {}),
+            roster_forced_named_speakers: rosterForcedNamedSpeakers || undefined,
             finalizationSnapshots: Array.isArray(pipelineDiagnostics?.finalizationSnapshots)
               ? pipelineDiagnostics.finalizationSnapshots
               : [],

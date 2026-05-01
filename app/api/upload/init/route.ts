@@ -20,6 +20,15 @@ import { estimateReservationAmount } from '@/lib/billing/reserve-amount';
 
 export const runtime = 'nodejs';
 
+const enforceNamedSpeakersForRoster = (analysisOptions: any, rosterSpeakers: any[] | undefined) => {
+    if (!Array.isArray(rosterSpeakers) || rosterSpeakers.length === 0) return analysisOptions;
+    if (analysisOptions?.namedSpeakers === true) return analysisOptions;
+    return {
+        ...analysisOptions,
+        namedSpeakers: true,
+    };
+};
+
 const sanitizeFileName = (name: string) => {
     const normalized = name
         .normalize('NFKD')
@@ -79,7 +88,10 @@ export async function POST(request: NextRequest) {
             ? Math.max(1, Math.round(body.estimatedDurationSeconds))
             : null;
         const estimatedDuration = providedEstimatedDuration || Math.round(size / (ESTIMATED_BITRATE_BPS / 8));
-        const analysisOptions = normalizeAnalysisOptions(body.analysisOptions);
+        const analysisOptions = enforceNamedSpeakersForRoster(
+            normalizeAnalysisOptions(body.analysisOptions),
+            Array.isArray(rosterSpeakers) ? rosterSpeakers : undefined
+        );
         const processingTier = getProcessingTierForAnalysis(analysisOptions);
         const estimatedCost = await estimateTranscriptionCostAsync({
             durationSeconds: estimatedDuration,

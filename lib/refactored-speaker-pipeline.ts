@@ -2893,6 +2893,31 @@ function canOverwriteSpeakerIdentity(
   const currentName = typeof speaker?.finalName === 'string' ? speaker.finalName.trim() : '';
   if (!currentName) return true;
   if (normalizeSpeakerName(currentName) === normalizeSpeakerName(nextName)) return true;
+
+  // If current identity is one of the active show/preset roster names,
+  // only allow overwrite by another known roster identity.
+  const normalizedCurrent = normalizeSpeakerName(currentName);
+  const normalizedNext = normalizeSpeakerName(nextName);
+  const rosterNames = new Set(
+    (options.showRoster || [])
+      .map((entry) => normalizeSpeakerName(entry.name))
+      .filter(Boolean)
+  );
+  if (rosterNames.has(normalizedCurrent) && !rosterNames.has(normalizedNext)) {
+    if (!Array.isArray((speaker as any).assignmentContradictions)) {
+      (speaker as any).assignmentContradictions = [];
+    }
+    if (!(speaker as any).assignmentContradictions.includes('roster_name_overwrite_blocked')) {
+      (speaker as any).assignmentContradictions.push('roster_name_overwrite_blocked');
+    }
+    const blocked = Array.isArray((speaker as any).rosterOverwriteBlockedAttempts)
+      ? (speaker as any).rosterOverwriteBlockedAttempts
+      : [];
+    blocked.push(nextName);
+    (speaker as any).rosterOverwriteBlockedAttempts = blocked.slice(-5);
+    return false;
+  }
+
   if (!isFinalNameLocked(speaker)) return true;
   const currentProvenance = getSpeakerNameProvenance(speaker);
   const nextProvenance = collectNameProvenanceReasons(nextName, options);
@@ -4176,6 +4201,9 @@ export function inspectConversationalNamingState(
     finalName: typeof speaker?.name === 'string' ? speaker.name : null,
     provenance: getSpeakerNameProvenance(speaker),
     finalNameLocked: isFinalNameLocked(speaker),
+    rosterOverwriteBlockedAttempts: Array.isArray((speaker as any)?.rosterOverwriteBlockedAttempts)
+      ? (speaker as any).rosterOverwriteBlockedAttempts
+      : [],
   }));
   const collapsePreventionApplied = roster.some((speaker: any) =>
     Array.isArray(speaker?.assignmentContradictions) &&
@@ -4228,6 +4256,13 @@ export function inspectConversationalNamingState(
     creditNameRejections: creditContextRejections,
     rejectedNamePromotions,
     rejectedNamePromotionReasons,
+    rosterNameOverwriteBlocked: nameProvenance
+      .filter((entry) => entry.rosterOverwriteBlockedAttempts.length > 0)
+      .map((entry) => ({
+        speakerId: entry.speakerId,
+        finalName: entry.finalName,
+        blockedCandidates: entry.rosterOverwriteBlockedAttempts,
+      })),
     ruleMatches,
     nameProvenance,
     rejectedIntroducedNames: collectRejectedIntroducedNames(segments),

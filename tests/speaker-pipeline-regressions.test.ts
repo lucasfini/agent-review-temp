@@ -4200,4 +4200,69 @@ describe('speaker pipeline regressions', () => {
     expect(resolved.speakers.speaker_3.finalName).toBe('Speaker 3');
   });
 
+  test('does not overwrite explicit roster guest with mention-derived non-roster name', () => {
+    const speakerMap = {
+      speaker_1: {
+        id: 'speaker_1',
+        finalName: 'Chris Williamson',
+        role: 'host',
+        roleConfidence: 0.9,
+        source: 'preset_roster',
+        finalNameLocked: true,
+        nameProvenance: ['recurring_roster'],
+        segments: [],
+      },
+      speaker_2: {
+        id: 'speaker_2',
+        finalName: 'Oz Pearlman',
+        role: 'guest',
+        roleConfidence: 0.9,
+        source: 'preset_roster',
+        finalNameLocked: true,
+        nameProvenance: ['recurring_roster', 'guest_intro'],
+        segments: [],
+      },
+    };
+
+    const segments: SpeakerSegment[] = [
+      {
+        speakerId: 'speaker_1',
+        initialSpeakerId: 'Speaker_A',
+        finalSpeakerId: 'speaker_1',
+        startTime: 0,
+        endTime: 30,
+        text: 'Welcome back. Today I am joined by Oz Pearlman.',
+        confidence: 0.92,
+        status: 'confirmed',
+      },
+      {
+        speakerId: 'speaker_2',
+        initialSpeakerId: 'Speaker_B',
+        finalSpeakerId: 'speaker_2',
+        startTime: 30,
+        endTime: 90,
+        text: 'There is a great old story involving Jennie Jerome and Winston Churchill.',
+        confidence: 0.9,
+        status: 'confirmed',
+      },
+    ];
+
+    const resolved = __testUtils.resolveConversationalHumanNamesInSpeakerMap(
+      speakerMap,
+      segments,
+      {
+        projectType: 'PODCAST',
+        title: 'Mentalist Secrets Revealed',
+        filename: 'mentalist-secrets.mp3',
+        showRoster: [
+          { name: 'Chris Williamson', role: 'host', aliases: ['Chris'], confidenceSource: 'manual' as any },
+          { name: 'Oz Pearlman', role: 'guest', aliases: ['Oz'], confidenceSource: 'manual' as any },
+        ],
+      }
+    );
+
+    expect(resolved.speakers.speaker_2.finalName).toBe('Oz Pearlman');
+    expect(resolved.speakers.speaker_2.finalName).not.toBe('Jennie Jerome');
+  });
+
 });
