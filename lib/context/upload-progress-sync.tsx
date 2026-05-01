@@ -46,6 +46,8 @@ export interface UploadedFile {
   importPayload?: Record<string, unknown>;
   speakerCount?: number;
   rosterSpeakers?: QueuedRosterSpeaker[];
+  namedSpeakersAutoFixed?: boolean;
+  speakerCountNudgeDismissed?: boolean;
 }
 
 export interface SyncedUploadProgressItem {

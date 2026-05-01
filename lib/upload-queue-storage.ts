@@ -28,6 +28,8 @@ interface PersistedQueuedUploadRecord {
   importPayload?: Record<string, unknown>;
   speakerCount?: number;
   rosterSpeakers?: QueuedRosterSpeaker[];
+  namedSpeakersAutoFixed?: boolean;
+  speakerCountNudgeDismissed?: boolean;
   savedAt: string;
 }
 
@@ -126,6 +128,8 @@ function toPersistedQueuedUpload(uploadedFile: UploadedFile): PersistedQueuedUpl
     importPayload: uploadedFile.importPayload,
     speakerCount: uploadedFile.speakerCount,
     rosterSpeakers: uploadedFile.rosterSpeakers,
+    namedSpeakersAutoFixed: uploadedFile.namedSpeakersAutoFixed,
+    speakerCountNudgeDismissed: uploadedFile.speakerCountNudgeDismissed,
     savedAt: new Date().toISOString(),
   };
 }
@@ -151,6 +155,8 @@ function toUploadedFile(record: PersistedQueuedUploadRecord): UploadedFile {
     importPayload: record.importPayload,
     speakerCount: record.speakerCount,
     rosterSpeakers: record.rosterSpeakers,
+    namedSpeakersAutoFixed: record.namedSpeakersAutoFixed,
+    speakerCountNudgeDismissed: record.speakerCountNudgeDismissed,
   };
 }
 

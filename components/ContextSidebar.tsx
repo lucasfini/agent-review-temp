@@ -599,6 +599,23 @@ export function ContextSidebar({
       items: items.sort((a, b) => a.index - b.index),
     }));
   }, [reviewItems]);
+  const unmatchedRosterSuggestions = useMemo(
+    () => activeSpeakerSuggestions.filter((suggestion) => suggestion.source === 'preset_roster_pending'),
+    [activeSpeakerSuggestions]
+  );
+  const genericSpeakerSuggestions = useMemo(
+    () => activeSpeakerSuggestions.filter((suggestion) => suggestion.source !== 'preset_roster_pending'),
+    [activeSpeakerSuggestions]
+  );
+
+  const suggestionSourceLabel = (source: string): string => {
+    if (source === 'preset_roster_pending') return 'Manual roster';
+    if (source === 'show_memory') return 'Show memory';
+    if (source === 'intro_handoff') return 'Intro handoff';
+    if (source === 'mid_intro_handoff') return 'Mid-intro handoff';
+    if (source.startsWith('verifier_')) return source.replace('verifier_', 'Verifier ');
+    return source.replace(/_/g, ' ');
+  };
 
   const handleConfirmSpeakerSuggestion = async (suggestion: SpeakerSuggestion) => {
     if (!onSpeakerRename) return;
@@ -1683,13 +1700,15 @@ export function ContextSidebar({
             {activeSpeakerSuggestions.length > 0 && (
               <div className="space-y-2">
                 <div className="flex items-center justify-between px-1">
-                  <p className="text-xs font-medium text-slate-500 dark:text-slate-400 uppercase tracking-wide">Suggested speakers</p>
+                  <p className="text-xs font-medium text-slate-500 dark:text-slate-400 uppercase tracking-wide">
+                    {unmatchedRosterSuggestions.length > 0 ? 'Unmatched roster names' : 'Suggested speakers'}
+                  </p>
                   <p className="text-[11px] text-slate-500 dark:text-slate-400">
                     {activeSpeakerSuggestions.length} suggestion{activeSpeakerSuggestions.length !== 1 ? 's' : ''}
                   </p>
                 </div>
                 <div className="space-y-2">
-                  {activeSpeakerSuggestions.map((suggestion) => {
+                  {(unmatchedRosterSuggestions.length > 0 ? unmatchedRosterSuggestions : genericSpeakerSuggestions).map((suggestion) => {
                     const key = `${suggestion.speakerId}:${suggestion.suggestedName}`;
                     const speaker = (speakers as Record<string, any>)[suggestion.speakerId];
                     const currentName = getSpeakerDisplayName(speaker) || suggestion.speakerId;
@@ -1711,6 +1730,103 @@ export function ContextSidebar({
                               {Math.round(suggestion.confidence * 100)}% suggested confidence
                               {suggestion.suggestedRole ? ` · ${SPEAKER_ROLE_LABELS[suggestion.suggestedRole as SpeakerRole] || suggestion.suggestedRole}` : ''}
                             </p>
+                            <div className="mt-1">
+                              <span className="inline-flex items-center rounded-full border border-blue-200 bg-white/80 px-2 py-0.5 text-[10px] font-medium text-blue-700 dark:border-blue-900/50 dark:bg-slate-900/50 dark:text-blue-300">
+                                {suggestionSourceLabel(suggestion.source)}
+                              </span>
+                            </div>
+                          </div>
+                          <button
+                            type="button"
+                            onClick={() => setDismissedSuggestionKeys((prev) => new Set(prev).add(key))}
+                            className="rounded-md p-1 text-slate-400 transition-colors hover:bg-white/70 hover:text-slate-600 dark:hover:bg-slate-900/50 dark:hover:text-slate-200"
+                            title="Dismiss suggestion"
+                            aria-label="Dismiss suggestion"
+                          >
+                            <X className="h-3.5 w-3.5" />
+                          </button>
+                        </div>
+                        {suggestion.reason ? (
+                          <p className="mt-2 line-clamp-3 text-[11px] leading-relaxed text-slate-600 dark:text-slate-300">
+                            {suggestion.reason}
+                          </p>
+                        ) : null}
+                        {evidence.length > 0 ? (
+                          <div className="mt-2 flex flex-wrap gap-1.5">
+                            {evidence.map((index) => (
+                              <button
+                                key={`${key}-${index}`}
+                                type="button"
+                                onClick={() => onScrollToSegment?.(index)}
+                                className="rounded-full border border-blue-200 bg-white/80 px-2 py-0.5 text-[10px] font-medium text-blue-700 hover:bg-blue-100 dark:border-blue-900/50 dark:bg-slate-900/50 dark:text-blue-300"
+                              >
+                                Segment {index + 1}
+                              </button>
+                            ))}
+                          </div>
+                        ) : null}
+                        {!readOnly && onSpeakerRename ? (
+                          <div className="mt-3 flex gap-2">
+                            <button
+                              type="button"
+                              onClick={() => handleConfirmSpeakerSuggestion(suggestion)}
+                              disabled={confirming}
+                              className="inline-flex flex-1 items-center justify-center gap-1 rounded-lg bg-blue-600 px-2.5 py-1.5 text-[11px] font-semibold text-white transition-colors hover:bg-blue-700 disabled:cursor-not-allowed disabled:bg-blue-300"
+                            >
+                              {confirming ? <Loader2 className="h-3 w-3 animate-spin" /> : <Check className="h-3 w-3" />}
+                              Confirm name
+                            </button>
+                            <button
+                              type="button"
+                              onClick={() => setDismissedSuggestionKeys((prev) => new Set(prev).add(key))}
+                              className="rounded-lg border border-slate-200 bg-white px-2.5 py-1.5 text-[11px] font-medium text-slate-600 transition-colors hover:bg-slate-50 dark:border-slate-700 dark:bg-slate-900 dark:text-slate-300 dark:hover:bg-slate-800"
+                            >
+                              Not this person
+                            </button>
+                          </div>
+                        ) : null}
+                      </div>
+                    );
+                  })}
+                </div>
+              </div>
+            )}
+            {unmatchedRosterSuggestions.length > 0 && genericSpeakerSuggestions.length > 0 && (
+              <div className="space-y-2">
+                <div className="flex items-center justify-between px-1">
+                  <p className="text-xs font-medium text-slate-500 dark:text-slate-400 uppercase tracking-wide">Other suggestions</p>
+                  <p className="text-[11px] text-slate-500 dark:text-slate-400">
+                    {genericSpeakerSuggestions.length} suggestion{genericSpeakerSuggestions.length !== 1 ? 's' : ''}
+                  </p>
+                </div>
+                <div className="space-y-2">
+                  {genericSpeakerSuggestions.map((suggestion) => {
+                    const key = `${suggestion.speakerId}:${suggestion.suggestedName}`;
+                    const speaker = (speakers as Record<string, any>)[suggestion.speakerId];
+                    const currentName = getSpeakerDisplayName(speaker) || suggestion.speakerId;
+                    const evidence = Array.isArray(suggestion.evidenceSegmentIndices)
+                      ? suggestion.evidenceSegmentIndices.slice(0, 3)
+                      : [];
+                    const confirming = confirmingSuggestionKey === key;
+                    return (
+                      <div
+                        key={`generic-${key}`}
+                        className="rounded-xl border border-blue-200 bg-blue-50/70 p-3 text-xs dark:border-blue-900/40 dark:bg-blue-950/20"
+                      >
+                        <div className="flex items-start justify-between gap-2">
+                          <div className="min-w-0">
+                            <p className="font-semibold text-slate-800 dark:text-slate-100">
+                              {currentName} may be {suggestion.suggestedName}
+                            </p>
+                            <p className="mt-1 text-[11px] text-slate-500 dark:text-slate-400">
+                              {Math.round(suggestion.confidence * 100)}% suggested confidence
+                              {suggestion.suggestedRole ? ` · ${SPEAKER_ROLE_LABELS[suggestion.suggestedRole as SpeakerRole] || suggestion.suggestedRole}` : ''}
+                            </p>
+                            <div className="mt-1">
+                              <span className="inline-flex items-center rounded-full border border-blue-200 bg-white/80 px-2 py-0.5 text-[10px] font-medium text-blue-700 dark:border-blue-900/50 dark:bg-slate-900/50 dark:text-blue-300">
+                                {suggestionSourceLabel(suggestion.source)}
+                              </span>
+                            </div>
                           </div>
                           <button
                             type="button"

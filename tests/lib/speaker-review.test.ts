@@ -260,6 +260,9 @@ describe('speaker review trust helpers', () => {
       }),
     ]);
     expect(Object.values(speakerData.speakers).every((speaker: any) => /^Speaker\s+\d+$/i.test(String(speaker.finalName || '')))).toBe(true);
+    expect(speakerData.detectionMetadata.speakerAssignmentBreakdown.rosterExpectedNamesMissing).toEqual(['Matt Berg']);
+    expect(typeof speakerData.detectionMetadata.speakerAssignmentBreakdown.rosterCoverageRatio).toBe('number');
+    expect(speakerData.detectionMetadata.speakerAssignmentBreakdown.reasonCounts.missing_explicit_roster_name).toBe(1);
   });
 
   test('short advertiser spillover fragments do not drag speaker trust into review', () => {

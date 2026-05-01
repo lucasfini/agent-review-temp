@@ -27,6 +27,8 @@ export type SpeakerAssignmentTrustSummary = {
   confidence: number;
   reviewCount: number;
   confirmedReviewCount: number;
+  rosterExpectedNamesMissing?: string[];
+  rosterCoverageRatio?: number;
   segmentReviewIndices: number[];
   reviewItems: Array<{
     index: number;
@@ -1128,10 +1130,35 @@ export function computeSpeakerAssignmentTrust(
 export function attachSpeakerAssignmentMetadata(
   speakerData: any
 ): any {
-  const summary = computeSpeakerAssignmentTrust(
+  const summaryBase = computeSpeakerAssignmentTrust(
     Array.isArray(speakerData?.segments) ? speakerData.segments : [],
     speakerData?.speakers || {}
   );
+  const pendingPresetSuggestions = Array.isArray(speakerData?.detectionMetadata?.pipelineDiagnostics?.presetPendingSuggestions)
+    ? speakerData.detectionMetadata.pipelineDiagnostics.presetPendingSuggestions
+    : [];
+  const rosterExpectedNamesMissing = pendingPresetSuggestions
+    .map((entry: any) => (typeof entry?.name === 'string' ? entry.name.trim() : ''))
+    .filter((value: string) => value.length > 0);
+  const explicitRosterSize = Array.isArray(speakerData?.detectionMetadata?.pipelineDiagnostics?.showRosterMatches)
+    ? speakerData.detectionMetadata.pipelineDiagnostics.showRosterMatches.length
+    : null;
+  const rosterCoverageRatio = typeof explicitRosterSize === 'number' && explicitRosterSize > 0
+    ? Math.max(0, Math.min(1, (explicitRosterSize - rosterExpectedNamesMissing.length) / explicitRosterSize))
+    : (rosterExpectedNamesMissing.length > 0 ? 0 : undefined);
+  const rosterMissingPenalty = Math.min(0.12, rosterExpectedNamesMissing.length * 0.04);
+  const summary: SpeakerAssignmentTrustSummary = {
+    ...summaryBase,
+    confidence: Number(Math.max(0.2, summaryBase.confidence - rosterMissingPenalty).toFixed(3)),
+    reasonCounts: {
+      ...summaryBase.reasonCounts,
+      ...(rosterExpectedNamesMissing.length > 0
+        ? { missing_explicit_roster_name: rosterExpectedNamesMissing.length }
+        : {}),
+    },
+    rosterExpectedNamesMissing: rosterExpectedNamesMissing.length > 0 ? rosterExpectedNamesMissing : undefined,
+    rosterCoverageRatio,
+  };
   const existingDiagnostics = speakerData?.detectionMetadata?.pipelineDiagnostics;
   const finalRecurringOwnership = summary.speakerSummaries
     .filter((speaker) => speaker.role === 'host' || speaker.role === 'co_host')
@@ -1192,6 +1219,8 @@ export function attachSpeakerAssignmentMetadata(
         speakerSuggestions,
         reasonCounts: summary.reasonCounts,
         speakerSummaries: summary.speakerSummaries,
+        rosterExpectedNamesMissing: summary.rosterExpectedNamesMissing,
+        rosterCoverageRatio: summary.rosterCoverageRatio,
       },
       pipelineDiagnostics: {
         ...pipelineDiagnosticsBase,
@@ -1203,6 +1232,8 @@ export function attachSpeakerAssignmentMetadata(
           confirmedReviewCount: summary.confirmedReviewCount,
           reasonCounts: summary.reasonCounts,
           calibrationSummary: summary.calibrationSummary,
+          rosterExpectedNamesMissing: summary.rosterExpectedNamesMissing,
+          rosterCoverageRatio: summary.rosterCoverageRatio,
           reviewSpeakerIds: summary.speakerSummaries
             .filter((speaker) => speaker.reviewReasons.length > 0)
             .map((speaker) => speaker.speakerId),

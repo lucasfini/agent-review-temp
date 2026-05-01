@@ -149,6 +149,7 @@ function UploadActivitySection({
               ? queuedFiles.findIndex(f => f.id === uploadedFile.id) + 1
               : 0;
             const queueTotal = queuedFiles.length;
+            const showNamedSpeakersAutoFixNotice = Boolean(uploadedFile.namedSpeakersAutoFixed);
 
             return (
               <div
@@ -531,6 +532,11 @@ export default function UploadPage() {
     () => formatAnalysisSummary(selectedQueuedFile?.analysisOptions || analysisOptions),
     [analysisOptions, selectedQueuedFile]
   );
+  const selectedQueuedRosterConflict = Boolean(
+    selectedQueuedFile &&
+    (selectedQueuedFile.rosterSpeakers?.length || 0) > 0 &&
+    normalizeAnalysisOptions(selectedQueuedFile.analysisOptions).namedSpeakers === false
+  );
   // Heuristic to estimate speaker count from title
   const estimateSpeakerCountFromTitle = (filename: string): number | undefined => {
     const clean = filename.toLowerCase().replace(/\.[^/.]+$/, "").replace(/_/g, " ");
@@ -563,14 +569,27 @@ export default function UploadPage() {
 
   useEffect(() => {
     if (selectedQueuedFile) {
+      const normalizedSelectedOptions = normalizeAnalysisOptions(selectedQueuedFile.analysisOptions);
       const next = forceNamedSpeakersForRoster(
-        normalizeAnalysisOptions(selectedQueuedFile.analysisOptions),
+        normalizedSelectedOptions,
         selectedQueuedFile.rosterSpeakers || []
       );
       analysisOptionsRef.current = next;
       setAnalysisOptions(next);
       setSpeakerCount(selectedQueuedFile.speakerCount);
       setRosterSpeakers((selectedQueuedFile.rosterSpeakers || []) as RosterSpeaker[]);
+      if (next.namedSpeakers !== normalizedSelectedOptions.namedSpeakers && selectedQueuedFile.status === 'queued') {
+        setUploadedFiles((currentFiles) => currentFiles.map((file) => (
+          file.id === selectedQueuedFile.id && file.status === 'queued'
+            ? {
+                ...file,
+                analysisOptions: next,
+                processingTier: getProcessingTierForAnalysis(next),
+                namedSpeakersAutoFixed: true,
+              }
+            : file
+        )));
+      }
       return;
     }
 
@@ -588,7 +607,7 @@ export default function UploadPage() {
     setAnalysisOptions(fallbackOptions);
     setSpeakerCount(undefined);
     setRosterSpeakers([]);
-  }, [queuedFiles, selectedQueuedFile, forceNamedSpeakersForRoster]);
+  }, [queuedFiles, selectedQueuedFile, forceNamedSpeakersForRoster, setUploadedFiles]);
 
   const handleAnalysisOptionToggle = (key: keyof AnalysisOptions) => {
     if (key === 'namedSpeakers' && rosterSpeakers.length > 0 && analysisOptions.namedSpeakers) {
@@ -624,6 +643,82 @@ export default function UploadPage() {
         : file
     )));
   }, [selectedQueuedFileId, setUploadedFiles]);
+
+  const dismissSpeakerCountNudgeForSelected = useCallback(() => {
+    if (!selectedQueuedFileId) return;
+    setUploadedFiles((currentFiles) => currentFiles.map((file) => (
+      file.id === selectedQueuedFileId && file.status === 'queued'
+        ? {
+            ...file,
+            speakerCountNudgeDismissed: true,
+          }
+        : file
+    )));
+  }, [selectedQueuedFileId, setUploadedFiles]);
+
+  const applyRosterToQueuedFile = useCallback((targetFileId: string) => {
+    const rosterToApply = rosterSpeakers as QueuedRosterSpeaker[];
+    if (!targetFileId || rosterToApply.length === 0) return 0;
+    let appliedCount = 0;
+    setUploadedFiles((currentFiles) => currentFiles.map((file) => {
+      if (file.id !== targetFileId || file.status !== 'queued') return file;
+      appliedCount += 1;
+      const nextAnalysis = forceNamedSpeakersForRoster(normalizeAnalysisOptions(file.analysisOptions), rosterToApply);
+      return {
+        ...file,
+        rosterSpeakers: rosterToApply,
+        analysisOptions: nextAnalysis,
+        processingTier: getProcessingTierForAnalysis(nextAnalysis),
+        namedSpeakersAutoFixed: true,
+      };
+    }));
+    return appliedCount;
+  }, [forceNamedSpeakersForRoster, rosterSpeakers, setUploadedFiles]);
+
+  const applyRosterToAllQueuedFiles = useCallback(() => {
+    const rosterToApply = rosterSpeakers as QueuedRosterSpeaker[];
+    if (rosterToApply.length === 0) return;
+    let appliedCount = 0;
+    setUploadedFiles((currentFiles) => currentFiles.map((file) => {
+      if (file.status !== 'queued') return file;
+      appliedCount += 1;
+      const nextAnalysis = forceNamedSpeakersForRoster(normalizeAnalysisOptions(file.analysisOptions), rosterToApply);
+      return {
+        ...file,
+        rosterSpeakers: rosterToApply,
+        analysisOptions: nextAnalysis,
+        processingTier: getProcessingTierForAnalysis(nextAnalysis),
+        namedSpeakersAutoFixed: true,
+      };
+    }));
+    if (appliedCount > 0) {
+      toast.success(`Applied roster to ${appliedCount} queued file${appliedCount === 1 ? '' : 's'}.`);
+    }
+  }, [forceNamedSpeakersForRoster, rosterSpeakers, setUploadedFiles]);
+
+  const handleStartQueuedUploads = useCallback(() => {
+    let autoFixedCount = 0;
+    setUploadedFiles((currentFiles) => currentFiles.map((file) => {
+      if (file.status !== 'queued') return file;
+      const hasRoster = (file.rosterSpeakers?.length || 0) > 0;
+      const namedSpeakersOn = normalizeAnalysisOptions(file.analysisOptions).namedSpeakers;
+      if (!hasRoster || namedSpeakersOn) {
+        return file;
+      }
+      autoFixedCount += 1;
+      const nextAnalysis = forceNamedSpeakersForRoster(normalizeAnalysisOptions(file.analysisOptions), file.rosterSpeakers);
+      return {
+        ...file,
+        analysisOptions: nextAnalysis,
+        processingTier: getProcessingTierForAnalysis(nextAnalysis),
+        namedSpeakersAutoFixed: true,
+      };
+    }));
+    if (autoFixedCount > 0) {
+      toast.message(`Auto-fixed ${autoFixedCount} queued file${autoFixedCount === 1 ? '' : 's'}: enabled Named Speakers for rostered uploads.`);
+    }
+    startQueuedUploads();
+  }, [forceNamedSpeakersForRoster, setUploadedFiles, startQueuedUploads]);
 
   useEffect(() => {
     if (user) {
@@ -1389,6 +1484,11 @@ export default function UploadPage() {
                         ? `Editing queued file: ${selectedQueuedFile.displayName || selectedQueuedFile.file?.name || 'Untitled'}`
                         : 'These options become the default for your next queued upload or URL import.'}
                     </p>
+                    {selectedQueuedRosterConflict && (
+                      <p className="mt-2 text-xs text-amber-700 dark:text-amber-300">
+                        Conflict detected: this queued file has a roster but Named Speakers was off. It has been auto-fixed for upload.
+                      </p>
+                    )}
                   </div>
                   <div className="rounded-full border border-slate-200 dark:border-slate-700 bg-slate-50 dark:bg-slate-800 px-3 py-1 text-xs font-medium text-slate-600 dark:text-slate-300">
                     {selectedAnalysisSummary}
@@ -1439,7 +1539,7 @@ export default function UploadPage() {
                   </span>
                   <button
                     type="button"
-                    onClick={activeTab === 'url' ? handleUrlImport : startQueuedUploads}
+                    onClick={activeTab === 'url' ? handleUrlImport : handleStartQueuedUploads}
                     disabled={
                       activeTab === 'url'
                         ? isUrlSubmitting
@@ -1520,6 +1620,16 @@ export default function UploadPage() {
                           const nextSpeakerCount = value === '' ? undefined : parseInt(value, 10);
                           setSpeakerCount(nextSpeakerCount);
                           updateSelectedQueuedFileAdvanced({ speakerCount: nextSpeakerCount });
+                          if (selectedQueuedFileId && nextSpeakerCount) {
+                            setUploadedFiles((currentFiles) => currentFiles.map((file) => (
+                              file.id === selectedQueuedFileId && file.status === 'queued'
+                                ? {
+                                    ...file,
+                                    speakerCountNudgeDismissed: true,
+                                  }
+                                : file
+                            )));
+                          }
                         }}
                         className="block w-36 rounded-md border border-slate-300 dark:border-slate-600 px-3 py-2 text-sm shadow-sm focus:outline-none focus:ring-1 focus:ring-blue-500 focus:border-blue-500 bg-white dark:bg-slate-900 text-slate-900 dark:text-slate-200"
                       >
@@ -1542,6 +1652,43 @@ export default function UploadPage() {
                         </button>
                       )}
                     </div>
+                    {rosterSpeakers.length >= 2 && !speakerCount && !selectedQueuedFile?.speakerCountNudgeDismissed && (
+                      <div className="mt-3 rounded-md border border-amber-200 bg-amber-50 px-3 py-2 text-xs text-amber-800 dark:border-amber-800/30 dark:bg-amber-900/20 dark:text-amber-200">
+                        <div className="flex items-center justify-between gap-2">
+                          <span>Set expected speaker count? This reduces roster merge/split errors.</span>
+                          <div className="flex items-center gap-2">
+                            <button
+                              type="button"
+                              onClick={() => {
+                                const suggested = Math.min(12, Math.max(2, rosterSpeakers.length));
+                                setSpeakerCount(suggested);
+                                updateSelectedQueuedFileAdvanced({ speakerCount: suggested });
+                                if (selectedQueuedFileId) {
+                                  setUploadedFiles((currentFiles) => currentFiles.map((file) => (
+                                    file.id === selectedQueuedFileId && file.status === 'queued'
+                                      ? {
+                                          ...file,
+                                          speakerCountNudgeDismissed: true,
+                                        }
+                                      : file
+                                  )));
+                                }
+                              }}
+                              className="rounded border border-amber-300 bg-white px-2 py-1 text-[11px] font-medium text-amber-700 hover:bg-amber-100 dark:border-amber-700 dark:bg-amber-950/50 dark:text-amber-200"
+                            >
+                              Use {Math.min(12, Math.max(2, rosterSpeakers.length))}
+                            </button>
+                            <button
+                              type="button"
+                              onClick={dismissSpeakerCountNudgeForSelected}
+                              className="text-[11px] text-amber-700 underline-offset-2 hover:underline dark:text-amber-300"
+                            >
+                              Dismiss
+                            </button>
+                          </div>
+                        </div>
+                      </div>
+                    )}
                   </div>
 
                   {/* Speaker Roster */}
@@ -1572,6 +1719,9 @@ export default function UploadPage() {
                                     ...file,
                                     analysisOptions: enforcedOptions,
                                     processingTier: getProcessingTierForAnalysis(enforcedOptions),
+                                    speakerCountNudgeDismissed: (nextRoster.length >= 2 && !file.speakerCount)
+                                      ? false
+                                      : file.speakerCountNudgeDismissed,
                                   }
                                 : file
                             )));
@@ -1579,6 +1729,30 @@ export default function UploadPage() {
                         }
                       }}
                     />
+                    <div className="mt-3 flex flex-wrap gap-2">
+                      <button
+                        type="button"
+                        disabled={!selectedQueuedFileId || rosterSpeakers.length === 0}
+                        onClick={() => {
+                          if (!selectedQueuedFileId) return;
+                          const applied = applyRosterToQueuedFile(selectedQueuedFileId);
+                          if (applied > 0) {
+                            toast.success('Applied roster to selected queued file.');
+                          }
+                        }}
+                        className="rounded-md border border-slate-300 bg-white px-2.5 py-1.5 text-xs font-medium text-slate-700 hover:bg-slate-50 disabled:cursor-not-allowed disabled:opacity-50 dark:border-slate-700 dark:bg-slate-900 dark:text-slate-200 dark:hover:bg-slate-800"
+                      >
+                        Apply roster to selected queued file
+                      </button>
+                      <button
+                        type="button"
+                        disabled={queuedFiles.length === 0 || rosterSpeakers.length === 0}
+                        onClick={applyRosterToAllQueuedFiles}
+                        className="rounded-md border border-slate-300 bg-white px-2.5 py-1.5 text-xs font-medium text-slate-700 hover:bg-slate-50 disabled:cursor-not-allowed disabled:opacity-50 dark:border-slate-700 dark:bg-slate-900 dark:text-slate-200 dark:hover:bg-slate-800"
+                      >
+                        Apply roster to all queued files
+                      </button>
+                    </div>
                   </div>
                 </div>
               )}
