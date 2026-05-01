@@ -1637,6 +1637,7 @@ export type ConversationalNamingInspection = {
   creditNameRejections?: Array<{ name: string; matchedText: string; reason: string }>;
   rejectedNamePromotions: string[];
   rejectedNamePromotionReasons?: Array<{ speakerId: string; name: string; reasons: string[] }>;
+  rosterNameOverwriteBlocked?: Array<{ speakerId: string; finalName: string | null; blockedCandidates: string[] }>;
   ruleMatches?: {
     accepted: SpeakerNamingRuleMatch[];
     rejected: SpeakerNamingRuleMatch[];
