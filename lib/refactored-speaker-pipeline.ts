@@ -2886,6 +2886,41 @@ function isFinalNameLocked(speaker: any): boolean {
   return Boolean(speaker?.finalNameLocked);
 }
 
+function hasSubstantiveConversationalOwnership(
+  speakerId: string,
+  segments: SpeakerSegment[]
+): boolean {
+  const owned = segments.filter((segment) => (
+    (segment.finalSpeakerId || segment.speakerId) === speakerId &&
+    segment.segmentKind !== 'ad_read' &&
+    segment.segmentKind !== 'promo'
+  ));
+  if (owned.length === 0) return false;
+
+  const totalDuration = owned.reduce((sum, segment) => sum + getSegmentDuration(segment), 0);
+  const substantiveTurns = owned.filter((segment) => (
+    isSubstantiveGuestReplySegment(segment) || countWords(segment.text || '') >= 10
+  )).length;
+  return totalDuration >= 45 || substantiveTurns >= 2;
+}
+
+function hasCrossSpeakerVocativeEvidence(
+  name: string,
+  speakerId: string,
+  segments: SpeakerSegment[]
+): boolean {
+  const aliases = buildRecurringAliasSet({ name });
+  for (const segment of segments) {
+    if (!isConversationalSegment(segment)) continue;
+    const owner = segment.finalSpeakerId || segment.speakerId;
+    if (owner === speakerId) continue;
+    if (countVocativeAliasMatches(getSegText(segment), aliases) > 0) {
+      return true;
+    }
+  }
+  return false;
+}
+
 function canOverwriteSpeakerIdentity(
   speaker: any,
   nextName: string,
@@ -2987,7 +3022,8 @@ function getConversationalNameRejectionReasons(
     if (match.category === 'non_human_sponsor_product') reasons.add('sponsor_product');
   }
   const participantSupported = hasParticipantStyleEvidence(name, provenance) ||
-    hasParticipantStyleProvenanceReasons(getSpeakerNameProvenance(speaker));
+    hasParticipantStyleProvenanceReasons(getSpeakerNameProvenance(speaker)) ||
+    hasCrossSpeakerVocativeEvidence(name, speaker.id, segments);
   if (creditContextNames.has(normalizeSpeakerName(name)) && !participantSupported) {
     reasons.add('credit_or_boilerplate');
   }
@@ -3076,7 +3112,10 @@ function enforceConversationalNameProvenanceInSpeakerMap(
     }
 
     const normalized = normalizeSpeakerName(currentName);
-    const supported = provenance.has(normalized) || hasParticipantStyleProvenanceReasons(getSpeakerNameProvenance(speaker));
+    const supported =
+      provenance.has(normalized) ||
+      hasParticipantStyleProvenanceReasons(getSpeakerNameProvenance(speaker)) ||
+      hasCrossSpeakerVocativeEvidence(currentName, speakerId, segments);
     const nonHuman = rejectionReasons.some((reason) => (
       reason === 'mentioned_entity_only' ||
       reason === 'credit_or_boilerplate' ||
@@ -4338,7 +4377,16 @@ export function resolveConversationalHumanNamesInSpeakerMap(
         }) &&
         (
           nameProvenance.has(normalizeSpeakerName(originalFinalName)) ||
-          hasParticipantStyleProvenanceReasons(getSpeakerNameProvenance(original))
+          hasParticipantStyleProvenanceReasons(getSpeakerNameProvenance(original)) ||
+          (
+            isPlausibleHumanName(originalFinalName) &&
+            hasSubstantiveConversationalOwnership(id, segments)
+          ) ||
+          (
+            ['guest', 'panelist', 'host', 'co_host'].includes(String(original?.role || '').toLowerCase()) &&
+            isPlausibleHumanName(originalFinalName) &&
+            hasSubstantiveConversationalOwnership(id, segments)
+          )
         );
       const originalRejectedName = originalFinalName.length > 0 &&
         !/^Speaker\s+\d+$/i.test(originalFinalName) &&
