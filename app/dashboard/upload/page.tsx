@@ -1,8 +1,7 @@
 "use client";
 
 import { useState, useCallback, useEffect, useRef, useMemo } from 'react';
-import { useSearchParams } from 'next/navigation';
-import { Upload, FileAudio, X, AlertCircle, CheckCircle, Clock, History, Trash2, Eye, FileVideo, Loader2, ChevronDown, ChevronUp, Lightbulb, Users, Mic, Pencil, UserCircle, MoreHorizontal } from 'lucide-react';
+import { Upload, FileAudio, X, AlertCircle, CheckCircle, Clock, History, Trash2, Eye, FileVideo, Loader2, ChevronDown, ChevronUp, Lightbulb, Users, Mic, Pencil, UserCircle, MoreHorizontal, Video, MessageSquare, Sparkles } from 'lucide-react';
 import { supabase } from '@/lib/supabase/client';
 import { useAuth } from '@/lib/auth/context';
 import { calculateOverallProgress, getStageDisplayName, getUserFacingProcessingMessage, type ProcessingStage } from '@/lib/tier-progress-config';
@@ -11,42 +10,45 @@ import { useActiveProcessingProjects } from '@/lib/hooks/useActiveProcessingProj
 import { emitProjectMutation } from '@/lib/project-events';
 import { normalizeTier } from '@/lib/tier-config';
 import { ANALYSIS_OPTION_CONFIG, DEFAULT_ANALYSIS_OPTIONS, getProcessingTierForAnalysis, getSelectedAnalysisKeys, normalizeAnalysisOptions, type AnalysisOptions } from '@/lib/analysis-options';
-import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogDescription } from '@/components/ui/dialog';
 import { FeatureHelp } from '@/components/ui/feature-help';
 import { useUploadProgressSync, type UploadedFile, type QueuedRosterSpeaker } from '@/lib/context/upload-progress-sync';
 import { toast } from 'sonner';
-import { INTEGRATIONS_COMING_SOON_MESSAGE, INTEGRATIONS_ENABLED } from '@/lib/integrations/availability';
 
-type IntegrationProvider = 'zoom' | 'microsoft';
 const HISTORY_PAGE_SIZE = 10;
+const UPLOAD_METHOD_TABS = [
+  { id: 'local', label: 'Local', labelFull: 'Local upload', soon: false },
+  { id: 'url', label: 'URL', labelFull: 'URL import', soon: false },
+  { id: 'integrations', label: 'Apps', labelFull: 'Integrations', soon: true },
+] as const;
 
-interface IntegrationStatus {
-  provider: IntegrationProvider;
-  connected: boolean;
-  metadata?: { email?: string; name?: string } | null;
-  updatedAt?: string | null;
-}
+type UploadMethodTab = typeof UPLOAD_METHOD_TABS[number]['id'];
 
-interface ZoomRecording {
-  meetingId: string;
-  topic: string;
-  startTime: string;
-  duration: number;
-  files: Array<{
-    fileId: string;
-    fileType: string;
-    fileExtension: string;
-    fileSize: number;
-  }>;
-}
-
-interface MicrosoftRecording {
-  id: string;
-  name: string;
-  size: number;
-  createdAt: string;
-  mimeType?: string;
-}
+const COMING_SOON_INTEGRATIONS = [
+  {
+    name: 'Zoom',
+    detail: 'Meeting recordings',
+    Icon: Video,
+    accent: 'text-blue-600 dark:text-blue-300',
+    bg: 'bg-blue-50 dark:bg-blue-500/10',
+    border: 'border-blue-100 dark:border-blue-400/20',
+  },
+  {
+    name: 'Teams',
+    detail: 'Call recordings',
+    Icon: Users,
+    accent: 'text-indigo-600 dark:text-indigo-300',
+    bg: 'bg-indigo-50 dark:bg-indigo-500/10',
+    border: 'border-indigo-100 dark:border-indigo-400/20',
+  },
+  {
+    name: 'Slack',
+    detail: 'Huddles and clips',
+    Icon: MessageSquare,
+    accent: 'text-emerald-600 dark:text-emerald-300',
+    bg: 'bg-emerald-50 dark:bg-emerald-500/10',
+    border: 'border-emerald-100 dark:border-emerald-400/20',
+  },
+];
 
 interface UploadHistory {
   id: string;
@@ -475,14 +477,7 @@ export default function UploadPage() {
   const [recommendedSpeakerCount, setRecommendedSpeakerCount] = useState<number | undefined>(undefined);
   const [showAdvancedOptions, setShowAdvancedOptions] = useState(true);
   const [confirmDeleteId, setConfirmDeleteId] = useState<string | null>(null);
-  const [integrations, setIntegrations] = useState<IntegrationStatus[]>([]);
-  const [integrationsLoading, setIntegrationsLoading] = useState(false);
-  const [showImportDialog, setShowImportDialog] = useState(false);
-  const [activeProvider, setActiveProvider] = useState<IntegrationProvider | null>(null);
-  const [recordings, setRecordings] = useState<Array<ZoomRecording | MicrosoftRecording>>([]);
-  const [recordingsLoading, setRecordingsLoading] = useState(false);
-  const [recordingsError, setRecordingsError] = useState<string | null>(null);
-  const [activeTab, setActiveTab] = useState<'local' | 'url' | 'integrations'>('local');
+  const [activeTab, setActiveTab] = useState<UploadMethodTab>('local');
   const [urlInput, setUrlInput] = useState('');
   const [urlTitle, setUrlTitle] = useState('');
   const [urlError, setUrlError] = useState<string | null>(null);
@@ -498,7 +493,7 @@ export default function UploadPage() {
   // Fix: drag counter prevents isDragActive flickering when cursor passes over child elements
   const dragCounterRef = useRef(0);
 
-  const { user, session, isDemoMode } = useAuth();
+  const { user, session } = useAuth();
   const {
     uploadedFiles,
     setUploadedFiles,
@@ -517,8 +512,6 @@ export default function UploadPage() {
     pollingEnabled: false,
     pollIntervalMs: 5000,
   });
-  const searchParams = useSearchParams();
-  const hideDemoChromeForCapture = searchParams.get('capture') === '1';
   const processingTier = useMemo(() => getProcessingTierForAnalysis(analysisOptions), [analysisOptions]);
   const queuedFiles = useMemo(
     () => uploadedFiles.filter((file) => file.status === 'queued'),
@@ -724,134 +717,9 @@ export default function UploadPage() {
     if (user) {
       setHistoryPage(1);
       fetchUploadHistory(1);
-      fetchIntegrations();
       refreshActiveProjects();
     }
   }, [user, session?.access_token]);
-
-  const fetchIntegrations = async () => {
-    if (!session?.access_token) return;
-    setIntegrationsLoading(true);
-    try {
-      const res = await fetch('/api/integrations/providers', {
-        headers: { Authorization: `Bearer ${session.access_token}` }
-      });
-      if (!res.ok) throw new Error('Failed to load integrations');
-      const data = await res.json();
-      setIntegrations(data.providers || []);
-    } catch (error) {
-      console.error('Failed to load integrations:', error);
-      toast.error('Failed to load integrations. Refresh the page and try again.');
-    } finally {
-      setIntegrationsLoading(false);
-    }
-  };
-
-  const startOAuth = async (provider: IntegrationProvider) => {
-    if (!session?.access_token) return;
-    const res = await fetch(`/api/integrations/${provider}/start?mode=json`, {
-      headers: { Authorization: `Bearer ${session.access_token}` }
-    });
-    if (!res.ok) {
-      console.error('Failed to start OAuth');
-      toast.error(`Unable to connect ${provider === 'zoom' ? 'Zoom' : 'Microsoft Teams'} right now.`);
-      return;
-    }
-    const data = await res.json();
-    if (data?.url) {
-      window.location.href = data.url;
-      return;
-    }
-    toast.error(`Unable to connect ${provider === 'zoom' ? 'Zoom' : 'Microsoft Teams'} right now.`);
-  };
-
-  const openImportDialog = async (provider: IntegrationProvider) => {
-    if (!session?.access_token) return;
-    setShowImportDialog(true);
-    setActiveProvider(provider);
-    setRecordings([]);
-    setRecordingsError(null);
-    setRecordingsLoading(true);
-    try {
-      const res = await fetch(`/api/integrations/${provider}/recordings`, {
-        headers: { Authorization: `Bearer ${session.access_token}` }
-      });
-      if (!res.ok) {
-        throw new Error(await readErrorMessage(res, 'Failed to load recordings.'));
-      }
-      const data = await res.json();
-      setRecordings(data.recordings || []);
-    } catch {
-      setRecordingsError('We could not load recordings right now. Please try again.');
-    } finally {
-      setRecordingsLoading(false);
-    }
-  };
-
-  const importRecording = async (provider: IntegrationProvider, payload: any) => {
-    if (!session?.access_token) {
-      throw new Error('You need to be signed in to import recordings.');
-    }
-    setRecordingsLoading(true);
-    setRecordingsError(null);
-    try {
-      const res = await fetch(`/api/integrations/${provider}/import`, {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-          Authorization: `Bearer ${session.access_token}`
-        },
-        body: JSON.stringify(payload)
-      });
-      if (!res.ok) {
-        throw new Error(await readErrorMessage(res, 'Import failed.'));
-      }
-      await fetchUploadHistory();
-      await refreshActiveProjects();
-      setShowImportDialog(false);
-      toast.success('Import started. Your recording is now processing.');
-    } catch (error) {
-      setRecordingsError('We could not import that recording. Please try again.');
-      throw error;
-    } finally {
-      setRecordingsLoading(false);
-    }
-  };
-
-  const queueImportRecording = (params: {
-    displayName: string;
-    estimatedDurationSeconds: number;
-    sourceType: 'zoom' | 'microsoft';
-    importPayload: Record<string, unknown>;
-  }) => {
-    const selectedAnalysisOptions = forceNamedSpeakersForRoster(
-      normalizeAnalysisOptions(analysisOptionsRef.current),
-      rosterSpeakers
-    );
-    const selectedProcessingTier = getProcessingTierForAnalysis(selectedAnalysisOptions);
-
-    const queuedImport: UploadedFile = {
-      id: Math.random().toString(36).substr(2, 9),
-      status: 'queued',
-      progress: 0,
-      processingStage: 'pending' as ProcessingStage,
-      stageProgress: 0,
-      processingMessage: 'Waiting to import...',
-      processingTier: selectedProcessingTier,
-      analysisOptions: selectedAnalysisOptions,
-      displayName: params.displayName,
-      estimatedDurationSeconds: params.estimatedDurationSeconds,
-      sourceType: params.sourceType,
-      importPayload: params.importPayload,
-      speakerCount,
-      rosterSpeakers: rosterSpeakers as QueuedRosterSpeaker[],
-    };
-
-    setUploadedFiles((prev) => [...prev, queuedImport]);
-    setSelectedQueuedFileId(queuedImport.id);
-    setShowImportDialog(false);
-    toast.success('Recording added to queue.');
-  };
 
   const fetchUploadHistory = async (page = historyPage) => {
     try {
@@ -1236,41 +1104,33 @@ export default function UploadPage() {
 
         <div className="xl:flex xl:gap-8 xl:items-start">
           <div className="flex-1 min-w-0">
-
-            {/* Demo notice */}
-            {isDemoMode && !hideDemoChromeForCapture && (
-              <div className="mb-6 bg-amber-950/50 border border-amber-700/50 rounded-xl p-4 flex items-start gap-3">
-                <div className="flex-shrink-0 h-8 w-8 bg-amber-500/20 rounded-lg flex items-center justify-center mt-0.5">
-                  <Eye className="h-4 w-4 text-amber-400" />
-                </div>
-                <div>
-                  <p className="text-sm font-semibold text-amber-300">Demo uploads are enabled</p>
-                  <p className="text-xs text-amber-400/70 mt-0.5">
-                    Upload recordings to try the workflow. Settings and account controls stay read-only in the demo.
-                  </p>
-                </div>
-              </div>
-            )}
-
             {/* Upload methods */}
             <div className="mb-6">
-              <div className="flex w-full items-center rounded-lg border border-slate-300 dark:border-slate-700 bg-slate-50 dark:bg-slate-900 p-1 shadow-sm">
-                {([
-                  { id: 'local', label: 'Local', labelFull: 'Local upload' },
-                  { id: 'url', label: 'URL', labelFull: 'URL import' },
-                  { id: 'integrations', label: 'Apps', labelFull: 'Integrations' },
-                ] as Array<{ id: 'local' | 'url' | 'integrations'; label: string; labelFull: string }>).map((tab) => (
+              <div className="flex w-full items-center gap-1 rounded-lg border border-slate-300 bg-slate-50 p-1 shadow-sm dark:border-slate-700 dark:bg-slate-900">
+                {UPLOAD_METHOD_TABS.map((tab) => (
                   <button
                     key={tab.id}
                     type="button"
                     onClick={() => setActiveTab(tab.id)}
-                    className={`flex-1 px-3 py-1.5 text-sm font-medium rounded-md transition-colors text-center ${activeTab === tab.id
-                        ? 'bg-white dark:bg-slate-700 text-slate-900 dark:text-white shadow'
-                        : 'text-slate-500 dark:text-slate-400 hover:text-slate-700 dark:hover:text-slate-50 hover:bg-slate-100 dark:hover:bg-slate-800'
+                    className={`${tab.soon ? 'relative flex-[0.62] sm:flex-[0.54] overflow-hidden' : 'flex-1'} px-2.5 py-1.5 text-sm font-medium rounded-md transition-all text-center ${activeTab === tab.id
+                        ? tab.soon
+                          ? 'bg-slate-900 text-white shadow dark:bg-white dark:text-slate-950'
+                          : 'bg-white dark:bg-slate-700 text-slate-900 dark:text-white shadow'
+                        : tab.soon
+                          ? 'text-slate-500 dark:text-slate-400 hover:text-slate-800 dark:hover:text-slate-100 hover:bg-white/80 dark:hover:bg-slate-800'
+                          : 'text-slate-500 dark:text-slate-400 hover:text-slate-700 dark:hover:text-slate-50 hover:bg-slate-100 dark:hover:bg-slate-800'
                       }`}
                   >
-                    <span className="sm:hidden">{tab.label}</span>
-                    <span className="hidden sm:inline">{tab.labelFull}</span>
+                    {tab.soon && (
+                      <span className="pointer-events-none absolute inset-y-1 left-1 w-8 rounded bg-white/15 blur-sm motion-safe:animate-pulse" />
+                    )}
+                    <span className="relative inline-flex items-center justify-center gap-1.5">
+                      <span className="sm:hidden">{tab.label}</span>
+                      <span className="hidden sm:inline">{tab.labelFull}</span>
+                      {tab.soon && (
+                        <span className={`h-1.5 w-1.5 rounded-full ${activeTab === tab.id ? 'bg-cyan-300' : 'bg-cyan-400'} motion-safe:animate-pulse`} />
+                      )}
+                    </span>
                   </button>
                 ))}
               </div>
@@ -1387,68 +1247,45 @@ export default function UploadPage() {
                 )}
 
                 {activeTab === 'integrations' && (
-                  <div data-tour="integrations">
-                    <div className="mb-4">
-                      <div className="flex items-center gap-2">
-                        <h2 className="text-lg font-semibold text-slate-900 dark:text-slate-50">Import from apps</h2>
-                        <FeatureHelp
-                          title="Import from apps"
-                          description="Pull recordings directly from connected tools so you can skip manual exporting and start from the transcript."
-                          bestFor="Zoom or Teams recordings that already live in another app"
-                        />
+                  <div className="relative overflow-hidden rounded-lg border border-slate-200 bg-slate-50 p-4 dark:border-slate-700 dark:bg-slate-950">
+                    <div className="pointer-events-none absolute inset-x-0 top-0 h-px bg-gradient-to-r from-transparent via-cyan-400/70 to-transparent" />
+                    <div className="flex flex-col gap-4 sm:flex-row sm:items-center sm:justify-between">
+                      <div className="min-w-0">
+                        <div className="flex items-center gap-2">
+                          <span className="inline-flex h-8 w-8 items-center justify-center rounded-lg bg-slate-900 text-white shadow-sm dark:bg-white dark:text-slate-950">
+                            <Sparkles className="h-4 w-4" />
+                          </span>
+                          <div>
+                            <h2 className="text-base font-semibold text-slate-900 dark:text-slate-50">Integrations are coming soon</h2>
+                            <p className="mt-0.5 text-sm text-slate-500 dark:text-slate-400">
+                              Direct imports are being prepared. Local upload and URL import are ready now.
+                            </p>
+                          </div>
+                        </div>
                       </div>
-                      <p className="mt-1 text-sm text-slate-500 dark:text-slate-400">Pull recordings directly from connected tools</p>
+                      <div className="inline-flex items-center gap-1.5 rounded-full border border-cyan-200 bg-cyan-50 px-3 py-1 text-xs font-medium text-cyan-700 dark:border-cyan-400/20 dark:bg-cyan-400/10 dark:text-cyan-200">
+                        <span className="h-1.5 w-1.5 rounded-full bg-cyan-500 motion-safe:animate-pulse" />
+                        Warming up
+                      </div>
                     </div>
-                    {!INTEGRATIONS_ENABLED && (
-                      <div className="mb-4 rounded-xl border border-amber-200 bg-amber-50 px-4 py-3 text-sm text-amber-700 dark:border-amber-500/20 dark:bg-amber-500/10 dark:text-amber-300">
-                        {INTEGRATIONS_COMING_SOON_MESSAGE}
-                      </div>
-                    )}
-                    <div className="grid gap-4 md:grid-cols-2">
-                      {(['zoom', 'microsoft'] as IntegrationProvider[]).map(provider => {
-                        const status = integrations.find(i => i.provider === provider);
-                        const connected = status?.connected;
-                        return (
-                          <div key={provider} className="border border-slate-300 dark:border-slate-700 bg-white dark:bg-slate-900 rounded-xl p-4">
-                            <div className="flex items-start justify-between">
-                              <div>
-                                <h3 className="text-base font-semibold text-slate-900 dark:text-slate-50">
-                                  {provider === 'zoom' ? 'Zoom' : 'Microsoft Teams'}
-                                </h3>
-                                <p className="text-xs text-slate-500 dark:text-slate-400 mt-1">
-                                  {connected
-                                    ? `Connected${status?.metadata?.email ? ` • ${status.metadata.email}` : ''}`
-                                    : 'Not connected'}
-                                </p>
-                              </div>
-                              <span className={`text-xs px-2 py-1 rounded-full ${connected ? 'bg-green-100 dark:bg-green-900/20 text-green-700 dark:text-green-400' : 'bg-slate-100 dark:bg-slate-800 text-slate-500 dark:text-slate-400'}`}>
-                                {connected ? 'Connected' : 'Disconnected'}
-                              </span>
-                            </div>
-                            <div className="mt-4 flex gap-2">
-                              {!connected ? (
-                                <button
-                                  type="button"
-                                  onClick={() => startOAuth(provider)}
-                                  className="px-3 py-2 text-sm font-medium bg-blue-600 text-white rounded-lg hover:bg-blue-700 transition-colors"
-                                  disabled={integrationsLoading || !INTEGRATIONS_ENABLED}
-                                >
-                                  {INTEGRATIONS_ENABLED ? 'Connect' : 'Coming soon'}
-                                </button>
-                              ) : (
-                                <button
-                                  type="button"
-                                  onClick={() => openImportDialog(provider)}
-                                  className="px-3 py-2 text-sm font-medium bg-slate-200 dark:bg-slate-700 text-slate-900 dark:text-white rounded-lg hover:bg-slate-300 dark:hover:bg-slate-600 transition-colors"
-                                  disabled={!INTEGRATIONS_ENABLED}
-                                >
-                                  Select recording
-                                </button>
-                              )}
+
+                    <div className="mt-4 grid gap-2 sm:grid-cols-3">
+                      {COMING_SOON_INTEGRATIONS.map(({ name, detail, Icon, accent, bg, border }) => (
+                        <div
+                          key={name}
+                          className={`rounded-lg border ${border} ${bg} p-3`}
+                        >
+                          <div className="flex items-center gap-2">
+                            <span className="inline-flex h-8 w-8 items-center justify-center rounded-md bg-white/80 shadow-sm dark:bg-slate-900/80">
+                              <Icon className={`h-4 w-4 ${accent}`} />
+                            </span>
+                            <div className="min-w-0">
+                              <p className="text-sm font-semibold text-slate-900 dark:text-slate-50">{name}</p>
+                              <p className="truncate text-xs text-slate-500 dark:text-slate-400">{detail}</p>
                             </div>
                           </div>
-                        );
-                      })}
+                        </div>
+                      ))}
                     </div>
                   </div>
                 )}
@@ -1539,16 +1376,20 @@ export default function UploadPage() {
                   </span>
                   <button
                     type="button"
-                    onClick={activeTab === 'url' ? handleUrlImport : handleStartQueuedUploads}
+                    onClick={activeTab === 'url' ? handleUrlImport : activeTab === 'local' ? handleStartQueuedUploads : undefined}
                     disabled={
                       activeTab === 'url'
                         ? isUrlSubmitting
+                        : activeTab === 'integrations'
+                          ? true
                         : queuedFiles.length === 0 || isStartingQueuedUploads
                     }
                     className="inline-flex items-center justify-center rounded-lg bg-blue-600 px-4 py-2 text-sm font-medium text-white transition-colors hover:bg-blue-700 disabled:cursor-not-allowed disabled:opacity-60"
                   >
                     {activeTab === 'url'
                       ? (isUrlSubmitting ? 'Importing...' : 'Import URL')
+                      : activeTab === 'integrations'
+                        ? 'Coming soon'
                       : isStartingQueuedUploads
                         ? 'Starting...'
                         : queuedFiles.length === 1
@@ -1796,37 +1637,6 @@ export default function UploadPage() {
                       <p className="mt-1 text-sm text-slate-500 dark:text-slate-400">
                         Your upload history will appear here once you start uploading.
                       </p>
-                      {isDemoMode && (
-                        <div className="mt-6 text-left">
-                          <div className="p-4 rounded-lg border border-slate-200 dark:border-slate-800 bg-white dark:bg-slate-900/60">
-                            <div className="flex items-center justify-between">
-                              <div className="flex items-center space-x-3 flex-1 min-w-0">
-                                <div className="flex-shrink-0">
-                                  {getStatusIcon('completed')}
-                                </div>
-                                <div className="flex-1 min-w-0">
-                                  <h4 className="text-sm font-medium text-slate-900 dark:text-slate-50 truncate">
-                                    Demo Upload: Future of Work Roundtable
-                                  </h4>
-                                  <div className="mt-0.5 flex items-center flex-wrap gap-x-2 gap-y-0.5 text-xs text-slate-500">
-                                    <span>128 MB</span>
-                                    <span>52 min</span>
-                                    <span className="hidden sm:inline">{new Date().toLocaleDateString()}</span>
-                                  </div>
-                                </div>
-                              </div>
-                              <div className="flex items-center space-x-2 flex-shrink-0 ml-3">
-                                <span className="hidden sm:inline-flex items-center px-2 py-0.5 rounded-full text-xs font-medium bg-emerald-100 dark:bg-emerald-900/20 text-emerald-700 dark:text-emerald-300">
-                                  Completed
-                                </span>
-                                <span className="p-1.5 text-blue-600 hover:text-blue-500 hover:bg-blue-50 dark:hover:bg-blue-900/20 rounded transition-colors" title="View project">
-                                  <Eye className="h-4 w-4" />
-                                </span>
-                              </div>
-                            </div>
-                          </div>
-                        </div>
-                      )}
                     </div>
                   ) : (
                     <>
@@ -1956,90 +1766,6 @@ export default function UploadPage() {
                 </div>
               )}
             </div>
-
-            <Dialog open={showImportDialog} onOpenChange={setShowImportDialog}>
-              <DialogContent className="max-w-2xl">
-                <DialogHeader>
-                  <DialogTitle>
-                    {activeProvider === 'zoom' ? 'Zoom recordings' : 'Teams recordings'}
-                  </DialogTitle>
-                  <DialogDescription>
-                    Select a recording to import into your project
-                  </DialogDescription>
-                </DialogHeader>
-                <div className="space-y-3 max-h-[60vh] overflow-auto">
-                  {recordingsLoading && (
-                    <div className="text-sm text-slate-500 dark:text-slate-400">Loading recordings...</div>
-                  )}
-                  {!recordingsLoading && recordingsError && (
-                    <div className="text-sm text-amber-700 dark:text-amber-300">{recordingsError}</div>
-                  )}
-                  {!recordingsLoading && !recordingsError && recordings.length === 0 && (
-                    <div className="text-sm text-slate-500 dark:text-slate-400">No recordings found.</div>
-                  )}
-                  {!recordingsLoading && activeProvider === 'zoom' && (recordings as ZoomRecording[]).map((rec) => (
-                    <div key={rec.meetingId} className="border border-slate-200 dark:border-slate-700 rounded-lg p-3">
-                      <div className="flex items-start justify-between gap-3">
-                        <div>
-                          <div className="text-sm font-medium text-slate-900 dark:text-slate-50">{rec.topic || 'Zoom Meeting'}</div>
-                          <div className="text-xs text-slate-500 dark:text-slate-400">
-                            {new Date(rec.startTime).toLocaleString()} • {rec.duration} mins
-                          </div>
-                        </div>
-                      </div>
-                      <div className="mt-2 flex flex-wrap gap-2">
-                        {rec.files.map(file => (
-                          <button
-                            key={file.fileId}
-                            type="button"
-                            onClick={() =>
-                              queueImportRecording({
-                                displayName: `${rec.topic || rec.meetingId} (${file.fileType || file.fileExtension})`,
-                                estimatedDurationSeconds: rec.duration * 60,
-                                sourceType: 'zoom',
-                                importPayload: {
-                                  meetingId: rec.meetingId,
-                                  fileId: file.fileId,
-                                },
-                              })
-                            }
-                            className="px-2.5 py-1.5 text-xs font-medium bg-blue-600 text-white rounded-md hover:bg-blue-700"
-                          >
-                            Add {file.fileType || file.fileExtension}
-                          </button>
-                        ))}
-                      </div>
-                    </div>
-                  ))}
-                  {!recordingsLoading && activeProvider === 'microsoft' && (recordings as MicrosoftRecording[]).map((rec) => (
-                    <div key={rec.id} className="border border-slate-200 dark:border-slate-700 rounded-lg p-3 flex items-center justify-between">
-                      <div>
-                        <div className="text-sm font-medium text-slate-900 dark:text-slate-50">{rec.name}</div>
-                        <div className="text-xs text-slate-500 dark:text-slate-400">
-                          {new Date(rec.createdAt).toLocaleString()} • {formatFileSize(rec.size)}
-                        </div>
-                      </div>
-                      <button
-                        type="button"
-                        onClick={() =>
-                          queueImportRecording({
-                            displayName: rec.name,
-                            estimatedDurationSeconds: Math.max(1, Math.round(rec.size / (128000 / 8))),
-                            sourceType: 'microsoft',
-                            importPayload: {
-                              itemId: rec.id,
-                            },
-                          })
-                        }
-                        className="px-3 py-1.5 text-xs font-medium bg-blue-600 text-white rounded-md hover:bg-blue-700"
-                      >
-                        Add
-                      </button>
-                    </div>
-                  ))}
-                </div>
-              </DialogContent>
-            </Dialog>
 
           </div>{/* end main column */}
 

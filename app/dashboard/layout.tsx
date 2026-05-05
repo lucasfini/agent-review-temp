@@ -8,7 +8,6 @@ import DashboardNav from '@/components/dashboard/nav';
 import { Loader2 } from 'lucide-react';
 import { CoverageProgressProvider } from '@/lib/context/coverage-progress';
 import { CoverageBanner } from '@/app/dashboard/_banners/coverage-banner';
-import { DemoBanner } from '@/components/demo/DemoBanner';
 import { FirstLoginWelcomeModal } from '@/components/dashboard/first-login-welcome-modal';
 import CompactFooter from '@/components/site/CompactFooter';
 import { calculateOverallProgress, getUserFacingProcessingMessage } from '@/lib/tier-progress-config';
@@ -36,7 +35,6 @@ function DashboardLayoutContent({
   const searchParams = useSearchParams();
   const [isSidebarCollapsed, setIsSidebarCollapsed] = useState(false);
   const forceWelcomePreview = searchParams.get('welcome') === '1';
-  const hideDemoChromeForCapture = searchParams.get('capture') === '1';
   const isUploadRoute = pathname === '/dashboard/upload';
   const isProjectsRoute = pathname === '/dashboard/projects';
   const { activeProjects: activeUploads } = useActiveProcessingProjects(user?.id, 5, {
@@ -111,7 +109,6 @@ function DashboardLayoutContent({
   return (
     <CoverageProgressProvider>
       <div className={`${usesDocumentFlow ? 'min-h-screen' : 'h-screen'} flex flex-col ${usesDocumentFlow ? 'overflow-visible' : 'overflow-hidden'} bg-slate-50 dark:bg-slate-950`}>
-        {isDemoMode && !hideDemoChromeForCapture && <DemoBanner />}
         <div className={`flex flex-1 flex-col md:flex-row ${usesDocumentFlow ? 'overflow-visible' : 'overflow-hidden'}`}>
           <Suspense fallback={<div className="hidden md:block md:w-64 md:flex-shrink-0" />}>
             <DashboardNav

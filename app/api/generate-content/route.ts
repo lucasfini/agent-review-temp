@@ -20,6 +20,7 @@ import { createReservation, failReservation, settleReservationAmount } from '@/l
 import { isAuthorizedMaintenanceRequest } from '@/lib/maintenance-auth';
 import { estimateReservationAmount } from '@/lib/billing/reserve-amount';
 import { estimateContentBlocksCostAsync } from '@/lib/billing/cost-map';
+import { isDemoUser } from '@/lib/demo-mode';
 
 /**
  * Parse JSON response from AI, stripping markdown code fences and conversational filler
@@ -603,7 +604,7 @@ export async function POST(request: NextRequest) {
     // Demo account guard
     if (userId) {
       const { data: { user: projectUser } } = await supabaseAdmin.auth.admin.getUserById(userId);
-      if (projectUser?.email === process.env.DEMO_EMAIL) {
+      if (isDemoUser(projectUser)) {
         return NextResponse.json({ error: 'Demo account is read-only' }, { status: 403 });
       }
     }

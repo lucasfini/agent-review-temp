@@ -1,5 +1,5 @@
 import { supabaseAdmin } from '@/lib/supabase/server';
-import { formatWorkflowReason } from '@/lib/billing/presentation';
+import { formatUsageEventReason, formatWorkflowReason } from '@/lib/billing/presentation';
 
 export interface GroupedTransactionChild {
   reason: string;
@@ -234,11 +234,12 @@ export async function getGroupedTransactions(
         amount: -Math.abs(Number(event.billed_cost || 0)),
         createdAt: event.created_at || latestTx.created_at,
         balanceAfter: Number(latestTx.balance_after),
-        reason: event.service_name || formatWorkflowReason({
+        reason: formatUsageEventReason({
+          serviceName: event.service_name,
+          provider: event.provider,
+          metadata: event.metadata,
           workflowType: reservation?.workflow_type,
-          metadata: reservation?.metadata || latestTx.metadata || {},
         }),
-        detail: event.provider,
         kind: 'usage',
       })) {
         groupedUsageEventCount += 1;
@@ -300,8 +301,13 @@ export async function getGroupedTransactions(
       amount: Number(tx.amount),
       createdAt: tx.created_at,
       balanceAfter: Number(tx.balance_after),
-      reason: tx.reason || usageEvent?.service_name || getDefaultReason(tx.transaction_type),
-      detail: usageEvent?.provider,
+      reason: usageEvent
+        ? formatUsageEventReason({
+            serviceName: usageEvent.service_name,
+            provider: usageEvent.provider,
+            metadata: usageEvent.metadata,
+          })
+        : tx.reason || getDefaultReason(tx.transaction_type),
       kind: tx.transaction_type === 'debit' ? 'usage' : 'charge',
     });
 

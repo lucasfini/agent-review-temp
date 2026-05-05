@@ -52,15 +52,18 @@ next-env.d.ts
 *.mp3
 
 # Runtime logs and conversation data
-/logs/conversations/*.json
-logs/conversations/*.json
+/logs/conversations/
 
 # Local screenshots and generated audits
 Screenshot *.png
 screencapture-*.png
 /playwright-report/
 /test-results/
+/docs/pdfs/
 /tmp/
 /tmp-light-audit/
 /tmp-light-audit-after/
 /tmp-light-audit-final/
+
+# Production secrets must stay local.
+env.production.example
