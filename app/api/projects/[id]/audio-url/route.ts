@@ -4,6 +4,7 @@ import { getSignedUrl } from '@aws-sdk/s3-request-presigner';
 import { supabaseAdmin } from '@/lib/supabase/server';
 import { r2Client, BUCKET_NAME } from '@/lib/r2';
 import { expireProjectAudio, isAudioExpired } from '@/lib/audio-retention';
+import { getStarterAudioObjectKey } from '@/lib/starter-project';
 
 export const dynamic = 'force-dynamic';
 
@@ -25,7 +26,7 @@ export async function GET(
 
     let { data: project, error: projectError } = await supabaseAdmin
       .from('projects')
-      .select('id, audio_file_name, audio_expires_at, audio_deleted_at, user_id')
+      .select('id, audio_file_name, audio_expires_at, audio_deleted_at, user_id, metadata')
       .eq('id', projectId)
       .single() as {
         data: {
@@ -34,6 +35,7 @@ export async function GET(
           audio_expires_at: string | null;
           audio_deleted_at: string | null;
           user_id: string;
+          metadata?: unknown;
         } | null;
         error: any;
       };
@@ -90,7 +92,11 @@ export async function GET(
       }, { status: 410 });
     }
 
-    const key = `${projectId}/${project.audio_file_name}`;
+    const key = getStarterAudioObjectKey(project);
+    if (!key) {
+      return NextResponse.json({ error: 'No audio file associated with this project' }, { status: 404 });
+    }
+
     const command = new GetObjectCommand({ Bucket: BUCKET_NAME, Key: key });
     const signedUrl = await getSignedUrl(r2Client, command, { expiresIn: 3600 });
 

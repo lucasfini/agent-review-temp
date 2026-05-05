@@ -24,20 +24,28 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
   const [loading, setLoading] = useState(true);
 
   useEffect(() => {
-    const ensureWelcomeBonus = async (activeSession: Session | null) => {
+    const ensureAccountSetup = async (activeSession: Session | null) => {
       if (!activeSession?.access_token || !activeSession.user || isDemoUser(activeSession.user)) {
         return;
       }
 
       try {
-        await fetch('/api/billing/welcome-bonus', {
-          method: 'POST',
-          headers: {
-            Authorization: `Bearer ${activeSession.access_token}`,
-          },
-        });
+        const authHeaders = {
+          Authorization: `Bearer ${activeSession.access_token}`,
+        };
+
+        await Promise.all([
+          fetch('/api/billing/welcome-bonus', {
+            method: 'POST',
+            headers: authHeaders,
+          }),
+          fetch('/api/projects/starter/ensure', {
+            method: 'POST',
+            headers: authHeaders,
+          }),
+        ]);
       } catch (error) {
-        console.warn('[AUTH] Failed to ensure welcome bonus:', error);
+        console.warn('[AUTH] Failed to ensure account setup:', error);
       }
     };
 
@@ -46,7 +54,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
       setSession(session);
       setUser(session?.user ?? null);
       setLoading(false);
-      void ensureWelcomeBonus(session);
+      void ensureAccountSetup(session);
     };
 
     getSession();
@@ -94,7 +102,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
         }
 
         if (event === 'SIGNED_IN') {
-          void ensureWelcomeBonus(session);
+          void ensureAccountSetup(session);
         }
       }
     );
