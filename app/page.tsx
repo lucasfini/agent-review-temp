@@ -1795,10 +1795,10 @@ function Hero() {
                 <ArrowRight className="h-4 w-4" />
               </Link>
               <Link
-                href="/auth/demo"
+                href="/auth/login"
                 className="inline-flex items-center gap-2 rounded-xl border border-slate-300 px-6 py-3.5 font-medium text-slate-700 transition-colors hover:border-slate-400 hover:bg-white/70 dark:border-white/25 dark:text-white/80 dark:hover:border-white/50 dark:hover:bg-white/5 dark:hover:text-white"
               >
-                Try Demo {"->"}
+                Log In
               </Link>
             </motion.div>
 
@@ -2928,12 +2928,6 @@ function Footer() {
                 className="block transition-colors hover:text-slate-900 dark:hover:text-gray-200"
               >
                 Get Started Free
-              </Link>
-              <Link
-                href="/auth/demo"
-                className="block transition-colors hover:text-slate-900 dark:hover:text-gray-200"
-              >
-                Try Demo
               </Link>
             </div>
           </div>

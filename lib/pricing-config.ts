@@ -70,6 +70,3 @@ export const PAYG_SECTIONS = [
 
 export const PRICING_MODEL_SUMMARY =
   "Transcription stays low-friction, analysis scales with transcript length, and content outputs are charged per generated asset.";
-
-export const DEMO_CREDITS_PRICING_COPY =
-  "No subscriptions. Buy credits and use them as you process audio. Transcription starts at $0.39/hr, analysis add-ons scale with transcript length, and content outputs are priced per asset.";

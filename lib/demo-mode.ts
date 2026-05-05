@@ -1,5 +1,4 @@
-export const DEMO_EMAIL = 'demo@audiorepurpose.com';
-
 export function isDemoUser(user: { email?: string | null } | null): boolean {
-  return user?.email === DEMO_EMAIL;
+  const readOnlyEmail = process.env.LEGACY_READ_ONLY_ACCOUNT_EMAIL;
+  return Boolean(readOnlyEmail && user?.email === readOnlyEmail);
 }

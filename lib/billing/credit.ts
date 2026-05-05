@@ -13,6 +13,7 @@
  */
 
 import { supabaseAdmin as supabase } from '@/lib/supabase/server';
+import { formatUsageEventReason } from '@/lib/billing/presentation';
 
 // ============================================================================
 // Types and Interfaces
@@ -563,7 +564,11 @@ export async function getUsageHistory(
     userId: row.user_id,
     projectId: row.project_id,
     serviceKey: row.service_key,
-    serviceName: row.service_name,
+    serviceName: formatUsageEventReason({
+      serviceName: row.service_name,
+      provider: row.provider,
+      metadata: row.metadata,
+    }),
     provider: row.provider,
     units: row.units,
     unitType: row.unit_type,

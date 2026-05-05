@@ -251,7 +251,7 @@ export async function DELETE(
 
     if (projectForDelete?.user_id) {
       const { data: { user: projectUser } } = await supabaseAdmin.auth.admin.getUserById(projectForDelete.user_id);
-      if (projectUser?.email === process.env.DEMO_EMAIL) {
+      if (isDemoUser(projectUser)) {
         return NextResponse.json({ error: 'Demo account is read-only' }, { status: 403 });
       }
     }

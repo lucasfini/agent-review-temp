@@ -7,6 +7,7 @@
 
 import { calculateServiceCostAsync, calculateTokenCostAsync } from './cost-map';
 import { logUsageEvent, debitCredit } from './credit';
+import { formatUsageEventReason } from './presentation';
 
 // ============================================================================
 // OpenAI Usage Tracking
@@ -121,7 +122,11 @@ export async function trackOpenAIUsage(params: {
       projectId,
       reservationId,
       serviceKey: inputServiceKey,
-      serviceName: `OpenAI ${modelName}`,
+      serviceName: formatUsageEventReason({
+        serviceName: `OpenAI ${modelName}`,
+        provider: 'openai',
+        metadata: { purpose },
+      }),
       provider: 'openai',
       units: usage.promptTokens + usage.completionTokens,
       unitType: 'tokens',
@@ -150,7 +155,11 @@ export async function trackOpenAIUsage(params: {
   if (shouldDebit) {
     try {
       await debitCredit(userId, totalBilledCost, usageEventId || undefined, {
-        reason: `OpenAI ${modelName} - ${purpose || 'API call'}`,
+        reason: formatUsageEventReason({
+          serviceName: `OpenAI ${modelName}`,
+          provider: 'openai',
+          metadata: { purpose },
+        }),
         metadata: {
           projectId,
           model: modelName,
@@ -245,7 +254,11 @@ export async function trackAnthropicUsage(params: {
       projectId,
       reservationId,
       serviceKey: inputServiceKey,
-      serviceName: `Claude ${modelName} Input`,
+      serviceName: formatUsageEventReason({
+        serviceName: `Claude ${modelName} Input`,
+        provider: 'anthropic',
+        metadata: { purpose },
+      }),
       provider: 'anthropic',
       units: usage.inputTokens,
       unitType: 'input_tokens',
@@ -267,7 +280,11 @@ export async function trackAnthropicUsage(params: {
       projectId,
       reservationId,
       serviceKey: outputServiceKey,
-      serviceName: `Claude ${modelName} Output`,
+      serviceName: formatUsageEventReason({
+        serviceName: `Claude ${modelName} Output`,
+        provider: 'anthropic',
+        metadata: { purpose },
+      }),
       provider: 'anthropic',
       units: usage.outputTokens,
       unitType: 'output_tokens',
@@ -290,7 +307,11 @@ export async function trackAnthropicUsage(params: {
   if (shouldDebit) {
     try {
       await debitCredit(userId, costResult.billedCost, usageEventId || undefined, {
-        reason: `Claude ${modelName} - ${purpose || 'API call'}`,
+        reason: formatUsageEventReason({
+          serviceName: `Claude ${modelName}`,
+          provider: 'anthropic',
+          metadata: { purpose },
+        }),
         metadata: {
           projectId,
           model: modelName,
@@ -359,7 +380,11 @@ export async function trackPerplexityUsage(params: {
       projectId,
       reservationId,
       serviceKey: 'perplexity_sonar_input',
-      serviceName: `Perplexity ${modelName} Input`,
+      serviceName: formatUsageEventReason({
+        serviceName: `Perplexity ${modelName} Input`,
+        provider: 'perplexity',
+        metadata: { purpose },
+      }),
       provider: 'perplexity',
       units: inputTokens,
       unitType: 'input_tokens',
@@ -381,7 +406,11 @@ export async function trackPerplexityUsage(params: {
       projectId,
       reservationId,
       serviceKey: 'perplexity_sonar_output',
-      serviceName: `Perplexity ${modelName} Output`,
+      serviceName: formatUsageEventReason({
+        serviceName: `Perplexity ${modelName} Output`,
+        provider: 'perplexity',
+        metadata: { purpose },
+      }),
       provider: 'perplexity',
       units: outputTokens,
       unitType: 'output_tokens',
@@ -404,7 +433,11 @@ export async function trackPerplexityUsage(params: {
   if (shouldDebit) {
     try {
       await debitCredit(userId, costResult.billedCost, usageEventId || undefined, {
-        reason: `Perplexity ${modelName} - ${purpose || 'API call'}`,
+        reason: formatUsageEventReason({
+          serviceName: `Perplexity ${modelName}`,
+          provider: 'perplexity',
+          metadata: { purpose },
+        }),
         metadata: {
           projectId,
           model: modelName,
@@ -465,7 +498,7 @@ export async function trackAssemblyAIUsage(params: {
       projectId,
       reservationId,
       serviceKey: 'assemblyai_transcription',
-      serviceName: 'AssemblyAI Transcription',
+      serviceName: 'Transcription',
       provider: 'assemblyai',
       units: durationSeconds,
       unitType: 'seconds',
@@ -488,7 +521,7 @@ export async function trackAssemblyAIUsage(params: {
   if (shouldDebit) {
     try {
       await debitCredit(userId, costResult.billedCost, usageEventId || undefined, {
-        reason: `AssemblyAI Transcription - ${(durationSeconds / 60).toFixed(1)} minutes`,
+        reason: `Transcription - ${(durationSeconds / 60).toFixed(1)} minutes`,
         metadata: {
           projectId,
           durationSeconds,

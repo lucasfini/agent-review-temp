@@ -72,3 +72,90 @@ export function formatWorkflowReason(params: {
       return 'Workflow charge';
   }
 }
+
+function cleanPurposeLabel(purpose: string): string {
+  const normalized = purpose.trim();
+  const lower = normalized.toLowerCase();
+
+  const exactLabels: Record<string, string> = {
+    'podcast summary': 'Summary',
+    'key takeaways': 'Takeaways',
+    'social quotes': 'Quotes',
+    'chapter detection': 'Chapters',
+    'transcript pre-processing': 'Transcript prep',
+    'content analysis': 'Content analysis',
+    'story angle identification': 'Story angles',
+    'speaker intelligence (pass 1)': 'Speaker analysis',
+    'legacy speaker intelligence': 'Speaker analysis',
+    'speaker name extraction': 'Named speakers',
+    'name extraction': 'Named speakers',
+    'speaker role classification': 'Speaker roles',
+    'speaker verification': 'Speaker verification',
+    'segment mapping (pass 2)': 'Speaker segment mapping',
+    'legacy segment reassignment': 'Speaker reassignment',
+    'legacy transcript reassignment': 'Transcript reassignment',
+    'dirty cluster resolution (pass 2c)': 'Speaker cleanup',
+    'insight extraction': 'Insights',
+    'insight research links': 'Insight research links',
+    'narrative coverage analysis': 'Creator coaching',
+    'project type classification': 'Project type',
+    'segment touchup': 'Transcript touch-up',
+    'strict json content generation (all 4 types)': 'Content bundle',
+    'show notes generation': 'Show notes',
+    'email newsletter generation': 'Newsletter',
+    'blog post generation': 'Blog post',
+    'quote graphic generation': 'Quote graphic',
+  };
+
+  if (exactLabels[lower]) return exactLabels[lower];
+
+  const themedContentMatch = normalized.match(/^(.+?)\s*\(/);
+  if (themedContentMatch?.[1]) {
+    return themedContentMatch[1].trim();
+  }
+
+  return normalized.replace(/\bjson\b/gi, 'JSON');
+}
+
+export function formatUsageEventReason(params: {
+  serviceName?: string | null;
+  provider?: string | null;
+  metadata?: Record<string, unknown> | null;
+  workflowType?: string | null;
+}): string {
+  const { serviceName, provider, metadata, workflowType } = params;
+  const purpose = typeof metadata?.purpose === 'string' ? metadata.purpose : null;
+  if (purpose) return cleanPurposeLabel(purpose);
+
+  const service = (serviceName || '').trim();
+  const serviceLower = service.toLowerCase();
+
+  if (serviceLower.includes('transcription') || provider === 'assemblyai') {
+    return 'Transcription';
+  }
+
+  if (
+    serviceLower.startsWith('openai ') ||
+    serviceLower.startsWith('claude ') ||
+    serviceLower.startsWith('perplexity ') ||
+    serviceLower.includes('gpt-') ||
+    serviceLower.includes('tokens')
+  ) {
+    switch (workflowType) {
+      case 'upload_processing':
+        return 'Project analysis';
+      case 'content_generation':
+        return 'Generated content';
+      case 'analysis_job':
+        return 'Analysis';
+      case 'coverage_analysis':
+        return 'Creator coaching';
+      case 'segment_touchup':
+        return 'Transcript touch-up';
+      default:
+        return 'AI processing';
+    }
+  }
+
+  return service || formatWorkflowReason({ workflowType, metadata });
+}

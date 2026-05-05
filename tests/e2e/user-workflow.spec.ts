@@ -20,7 +20,7 @@ test.describe('AudioRepurpose User Workflows', () => {
       await expect(page.locator('h1')).toBeVisible();
       
       // Should see some form of upload interface or call-to-action
-      const primaryCta = page.locator('a[href="/auth/signup"], a[href="/auth/demo"]').first();
+      const primaryCta = page.locator('a[href="/auth/signup"]').first();
       await expect(primaryCta).toBeVisible();
     });
 
