@@ -1,6 +1,6 @@
 'use client';
 
-import { useEffect, useState } from 'react';
+import { useEffect, useState, type FormEvent } from 'react';
 import { useAuth } from '@/lib/auth/context';
 
 type AdminUser = {
@@ -27,6 +27,8 @@ export default function AdminUsersPage() {
   const [total, setTotal] = useState(0);
   const [actionLoadingId, setActionLoadingId] = useState<string | null>(null);
   const [banDurationByUser, setBanDurationByUser] = useState<Record<string, '24h' | '7d'>>({});
+  const [inviteEmail, setInviteEmail] = useState('');
+  const [inviteLoading, setInviteLoading] = useState(false);
   const [message, setMessage] = useState<{ type: 'success' | 'error'; text: string } | null>(null);
 
   useEffect(() => {
@@ -68,6 +70,35 @@ export default function AdminUsersPage() {
     const json = await res.json();
     setUsers(json.users || []);
     setTotal(json.total || 0);
+  };
+
+  const sendInvite = async (event: FormEvent<HTMLFormElement>) => {
+    event.preventDefault();
+    if (!session?.access_token || !inviteEmail.trim()) return;
+
+    setInviteLoading(true);
+    setMessage(null);
+
+    try {
+      const res = await fetch('/api/admin/users', {
+        method: 'POST',
+        headers: {
+          Authorization: `Bearer ${session.access_token}`,
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify({ email: inviteEmail.trim() }),
+      });
+      const data = await res.json().catch(() => null);
+      if (!res.ok) throw new Error(data?.error || 'Failed to send invite');
+
+      setInviteEmail('');
+      setMessage({ type: 'success', text: data?.message || 'Invite sent' });
+      await refreshUsers();
+    } catch (err: any) {
+      setMessage({ type: 'error', text: err?.message || 'Failed to send invite' });
+    } finally {
+      setInviteLoading(false);
+    }
   };
 
   const applyUserAction = async (
@@ -142,6 +173,37 @@ export default function AdminUsersPage() {
             {message.text}
           </div>
         )}
+
+        <form
+          onSubmit={sendInvite}
+          className="mt-6 rounded-xl border border-slate-800 bg-slate-950/40 p-4"
+        >
+          <label htmlFor="invite-email" className="block text-sm font-medium text-slate-200">
+            Invite user
+          </label>
+          <div className="mt-2 flex flex-col gap-2 sm:flex-row">
+            <input
+              id="invite-email"
+              type="email"
+              value={inviteEmail}
+              onChange={(e) => setInviteEmail(e.target.value)}
+              placeholder="new-user@example.com"
+              className="min-w-0 flex-1 px-3 py-2 text-sm rounded-lg bg-slate-900 border border-slate-800 text-slate-200"
+              disabled={inviteLoading}
+              required
+            />
+            <button
+              type="submit"
+              disabled={inviteLoading || !inviteEmail.trim()}
+              className="px-3 py-2 text-sm font-medium rounded-lg bg-blue-600 text-white hover:bg-blue-700 disabled:opacity-50"
+            >
+              {inviteLoading ? 'Sending...' : 'Send invite'}
+            </button>
+          </div>
+          <p className="mt-2 text-xs text-slate-500">
+            Invited users receive the Supabase invite email and land on the password setup page.
+          </p>
+        </form>
 
         <div className="mt-6 flex flex-wrap gap-3 items-center">
           <input

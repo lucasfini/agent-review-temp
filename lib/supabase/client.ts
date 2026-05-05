@@ -78,6 +78,7 @@ export const createMockSupabaseClient = (): SupabaseClient<any> => {
         error: null,
       })),
       resetPasswordForEmail: createMockFunction(async () => ({ data: {}, error: null })),
+      reauthenticate: createMockFunction(authResponse),
       updateUser: createMockFunction(authResponse),
     },
     from: createMockFunction(() => createMockQueryBuilder()),

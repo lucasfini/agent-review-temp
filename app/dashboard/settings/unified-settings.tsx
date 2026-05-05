@@ -38,6 +38,7 @@ import { supabase } from '@/lib/supabase/client';
 import { toast } from 'sonner';
 import { formatSiteCreditDeltaFromUsd, formatSiteCreditsFromUsd } from '@/lib/billing/display';
 import { INTEGRATIONS_COMING_SOON_MESSAGE, INTEGRATIONS_ENABLED } from '@/lib/integrations/availability';
+import { isValidEmail } from '@/lib/auth/validation';
 
 // ============================================================================
 // TYPES
@@ -258,6 +259,7 @@ export default function UnifiedSettings({ userEmail, forcedSection }: UnifiedSet
   const [firstName, setFirstName] = useState('');
   const [lastName, setLastName] = useState('');
   const [email] = useState(userEmail);
+  const [newEmail, setNewEmail] = useState('');
   const [avatarUrl, setAvatarUrl] = useState('');
   const [avatarFile, setAvatarFile] = useState<File | null>(null);
   const [avatarPreview, setAvatarPreview] = useState<string | null>(null);
@@ -265,8 +267,12 @@ export default function UnifiedSettings({ userEmail, forcedSection }: UnifiedSet
   const [deleteModalOpen, setDeleteModalOpen] = useState(false);
   const [confirmPassword, setConfirmPassword] = useState('');
   const [newPassword, setNewPassword] = useState('');
+  const [reauthNonce, setReauthNonce] = useState('');
   const [savingProfile, setSavingProfile] = useState(false);
+  const [changingEmail, setChangingEmail] = useState(false);
+  const [sendingReauth, setSendingReauth] = useState(false);
   const [profileMessage, setProfileMessage] = useState<{ type: 'success' | 'error'; text: string } | null>(null);
+  const [emailChangeMessage, setEmailChangeMessage] = useState<{ type: 'success' | 'error'; text: string } | null>(null);
   const [deletingAccount, setDeletingAccount] = useState(false);
 
   // Billing tab state
@@ -549,7 +555,12 @@ export default function UnifiedSettings({ userEmail, forcedSection }: UnifiedSet
           throw new Error('New password and confirmation do not match.');
         }
 
-        const { error: passwordError } = await supabase.auth.updateUser({ password: newPassword });
+        const passwordUpdate: { password: string; nonce?: string } = { password: newPassword };
+        if (reauthNonce.trim()) {
+          passwordUpdate.nonce = reauthNonce.trim();
+        }
+
+        const { error: passwordError } = await supabase.auth.updateUser(passwordUpdate);
         if (passwordError) throw passwordError;
       }
 
@@ -558,10 +569,69 @@ export default function UnifiedSettings({ userEmail, forcedSection }: UnifiedSet
       setAvatarFile(null);
       setNewPassword('');
       setConfirmPassword('');
+      setReauthNonce('');
     } catch (error) {
       setProfileMessage({ type: 'error', text: friendlyError('Failed to save settings.', error) });
     } finally {
       setSavingProfile(false);
+    }
+  };
+
+  const handleRequestEmailChange = async () => {
+    if (isDemoMode) {
+      toast.error('Demo account settings are read-only.');
+      return;
+    }
+
+    const trimmedEmail = newEmail.trim();
+    if (!isValidEmail(trimmedEmail)) {
+      setEmailChangeMessage({ type: 'error', text: 'Enter a valid email address.' });
+      return;
+    }
+    if (trimmedEmail.toLowerCase() === email.trim().toLowerCase()) {
+      setEmailChangeMessage({ type: 'error', text: 'Enter a different email address.' });
+      return;
+    }
+
+    setChangingEmail(true);
+    setEmailChangeMessage(null);
+
+    try {
+      const { error } = await supabase.auth.updateUser(
+        { email: trimmedEmail },
+        { emailRedirectTo: `${window.location.origin}/auth/callback` }
+      );
+      if (error) throw error;
+
+      setNewEmail('');
+      setEmailChangeMessage({
+        type: 'success',
+        text: 'Confirmation email sent. Check your new email address to finish the change.',
+      });
+    } catch (error) {
+      setEmailChangeMessage({ type: 'error', text: friendlyError('Failed to send email change confirmation.', error) });
+    } finally {
+      setChangingEmail(false);
+    }
+  };
+
+  const handleSendReauthCode = async () => {
+    if (isDemoMode) {
+      toast.error('Demo account settings are read-only.');
+      return;
+    }
+
+    setSendingReauth(true);
+    setProfileMessage(null);
+
+    try {
+      const { error } = await supabase.auth.reauthenticate();
+      if (error) throw error;
+      setProfileMessage({ type: 'success', text: 'Verification code sent to your account email.' });
+    } catch (error) {
+      setProfileMessage({ type: 'error', text: friendlyError('Failed to send verification code.', error) });
+    } finally {
+      setSendingReauth(false);
     }
   };
 
@@ -898,7 +968,7 @@ export default function UnifiedSettings({ userEmail, forcedSection }: UnifiedSet
                   <label className="block text-sm font-medium text-slate-700 dark:text-slate-300 mb-1">
                     Email Address
                   </label>
-                  <div className="relative" title="To change your email address, please contact support">
+                  <div className="relative">
                     <Mail className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-slate-500" />
                     <input
                       type="email"
@@ -907,23 +977,60 @@ export default function UnifiedSettings({ userEmail, forcedSection }: UnifiedSet
                       className="w-full pl-10 pr-3 py-2 border border-slate-300 dark:border-slate-700 bg-slate-100 dark:bg-slate-800 text-slate-500 dark:text-slate-400 rounded-lg text-sm cursor-not-allowed opacity-60"
                     />
                   </div>
-                  <p className="mt-1 text-xs text-slate-500">Contact support to change your email</p>
+                  <p className="mt-1 text-xs text-slate-500">Current account email.</p>
                 </div>
-              </div>
-
-              {!isGoogleAuth && (
-                <>
-                  {profileMessage && (
+                <div>
+                  <label htmlFor="new-email" className="block text-sm font-medium text-slate-700 dark:text-slate-300 mb-1">
+                    New Email Address
+                  </label>
+                  <div className="flex flex-col gap-2 sm:flex-row">
+                    <div className="relative flex-1">
+                      <Mail className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-slate-500" />
+                      <input
+                        id="new-email"
+                        type="email"
+                        value={newEmail}
+                        onChange={(e) => setNewEmail(e.target.value)}
+                        disabled={isDemoMode || changingEmail}
+                        placeholder="new@example.com"
+                        className="w-full pl-10 pr-3 py-2 border border-slate-300 dark:border-slate-700 bg-white dark:bg-slate-800 text-slate-900 dark:text-slate-200 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-transparent disabled:opacity-50 disabled:cursor-not-allowed"
+                      />
+                    </div>
+                    <button
+                      type="button"
+                      onClick={handleRequestEmailChange}
+                      disabled={isDemoMode || changingEmail || !newEmail.trim()}
+                      className="inline-flex items-center justify-center gap-2 rounded-lg border border-slate-300 bg-slate-50 px-3 py-2 text-sm font-medium text-slate-700 transition-colors hover:bg-slate-100 disabled:opacity-50 dark:border-slate-600 dark:bg-slate-900 dark:text-slate-200 dark:hover:bg-slate-800"
+                    >
+                      {changingEmail ? <Loader2 className="h-4 w-4 animate-spin" /> : <Mail className="h-4 w-4" />}
+                      Send confirmation
+                    </button>
+                  </div>
+                  <p className="mt-1 text-xs text-slate-500">
+                    We will send confirmation instructions before changing your login email.
+                  </p>
+                  {emailChangeMessage && (
                     <div className={cn(
-                      "p-3 rounded-lg text-sm",
-                      profileMessage.type === 'success'
+                      "mt-2 p-3 rounded-lg text-sm",
+                      emailChangeMessage.type === 'success'
                         ? "bg-green-50 text-green-700 dark:bg-green-900/20 dark:text-green-400"
                         : "bg-red-50 text-red-700 dark:bg-red-900/20 dark:text-red-400"
                     )}>
-                      {profileMessage.text}
+                      {emailChangeMessage.text}
                     </div>
                   )}
-                </>
+                </div>
+              </div>
+
+              {profileMessage && (
+                <div className={cn(
+                  "p-3 rounded-lg text-sm",
+                  profileMessage.type === 'success'
+                    ? "bg-green-50 text-green-700 dark:bg-green-900/20 dark:text-green-400"
+                    : "bg-red-50 text-red-700 dark:bg-red-900/20 dark:text-red-400"
+                )}>
+                  {profileMessage.text}
+                </div>
               )}
 
               <div className="flex justify-end pt-1">
@@ -956,23 +1063,6 @@ export default function UnifiedSettings({ userEmail, forcedSection }: UnifiedSet
               <CardContent className="space-y-4">
                 <div className="grid gap-4 md:grid-cols-2">
                   <div>
-                    <label htmlFor="confirm-new-password" className="block text-sm font-medium text-slate-700 dark:text-slate-300 mb-1">
-                      Confirm New Password
-                    </label>
-                    <div className="relative">
-                      <Lock className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-slate-500" />
-                      <input
-                        id="confirm-new-password"
-                        type="password"
-                        value={confirmPassword}
-                        onChange={(e) => setConfirmPassword(e.target.value)}
-                        placeholder="Re-enter new password"
-                        disabled={isDemoMode}
-                        className="w-full pl-10 pr-3 py-2 border border-slate-300 dark:border-slate-700 bg-white dark:bg-slate-800 text-slate-900 dark:text-slate-200 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-transparent"
-                      />
-                    </div>
-                  </div>
-                  <div>
                     <label htmlFor="new-password" className="block text-sm font-medium text-slate-700 dark:text-slate-300 mb-1">
                       New Password
                     </label>
@@ -990,6 +1080,70 @@ export default function UnifiedSettings({ userEmail, forcedSection }: UnifiedSet
                     </div>
                     <p className="mt-1 text-xs text-slate-500">Use at least 8 characters.</p>
                   </div>
+                  <div>
+                    <label htmlFor="confirm-new-password" className="block text-sm font-medium text-slate-700 dark:text-slate-300 mb-1">
+                      Confirm New Password
+                    </label>
+                    <div className="relative">
+                      <Lock className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-slate-500" />
+                      <input
+                        id="confirm-new-password"
+                        type="password"
+                        value={confirmPassword}
+                        onChange={(e) => setConfirmPassword(e.target.value)}
+                        placeholder="Re-enter new password"
+                        disabled={isDemoMode}
+                        className="w-full pl-10 pr-3 py-2 border border-slate-300 dark:border-slate-700 bg-white dark:bg-slate-800 text-slate-900 dark:text-slate-200 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-transparent"
+                      />
+                    </div>
+                  </div>
+                </div>
+                <div>
+                  <label htmlFor="reauth-code" className="block text-sm font-medium text-slate-700 dark:text-slate-300 mb-1">
+                    Verification Code
+                  </label>
+                  <div className="flex flex-col gap-2 sm:flex-row">
+                    <div className="relative flex-1">
+                      <Lock className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-slate-500" />
+                      <input
+                        id="reauth-code"
+                        type="text"
+                        inputMode="numeric"
+                        value={reauthNonce}
+                        onChange={(e) => setReauthNonce(e.target.value)}
+                        placeholder="6-digit code"
+                        disabled={isDemoMode || sendingReauth}
+                        className="w-full pl-10 pr-3 py-2 border border-slate-300 dark:border-slate-700 bg-white dark:bg-slate-800 text-slate-900 dark:text-slate-200 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-transparent disabled:opacity-50"
+                      />
+                    </div>
+                    <button
+                      type="button"
+                      onClick={handleSendReauthCode}
+                      disabled={isDemoMode || sendingReauth}
+                      className="inline-flex items-center justify-center gap-2 rounded-lg border border-slate-300 bg-slate-50 px-3 py-2 text-sm font-medium text-slate-700 transition-colors hover:bg-slate-100 disabled:opacity-50 dark:border-slate-600 dark:bg-slate-900 dark:text-slate-200 dark:hover:bg-slate-800"
+                    >
+                      {sendingReauth ? <Loader2 className="h-4 w-4 animate-spin" /> : <Mail className="h-4 w-4" />}
+                      Send code
+                    </button>
+                  </div>
+                  <p className="mt-1 text-xs text-slate-500">
+                    Use this if Supabase asks for reauthentication before changing your password.
+                  </p>
+                </div>
+                <div className="flex justify-end pt-1">
+                  <button
+                    type="button"
+                    onClick={handleSaveProfile}
+                    disabled={isDemoMode || savingProfile || (!newPassword.trim() && !confirmPassword.trim())}
+                    className="inline-flex items-center gap-2 px-3 py-1.5 bg-blue-600 text-white text-xs font-medium rounded-lg hover:bg-blue-700 disabled:opacity-50 transition-colors"
+                  >
+                    {savingProfile ? (
+                      <Loader2 className="h-3.5 w-3.5 animate-spin" />
+                    ) : (
+                      <Save className="h-3.5 w-3.5" />
+                    )}
+                    Save password
+                  </button>
                 </div>
               </CardContent>
             </Card>
