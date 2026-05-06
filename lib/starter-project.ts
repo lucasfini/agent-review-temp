@@ -77,6 +77,30 @@ async function markStarterGranted(userId: string, payload: {
   }
 }
 
+async function findExistingStarterCopy(userId: string, sourceProjectId: string): Promise<{ id: string } | null> {
+  const { data: fallbackProjects, error } = await supabaseAdmin
+    .from('projects')
+    .select('id, metadata')
+    .eq('user_id', userId)
+    .order('created_at', { ascending: true })
+    .limit(500) as { data: Array<{ id: string; metadata: unknown }> | null; error: any };
+
+  if (error) {
+    console.warn('[STARTER PROJECT] Could not check existing starter copies:', error);
+    return null;
+  }
+
+  return (fallbackProjects || []).find((project) => (
+    getStarterMetadata(project.metadata)?.sourceProjectId === sourceProjectId
+  )) || null;
+}
+
+function isUniqueStarterCopyViolation(error: any): boolean {
+  return error?.code === '23505'
+    && typeof error?.message === 'string'
+    && error.message.includes('projects_one_starter_copy_per_user_idx');
+}
+
 async function copyProjectRows(params: {
   table: string;
   sourceProjectId: string;
@@ -158,16 +182,7 @@ export async function ensureStarterProjectForUser(user: User): Promise<EnsureSta
     return { configured: true, created: false, skipped: true, projectId: sourceProjectId, reason: 'template_owner' };
   }
 
-  const { data: existingProjects } = await supabaseAdmin
-    .from('projects')
-    .select('id, metadata')
-    .eq('user_id', user.id)
-    .limit(100) as { data: Array<{ id: string; metadata: unknown }> | null; error: any };
-
-  const existingStarter = (existingProjects || []).find((project) => (
-    getStarterMetadata(project.metadata)?.sourceProjectId === sourceProjectId
-  ));
-
+  const existingStarter = await findExistingStarterCopy(user.id, sourceProjectId);
   if (existingStarter) {
     await markStarterGranted(user.id, {
       sourceProjectId,
@@ -208,6 +223,24 @@ export async function ensureStarterProjectForUser(user: User): Promise<EnsureSta
     .single() as { data: { id: string; title: string | null } | null; error: any };
 
   if (createError || !createdProject) {
+    if (isUniqueStarterCopyViolation(createError)) {
+      const existingCopy = await findExistingStarterCopy(user.id, sourceProjectId);
+      if (existingCopy) {
+        await markStarterGranted(user.id, {
+          sourceProjectId,
+          projectId: existingCopy.id,
+          createdAt: new Date().toISOString(),
+        });
+        return {
+          configured: true,
+          created: false,
+          skipped: true,
+          projectId: existingCopy.id,
+          reason: 'existing_copy',
+        };
+      }
+    }
+
     console.error('[STARTER PROJECT] Failed to create starter copy:', createError);
     throw createError || new Error('Failed to create starter project copy');
   }

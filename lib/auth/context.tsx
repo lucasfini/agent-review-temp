@@ -1,6 +1,6 @@
 "use client";
 
-import { createContext, useContext, useEffect, useState } from 'react';
+import { createContext, useContext, useEffect, useRef, useState } from 'react';
 import { User, Session } from '@supabase/supabase-js';
 import { supabase } from '@/lib/supabase/client';
 import { isDemoUser } from '@/lib/demo-mode';
@@ -22,12 +22,19 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
   const [user, setUser] = useState<User | null>(null);
   const [session, setSession] = useState<Session | null>(null);
   const [loading, setLoading] = useState(true);
+  const accountSetupKeyRef = useRef<string | null>(null);
 
   useEffect(() => {
     const ensureAccountSetup = async (activeSession: Session | null) => {
       if (!activeSession?.access_token || !activeSession.user || isDemoUser(activeSession.user)) {
         return;
       }
+
+      const setupKey = `${activeSession.user.id}:${activeSession.access_token}`;
+      if (accountSetupKeyRef.current === setupKey) {
+        return;
+      }
+      accountSetupKeyRef.current = setupKey;
 
       try {
         const authHeaders = {
@@ -45,6 +52,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
           }),
         ]);
       } catch (error) {
+        accountSetupKeyRef.current = null;
         console.warn('[AUTH] Failed to ensure account setup:', error);
       }
     };
@@ -64,6 +72,9 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
         setSession(session);
         setUser(session?.user ?? null);
         setLoading(false);
+        if (!session?.user) {
+          accountSetupKeyRef.current = null;
+        }
 
         if (event === 'SIGNED_IN' && session?.user) {
           try {
@@ -146,6 +157,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
   };
 
   const signOut = async () => {
+    accountSetupKeyRef.current = null;
     const { error } = await supabase.auth.signOut();
     return { error };
   };
