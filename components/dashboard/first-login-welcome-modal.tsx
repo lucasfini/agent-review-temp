@@ -45,63 +45,47 @@ export function FirstLoginWelcomeModal({
 
   return (
     <Dialog open={isOpen} onOpenChange={(next) => !next && onClose()}>
-      <DialogContent className="w-[calc(100vw-1rem)] max-w-[740px] overflow-hidden border-slate-200/70 bg-white/72 p-0 shadow-2xl backdrop-blur-2xl sm:w-[min(92vw,740px)] [&>button]:right-3 [&>button]:top-3 [&>button]:bg-transparent [&>button]:text-slate-700 [&>button]:opacity-100 hover:[&>button]:bg-transparent hover:[&>button]:text-slate-950 [&>button]:ring-offset-white dark:border-slate-800/70 dark:bg-slate-950/70 dark:[&>button]:text-slate-200 dark:hover:[&>button]:bg-transparent dark:hover:[&>button]:text-white dark:[&>button]:ring-offset-slate-950">
+      <DialogContent className="w-[calc(100vw-1rem)] max-w-[560px] gap-0 overflow-hidden border-slate-200 bg-white p-0 shadow-2xl sm:w-[min(92vw,560px)] sm:rounded-xl [&>button]:right-4 [&>button]:top-4 [&>button]:z-10 [&>button]:bg-white/85 [&>button]:text-slate-600 [&>button]:opacity-100 [&>button]:shadow-sm hover:[&>button]:bg-white hover:[&>button]:text-slate-950 dark:border-slate-800 dark:bg-slate-950 dark:[&>button]:bg-slate-900/85 dark:[&>button]:text-slate-300 dark:hover:[&>button]:bg-slate-900 dark:hover:[&>button]:text-white">
         <div className="max-h-[calc(100dvh-1rem)] overflow-y-auto sm:max-h-[calc(100dvh-2rem)]">
-          <div className="relative overflow-hidden border-b border-slate-200/80 bg-[linear-gradient(180deg,rgba(248,251,255,0.82)_0%,rgba(238,245,255,0.72)_100%)] px-4 py-5 dark:border-slate-800/80 dark:bg-[linear-gradient(180deg,rgba(15,23,42,0.84)_0%,rgba(17,24,39,0.72)_100%)] sm:px-8 sm:py-7">
-            <div className="absolute inset-0 bg-[radial-gradient(circle_at_top_left,rgba(59,130,246,0.16),transparent_34%),radial-gradient(circle_at_80%_20%,rgba(125,211,252,0.16),transparent_28%)] dark:bg-[radial-gradient(circle_at_top_left,rgba(59,130,246,0.22),transparent_34%),radial-gradient(circle_at_80%_20%,rgba(56,189,248,0.14),transparent_28%)]" />
-            <div className="relative">
-              <div className="mb-5 flex items-center gap-3 sm:mb-6">
-                <BrandLogo showText={false} size="lg" theme={logoTheme} />
-                <div>
-                  <p className="text-[11px] font-semibold uppercase tracking-[0.22em] text-slate-500 dark:text-slate-400">
-                    Welcome
-                  </p>
-                  <p className="text-sm text-slate-600 dark:text-slate-300">AudioRepurpose</p>
-                </div>
+          <div className="border-b border-slate-200 bg-slate-50 px-5 pb-6 pt-5 dark:border-slate-800 dark:bg-slate-900/70 sm:px-8 sm:pb-7 sm:pt-7">
+            <div className="mb-5 flex items-center gap-3 pr-10">
+              <BrandLogo showText={false} size="md" theme={logoTheme} />
+              <div className="min-w-0">
+                <p className="text-[11px] font-semibold uppercase tracking-[0.18em] text-slate-500 dark:text-slate-400">
+                  Welcome
+                </p>
+                <p className="truncate text-sm text-slate-600 dark:text-slate-300">AudioRepurpose</p>
               </div>
+            </div>
 
-              <DialogHeader className="space-y-2 text-left">
-                <DialogTitle className="max-w-xl pr-8 text-[1.5rem] font-semibold leading-tight tracking-tight text-slate-950 dark:text-slate-50 sm:text-[2rem]">
-                  Welcome, {welcomeName}.
-                </DialogTitle>
-                <DialogDescription className="max-w-xl text-sm leading-6 text-slate-600 dark:text-slate-300 sm:leading-7">
-                  AudioRepurpose helps you go from one recording to clean transcripts and publish-ready content without a messy workflow.
-                </DialogDescription>
-              </DialogHeader>
+            <DialogHeader className="space-y-3 text-left">
+              <DialogTitle className="max-w-[30rem] break-words pr-8 text-2xl font-semibold leading-tight text-slate-950 dark:text-slate-50 sm:text-3xl">
+                Welcome, {welcomeName}.
+              </DialogTitle>
+              <DialogDescription className="max-w-[34rem] text-sm leading-6 text-slate-600 dark:text-slate-300 sm:text-base sm:leading-7">
+                AudioRepurpose helps you go from one recording to clean transcripts and publish-ready content without a messy workflow.
+              </DialogDescription>
+            </DialogHeader>
 
-              <div className="mt-6 rounded-3xl border border-slate-200/70 bg-white/58 p-4 shadow-sm backdrop-blur-md dark:border-slate-800/80 dark:bg-slate-900/45 sm:mt-7 sm:p-6">
-                <div className="flex items-start gap-4">
-                  <div>
-                    <p className="text-xs font-semibold uppercase tracking-[0.18em] text-slate-500 dark:text-slate-400">
-                      Quick start
-                    </p>
-                    <p className="mt-2 max-w-lg text-sm leading-6 text-slate-700 dark:text-slate-300">
-                      Drop in one file and see what the workspace gives back. It is the fastest way to get a feel for the product.
-                    </p>
-                  </div>
-                </div>
-              </div>
+            <div className="mt-6 rounded-lg border border-slate-200 bg-white p-4 dark:border-slate-800 dark:bg-slate-950/70">
+              <p className="text-xs font-semibold uppercase tracking-[0.16em] text-slate-500 dark:text-slate-400">
+                Quick start
+              </p>
+              <p className="mt-2 text-sm leading-6 text-slate-700 dark:text-slate-300">
+                Drop in one file and see what the workspace gives back. It is the fastest way to get a feel for the product.
+              </p>
             </div>
           </div>
 
-          <div className="bg-white/42 px-4 py-5 dark:bg-slate-950/38 sm:px-8 sm:py-7">
-            <div className="mb-5">
-              <p className="text-xs font-semibold uppercase tracking-[0.18em] text-slate-500 dark:text-slate-400">
-                What you can do here
-              </p>
-              <p className="mt-2 text-sm leading-6 text-slate-600 dark:text-slate-300">
-                Keep it simple. Start with one recording and explore from there.
-              </p>
-            </div>
-
-            <div className="grid gap-2.5 sm:gap-3 md:grid-cols-3">
+          <div className="bg-white px-5 py-5 dark:bg-slate-950 sm:px-8 sm:py-6">
+            <div className="space-y-1">
               {highlights.map(({ title, description, icon: Icon }) => (
                 <div
                   key={title}
-                  className="flex gap-3 rounded-2xl border border-slate-200/80 bg-slate-50/52 p-3 transition-colors dark:border-slate-800/80 dark:bg-slate-900/38 sm:p-3.5"
+                  className="flex items-start gap-3 rounded-lg px-1 py-2.5"
                 >
-                  <div className="flex h-9 w-9 flex-shrink-0 items-center justify-center rounded-xl bg-blue-600/10 text-blue-600 dark:bg-blue-500/15 dark:text-blue-300">
-                    <Icon className="h-4.5 w-4.5" />
+                  <div className="flex h-9 w-9 flex-shrink-0 items-center justify-center rounded-md bg-blue-600/10 text-blue-600 dark:bg-blue-500/15 dark:text-blue-300">
+                    <Icon className="h-4 w-4" />
                   </div>
                   <div className="min-w-0">
                     <h3 className="text-sm font-semibold text-slate-900 dark:text-slate-100">{title}</h3>
@@ -111,11 +95,11 @@ export function FirstLoginWelcomeModal({
               ))}
             </div>
 
-            <div className="mt-6 flex flex-col gap-2 sm:flex-row sm:justify-start">
+            <div className="mt-5 flex flex-col gap-2 border-t border-slate-200 pt-5 dark:border-slate-800 sm:flex-row sm:justify-start">
               <button
                 type="button"
                 onClick={onGoToUpload}
-                className="inline-flex min-h-11 w-full items-center justify-center gap-2 rounded-xl bg-blue-600 px-4 py-2.5 text-sm font-semibold text-white transition-colors hover:bg-blue-700 sm:w-auto"
+                className="inline-flex min-h-11 w-full items-center justify-center gap-2 rounded-lg bg-blue-600 px-4 py-2.5 text-sm font-semibold text-white transition-colors hover:bg-blue-700 sm:w-auto"
               >
                 Upload a file
                 <ArrowRight className="h-4 w-4" />
@@ -123,7 +107,7 @@ export function FirstLoginWelcomeModal({
               <button
                 type="button"
                 onClick={onClose}
-                className="min-h-11 w-full rounded-xl border border-slate-300 bg-white px-4 py-2.5 text-sm font-medium text-slate-700 transition-colors hover:bg-slate-100 dark:border-slate-700 dark:bg-slate-900 dark:text-slate-200 dark:hover:bg-slate-800 sm:w-auto"
+                className="min-h-11 w-full rounded-lg border border-slate-300 bg-white px-4 py-2.5 text-sm font-medium text-slate-700 transition-colors hover:bg-slate-100 dark:border-slate-700 dark:bg-slate-900 dark:text-slate-200 dark:hover:bg-slate-800 sm:w-auto"
               >
                 Explore first
               </button>
