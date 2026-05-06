@@ -26,7 +26,7 @@ export async function heartbeatGlobalJobLock(jobId: string): Promise<void> {
 }
 
 /**
- * Attempts to acquire a global lock for a generation job.
+ * Attempts to acquire a global lock for a heavy background job.
  * Returns true if the lock was acquired, false otherwise.
  */
 export async function acquireGlobalJobLock(jobId: string): Promise<boolean> {

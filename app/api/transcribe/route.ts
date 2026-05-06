@@ -28,6 +28,7 @@ import { correctDebateSpeakers, applyDebateCorrectionToSpeakerData, summarizeDeb
 import { getOpenAIApiKeyForUser } from '@/lib/openai/consent';
 import { r2Client, BUCKET_NAME } from '@/lib/r2';
 import { isAuthorizedMaintenanceRequest } from '@/lib/maintenance-auth';
+import { acquireGlobalJobLock, releaseGlobalJobLock, heartbeatGlobalJobLock } from '@/lib/concurrency';
 import {
   applyNeighborSmoothing,
   attachSpeakerAssignmentMetadata,
@@ -47,6 +48,8 @@ import {
 import { runControlledSpeakerVerification } from '@/lib/speaker-verification';
 
 const sleep = (ms: number) => new Promise<void>(resolve => setTimeout(resolve, ms));
+const TRANSCRIPTION_PREPARING_MESSAGE = 'Preparing your audio for processing...';
+const TRANSCRIPTION_JOB_PREFIX = 'transcribe';
 
 // Allow this function to run for up to 5 minutes (300 seconds)
 export const maxDuration = 300;
@@ -64,6 +67,49 @@ type AIProcessingFlags = {
   backgroundCompletedAt?: string;
   backgroundErrors?: Record<string, string>;
 };
+
+type TranscriptionQueuePayload = {
+  projectId: string;
+  fileName: string;
+  fingerprint?: string;
+  performanceLevel?: TierLevel;
+  analysisOptions?: Record<string, unknown>;
+  diarizationProvider: 'assemblyai' | 'deepgram';
+  speakerCount?: number;
+};
+
+function getTranscriptionJobId(projectId: string) {
+  return `${TRANSCRIPTION_JOB_PREFIX}:${projectId}`;
+}
+
+async function updateTranscriptionQueueState(
+  projectId: string,
+  currentMetadata: any,
+  payload: TranscriptionQueuePayload,
+  status: 'queued' | 'running' | 'completed' | 'failed'
+) {
+  const previousQueue = currentMetadata?.transcription_queue || {};
+  const nextMetadata = {
+    ...(currentMetadata || {}),
+    transcription_queue: {
+      ...previousQueue,
+      ...payload,
+      status,
+      updatedAt: new Date().toISOString(),
+      queuedAt: previousQueue.queuedAt || new Date().toISOString(),
+      startedAt: status === 'running' ? new Date().toISOString() : previousQueue.startedAt,
+      completedAt: status === 'completed' ? new Date().toISOString() : previousQueue.completedAt,
+      failedAt: status === 'failed' ? new Date().toISOString() : previousQueue.failedAt,
+    },
+  };
+
+  await (supabaseAdmin as any)
+    .from('projects')
+    .update({ metadata: nextMetadata })
+    .eq('id', projectId);
+
+  return nextMetadata;
+}
 
 async function updateProjectWithSpeakerData(
   projectId: string,
@@ -363,6 +409,9 @@ async function runBackgroundContentTasks(params: {
 export async function POST(request: NextRequest) {
   const startTime = Date.now();
   let parsedProjectId: string | undefined;
+  let transcriptionLockHeld = false;
+  let transcriptionLockId: string | null = null;
+  let transcriptionHeartbeat: ReturnType<typeof setInterval> | null = null;
 
   try {
     // Auth: accept internal job token (from finalize route) OR user bearer token
@@ -479,6 +528,49 @@ export async function POST(request: NextRequest) {
     if (features.chapterDetection) selectedContentBlocks.push('chapters');
     if (features.keyTakeaways) selectedContentBlocks.push('takeaways');
     if (features.quotesExtraction) selectedContentBlocks.push('quotes');
+
+    const queuePayload: TranscriptionQueuePayload = {
+      projectId,
+      fileName,
+      fingerprint: payload.fingerprint as string | undefined,
+      performanceLevel,
+      analysisOptions,
+      diarizationProvider,
+      speakerCount,
+    };
+
+    transcriptionLockId = getTranscriptionJobId(projectId);
+    const lockAcquired = await acquireGlobalJobLock(transcriptionLockId);
+    if (!lockAcquired) {
+      await updateTranscriptionQueueState(projectId, existingProject.metadata, queuePayload, 'queued');
+      await updateProcessingProgress(projectId, {
+        stage: 'transcribing' as ProcessingStage,
+        progress: 1,
+        message: TRANSCRIPTION_PREPARING_MESSAGE,
+      });
+
+      console.log(`[TRANSCRIPTION] Deferred project ${projectId}; processing slot unavailable.`);
+      return NextResponse.json({
+        success: true,
+        queued: true,
+        message: 'Processing started',
+      }, { status: 202 });
+    }
+
+    transcriptionLockHeld = true;
+    transcriptionHeartbeat = setInterval(() => {
+      if (!transcriptionLockId) return;
+      heartbeatGlobalJobLock(transcriptionLockId).catch(err =>
+        console.error(`[TRANSCRIPTION] Heartbeat failed for ${transcriptionLockId}:`, err)
+      );
+    }, 5 * 60 * 1000);
+
+    existingProject.metadata = await updateTranscriptionQueueState(
+      projectId,
+      existingProject.metadata,
+      queuePayload,
+      'running'
+    );
 
     void (async () => {
       try {
@@ -601,6 +693,14 @@ export async function POST(request: NextRequest) {
         } catch (error) {
           if (error instanceof InsufficientCreditError) {
             console.error(`[BILLING] ❌ Insufficient credits: need $${error.required.toFixed(4)}, have $${error.available.toFixed(4)}`);
+            if (transcriptionHeartbeat) {
+              clearInterval(transcriptionHeartbeat);
+              transcriptionHeartbeat = null;
+            }
+            if (transcriptionLockHeld && transcriptionLockId) {
+              await releaseGlobalJobLock(transcriptionLockId);
+              transcriptionLockHeld = false;
+            }
             return NextResponse.json(
               {
                 error: 'Insufficient credits',
@@ -1494,6 +1594,13 @@ export async function POST(request: NextRequest) {
       message: 'Conversation ready. Generating summaries and insights in the background...'
     });
 
+    existingProject.metadata = await updateTranscriptionQueueState(
+      projectId,
+      existingProject.metadata,
+      queuePayload,
+      'completed'
+    );
+
     // Background AI content processing (summary, roles, chapters, takeaways, quotes, insights)
     if (finalTranscription && speakerData) {
       scheduleBackgroundTask(
@@ -1510,7 +1617,26 @@ export async function POST(request: NextRequest) {
           .catch((error) => {
             console.error('[BACKGROUND] ❌ Failed to run background tasks:', error);
           })
+          .finally(async () => {
+            if (transcriptionHeartbeat) {
+              clearInterval(transcriptionHeartbeat);
+              transcriptionHeartbeat = null;
+            }
+            if (transcriptionLockHeld && transcriptionLockId) {
+              await releaseGlobalJobLock(transcriptionLockId);
+              transcriptionLockHeld = false;
+            }
+          })
       );
+    } else {
+      if (transcriptionHeartbeat) {
+        clearInterval(transcriptionHeartbeat);
+        transcriptionHeartbeat = null;
+      }
+      if (transcriptionLockHeld && transcriptionLockId) {
+        await releaseGlobalJobLock(transcriptionLockId);
+        transcriptionLockHeld = false;
+      }
     }
 
     if (uploadReservationId && !selectedContentBlocks.length) {
@@ -1543,6 +1669,11 @@ export async function POST(request: NextRequest) {
   } catch (error: any) {
     console.error('[TRANSCRIPTION] ❌ Error:', error);
 
+    if (transcriptionHeartbeat) {
+      clearInterval(transcriptionHeartbeat);
+      transcriptionHeartbeat = null;
+    }
+
     if (parsedProjectId) {
       try {
         const { data: failedProject } = await supabaseAdmin
@@ -1551,6 +1682,23 @@ export async function POST(request: NextRequest) {
           .eq('id', parsedProjectId)
           .maybeSingle() as { data: any };
         const reservationId: string | undefined = failedProject?.metadata?.billing?.uploadReservationId;
+        const queuedPayload = failedProject?.metadata?.transcription_queue;
+        if (queuedPayload?.projectId && queuedPayload?.fileName) {
+          await updateTranscriptionQueueState(
+            parsedProjectId,
+            failedProject?.metadata,
+            {
+              projectId: queuedPayload.projectId,
+              fileName: queuedPayload.fileName,
+              fingerprint: queuedPayload.fingerprint,
+              performanceLevel: queuedPayload.performanceLevel,
+              analysisOptions: queuedPayload.analysisOptions,
+              diarizationProvider: queuedPayload.diarizationProvider || 'assemblyai',
+              speakerCount: queuedPayload.speakerCount,
+            },
+            'failed'
+          );
+        }
         if (reservationId) {
           await failReservation(reservationId, error.message || 'Transcription failed');
         }
@@ -1567,6 +1715,11 @@ export async function POST(request: NextRequest) {
       } catch (statusError) {
         console.error('[TRANSCRIPTION] ❌ Could not update project status to failed:', statusError);
       }
+    }
+
+    if (transcriptionLockHeld && transcriptionLockId) {
+      await releaseGlobalJobLock(transcriptionLockId);
+      transcriptionLockHeld = false;
     }
 
     return NextResponse.json(

@@ -100,7 +100,7 @@ export async function POST(request: NextRequest) {
     await updateProcessingProgress(projectId, {
       stage: 'transcribing',
       progress: 0,
-      message: 'Upload complete. Starting transcription...'
+      message: 'Preparing your audio for processing...'
     });
 
     // Legacy status update
@@ -163,7 +163,7 @@ export async function POST(request: NextRequest) {
       );
     }
 
-    return NextResponse.json({ success: true, message: 'Transcription queued' });
+    return NextResponse.json({ success: true, message: 'Processing started' });
   } catch (error) {
     console.error('Finalize error:', error);
     return NextResponse.json({ error: 'Failed to finalize upload' }, { status: 500 });

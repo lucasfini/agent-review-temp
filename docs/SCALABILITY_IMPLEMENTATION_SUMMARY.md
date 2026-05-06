@@ -21,7 +21,7 @@ This document summarizes the architectural changes made to enable a 2 vCPU, 4GB 
 - **Limit:** A strict global limit of **2 concurrent heavy jobs** is enforced server-wide.
 - **Process:**
     1. A job attempts to acquire a lock in Redis.
-    2. If 2 jobs are already running, the job yields, stays in the `queued` state, and the UI displays **"Waiting in queue (server at capacity)..."**.
+    2. If 2 jobs are already running, the job yields, stays in the `queued` state, and the UI continues to show neutral processing copy.
     3. **Heartbeat Logic:** Active jobs now send a heartbeat every 5 minutes to renew their lock. The lock has a 30-minute safety TTL.
     4. Capacity is released automatically when a job completes or fails (or if the heartbeat stops for > 30 mins).
 - **Polling:** Created `/api/internal/process-queued-jobs` to allow a cron job to trigger pending tasks as capacity opens up.

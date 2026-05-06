@@ -124,11 +124,11 @@ export async function POST(
       if (!lockAcquired) {
         console.log(`[PROJECT-GENERATE-PROCESS] Yielding due to global concurrency limit. Job ${nextJob.id} will remain queued.`);
         
-        // Update user-facing progress to show queue status
+        // Keep user-facing progress neutral while work waits for a processing slot.
         await (supabaseAdmin as any)
           .from('generation_progress')
           .update({
-            message: 'Waiting in queue (server at capacity)...',
+            message: 'Preparing your content...',
             updated_at: new Date().toISOString()
           })
           .eq('project_id', projectId);

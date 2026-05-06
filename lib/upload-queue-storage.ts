@@ -145,7 +145,7 @@ function toUploadedFile(record: PersistedQueuedUploadRecord): UploadedFile {
     extractionProgress: undefined,
     processingStage: 'pending',
     stageProgress: 0,
-    processingMessage: interrupted ? 'Ready to retry after refresh.' : (record.processingMessage || 'Waiting in queue...'),
+    processingMessage: interrupted ? 'Ready to retry after refresh.' : (record.processingMessage || 'Ready to process...'),
     processingTier: normalizeTier(record.processingTier),
     analysisOptions: normalizeAnalysisOptions(record.analysisOptions),
     displayName: record.displayName,

@@ -500,7 +500,7 @@ export function UploadProgressSyncProvider({ children }: { children: ReactNode }
           projectId,
           processingStage: 'transcribing',
           stageProgress: 0,
-          processingMessage: 'Upload complete. Starting transcription...',
+          processingMessage: 'Preparing your audio for processing...',
           progress: calculateOverallProgress(f.processingTier, 'transcribing', 0),
         } : f)
       );

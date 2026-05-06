@@ -140,7 +140,7 @@ export async function importRecording(params: {
   await updateProcessingProgress(project.id, {
     stage: 'transcribing',
     progress: 0,
-    message: 'Import complete. Starting transcription...'
+    message: 'Preparing your audio for processing...'
   });
 
   await supabaseAdmin
