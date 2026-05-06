@@ -18,6 +18,11 @@ import {
   AlertTriangle,
   Camera,
   Trash2,
+  Sparkles,
+  Video,
+  Users,
+  MessageSquare,
+  type LucideIcon,
 } from 'lucide-react';
 import {
   AreaChart,
@@ -37,7 +42,7 @@ import CreditPackages from '@/components/billing/credit-packages';
 import { supabase } from '@/lib/supabase/client';
 import { toast } from 'sonner';
 import { formatSiteCreditDeltaFromUsd, formatSiteCreditsFromUsd } from '@/lib/billing/display';
-import { INTEGRATIONS_COMING_SOON_MESSAGE, INTEGRATIONS_ENABLED } from '@/lib/integrations/availability';
+import { INTEGRATIONS_ENABLED } from '@/lib/integrations/availability';
 import { isValidEmail } from '@/lib/auth/validation';
 
 // ============================================================================
@@ -96,6 +101,43 @@ interface IntegrationStatus {
   metadata?: { email?: string; name?: string } | null;
   updatedAt?: string | null;
 }
+
+const SETTINGS_INTEGRATIONS: Array<{
+  provider?: IntegrationProvider;
+  name: string;
+  detail: string;
+  Icon: LucideIcon;
+  accent: string;
+  bg: string;
+  border: string;
+}> = [
+  {
+    provider: 'zoom',
+    name: 'Zoom',
+    detail: 'Meeting recordings',
+    Icon: Video,
+    accent: 'text-blue-600 dark:text-blue-300',
+    bg: 'bg-blue-50 dark:bg-blue-500/10',
+    border: 'border-blue-100 dark:border-blue-400/20',
+  },
+  {
+    provider: 'microsoft',
+    name: 'Teams',
+    detail: 'Call recordings',
+    Icon: Users,
+    accent: 'text-indigo-600 dark:text-indigo-300',
+    bg: 'bg-indigo-50 dark:bg-indigo-500/10',
+    border: 'border-indigo-100 dark:border-indigo-400/20',
+  },
+  {
+    name: 'Slack',
+    detail: 'Huddles and clips',
+    Icon: MessageSquare,
+    accent: 'text-emerald-600 dark:text-emerald-300',
+    bg: 'bg-emerald-50 dark:bg-emerald-500/10',
+    border: 'border-emerald-100 dark:border-emerald-400/20',
+  },
+];
 
 // ============================================================================
 // HELPERS
@@ -1150,75 +1192,82 @@ export default function UnifiedSettings({ userEmail, forcedSection }: UnifiedSet
           )}
 
           {/* Integrations Section */}
-          <Card>
-            <CardHeader>
-              <CardTitle>Integrations</CardTitle>
-              <CardDescription>
-                Connect Zoom or Microsoft Teams to import recordings
-              </CardDescription>
-            </CardHeader>
-            <CardContent className="space-y-4">
-              {!INTEGRATIONS_ENABLED && (
-                <div className="rounded-xl border border-amber-200 bg-amber-50 px-4 py-3 text-sm text-amber-700 dark:border-amber-500/20 dark:bg-amber-500/10 dark:text-amber-300">
-                  {INTEGRATIONS_COMING_SOON_MESSAGE}
+          <Card className="overflow-hidden">
+            <CardContent className="p-4 sm:p-6">
+              <div className="relative overflow-hidden rounded-lg border border-slate-200 bg-slate-50 p-4 dark:border-slate-700 dark:bg-slate-950">
+                <div className="pointer-events-none absolute inset-x-0 top-0 h-px bg-gradient-to-r from-transparent via-cyan-400/70 to-transparent" />
+                <div className="flex flex-col gap-4 sm:flex-row sm:items-center sm:justify-between">
+                  <div className="min-w-0">
+                    <div className="flex items-center gap-2">
+                      <span className="inline-flex h-8 w-8 shrink-0 items-center justify-center rounded-lg bg-slate-900 text-white shadow-sm dark:bg-white dark:text-slate-950">
+                        <Sparkles className="h-4 w-4" />
+                      </span>
+                      <div>
+                        <h2 className="text-base font-semibold text-slate-900 dark:text-slate-50">Integrations are coming soon</h2>
+                        <p className="mt-0.5 text-sm text-slate-500 dark:text-slate-400">
+                          Direct imports are being prepared. Local upload and URL import are ready now.
+                        </p>
+                      </div>
+                    </div>
+                  </div>
+                  <div className="inline-flex w-fit items-center gap-1.5 rounded-full border border-cyan-200 bg-cyan-50 px-3 py-1 text-xs font-medium text-cyan-700 dark:border-cyan-400/20 dark:bg-cyan-400/10 dark:text-cyan-200">
+                    <span className="h-1.5 w-1.5 rounded-full bg-cyan-500 motion-safe:animate-pulse" />
+                    Warming up
+                  </div>
                 </div>
-              )}
-              {integrationsLoading && (
-                <div className="text-sm text-slate-400">Loading integrations...</div>
-              )}
-              {!integrationsLoading && integrationsError && (
-                <div className="text-sm text-red-400">{integrationsError}</div>
-              )}
-              {!integrationsLoading && !integrationsError && (
-                <div className="grid gap-3 md:grid-cols-2">
-                  {(['zoom', 'microsoft'] as IntegrationProvider[]).map(provider => {
-                    const status = integrations.find(i => i.provider === provider);
-                    const connected = status?.connected;
+
+                {integrationsLoading && (
+                  <div className="mt-4 text-sm text-slate-400">Loading integrations...</div>
+                )}
+                {!integrationsLoading && integrationsError && (
+                  <div className="mt-4 text-sm text-red-400">{integrationsError}</div>
+                )}
+
+                <div className="mt-4 grid gap-2 lg:grid-cols-3">
+                  {SETTINGS_INTEGRATIONS.map(({ provider, name, detail, Icon, accent, bg, border }) => {
+                    const status = provider ? integrations.find(i => i.provider === provider) : undefined;
+                    const connected = Boolean(status?.connected);
+                    const connectedDetail = status?.metadata?.email ? `Connected • ${status.metadata.email}` : 'Connected';
+                    const showAction = Boolean(provider && !isDemoMode && (INTEGRATIONS_ENABLED || connected) && !integrationsLoading && !integrationsError);
+
                     return (
-                      <div key={provider} className="border border-slate-300 dark:border-slate-700 rounded-lg p-4">
-                        <div className="flex items-start justify-between">
-                          <div>
-                            <p className="text-sm font-semibold text-slate-900 dark:text-slate-50">
-                              {provider === 'zoom' ? 'Zoom' : 'Microsoft Teams'}
-                            </p>
-                            <p className="text-xs text-slate-500 dark:text-slate-400 mt-1">
-                              {connected
-                                ? `Connected${status?.metadata?.email ? ` • ${status.metadata.email}` : ''}`
-                                : 'Not connected'}
-                            </p>
+                      <div
+                        key={name}
+                        className={`rounded-lg border ${border} ${bg} p-3`}
+                      >
+                        <div className="flex items-start justify-between gap-3">
+                          <div className="flex min-w-0 items-center gap-2">
+                            <span className="inline-flex h-8 w-8 shrink-0 items-center justify-center rounded-md bg-white/80 shadow-sm dark:bg-slate-900/80">
+                              <Icon className={`h-4 w-4 ${accent}`} />
+                            </span>
+                            <div className="min-w-0">
+                              <p className="text-sm font-semibold text-slate-900 dark:text-slate-50">{name}</p>
+                              <p className="truncate text-xs text-slate-500 dark:text-slate-400">
+                                {connected ? connectedDetail : detail}
+                              </p>
+                            </div>
                           </div>
-                          <span className={`text-xs px-2 py-1 rounded-full ${connected ? 'bg-green-100 dark:bg-green-900/20 text-green-700 dark:text-green-400' : 'bg-slate-100 dark:bg-slate-800 text-slate-500 dark:text-slate-400'}`}>
-                            {connected ? 'Connected' : 'Disconnected'}
-                          </span>
+                          {connected && (
+                            <span className="shrink-0 rounded-full bg-emerald-100 px-2 py-0.5 text-xs font-medium text-emerald-700 dark:bg-emerald-400/10 dark:text-emerald-300">
+                              Connected
+                            </span>
+                          )}
                         </div>
-                        {!isDemoMode && (
-                          <div className="mt-4 flex gap-2">
-                            {!connected ? (
-                              <button
-                                type="button"
-                                onClick={() => startOAuth(provider)}
-                                disabled={!INTEGRATIONS_ENABLED}
-                                className="px-3 py-2 text-sm font-medium bg-blue-600 text-white rounded-lg hover:bg-blue-700 transition-colors disabled:cursor-not-allowed disabled:opacity-60"
-                              >
-                                {INTEGRATIONS_ENABLED ? 'Connect' : 'Coming soon'}
-                              </button>
-                            ) : (
-                              <button
-                                type="button"
-                                onClick={() => disconnectProvider(provider)}
-                                disabled={!INTEGRATIONS_ENABLED}
-                                className="px-3 py-2 text-sm font-medium bg-slate-100 dark:bg-slate-800 text-slate-700 dark:text-slate-300 rounded-lg hover:bg-slate-200 dark:hover:bg-slate-700 transition-colors"
-                              >
-                                Disconnect
-                              </button>
-                            )}
-                          </div>
+                        {showAction && provider && (
+                          <button
+                            type="button"
+                            onClick={() => connected ? disconnectProvider(provider) : startOAuth(provider)}
+                            disabled={!INTEGRATIONS_ENABLED}
+                            className="mt-3 inline-flex w-fit rounded-md bg-slate-900 px-3 py-1.5 text-xs font-medium text-white transition-colors hover:bg-slate-800 disabled:cursor-not-allowed disabled:opacity-60 dark:bg-white dark:text-slate-950 dark:hover:bg-slate-200"
+                          >
+                            {connected ? 'Disconnect' : 'Connect'}
+                          </button>
                         )}
                       </div>
                     );
                   })}
                 </div>
-              )}
+              </div>
             </CardContent>
           </Card>
 
