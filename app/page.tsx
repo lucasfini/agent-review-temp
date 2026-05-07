@@ -150,7 +150,7 @@ const HOW_IT_WORKS_STEPS: HowItWorksStep[] = [
     title: "Upload Your Audio",
     eyebrow: "Start with the source",
     description:
-      "Drop in the episode, pick the import source, and start from a polished upload surface that feels lightweight instead of technical.",
+      "Drop in the episode, pick the import source, and start from a polished upload surface with automatic speaker recognition ready to run.",
     accent: "bg-blue-500",
     ring: "ring-blue-500/20",
     Icon: Upload,
@@ -161,7 +161,7 @@ const HOW_IT_WORKS_STEPS: HowItWorksStep[] = [
     title: "Choose What Runs",
     eyebrow: "Switch on the right workflow",
     description:
-      "Turn on speaker detection, summaries, insights, chapters, and takeaways only when you need them, without cluttering the flow.",
+      "Turn on automatic speaker recognition, summaries, insights, chapters, and takeaways only when you need them, without cluttering the flow.",
     accent: "bg-violet-500",
     ring: "ring-violet-500/20",
     Icon: Sparkles,
@@ -172,7 +172,7 @@ const HOW_IT_WORKS_STEPS: HowItWorksStep[] = [
     title: "Publish From One Workspace",
     eyebrow: "Everything is ready downstream",
     description:
-      "Move from transcript and speaker cleanup into finished content assets without leaving the same project workspace.",
+      "Move from transcript, automatic speaker recognition, and cleanup into finished content assets without leaving the same workspace.",
     accent: "bg-indigo-500",
     ring: "ring-indigo-500/20",
     Icon: Zap,
@@ -346,6 +346,7 @@ const FEATURED_OUTPUT_STACK: FeaturedOutputCard[] = [
 
 const HERO_ROTATING_PHRASES = [
   "transcripts",
+  "automatic speaker recognition",
   "speaker briefs",
   "content kits",
   "publish-ready drafts",
@@ -1162,17 +1163,15 @@ function HowItWorksGraphic({ step }: { step: HowItWorksStep }) {
 
   if (step.id === "upload") {
     return (
-      <div className="relative min-h-[24rem] overflow-hidden rounded-[2rem] border border-slate-200/70 bg-[linear-gradient(135deg,#eff6ff_0%,#eef2ff_52%,#f8fafc_100%)] p-4 shadow-[0_40px_120px_-60px_rgba(37,99,235,0.45)] sm:p-5 md:h-[26rem] dark:border-white/10 dark:bg-[linear-gradient(140deg,#020617_0%,#0f172a_45%,#172554_100%)]">
+      <div className="relative min-h-[20rem] overflow-hidden rounded-[2rem] border border-slate-200/70 bg-[linear-gradient(135deg,#eff6ff_0%,#eef2ff_52%,#f8fafc_100%)] p-3 shadow-[0_40px_120px_-60px_rgba(37,99,235,0.45)] sm:min-h-[24rem] sm:p-5 md:h-[26rem] dark:border-white/10 dark:bg-[linear-gradient(140deg,#020617_0%,#0f172a_45%,#172554_100%)]">
         <div className="absolute -left-8 top-12 h-36 w-36 rounded-full bg-blue-400/20 blur-3xl dark:bg-blue-500/20" />
         <div className="absolute bottom-6 right-2 h-44 w-44 rounded-full bg-indigo-400/20 blur-3xl dark:bg-indigo-500/20" />
-        <div
-          className={`${baseSurface} relative flex h-full flex-col gap-4 p-5`}
-        >
+        <div className={`${baseSurface} relative flex h-full flex-col gap-4 p-3 sm:p-5`}>
           <div className="flex items-center gap-2">
             <div className="h-3 w-3 rounded-full bg-rose-400/70" />
             <div className="h-3 w-3 rounded-full bg-amber-400/70" />
             <div className="h-3 w-3 rounded-full bg-emerald-400/70" />
-            <div className="ml-3 flex h-9 flex-1 items-center rounded-xl border border-slate-200/80 bg-white/80 px-4 text-xs font-medium text-slate-500 dark:border-white/10 dark:bg-white/5 dark:text-slate-300">
+            <div className="ml-2 flex h-9 min-w-0 flex-1 items-center rounded-xl border border-slate-200/80 bg-white/80 px-3 text-[11px] font-medium text-slate-500 sm:ml-3 sm:px-4 sm:text-xs dark:border-white/10 dark:bg-white/5 dark:text-slate-300">
               audiorepurpose.com/dashboard/upload
             </div>
           </div>
@@ -1245,12 +1244,10 @@ function HowItWorksGraphic({ step }: { step: HowItWorksStep }) {
 
   if (step.id === "process") {
     return (
-      <div className="relative min-h-[24rem] overflow-hidden rounded-[2rem] border border-slate-200/70 bg-[linear-gradient(145deg,#f8fafc_0%,#eef2ff_55%,#ecfeff_100%)] p-4 shadow-[0_40px_120px_-60px_rgba(99,102,241,0.42)] sm:p-5 md:h-[26rem] dark:border-white/10 dark:bg-[linear-gradient(145deg,#020617_0%,#111827_48%,#1e1b4b_100%)]">
+      <div className="relative min-h-[20rem] overflow-hidden rounded-[2rem] border border-slate-200/70 bg-[linear-gradient(145deg,#f8fafc_0%,#eef2ff_55%,#ecfeff_100%)] p-3 shadow-[0_40px_120px_-60px_rgba(99,102,241,0.42)] sm:min-h-[24rem] sm:p-5 md:h-[26rem] dark:border-white/10 dark:bg-[linear-gradient(145deg,#020617_0%,#111827_48%,#1e1b4b_100%)]">
         <div className="absolute left-10 top-8 h-36 w-36 rounded-full bg-violet-400/18 blur-3xl dark:bg-violet-500/18" />
         <div className="absolute bottom-4 right-10 h-40 w-40 rounded-full bg-cyan-400/16 blur-3xl dark:bg-cyan-500/18" />
-        <div
-          className={`${baseSurface} relative flex h-full flex-col gap-5 p-5`}
-        >
+        <div className={`${baseSurface} relative flex h-full flex-col gap-5 p-3 sm:p-5`}>
           <div className="flex items-center justify-between">
             <div>
               <div className="text-sm font-semibold text-slate-900 dark:text-white">
@@ -1364,10 +1361,10 @@ function HowItWorksGraphic({ step }: { step: HowItWorksStep }) {
   }
 
   return (
-    <div className="relative min-h-[24rem] overflow-hidden rounded-[2rem] border border-slate-200/70 bg-[linear-gradient(145deg,#eef2ff_0%,#f8fafc_52%,#ecfeff_100%)] p-4 shadow-[0_40px_120px_-60px_rgba(79,70,229,0.4)] sm:p-5 md:h-[26rem] dark:border-white/10 dark:bg-[linear-gradient(145deg,#020617_0%,#0f172a_45%,#172554_100%)]">
+    <div className="relative min-h-[20rem] overflow-hidden rounded-[2rem] border border-slate-200/70 bg-[linear-gradient(145deg,#eef2ff_0%,#f8fafc_52%,#ecfeff_100%)] p-3 shadow-[0_40px_120px_-60px_rgba(79,70,229,0.4)] sm:min-h-[24rem] sm:p-5 md:h-[26rem] dark:border-white/10 dark:bg-[linear-gradient(145deg,#020617_0%,#0f172a_45%,#172554_100%)]">
       <div className="absolute -left-4 top-10 h-40 w-40 rounded-full bg-indigo-400/18 blur-3xl dark:bg-indigo-500/20" />
       <div className="absolute bottom-8 right-8 h-44 w-44 rounded-full bg-cyan-400/16 blur-3xl dark:bg-cyan-500/18" />
-      <div className={`${baseSurface} relative flex h-full flex-col gap-5 p-5`}>
+      <div className={`${baseSurface} relative flex h-full flex-col gap-5 p-3 sm:p-5`}>
         <div className="grid gap-4 md:grid-cols-[0.78fr_1.22fr]">
           <div className="rounded-[1.35rem] border border-slate-200/80 bg-white/82 p-4 dark:border-white/10 dark:bg-white/[0.05]">
             <div className="mb-4 text-sm font-semibold text-slate-900 dark:text-white">
@@ -1740,12 +1737,9 @@ function Navbar({
 
 // Hero
 function Hero() {
-  const isMobileLayout = useIsMobileLayout();
   const [activePhrase, setActivePhrase] = useState(0);
 
   useEffect(() => {
-    if (isMobileLayout) return;
-
     const interval = window.setInterval(() => {
       setActivePhrase(
         (current) => (current + 1) % HERO_ROTATING_PHRASES.length,
@@ -1753,7 +1747,7 @@ function Hero() {
     }, 2800);
 
     return () => window.clearInterval(interval);
-  }, [isMobileLayout]);
+  }, []);
 
   return (
     <section className="relative overflow-hidden bg-[linear-gradient(180deg,#f8fbff_0%,#eef4ff_42%,#f7f9fc_100%)] dark:bg-[linear-gradient(180deg,#020617_0%,#0b1120_48%,#111827_100%)]">
@@ -1830,6 +1824,7 @@ function Hero() {
               <div className="flex flex-nowrap items-center justify-center gap-2 px-1">
                 {[
                   "Speaker-attributed transcript",
+                  "Automatic speaker recognition",
                   "Insights + chapters",
                   "Show notes",
                   "LinkedIn draft",
@@ -2023,7 +2018,7 @@ function HowItWorks() {
                   key={item.id}
                   type="button"
                   onClick={() => setActiveStep(index)}
-                  className={`group w-full rounded-[1.6rem] border p-5 text-left transition-all ${active
+                  className={`group w-full rounded-[1.45rem] border p-4 text-left transition-all sm:rounded-[1.6rem] sm:p-5 ${active
                       ? "border-blue-300 bg-white shadow-[0_28px_70px_-38px_rgba(37,99,235,0.42)] dark:border-blue-400/30 dark:bg-white/[0.04]"
                       : "border-slate-200/80 bg-white/60 hover:border-slate-300 hover:bg-white dark:border-white/10 dark:bg-white/[0.02] dark:hover:bg-white/[0.04]"
                     }`}
@@ -2043,10 +2038,10 @@ function HowItWorks() {
                       >
                         {item.eyebrow}
                       </p>
-                      <h3 className="mt-2 text-xl font-bold text-slate-900 dark:text-white">
+                      <h3 className="mt-2 text-lg font-bold text-slate-900 sm:text-xl dark:text-white">
                         {item.title}
                       </h3>
-                      <p className="mt-2 text-sm leading-6 text-slate-500 dark:text-slate-300">
+                      <p className="mt-2 text-[13px] leading-5 text-slate-500 sm:text-sm sm:leading-6 dark:text-slate-300">
                         {item.description}
                       </p>
                     </div>
@@ -2061,7 +2056,7 @@ function HowItWorks() {
             whileInView={{ opacity: 1, x: 0 }}
             viewport={SECTION_VIEWPORT}
             transition={{ duration: 0.6, ease: "easeOut", delay: 0.08 }}
-            className="relative"
+            className="relative mx-auto w-full max-w-[22rem] sm:max-w-none"
           >
             <div className="pointer-events-none absolute inset-x-8 bottom-5 h-20 rounded-full bg-blue-500/18 blur-3xl dark:bg-blue-500/22" />
             <AnimatePresence mode="wait">
@@ -2097,7 +2092,6 @@ function HowItWorks() {
 
 // Content Outputs Section
 function ContentOutputsSection() {
-  const isMobileLayout = useIsMobileLayout();
   const [activeCard, setActiveCard] = useState(0);
   const [signalHeights, setSignalHeights] = useState<number[]>(
     SIGNAL_LEVELS.map((signal) => signal.base),
@@ -2108,7 +2102,6 @@ function ContentOutputsSection() {
   const [signalLeadIn, setSignalLeadIn] = useState(false);
 
   useEffect(() => {
-    if (isMobileLayout) return;
     if (activeSignalPattern !== null || signalLeadIn) return;
 
     const timer = setInterval(() => {
@@ -2116,11 +2109,9 @@ function ContentOutputsSection() {
     }, 520);
 
     return () => clearInterval(timer);
-  }, [activeSignalPattern, isMobileLayout, signalLeadIn]);
+  }, [activeSignalPattern, signalLeadIn]);
 
   useEffect(() => {
-    if (isMobileLayout) return;
-
     let patternIndex = 0;
     let leadTimeout: ReturnType<typeof setTimeout> | null = null;
     let releaseTimeout: ReturnType<typeof setTimeout> | null = null;
@@ -2157,7 +2148,7 @@ function ContentOutputsSection() {
       if (leadTimeout) clearTimeout(leadTimeout);
       if (releaseTimeout) clearTimeout(releaseTimeout);
     };
-  }, [isMobileLayout]);
+  }, []);
 
   const card = FEATURED_OUTPUT_STACK[activeCard];
   const ActiveCardIcon = OUTPUT_ICONS[card.icon];
@@ -2332,7 +2323,7 @@ function ContentOutputsSection() {
                   <span>Source transcript</span>
                 </div>
                 <div
-                  className="mt-4 grid grid-cols-11 gap-2 items-end"
+                  className="mt-6 grid grid-cols-11 gap-2 items-end"
                   style={{ height: 104 }}
                 >
                   {OUTPUT_GROUPS.flatMap((group) => group.items).map(
