@@ -2337,13 +2337,16 @@ function ContentOutputsSection() {
                       const patternFrames = activePattern?.frames.map(
                         (frame) => frame[index],
                       );
-                      const patternTimes = patternFrames?.map(
+                      const smoothPatternFrames = activePattern
+                        ? [liveHeight, ...(patternFrames || [])]
+                        : undefined;
+                      const patternTimes = smoothPatternFrames?.map(
                         (_, frameIndex, arr) =>
                           arr.length === 1 ? 1 : frameIndex / (arr.length - 1),
                       );
                       const iconFrames = activePattern
                         ? [
-                          0,
+                          -iconTravel,
                           ...(patternFrames || []).map(
                             (height) => -Math.max(3, Math.round(height / 10)),
                           ),
@@ -2387,7 +2390,7 @@ function ContentOutputsSection() {
                             animate={
                               activePattern
                                 ? {
-                                  height: (patternFrames || [liveHeight]).map(
+                                  height: (smoothPatternFrames || [liveHeight]).map(
                                     (height) => `${height}%`,
                                   ),
                                 }
