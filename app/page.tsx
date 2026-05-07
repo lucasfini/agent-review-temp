@@ -1128,7 +1128,7 @@ function HeroWordPill({ phrase }: { phrase: string }) {
   const reduceMotion = useReducedMotion();
 
   return (
-    <span className="relative block w-full text-center font-bold tracking-[-0.02em]">
+    <span className="relative mx-auto block w-full max-w-[17ch] text-center font-bold tracking-[-0.02em] sm:max-w-[24ch]">
       <AnimatePresence mode="wait">
         <motion.span
           key={phrase}
@@ -1148,7 +1148,7 @@ function HeroWordPill({ phrase }: { phrase: string }) {
               : { opacity: 0, y: -16, filter: "blur(6px)", scale: 1.01 }
           }
           transition={{ duration: 0.42, ease: [0.22, 1, 0.36, 1] }}
-          className="inline-block whitespace-normal leading-tight sm:whitespace-nowrap bg-gradient-to-r from-blue-600 to-indigo-600 bg-clip-text text-transparent dark:from-cyan-400 dark:to-blue-500"
+          className="inline-block whitespace-normal leading-tight bg-gradient-to-r from-blue-600 to-indigo-600 bg-clip-text text-transparent dark:from-cyan-400 dark:to-blue-500"
         >
           Leave with {phrase}
         </motion.span>
