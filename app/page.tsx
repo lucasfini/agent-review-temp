@@ -92,6 +92,7 @@ const SOCIAL_TAGS = [
 ];
 
 const SECTION_VIEWPORT = { once: true, amount: 0.2 };
+const MOBILE_SECTION_VIEWPORT = { once: true, amount: 0.08 };
 const sectionContainer = {
   hidden: { opacity: 0, y: 20 },
   show: {
@@ -619,6 +620,21 @@ function generateRandomSignal(prev: number[]): number[] {
 }
 
 // Utilities
+function useIsMobileLayout(maxWidth = 767) {
+  const [isMobile, setIsMobile] = useState(false);
+
+  useEffect(() => {
+    const mediaQuery = window.matchMedia(`(max-width: ${maxWidth}px)`);
+    const update = () => setIsMobile(mediaQuery.matches);
+
+    update();
+    mediaQuery.addEventListener("change", update);
+    return () => mediaQuery.removeEventListener("change", update);
+  }, [maxWidth]);
+
+  return isMobile;
+}
+
 function ScrollProgressBar() {
   const { scrollYProgress } = useScroll();
   const scaleX = useSpring(scrollYProgress, {
@@ -1111,7 +1127,7 @@ function HeroWordPill({ phrase }: { phrase: string }) {
   const reduceMotion = useReducedMotion();
 
   return (
-    <span className="relative inline-flex items-center justify-center overflow-hidden font-bold tracking-[-0.02em]">
+    <span className="relative block w-full text-center font-bold tracking-[-0.02em]">
       <AnimatePresence mode="wait">
         <motion.span
           key={phrase}
@@ -1131,7 +1147,7 @@ function HeroWordPill({ phrase }: { phrase: string }) {
               : { opacity: 0, y: -16, filter: "blur(6px)", scale: 1.01 }
           }
           transition={{ duration: 0.42, ease: [0.22, 1, 0.36, 1] }}
-          className="inline-flex whitespace-nowrap bg-gradient-to-r from-blue-600 to-indigo-600 bg-clip-text text-transparent dark:from-cyan-400 dark:to-blue-500"
+          className="inline-block whitespace-normal leading-tight sm:whitespace-nowrap bg-gradient-to-r from-blue-600 to-indigo-600 bg-clip-text text-transparent dark:from-cyan-400 dark:to-blue-500"
         >
           Leave with {phrase}
         </motion.span>
@@ -1724,9 +1740,12 @@ function Navbar({
 
 // Hero
 function Hero() {
+  const isMobileLayout = useIsMobileLayout();
   const [activePhrase, setActivePhrase] = useState(0);
 
   useEffect(() => {
+    if (isMobileLayout) return;
+
     const interval = window.setInterval(() => {
       setActivePhrase(
         (current) => (current + 1) % HERO_ROTATING_PHRASES.length,
@@ -1734,7 +1753,7 @@ function Hero() {
     }, 2800);
 
     return () => window.clearInterval(interval);
-  }, []);
+  }, [isMobileLayout]);
 
   return (
     <section className="relative overflow-hidden bg-[linear-gradient(180deg,#f8fbff_0%,#eef4ff_42%,#f7f9fc_100%)] dark:bg-[linear-gradient(180deg,#020617_0%,#0b1120_48%,#111827_100%)]">
@@ -1756,7 +1775,7 @@ function Hero() {
               One workflow for transcript, analysis, and content
             </motion.div>
             <motion.h1
-              className="mb-6 text-4xl font-bold leading-tight tracking-tight text-slate-900 dark:text-white sm:text-5xl md:text-6xl"
+              className="mb-6 text-[2.2rem] font-bold leading-[1.12] tracking-tight text-slate-900 dark:text-white sm:text-5xl sm:leading-tight md:text-6xl"
               initial={{ opacity: 0, y: 18 }}
               animate={{ opacity: 1, y: 0 }}
               transition={{ duration: 0.55, delay: 0.08, ease: "easeOut" }}
@@ -1945,18 +1964,19 @@ function SpeakerIntelligenceSection() {
 
 // How It Works
 function HowItWorks() {
+  const isMobileLayout = useIsMobileLayout();
   const reduceMotion = useReducedMotion();
   const [activeStep, setActiveStep] = useState(0);
 
   useEffect(() => {
-    if (reduceMotion) return;
+    if (reduceMotion || isMobileLayout) return;
 
     const interval = window.setInterval(() => {
       setActiveStep((current) => (current + 1) % HOW_IT_WORKS_STEPS.length);
     }, 3600);
 
     return () => window.clearInterval(interval);
-  }, [reduceMotion]);
+  }, [isMobileLayout, reduceMotion]);
 
   const step = HOW_IT_WORKS_STEPS[activeStep] ?? HOW_IT_WORKS_STEPS[0];
 
@@ -2077,6 +2097,7 @@ function HowItWorks() {
 
 // Content Outputs Section
 function ContentOutputsSection() {
+  const isMobileLayout = useIsMobileLayout();
   const [activeCard, setActiveCard] = useState(0);
   const [signalHeights, setSignalHeights] = useState<number[]>(
     SIGNAL_LEVELS.map((signal) => signal.base),
@@ -2087,6 +2108,7 @@ function ContentOutputsSection() {
   const [signalLeadIn, setSignalLeadIn] = useState(false);
 
   useEffect(() => {
+    if (isMobileLayout) return;
     if (activeSignalPattern !== null || signalLeadIn) return;
 
     const timer = setInterval(() => {
@@ -2094,9 +2116,11 @@ function ContentOutputsSection() {
     }, 520);
 
     return () => clearInterval(timer);
-  }, [activeSignalPattern, signalLeadIn]);
+  }, [activeSignalPattern, isMobileLayout, signalLeadIn]);
 
   useEffect(() => {
+    if (isMobileLayout) return;
+
     let patternIndex = 0;
     let leadTimeout: ReturnType<typeof setTimeout> | null = null;
     let releaseTimeout: ReturnType<typeof setTimeout> | null = null;
@@ -2133,7 +2157,7 @@ function ContentOutputsSection() {
       if (leadTimeout) clearTimeout(leadTimeout);
       if (releaseTimeout) clearTimeout(releaseTimeout);
     };
-  }, []);
+  }, [isMobileLayout]);
 
   const card = FEATURED_OUTPUT_STACK[activeCard];
   const ActiveCardIcon = OUTPUT_ICONS[card.icon];
@@ -2302,7 +2326,7 @@ function ContentOutputsSection() {
                 ))}
               </div>
 
-              <div className="mt-6">
+              <div className="mt-8 px-3 sm:mt-6 sm:px-0">
                 <div className="flex items-center justify-between text-xs font-semibold uppercase tracking-[0.16em] text-slate-500 dark:text-slate-400">
                   <span>Pipeline signal</span>
                   <span>Source transcript</span>
@@ -2406,6 +2430,11 @@ function ContentOutputsSection() {
 }
 
 function AnalysisSection() {
+  const isMobileLayout = useIsMobileLayout();
+  const analysisViewport = isMobileLayout
+    ? MOBILE_SECTION_VIEWPORT
+    : SECTION_VIEWPORT;
+
   return (
     <section
       id="analysis"
@@ -2415,9 +2444,9 @@ function AnalysisSection() {
       <div className="relative max-w-[90rem] mx-auto px-4 sm:px-6 lg:px-8">
         <motion.div
           className="text-center mb-12"
-          initial="hidden"
+          initial={isMobileLayout ? false : "hidden"}
           whileInView="show"
-          viewport={SECTION_VIEWPORT}
+          viewport={analysisViewport}
           variants={sectionContainer}
         >
           <span className="text-sm font-semibold uppercase tracking-widest text-blue-300">
@@ -2435,9 +2464,9 @@ function AnalysisSection() {
 
         <motion.div
           className="grid gap-8 xl:grid-cols-5 xl:items-stretch"
-          initial="hidden"
+          initial={isMobileLayout ? false : "hidden"}
           whileInView="show"
-          viewport={SECTION_VIEWPORT}
+          viewport={analysisViewport}
           variants={sectionContainer}
         >
           <motion.div variants={sectionItem} className="xl:col-span-2 h-full">
