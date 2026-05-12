@@ -30,7 +30,6 @@ import {
   Lightbulb,
   Menu,
   X as CloseIcon,
-  Clock,
   Upload,
   Sun,
   Moon,
@@ -43,7 +42,10 @@ import {
   Newspaper,
 } from "lucide-react";
 import BrandLogo from "@/components/site/BrandLogo";
-import { PAYG_SECTIONS, PRICING_MODEL_SUMMARY } from "@/lib/pricing-config";
+import {
+  PAYG_SECTIONS,
+  PRICING_MODEL_SUMMARY,
+} from "@/lib/pricing-config";
 
 const XIcon = ({ className, ...props }: SVGProps<SVGSVGElement>) => (
   <svg viewBox="0 0 24 24" fill="currentColor" className={className} {...props}>
@@ -81,14 +83,14 @@ type OutputIconKey = keyof typeof OUTPUT_ICONS;
 
 // Constants
 const SOCIAL_TAGS = [
-  "Podcasts",
-  "Interviews",
-  "Webinars",
-  "Panels",
-  "Founder Updates",
-  "Customer Calls",
-  "Creator Episodes",
-  "Team Briefings",
+  "Creators: podcasts and interviews",
+  "Teams: meetings and customer calls",
+  "Educators: lectures and panels",
+  "Speaker-attributed transcripts",
+  "Choose analysis runs per upload",
+  "Generate outputs only when needed",
+  "Review and edit before export",
+  "No subscription required",
 ];
 
 const SECTION_VIEWPORT = { once: true, amount: 0.2 };
@@ -119,16 +121,6 @@ type OutputGroupItem = {
   badgeBg: string;
   name: string;
   desc: string;
-};
-
-type FeaturedOutputCard = {
-  eyebrow: string;
-  platform: string;
-  accent: string;
-  surface: string;
-  icon: OutputIconKey;
-  badgeBg: string;
-  preview: Array<{ label: string; text: string }>;
 };
 
 type HowItWorksStep = {
@@ -278,93 +270,13 @@ const OUTPUT_GROUPS: Array<{
     },
   ];
 
-const FEATURED_OUTPUT_STACK: FeaturedOutputCard[] = [
-  {
-    eyebrow: "Short-form video",
-    platform: "TikTok / Reels Script",
-    accent: "from-cyan-400 to-blue-500",
-    surface: "bg-slate-950/80 border-cyan-500/25",
-    icon: "tiktok",
-    badgeBg: "bg-cyan-600",
-    preview: [
-      {
-        label: "Hook",
-        text: '"This moment from our podcast is about to reframe how you think about customer retention..."',
-      },
-      {
-        label: "Build",
-        text: "Guest breaks down the exact framework their team used to cut churn by 40% in 6 months.",
-      },
-      {
-        label: "CTA",
-        text: '"Drop a comment if you want the full episode link."',
-      },
-    ],
-  },
-  {
-    eyebrow: "Episode packaging",
-    platform: "YouTube Description",
-    accent: "from-rose-400 to-red-500",
-    surface: "bg-slate-950/80 border-rose-500/25",
-    icon: "youtube",
-    badgeBg: "bg-red-600",
-    preview: [
-      {
-        label: "Summary",
-        text: "Sarah Chen explains what separates high-retention SaaS from the rest - and the metrics teams get wrong.",
-      },
-      {
-        label: "Chapters",
-        text: "00:00 Intro | 04:22 Retention paradox | 18:45 Framework | 32:10 Q&A",
-      },
-      {
-        label: "Tags",
-        text: "#SaaS #CustomerRetention #ProductLed #StartupGrowth",
-      },
-    ],
-  },
-  {
-    eyebrow: "Long-form",
-    platform: "Email Newsletter",
-    accent: "from-amber-300 to-orange-500",
-    surface: "bg-slate-950/80 border-amber-500/25",
-    icon: "newsletter",
-    badgeBg: "bg-orange-500",
-    preview: [
-      {
-        label: "Opening",
-        text: "Most teams measure retention wrong. This week Sarah Chen joined us to explain why stickiness is a vanity metric.",
-      },
-      {
-        label: "Insight",
-        text: "The teams that win aren't reducing churn - they're engineering indispensability at 30, 60, and 90 days.",
-      },
-      { label: "CTA", text: "Read the full breakdown -> [Listen Now]" },
-    ],
-  },
-];
-
 const HERO_ROTATING_PHRASES = [
-  "transcripts",
-  "automatic speaker recognition",
-  "speaker briefs",
-  "content kits",
+  "a clean transcript",
+  "speaker-attributed insights",
   "publish-ready drafts",
+  "channel-ready content kits",
+  "assets you can ship today",
 ] as const;
-
-const SIGNAL_LEVELS = [
-  { base: 24, low: 10, high: 42 },
-  { base: 68, low: 28, high: 88 },
-  { base: 32, low: 14, high: 52 },
-  { base: 84, low: 42, high: 100 },
-  { base: 40, low: 18, high: 64 },
-  { base: 58, low: 22, high: 78 },
-  { base: 28, low: 12, high: 46 },
-  { base: 92, low: 48, high: 100 },
-  { base: 46, low: 20, high: 68 },
-  { base: 74, low: 34, high: 92 },
-  { base: 36, low: 16, high: 58 },
-];
 
 const ANALYSIS_METRICS = [
   {
@@ -556,69 +468,6 @@ const PRICING_DARK_STARS = [
   { x: "96%", y: "35%", size: 6, opacity: 0.48, duration: 6.7, delay: 0.2 },
   { x: "96%", y: "77%", size: 7, opacity: 0.44, duration: 7.4, delay: 1.0 },
 ];
-
-const SYNC_SIGNAL_PATTERNS = [
-  {
-    name: "bell-curve",
-    frames: [
-      [14, 20, 30, 48, 72, 90, 72, 48, 30, 20, 14],
-      [18, 30, 48, 72, 94, 100, 94, 72, 48, 30, 18],
-      [22, 38, 58, 82, 100, 100, 100, 82, 58, 38, 22],
-      [18, 30, 48, 72, 94, 100, 94, 72, 48, 30, 18],
-      [14, 20, 30, 48, 72, 90, 72, 48, 30, 20, 14],
-    ],
-  },
-  {
-    name: "split-peak",
-    frames: [
-      [20, 34, 62, 96, 54, 18, 54, 96, 62, 34, 20],
-      [26, 48, 82, 100, 64, 22, 64, 100, 82, 48, 26],
-      [18, 32, 58, 86, 46, 14, 46, 86, 58, 32, 18],
-      [28, 50, 84, 100, 68, 24, 68, 100, 84, 50, 28],
-    ],
-  },
-  {
-    name: "traveling-wave",
-    frames: [
-      [100, 86, 64, 38, 22, 14, 18, 28, 46, 70, 92],
-      [68, 92, 100, 84, 58, 30, 16, 18, 26, 42, 66],
-      [28, 48, 76, 100, 94, 68, 40, 20, 16, 24, 40],
-      [18, 24, 38, 62, 88, 100, 90, 64, 36, 18, 16],
-      [22, 18, 24, 42, 68, 92, 100, 86, 60, 34, 18],
-    ],
-  },
-  {
-    name: "center-pulse",
-    frames: [
-      [12, 14, 18, 30, 58, 90, 58, 30, 18, 14, 12],
-      [16, 22, 34, 58, 88, 100, 88, 58, 34, 22, 16],
-      [20, 30, 48, 78, 100, 100, 100, 78, 48, 30, 20],
-      [16, 22, 34, 58, 88, 100, 88, 58, 34, 22, 16],
-      [12, 14, 18, 30, 58, 90, 58, 30, 18, 14, 12],
-    ],
-  },
-  {
-    name: "stadium-rise",
-    frames: [
-      [14, 24, 36, 52, 68, 82, 68, 52, 36, 24, 14],
-      [24, 38, 54, 74, 90, 100, 90, 74, 54, 38, 24],
-      [34, 52, 72, 90, 100, 100, 100, 90, 72, 52, 34],
-      [20, 34, 48, 66, 82, 92, 82, 66, 48, 34, 20],
-      [14, 24, 36, 52, 68, 82, 68, 52, 36, 24, 14],
-    ],
-  },
-];
-
-function generateRandomSignal(prev: number[]): number[] {
-  return prev.map((value, index) => {
-    const drift = Math.round((Math.random() - 0.5) * 34);
-    const neighborBias =
-      index > 0 && index < prev.length - 1
-        ? Math.round(((prev[index - 1] + prev[index + 1]) / 2 - value) * 0.18)
-        : 0;
-    return Math.max(12, Math.min(100, value + drift + neighborBias));
-  });
-}
 
 // Utilities
 function useIsMobileLayout(maxWidth = 767) {
@@ -1029,6 +878,12 @@ function SocialProofStrip({ className = "" }: { className?: string }) {
         >
           Built For Real-World Audio
         </p>
+        <p
+          className={`mt-2 text-center text-xs ${isLight ? "text-slate-600" : "text-blue-100/70"}`}
+        >
+          Choose what runs, review before publishing, and pay only for what you
+          process.
+        </p>
       </div>
       <div
         className={`pointer-events-none absolute inset-y-0 left-0 z-20 w-24 ${isLight ? "bg-gradient-to-r from-[#f8fbff] to-transparent" : "bg-gradient-to-r from-slate-950 to-transparent"}`}
@@ -1150,7 +1005,7 @@ function HeroWordPill({ phrase }: { phrase: string }) {
           transition={{ duration: 0.42, ease: [0.22, 1, 0.36, 1] }}
           className="inline-block whitespace-normal leading-tight bg-gradient-to-r from-blue-600 to-indigo-600 bg-clip-text text-transparent dark:from-cyan-400 dark:to-blue-500"
         >
-          Leave with {phrase}
+          Get {phrase}
         </motion.span>
       </AnimatePresence>
     </span>
@@ -1804,7 +1659,7 @@ function Hero() {
                 href="/auth/signup"
                 className="inline-flex items-center gap-2 bg-blue-600 hover:bg-blue-500 text-white font-semibold px-7 py-3.5 rounded-xl transition-colors shadow-lg shadow-blue-900/50"
               >
-                Start Free
+                Try it with one recording
                 <ArrowRight className="h-4 w-4" />
               </Link>
               <Link
@@ -1814,6 +1669,15 @@ function Hero() {
                 Log In
               </Link>
             </motion.div>
+            <motion.p
+              className="mx-auto mb-10 max-w-2xl text-sm text-slate-600 dark:text-blue-100/75"
+              initial={{ opacity: 0, y: 12 }}
+              animate={{ opacity: 1, y: 0 }}
+              transition={{ duration: 0.5, delay: 0.28, ease: "easeOut" }}
+            >
+              No subscription required. Choose analysis per upload. Review
+              before export.
+            </motion.p>
 
             <motion.div
               className="mx-auto flex w-full max-w-5xl items-center justify-center overflow-x-auto pb-1"
@@ -1875,11 +1739,11 @@ function SpeakerIntelligenceSection() {
             Speaker Intelligence
           </span>
           <h2 className="text-3xl md:text-4xl font-bold text-gray-900 mt-2 dark:text-white">
-            The feature no other tool ships
+            Multi-speaker accuracy that improves every downstream output
           </h2>
           <p className="text-gray-500 mt-4 max-w-xl mx-auto text-base dark:text-slate-300">
-            Detect speakers, review the uncertain moments, and keep every output
-            correctly attributed.
+            Detect speakers, review uncertain moments, and keep transcripts,
+            summaries, and generated content correctly attributed.
           </p>
         </motion.div>
 
@@ -2092,71 +1956,6 @@ function HowItWorks() {
 
 // Content Outputs Section
 function ContentOutputsSection() {
-  const [activeCard, setActiveCard] = useState(0);
-  const [signalHeights, setSignalHeights] = useState<number[]>(
-    SIGNAL_LEVELS.map((signal) => signal.base),
-  );
-  const [activeSignalPattern, setActiveSignalPattern] = useState<number | null>(
-    null,
-  );
-  const [signalLeadIn, setSignalLeadIn] = useState(false);
-
-  useEffect(() => {
-    if (activeSignalPattern !== null || signalLeadIn) return;
-
-    const timer = setInterval(() => {
-      setSignalHeights((prev) => generateRandomSignal(prev));
-    }, 520);
-
-    return () => clearInterval(timer);
-  }, [activeSignalPattern, signalLeadIn]);
-
-  useEffect(() => {
-    let patternIndex = 0;
-    let leadTimeout: ReturnType<typeof setTimeout> | null = null;
-    let releaseTimeout: ReturnType<typeof setTimeout> | null = null;
-
-    const runPattern = () => {
-      const nextPattern = patternIndex % SYNC_SIGNAL_PATTERNS.length;
-      patternIndex += 1;
-      const gatherFrame = SYNC_SIGNAL_PATTERNS[nextPattern].frames[0];
-      const finalFrame = SYNC_SIGNAL_PATTERNS[nextPattern].frames.at(-1);
-      setSignalLeadIn(true);
-      setSignalHeights(gatherFrame);
-
-      leadTimeout = setTimeout(() => {
-        setActiveSignalPattern(nextPattern);
-        setSignalLeadIn(false);
-      }, 1000);
-
-      releaseTimeout = setTimeout(() => {
-        setSignalHeights(
-          finalFrame || SIGNAL_LEVELS.map((signal) => signal.base),
-        );
-        setActiveSignalPattern(null);
-      }, 7000);
-    };
-
-    const interval = setInterval(() => {
-      runPattern();
-    }, 30000);
-
-    runPattern();
-
-    return () => {
-      clearInterval(interval);
-      if (leadTimeout) clearTimeout(leadTimeout);
-      if (releaseTimeout) clearTimeout(releaseTimeout);
-    };
-  }, []);
-
-  const card = FEATURED_OUTPUT_STACK[activeCard];
-  const ActiveCardIcon = OUTPUT_ICONS[card.icon];
-  const activePattern =
-    activeSignalPattern !== null
-      ? SYNC_SIGNAL_PATTERNS[activeSignalPattern]
-      : null;
-
   return (
     <section
       id="outputs"
@@ -2178,14 +1977,13 @@ function ContentOutputsSection() {
           </h2>
         </motion.div>
 
-        <div className="grid gap-8 xl:grid-cols-5 xl:items-start">
-          {/* Left column - Content Menu */}
+        <div className="mx-auto max-w-5xl">
           <motion.div
             initial={{ opacity: 0, y: 20 }}
             whileInView={{ opacity: 1, y: 0 }}
             viewport={SECTION_VIEWPORT}
             transition={{ duration: 0.6, ease: "easeOut" }}
-            className="xl:col-span-3"
+            className="mx-auto"
           >
             <div className="space-y-0">
               {OUTPUT_GROUPS.map(({ title, description, items }, index) => (
@@ -2242,181 +2040,6 @@ function ContentOutputsSection() {
               </Link>
             </div>
           </motion.div>
-
-          {/* Right column - Cycling Output Preview */}
-          <motion.div
-            initial={{ opacity: 0, y: 24 }}
-            whileInView={{ opacity: 1, y: 0 }}
-            viewport={SECTION_VIEWPORT}
-            transition={{ duration: 0.6, ease: "easeOut", delay: 0.08 }}
-            className="xl:col-span-2 xl:sticky xl:top-24"
-          >
-            <div className="relative pt-4">
-              <div className="absolute left-0 right-0 top-0 h-px bg-gradient-to-r from-transparent via-slate-300 to-transparent dark:via-white/15" />
-              <div className="relative min-h-[19rem] border-y border-slate-200 py-6 dark:border-white/10">
-                <AnimatePresence mode="wait">
-                  <motion.div
-                    key={activeCard}
-                    initial={{ opacity: 0, y: 16 }}
-                    animate={{ opacity: 1, y: 0 }}
-                    exit={{ opacity: 0, y: -12 }}
-                    transition={{ duration: 0.4, ease: "easeOut" }}
-                    className="grid gap-4"
-                  >
-                    <div className="flex items-start gap-4">
-                      <div
-                        className={`h-11 w-11 rounded-2xl ${card.badgeBg} flex items-center justify-center text-white flex-shrink-0 shadow-sm`}
-                      >
-                        <ActiveCardIcon className="h-5 w-5" />
-                      </div>
-                      <div>
-                        <p className="text-[11px] font-semibold uppercase tracking-[0.18em] text-slate-500 dark:text-slate-400">
-                          {card.eyebrow}
-                        </p>
-                        <h4 className="mt-1 text-xl font-bold tracking-tight text-slate-950 dark:text-white">
-                          {card.platform}
-                        </h4>
-                      </div>
-                      <div
-                        className={`ml-auto h-8 w-8 rounded-xl bg-gradient-to-br ${card.accent} shadow-md flex-shrink-0`}
-                      />
-                    </div>
-
-                    <div className="space-y-3">
-                      {card.preview.map(({ label, text }, index) => (
-                        <div
-                          key={label}
-                          className="grid grid-cols-[4.75rem_1fr] gap-3 border-b border-slate-200/80 pb-3 last:border-b-0 last:pb-0 dark:border-white/10"
-                        >
-                          <span className="pt-1 text-[10px] font-semibold uppercase tracking-[0.14em] text-slate-500 dark:text-slate-400">
-                            {String(index + 1).padStart(2, "0")} {label}
-                          </span>
-                          <span className="text-sm leading-7 text-slate-700 dark:text-slate-300">
-                            {text}
-                          </span>
-                        </div>
-                      ))}
-                    </div>
-                  </motion.div>
-                </AnimatePresence>
-              </div>
-
-              <div className="mt-5 flex items-center justify-center gap-2">
-                {FEATURED_OUTPUT_STACK.map((c, i) => (
-                  <button
-                    key={i}
-                    onClick={() => setActiveCard(i)}
-                    className={`rounded-full px-3 py-1 text-[11px] font-semibold uppercase tracking-[0.14em] transition-all
-                      ${i === activeCard
-                        ? "bg-slate-900 text-white border border-slate-900 dark:border-white/10 dark:bg-white/10"
-                        : "text-slate-500 hover:text-slate-700 dark:text-slate-400 dark:hover:text-slate-200"
-                      }`}
-                  >
-                    {c.eyebrow}
-                  </button>
-                ))}
-              </div>
-
-              <div className="mt-8 px-3 sm:mt-6 sm:px-0">
-                <div className="flex items-center justify-between text-xs font-semibold uppercase tracking-[0.16em] text-slate-500 dark:text-slate-400">
-                  <span>Pipeline signal</span>
-                  <span>Source transcript</span>
-                </div>
-                <div
-                  className="mt-6 grid grid-cols-11 gap-2 items-end"
-                  style={{ height: 104 }}
-                >
-                  {OUTPUT_GROUPS.flatMap((group) => group.items).map(
-                    ({ icon, badgeBg, name }, index) => {
-                      const Icon = OUTPUT_ICONS[icon];
-                      const liveHeight = signalHeights[index];
-                      const iconTravel = Math.max(
-                        3,
-                        Math.round(liveHeight / 10),
-                      );
-                      const patternFrames = activePattern?.frames.map(
-                        (frame) => frame[index],
-                      );
-                      const smoothPatternFrames = activePattern
-                        ? [liveHeight, ...(patternFrames || [])]
-                        : undefined;
-                      const patternTimes = smoothPatternFrames?.map(
-                        (_, frameIndex, arr) =>
-                          arr.length === 1 ? 1 : frameIndex / (arr.length - 1),
-                      );
-                      const iconFrames = activePattern
-                        ? [
-                          -iconTravel,
-                          ...(patternFrames || []).map(
-                            (height) => -Math.max(3, Math.round(height / 10)),
-                          ),
-                          0,
-                        ]
-                        : signalLeadIn
-                          ? [-Math.max(3, Math.round(liveHeight / 10))]
-                          : [-iconTravel];
-                      const iconTimes = activePattern
-                        ? iconFrames.map((_, frameIndex, arr) =>
-                          arr.length === 1
-                            ? 1
-                            : frameIndex / (arr.length - 1),
-                        )
-                        : undefined;
-                      return (
-                        <div
-                          key={name}
-                          className="flex h-full flex-col items-center justify-end"
-                        >
-                          <motion.div
-                            className={`mb-1 flex h-8 w-8 items-center justify-center rounded-lg ${badgeBg} text-white shadow-sm`}
-                            animate={{ y: iconFrames }}
-                            style={{ willChange: "transform" }}
-                            transition={
-                              activePattern
-                                ? {
-                                  duration: 6,
-                                  times: iconTimes,
-                                  ease: "easeInOut",
-                                }
-                                : signalLeadIn
-                                  ? { duration: 1, ease: "easeInOut" }
-                                  : { duration: 0.42, ease: "easeOut" }
-                            }
-                          >
-                            <Icon className="h-4 w-4" />
-                          </motion.div>
-                          <motion.div
-                            className="w-full rounded-[5px] bg-gradient-to-t from-blue-500 via-sky-400 to-cyan-200"
-                            animate={
-                              activePattern
-                                ? {
-                                  height: (smoothPatternFrames || [liveHeight]).map(
-                                    (height) => `${height}%`,
-                                  ),
-                                }
-                                : { height: `${liveHeight}%` }
-                            }
-                            transition={
-                              activePattern
-                                ? {
-                                  duration: 6,
-                                  times: patternTimes,
-                                  ease: "easeInOut",
-                                }
-                                : signalLeadIn
-                                  ? { duration: 1, ease: "easeInOut" }
-                                  : { duration: 0.42, ease: "easeOut" }
-                            }
-                            style={{ height: `${liveHeight}%` }}
-                          />
-                        </div>
-                      );
-                    },
-                  )}
-                </div>
-              </div>
-            </div>
-          </motion.div>
         </div>
       </div>
     </section>
@@ -2432,7 +2055,7 @@ function AnalysisSection() {
   return (
     <section
       id="analysis"
-      className="relative overflow-hidden bg-slate-100 py-20 dark:bg-slate-950"
+      className="relative overflow-hidden bg-[linear-gradient(180deg,#f1f5f9_0%,#dbeafe_18%,#0b1220_100%)] py-20 dark:bg-slate-950"
     >
       <AnalysisConstellationBackground />
       <div className="relative max-w-[90rem] mx-auto px-4 sm:px-6 lg:px-8">
@@ -2449,7 +2072,7 @@ function AnalysisSection() {
           <h2 className="mt-2 text-3xl font-bold text-white md:text-4xl">
             Review the conversation before you turn it into more content.
           </h2>
-          <p className="mx-auto mt-4 max-w-2xl text-base text-blue-100/65">
+          <p className="mx-auto mt-4 max-w-2xl text-base text-blue-100/82">
             AudioRepurpose reads the transcript like an editor would: where the
             hook landed, where the follow-up missed, and which moments deserve
             to become assets.
@@ -2481,7 +2104,7 @@ function AnalysisSection() {
               </motion.h3>
               <motion.p
                 variants={sectionItem}
-                className="mt-5 max-w-xl text-sm leading-7 text-blue-100/70"
+                className="mt-5 max-w-xl text-sm leading-7 text-blue-100/82"
               >
                 Instead of just counting outputs, AudioRepurpose shows where the
                 conversation created usable material, where it lost momentum,
@@ -2528,7 +2151,7 @@ function AnalysisSection() {
                     <div className="mt-0.5 flex h-9 w-9 items-center justify-center rounded-xl bg-white text-blue-600 shadow-sm dark:bg-white/8 dark:text-blue-200">
                       <Icon className="h-4 w-4" />
                     </div>
-                    <p className="text-sm leading-6 text-blue-100/72">{text}</p>
+                    <p className="text-sm leading-6 text-blue-100/84">{text}</p>
                   </motion.div>
                 ))}
               </motion.div>
@@ -2580,7 +2203,7 @@ function AnalysisSection() {
                       <div className="mt-3 text-3xl font-bold tracking-tight text-white">
                         {metric.value}
                       </div>
-                      <p className="mt-2 text-sm leading-6 text-blue-100/65">
+                      <p className="mt-2 text-sm leading-6 text-blue-100/82">
                         {metric.note}
                       </p>
                     </motion.div>
@@ -2633,7 +2256,7 @@ function AnalysisSection() {
                             ease: "easeOut",
                           }}
                         >
-                          <div className="flex items-center justify-between text-sm text-blue-100/78">
+                          <div className="flex items-center justify-between text-sm text-blue-100/88">
                             <span>{item.name}</span>
                             <span className="text-xs font-semibold uppercase tracking-[0.14em] text-blue-100/45">
                               {item.width}
@@ -2701,7 +2324,7 @@ function AnalysisSection() {
                         <h5 className="mt-2 text-sm font-semibold leading-6 text-white">
                           {item.title}
                         </h5>
-                        <p className="mt-2 text-sm leading-6 text-blue-100/65">
+                        <p className="mt-2 text-sm leading-6 text-blue-100/82">
                           {item.action}
                         </p>
                       </motion.div>
@@ -2734,18 +2357,8 @@ function Pricing() {
             Pay only for what you process
           </h2>
           <p className="text-slate-600 mt-4 max-w-xl mx-auto text-base dark:text-slate-300">
-            One pay-as-you-go workflow. Upload audio, choose analysis options,
-            and generate content later only when you need it.
-          </p>
-        </div>
-
-        <div className="max-w-5xl mx-auto mb-10 rounded-xl border border-slate-200 bg-transparent px-5 py-3.5 flex items-start gap-3 dark:border-white/10 dark:bg-white/[0.03]">
-          <Clock className="h-4 w-4 text-slate-500 flex-shrink-0 mt-0.5 dark:text-slate-400" />
-          <p className="text-sm text-slate-700 dark:text-slate-300">
-            <span className="font-semibold">Manual by default</span> - You
-            choose which analysis runs during upload, then generate content
-            later from the project page so credits only go toward outputs you
-            actually want.
+            One pay-as-you-go workflow: base transcript, optional analysis, and
+            per-output content generation.
           </p>
         </div>
 
@@ -2788,7 +2401,7 @@ function Pricing() {
               href="/auth/signup"
               className="inline-flex min-w-[220px] items-center justify-center rounded-xl bg-blue-600 px-6 py-3 text-sm font-semibold text-white transition-colors hover:bg-blue-700"
             >
-              Start pay as you go
+              Process your first recording
             </Link>
           </div>
         </div>

@@ -26,10 +26,10 @@ export const CONTENT_OUTPUT_PRICES = {
 
 export const PAYG_SECTIONS = [
   {
-    name: "Base transcription",
+    name: "Base transcript",
     price: BASE_TRANSCRIPTION_PRICE_LABEL,
     description:
-      "Always-on transcript with numbered speaker labels and timestamps.",
+      "Per-hour transcript foundation with numbered speaker labels and timestamps.",
     features: [
       "Clean transcript",
       "Speaker labels (numbered)",
@@ -38,10 +38,10 @@ export const PAYG_SECTIONS = [
     ],
   },
   {
-    name: "Optional analysis add-ons",
+    name: "Optional analysis",
     price: "Usage-based",
     description:
-      "Choose only the structure you want during processing. Short uploads cost less, longer transcripts cost more.",
+      "Turn on only what you need during processing. Cost scales with transcript length.",
     features: [
       "Named speakers with roles",
       "Episode summary",
@@ -52,7 +52,7 @@ export const PAYG_SECTIONS = [
     ],
   },
   {
-    name: "Content generation",
+    name: "Per-output generation",
     price: "Per output",
     description:
       "Generate content later from the project page, one fixed-price output at a time.",
@@ -70,3 +70,29 @@ export const PAYG_SECTIONS = [
 
 export const PRICING_MODEL_SUMMARY =
   "Transcription stays low-friction, analysis scales with transcript length, and content outputs are charged per generated asset.";
+
+const ONE_HOUR = 1;
+const EXAMPLE_BASE_TRANSCRIPTION = BASE_TRANSCRIPTION_PRICE_PER_HOUR * ONE_HOUR;
+const EXAMPLE_NAMED_SPEAKERS = Math.max(
+  BASE_TRANSCRIPTION_PRICE_PER_HOUR *
+    ANALYSIS_PRICE_RULES.namedSpeakers.multiplier *
+    ONE_HOUR,
+  ANALYSIS_PRICE_RULES.namedSpeakers.minimumCharge,
+);
+const EXAMPLE_SUMMARY = Math.max(
+  BASE_TRANSCRIPTION_PRICE_PER_HOUR *
+    ANALYSIS_PRICE_RULES.summary.multiplier *
+    ONE_HOUR,
+  ANALYSIS_PRICE_RULES.summary.minimumCharge,
+);
+const EXAMPLE_LINKEDIN_OUTPUT = CONTENT_OUTPUT_PRICES.linkedin_posts;
+
+const EXAMPLE_TOTAL =
+  EXAMPLE_BASE_TRANSCRIPTION +
+  EXAMPLE_NAMED_SPEAKERS +
+  EXAMPLE_SUMMARY +
+  EXAMPLE_LINKEDIN_OUTPUT;
+
+export const PRICING_EXAMPLE_SUMMARY = `Example estimate: a 60-minute recording with base transcript + named speakers + summary + one LinkedIn post is about $${EXAMPLE_TOTAL.toFixed(
+  2,
+)}.`;
