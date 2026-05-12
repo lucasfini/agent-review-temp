@@ -2,6 +2,7 @@
 
 import {
   useEffect,
+  useMemo,
   useRef,
   useState,
   type ElementType,
@@ -40,8 +41,11 @@ import {
   FileText,
   Quote,
   Newspaper,
+  CircleHelp,
 } from "lucide-react";
 import BrandLogo from "@/components/site/BrandLogo";
+import { ANALYSIS_OPTION_CONFIG } from "@/lib/analysis-options";
+import { CONTENT_TYPES } from "@/lib/content-types";
 import {
   PAYG_SECTIONS,
   PRICING_MODEL_SUMMARY,
@@ -116,11 +120,22 @@ const sectionItem = {
   },
 };
 
-type OutputGroupItem = {
-  icon: OutputIconKey;
+type InteractiveGroup = "addons" | "content";
+type PreviewMeta = { label: string; value: string };
+type InteractivePreview = {
+  title: string;
+  eyebrow: string;
+  meta: PreviewMeta[];
+  body: string;
+};
+type InteractiveItem = {
+  id: string;
+  group: InteractiveGroup;
+  label: string;
+  helpText: string;
+  iconKey: OutputIconKey;
   badgeBg: string;
-  name: string;
-  desc: string;
+  preview: InteractivePreview;
 };
 
 type HowItWorksStep = {
@@ -171,104 +186,221 @@ const HOW_IT_WORKS_STEPS: HowItWorksStep[] = [
   },
 ];
 
-// Output formats
-const OUTPUT_GROUPS: Array<{
-  title: string;
-  description: string;
-  accent: string;
-  items: OutputGroupItem[];
-}> = [
-    {
-      title: "Social Distribution",
-      description:
-        "Posts built to grab attention quickly and drive replies, saves, and shares.",
-      accent: "from-slate-900 via-slate-800 to-slate-900",
-      items: [
-        {
-          icon: "x",
-          badgeBg: "bg-slate-900",
-          name: "X Threads",
-          desc: "6-8 posts per thread",
-        },
-        {
-          icon: "linkedin",
-          badgeBg: "bg-blue-700",
-          name: "LinkedIn Posts",
-          desc: "Professional posts with discussion prompts",
-        },
-        {
-          icon: "facebook",
-          badgeBg: "bg-blue-600",
-          name: "Facebook Post",
-          desc: "Conversational post with question-led engagement",
-        },
-        {
-          icon: "instagram",
-          badgeBg: "bg-gradient-to-br from-fuchsia-500 to-rose-500",
-          name: "Instagram Carousel",
-          desc: "Multi-slide carousel with hashtags",
-        },
-      ],
-    },
-    {
-      title: "Video + Episode Packaging",
-      description:
-        "Assets that help an episode travel across video feeds and listening platforms.",
-      accent: "from-blue-950 via-indigo-950 to-slate-900",
-      items: [
-        {
-          icon: "youtube",
-          badgeBg: "bg-red-600",
-          name: "YouTube Description",
-          desc: "SEO-friendly summary with timestamps and hashtags",
-        },
-        {
-          icon: "tiktok",
-          badgeBg: "bg-cyan-600",
-          name: "TikTok / Reels Script",
-          desc: "45-60 second short-form hook and CTA",
-        },
-        {
-          icon: "podcast",
-          badgeBg: "bg-amber-600",
-          name: "Podcast Episode Description",
-          desc: "Store-ready episode summary for podcast apps",
-        },
-        {
-          icon: "showNotes",
-          badgeBg: "bg-violet-600",
-          name: "Show Notes",
-          desc: "Episode summary with timestamps",
-        },
-      ],
-    },
-    {
-      title: "Long-Form + Pull Quotes",
-      description:
-        "Deeper assets for search, email, and republishing once an episode has landed.",
-      accent: "from-emerald-950 via-slate-900 to-slate-900",
-      items: [
-        {
-          icon: "blog",
-          badgeBg: "bg-emerald-600",
-          name: "Blog Post",
-          desc: "SEO-optimized, 1,200-1,800 words",
-        },
-        {
-          icon: "newsletter",
-          badgeBg: "bg-orange-500",
-          name: "Email Newsletter",
-          desc: "800-1,200 words with CTA",
-        },
-        {
-          icon: "quote",
-          badgeBg: "bg-rose-500",
-          name: "Quote Graphics",
-          desc: "Speaker-attributed quotable excerpts",
-        },
-      ],
-    },
-  ];
+const ADDON_ICON_MAP: Record<string, { iconKey: OutputIconKey; badgeBg: string }> = {
+  namedSpeakers: { iconKey: "podcast", badgeBg: "bg-sky-600" },
+  summary: { iconKey: "showNotes", badgeBg: "bg-violet-600" },
+  insights: { iconKey: "blog", badgeBg: "bg-amber-600" },
+  chapters: { iconKey: "showNotes", badgeBg: "bg-indigo-600" },
+  takeaways: { iconKey: "quote", badgeBg: "bg-emerald-600" },
+  quotes: { iconKey: "quote", badgeBg: "bg-rose-600" },
+};
+
+const CONTENT_ICON_MAP: Record<string, { iconKey: OutputIconKey; badgeBg: string }> = {
+  twitter_threads: { iconKey: "x", badgeBg: "bg-slate-900" },
+  linkedin_posts: { iconKey: "linkedin", badgeBg: "bg-blue-700" },
+  instagram_content: { iconKey: "instagram", badgeBg: "bg-gradient-to-br from-fuchsia-500 to-rose-500" },
+  facebook_post: { iconKey: "facebook", badgeBg: "bg-blue-600" },
+  blog_post: { iconKey: "blog", badgeBg: "bg-emerald-600" },
+  newsletter: { iconKey: "newsletter", badgeBg: "bg-orange-500" },
+  show_notes: { iconKey: "showNotes", badgeBg: "bg-violet-600" },
+  youtube_description: { iconKey: "youtube", badgeBg: "bg-red-600" },
+  podcast_episode_description: { iconKey: "podcast", badgeBg: "bg-amber-600" },
+  short_form_video_script: { iconKey: "tiktok", badgeBg: "bg-cyan-600" },
+  quote_graphics: { iconKey: "quote", badgeBg: "bg-rose-500" },
+};
+
+const ADDON_PREVIEW_MAP: Record<string, InteractivePreview> = {
+  namedSpeakers: {
+    eyebrow: "Add-on preview",
+    title: "Speaker timeline with named roles",
+    meta: [
+      { label: "Typical output", value: "Speaker roster + timestamps" },
+      { label: "Best for", value: "Interviews and panels" },
+      { label: "Tone", value: "Structured and factual" },
+    ],
+    body:
+      "00:00 Host (Maya): 'Today we're unpacking retention myths.'\n00:42 Guest (Arjun): 'Teams that win measure behavior, not vanity metrics.'\n08:15 Host (Maya): 'Let's break that framework down in three steps.'\n\nThis add-on keeps attribution stable across summaries, quotes, and downstream content so every point stays tied to the right speaker.",
+  },
+  summary: {
+    eyebrow: "Add-on preview",
+    title: "Concise episode summary",
+    meta: [
+      { label: "Typical output", value: "1-2 paragraphs" },
+      { label: "Best for", value: "Show pages and briefs" },
+      { label: "Tone", value: "Clear and executive" },
+    ],
+    body:
+      "This episode explains why retention improves when teams design for repeat value moments at days 1, 7, and 30. The guest outlines a practical scoring model, then walks through one rollout that increased activation by 22% without adding onboarding friction.",
+  },
+  insights: {
+    eyebrow: "Add-on preview",
+    title: "Concept and opportunity insights",
+    meta: [
+      { label: "Typical output", value: "Theme breakdown" },
+      { label: "Best for", value: "Editorial planning" },
+      { label: "Tone", value: "Analytical" },
+    ],
+    body:
+      "Insight: The strongest segment appears when the guest contrasts 'feature adoption' with 'habit adoption.'\nOpportunity: Expand the case-study section into a follow-up clip focused on the 30-day benchmark table.\nRisk: CTA section is late; moving it earlier would improve listener completion behavior.",
+  },
+  chapters: {
+    eyebrow: "Add-on preview",
+    title: "Timestamped chapter structure",
+    meta: [
+      { label: "Typical output", value: "6-10 chapter markers" },
+      { label: "Best for", value: "YouTube and podcast players" },
+      { label: "Tone", value: "Navigable" },
+    ],
+    body:
+      "00:00 Why retention fails in month one\n05:14 The 3-part behavior model\n12:36 Case study: reducing early churn\n21:03 Listener Q&A on onboarding\n31:20 Action plan for next sprint",
+  },
+  takeaways: {
+    eyebrow: "Add-on preview",
+    title: "Actionable key takeaways",
+    meta: [
+      { label: "Typical output", value: "3-7 bullet insights" },
+      { label: "Best for", value: "Team recap docs" },
+      { label: "Tone", value: "Practical" },
+    ],
+    body:
+      "1) Track behavior milestones, not raw activity.\n2) Map friction points by week, then prioritize one fix per cycle.\n3) Tie onboarding changes to one measurable habit metric.\n4) Use listener questions to choose next episode topics.",
+  },
+  quotes: {
+    eyebrow: "Add-on preview",
+    title: "Pull-ready quote selection",
+    meta: [
+      { label: "Typical output", value: "Speaker-attributed quotes" },
+      { label: "Best for", value: "Social snippets" },
+      { label: "Tone", value: "Memorable" },
+    ],
+    body:
+      "\"Retention isn't a dashboard number. It's a behavior you engineer.\"\n— Arjun Patel, Guest\n\n\"If users don't experience value in week one, they never build the habit.\"\n— Maya Lin, Host",
+  },
+};
+
+const CONTENT_PREVIEW_MAP: Record<string, InteractivePreview> = {
+  twitter_threads: {
+    eyebrow: "Content type preview",
+    title: "X thread draft",
+    meta: [
+      { label: "Typical output", value: "6-8 posts" },
+      { label: "Tone", value: "Punchy and teachable" },
+      { label: "Length", value: "Short-form series" },
+    ],
+    body:
+      "Post 1: Most teams call it churn. The real problem is missing week-one value.\nPost 2: In this episode, we broke retention into 3 measurable behaviors.\nPost 3: One team raised activation 22% by fixing only one onboarding step.\nPost 4: Here's the exact checklist they used...",
+  },
+  linkedin_posts: {
+    eyebrow: "Content type preview",
+    title: "LinkedIn post draft",
+    meta: [
+      { label: "Typical output", value: "1 long-form post" },
+      { label: "Tone", value: "Professional" },
+      { label: "Length", value: "1200-1500 characters" },
+    ],
+    body:
+      "If retention is flat, your onboarding probably teaches clicks, not outcomes.\n\nIn our latest conversation, we mapped three behavior checkpoints that predict long-term retention. The most surprising finding: one clarity change in week one outperformed multiple feature launches.\n\nQuestion for operators: which user behavior do you optimize first?",
+  },
+  instagram_content: {
+    eyebrow: "Content type preview",
+    title: "Instagram carousel concept",
+    meta: [
+      { label: "Typical output", value: "Slide outline + caption" },
+      { label: "Tone", value: "Visual and concise" },
+      { label: "Length", value: "Multi-slide" },
+    ],
+    body:
+      "Slide 1: Why users drop in week one\nSlide 2: The 3 retention checkpoints\nSlide 3: Mistake teams repeat\nSlide 4: One fix that changed outcomes\nSlide 5: Apply this in your next sprint\n\nCaption: Save this before your next growth review.",
+  },
+  facebook_post: {
+    eyebrow: "Content type preview",
+    title: "Facebook discussion post",
+    meta: [
+      { label: "Typical output", value: "1 conversational post" },
+      { label: "Tone", value: "Friendly" },
+      { label: "Length", value: "150-300 words" },
+    ],
+    body:
+      "We just recorded a great conversation on why retention plateaus. One takeaway really stood out: users stay when they feel progress early, not when they see more features.\n\nIf you run a product or content team, what signals tell you a new user is likely to come back?",
+  },
+  blog_post: {
+    eyebrow: "Content type preview",
+    title: "Blog post outline",
+    meta: [
+      { label: "Typical output", value: "1200-1800 words" },
+      { label: "Tone", value: "Educational" },
+      { label: "Length", value: "Long-form" },
+    ],
+    body:
+      "H1: The Week-One Retention Framework\nH2: Why activation metrics mislead teams\nH2: Three behavior checkpoints that predict repeat usage\nH2: Case study: from flat retention to measurable habit loops\nH2: Implementation checklist for your next 30 days",
+  },
+  newsletter: {
+    eyebrow: "Content type preview",
+    title: "Email newsletter draft",
+    meta: [
+      { label: "Typical output", value: "Subject + full issue" },
+      { label: "Tone", value: "Editorial" },
+      { label: "Length", value: "800-1200 words" },
+    ],
+    body:
+      "Subject: Why users leave in week one (and what to fix)\n\nThis week we unpacked a practical retention model with clear checkpoints your team can audit in one meeting. The core idea: design for early progress signals, then reinforce them across day 7 and day 30 touchpoints.",
+  },
+  show_notes: {
+    eyebrow: "Content type preview",
+    title: "Show notes draft",
+    meta: [
+      { label: "Typical output", value: "Summary + timestamps" },
+      { label: "Tone", value: "Reference-friendly" },
+      { label: "Length", value: "Structured notes" },
+    ],
+    body:
+      "In this episode: retention myths, practical measurement, and a rollout breakdown.\n\nTimestamps\n00:00 Intro\n05:14 Framework\n12:36 Case study\n21:03 Q&A\n31:20 Next actions",
+  },
+  youtube_description: {
+    eyebrow: "Content type preview",
+    title: "YouTube description draft",
+    meta: [
+      { label: "Typical output", value: "SEO summary + chapters" },
+      { label: "Tone", value: "Search-aware" },
+      { label: "Length", value: "Medium" },
+    ],
+    body:
+      "Learn the retention framework high-performing teams use to improve week-one user behavior.\n\nChapters\n00:00 Intro\n05:14 Framework\n12:36 Case study\n\n#SaaS #Retention #ProductGrowth",
+  },
+  podcast_episode_description: {
+    eyebrow: "Content type preview",
+    title: "Podcast episode description",
+    meta: [
+      { label: "Typical output", value: "Store-ready blurb" },
+      { label: "Tone", value: "Conversational" },
+      { label: "Length", value: "Short-medium" },
+    ],
+    body:
+      "Why do users disappear after the first week? In this episode, we break down a practical retention model, share a real team example, and outline the exact checkpoints you can apply before your next launch cycle.",
+  },
+  short_form_video_script: {
+    eyebrow: "Content type preview",
+    title: "Short-form video script",
+    meta: [
+      { label: "Typical output", value: "45-60 second script" },
+      { label: "Tone", value: "Fast-paced" },
+      { label: "Length", value: "Short-form" },
+    ],
+    body:
+      "Hook: Most users quit before they ever feel value.\nBuild: Here are 3 retention checkpoints top teams track in week one.\nCTA: Comment 'checklist' and I'll send the framework we use with clients.",
+  },
+  quote_graphics: {
+    eyebrow: "Content type preview",
+    title: "Quote graphics captions",
+    meta: [
+      { label: "Typical output", value: "Caption-ready quote set" },
+      { label: "Tone", value: "Memorable" },
+      { label: "Length", value: "Short snippets" },
+    ],
+    body:
+      "\"Retention is a behavior design problem, not a messaging problem.\"\n\"When week one feels confusing, month one never happens.\"\n\"Measure moments of progress, then engineer more of them.\"",
+  },
+};
 
 const HERO_ROTATING_PHRASES = [
   "a clean transcript",
@@ -1956,6 +2088,65 @@ function HowItWorks() {
 
 // Content Outputs Section
 function ContentOutputsSection() {
+  const interactiveItems = useMemo<InteractiveItem[]>(() => {
+    const addonItems: InteractiveItem[] = ANALYSIS_OPTION_CONFIG.map((option) => {
+      const iconConfig = ADDON_ICON_MAP[option.key] || {
+        iconKey: "showNotes" as OutputIconKey,
+        badgeBg: "bg-slate-600",
+      };
+      return {
+        id: option.key,
+        group: "addons",
+        label: option.label,
+        helpText: option.description,
+        iconKey: iconConfig.iconKey,
+        badgeBg: iconConfig.badgeBg,
+        preview: ADDON_PREVIEW_MAP[option.key] || {
+          eyebrow: "Add-on preview",
+          title: option.label,
+          meta: [{ label: "Typical output", value: "Generated analysis" }],
+          body: "Preview content for this add-on appears here.",
+        },
+      };
+    });
+
+    const contentItems: InteractiveItem[] = CONTENT_TYPES.filter(
+      (contentType) => contentType.enabled,
+    ).map((contentType) => {
+      const iconConfig = CONTENT_ICON_MAP[contentType.id] || {
+        iconKey: "showNotes" as OutputIconKey,
+        badgeBg: "bg-slate-600",
+      };
+      return {
+        id: contentType.id,
+        group: "content",
+        label: contentType.name,
+        helpText: contentType.description,
+        iconKey: iconConfig.iconKey,
+        badgeBg: iconConfig.badgeBg,
+        preview: CONTENT_PREVIEW_MAP[contentType.id] || {
+          eyebrow: "Content type preview",
+          title: contentType.name,
+          meta: [{ label: "Typical output", value: "Generated draft" }],
+          body: "Preview content for this content type appears here.",
+        },
+      };
+    });
+
+    return [...addonItems, ...contentItems];
+  }, []);
+
+  const [activeItemId, setActiveItemId] = useState<string>("namedSpeakers");
+  const [openHelpItemId, setOpenHelpItemId] = useState<string | null>(null);
+
+  const activeItem =
+    interactiveItems.find((item) => item.id === activeItemId) ||
+    interactiveItems[0];
+  const addonItems = interactiveItems.filter((item) => item.group === "addons");
+  const contentItems = interactiveItems.filter(
+    (item) => item.group === "content",
+  );
+
   return (
     <section
       id="outputs"
@@ -1975,68 +2166,202 @@ function ContentOutputsSection() {
           <h2 className="text-3xl md:text-4xl font-bold text-gray-900 mt-2 dark:text-white">
             One recording, shaped for every channel.
           </h2>
+          <p className="text-gray-500 mt-4 max-w-2xl mx-auto text-base dark:text-slate-300">
+            Select any add-on or content type to preview exactly how one
+            recording can turn into production-ready assets.
+          </p>
         </motion.div>
 
-        <div className="mx-auto max-w-5xl">
+        <div className="mx-auto grid max-w-6xl gap-8 lg:grid-cols-[minmax(0,23rem)_minmax(0,1fr)]">
           <motion.div
             initial={{ opacity: 0, y: 20 }}
             whileInView={{ opacity: 1, y: 0 }}
             viewport={SECTION_VIEWPORT}
             transition={{ duration: 0.6, ease: "easeOut" }}
-            className="mx-auto"
+            className="rounded-2xl border border-slate-200 bg-slate-50/70 p-4 dark:border-white/10 dark:bg-white/[0.03]"
           >
-            <div className="space-y-0">
-              {OUTPUT_GROUPS.map(({ title, description, items }, index) => (
-                <div key={title}>
-                  {index > 0 && (
-                    <div className="my-5 border-t border-slate-200 dark:border-white/10" />
-                  )}
-                  <div className="mb-3 flex items-baseline justify-between gap-4">
-                    <div>
-                      <h3 className="text-base font-semibold tracking-tight text-slate-950 dark:text-white">
-                        {title}
-                      </h3>
-                      <p className="mt-1 text-xs text-slate-500 dark:text-slate-400">
-                        {description}
+            <div className="space-y-5">
+              <div>
+                <h3 className="text-sm font-semibold uppercase tracking-[0.16em] text-slate-500 dark:text-slate-300">
+                  Add-ons
+                </h3>
+                <div className="mt-3 grid gap-2 sm:grid-cols-2 lg:grid-cols-1">
+                  {addonItems.map((item) => {
+                    const Icon = OUTPUT_ICONS[item.iconKey];
+                    const isActive = activeItem?.id === item.id;
+                    const helpId = `help-${item.id}`;
+                    return (
+                      <div key={item.id} className="relative">
+                        <button
+                          type="button"
+                          onClick={() => setActiveItemId(item.id)}
+                          aria-pressed={isActive}
+                          className={`w-full rounded-xl border px-3 py-3 text-left transition-colors ${isActive
+                            ? "border-blue-400 bg-blue-50 shadow-sm dark:border-blue-400/40 dark:bg-blue-500/10"
+                            : "border-slate-200 bg-white hover:border-slate-300 dark:border-white/10 dark:bg-white/[0.04] dark:hover:border-white/20"
+                            }`}
+                        >
+                          <div className="flex items-start gap-3 pr-9">
+                            <div
+                              className={`flex h-8 w-8 flex-shrink-0 items-center justify-center rounded-lg ${item.badgeBg} text-white`}
+                            >
+                              <Icon className="h-4 w-4" />
+                            </div>
+                            <div className="min-w-0 flex-1">
+                              <p className="text-sm font-semibold text-slate-900 dark:text-white">
+                                {item.label}
+                              </p>
+                            </div>
+                          </div>
+                        </button>
+                        <button
+                          type="button"
+                          aria-label={`About ${item.label}`}
+                          aria-describedby={openHelpItemId === item.id ? helpId : undefined}
+                          onClick={() =>
+                            setOpenHelpItemId((current) =>
+                              current === item.id ? null : item.id,
+                            )
+                          }
+                          className="absolute right-2 top-2 rounded-md p-1 text-slate-500 hover:bg-slate-100 hover:text-slate-700 dark:text-slate-300 dark:hover:bg-white/10 dark:hover:text-white"
+                        >
+                          <CircleHelp className="h-4 w-4" />
+                        </button>
+                        {openHelpItemId === item.id && (
+                          <div
+                            id={helpId}
+                            className="mt-2 rounded-lg border border-slate-200 bg-white px-3 py-2 text-xs leading-5 text-slate-600 shadow-sm dark:border-white/15 dark:bg-slate-900 dark:text-slate-300"
+                          >
+                            {item.helpText}
+                          </div>
+                        )}
+                      </div>
+                    );
+                  })}
+                </div>
+              </div>
+
+              <div className="border-t border-slate-200 pt-4 dark:border-white/10">
+                <h3 className="text-sm font-semibold uppercase tracking-[0.16em] text-slate-500 dark:text-slate-300">
+                  Content Types
+                </h3>
+                <div className="mt-3 grid gap-2 sm:grid-cols-2">
+                  {contentItems.map((item) => {
+                    const Icon = OUTPUT_ICONS[item.iconKey];
+                    const isActive = activeItem?.id === item.id;
+                    const helpId = `help-${item.id}`;
+                    return (
+                      <div key={item.id} className="relative">
+                        <button
+                          type="button"
+                          onClick={() => setActiveItemId(item.id)}
+                          aria-pressed={isActive}
+                          className={`w-full rounded-xl border px-3 py-3 text-left transition-colors ${isActive
+                            ? "border-blue-400 bg-blue-50 shadow-sm dark:border-blue-400/40 dark:bg-blue-500/10"
+                            : "border-slate-200 bg-white hover:border-slate-300 dark:border-white/10 dark:bg-white/[0.04] dark:hover:border-white/20"
+                            }`}
+                        >
+                          <div className="flex items-start gap-3 pr-9">
+                            <div
+                              className={`flex h-8 w-8 flex-shrink-0 items-center justify-center rounded-lg ${item.badgeBg} text-white`}
+                            >
+                              <Icon className="h-4 w-4" />
+                            </div>
+                            <div className="min-w-0 flex-1">
+                              <p className="text-sm font-semibold text-slate-900 dark:text-white">
+                                {item.label}
+                              </p>
+                            </div>
+                          </div>
+                        </button>
+                        <button
+                          type="button"
+                          aria-label={`About ${item.label}`}
+                          aria-describedby={openHelpItemId === item.id ? helpId : undefined}
+                          onClick={() =>
+                            setOpenHelpItemId((current) =>
+                              current === item.id ? null : item.id,
+                            )
+                          }
+                          className="absolute right-2 top-2 rounded-md p-1 text-slate-500 hover:bg-slate-100 hover:text-slate-700 dark:text-slate-300 dark:hover:bg-white/10 dark:hover:text-white"
+                        >
+                          <CircleHelp className="h-4 w-4" />
+                        </button>
+                        {openHelpItemId === item.id && (
+                          <div
+                            id={helpId}
+                            className="mt-2 rounded-lg border border-slate-200 bg-white px-3 py-2 text-xs leading-5 text-slate-600 shadow-sm dark:border-white/15 dark:bg-slate-900 dark:text-slate-300"
+                          >
+                            {item.helpText}
+                          </div>
+                        )}
+                      </div>
+                    );
+                  })}
+                </div>
+              </div>
+            </div>
+          </motion.div>
+
+          <motion.div
+            initial={{ opacity: 0, y: 20 }}
+            whileInView={{ opacity: 1, y: 0 }}
+            viewport={SECTION_VIEWPORT}
+            transition={{ duration: 0.6, ease: "easeOut", delay: 0.08 }}
+            className="rounded-2xl border border-slate-200 bg-white p-5 shadow-sm dark:border-white/10 dark:bg-slate-900/80"
+          >
+            <AnimatePresence mode="wait">
+              <motion.div
+                key={activeItem?.id || "none"}
+                initial={{ opacity: 0, y: 10 }}
+                animate={{ opacity: 1, y: 0 }}
+                exit={{ opacity: 0, y: -8 }}
+                transition={{ duration: 0.24, ease: "easeOut" }}
+              >
+                <div className="flex items-center justify-between gap-3 border-b border-slate-200 pb-4 dark:border-white/10">
+                  <div>
+                    <p className="text-[11px] font-semibold uppercase tracking-[0.16em] text-slate-500 dark:text-slate-400">
+                      {activeItem?.preview.eyebrow}
+                    </p>
+                    <h3 className="mt-1 text-xl font-bold text-slate-900 dark:text-white">
+                      {activeItem?.preview.title}
+                    </h3>
+                  </div>
+                  <span className="rounded-full border border-slate-200 bg-slate-100 px-2.5 py-1 text-[11px] font-semibold uppercase tracking-[0.14em] text-slate-700 dark:border-white/15 dark:bg-white/10 dark:text-slate-200">
+                    {activeItem?.group === "addons" ? "Add-on" : "Content"}
+                  </span>
+                </div>
+
+                <div className="mt-4 grid gap-2 sm:grid-cols-3">
+                  {activeItem?.preview.meta.map((item) => (
+                    <div
+                      key={item.label}
+                      className="rounded-lg border border-slate-200 bg-slate-50 px-3 py-2 dark:border-white/10 dark:bg-white/[0.04]"
+                    >
+                      <p className="text-[10px] font-semibold uppercase tracking-[0.14em] text-slate-500 dark:text-slate-400">
+                        {item.label}
+                      </p>
+                      <p className="mt-1 text-xs font-medium text-slate-800 dark:text-slate-200">
+                        {item.value}
                       </p>
                     </div>
-                  </div>
-                  <div className="grid gap-2 sm:grid-cols-2">
-                    {items.map(({ icon, badgeBg, name, desc }) => {
-                      const Icon = OUTPUT_ICONS[icon];
-                      return (
-                        <div
-                          key={name}
-                          className="flex items-center gap-3 rounded-xl border border-slate-200 bg-white px-3 py-2.5 transition-colors hover:border-slate-300 hover:shadow-sm dark:border-white/10 dark:bg-white/[0.03] dark:hover:border-white/20 dark:hover:bg-white/[0.05]"
-                        >
-                          <div
-                            className={`flex h-8 w-8 flex-shrink-0 items-center justify-center rounded-lg ${badgeBg} text-white`}
-                          >
-                            <Icon className="h-3.5 w-3.5" />
-                          </div>
-                          <div className="min-w-0">
-                            <div className="text-sm font-semibold text-slate-950 dark:text-white">
-                              {name}
-                            </div>
-                            <div className="mt-0.5 text-[11px] leading-4 text-slate-500 dark:text-slate-400">
-                              {desc}
-                            </div>
-                          </div>
-                        </div>
-                      );
-                    })}
-                  </div>
+                  ))}
                 </div>
-              ))}
-            </div>
 
-            <div className="mt-6 flex flex-wrap items-center justify-between gap-3 border-t border-slate-200 pt-4 dark:border-white/10">
+                <div className="mt-5 rounded-xl border border-slate-200 bg-slate-50 p-4 dark:border-white/10 dark:bg-slate-950/60">
+                  <p className="whitespace-pre-line text-sm leading-7 text-slate-700 dark:text-slate-300">
+                    {activeItem?.preview.body}
+                  </p>
+                </div>
+              </motion.div>
+            </AnimatePresence>
+
+            <div className="mt-6 border-t border-slate-200 pt-4 dark:border-white/10">
               <Link
                 href="/auth/signup"
-                className="inline-flex items-center gap-2 text-sm font-semibold text-blue-600 hover:text-blue-700 transition-colors"
+                className="inline-flex items-center gap-2 text-sm font-semibold text-blue-600 transition-colors hover:text-blue-700"
               >
-                Generate your first batch here{" "}
-                <ArrowRight className="h-4 w-4" />
+                Generate your first batch here <ArrowRight className="h-4 w-4" />
               </Link>
             </div>
           </motion.div>
