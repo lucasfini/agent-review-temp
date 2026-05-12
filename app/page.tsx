@@ -41,11 +41,11 @@ import {
   FileText,
   Quote,
   Newspaper,
-  CircleHelp,
 } from "lucide-react";
 import BrandLogo from "@/components/site/BrandLogo";
 import { ANALYSIS_OPTION_CONFIG } from "@/lib/analysis-options";
 import { CONTENT_TYPES } from "@/lib/content-types";
+import { getCuratedThemes } from "@/lib/content-themes";
 import {
   PAYG_SECTIONS,
   PRICING_MODEL_SUMMARY,
@@ -137,6 +137,56 @@ type InteractiveItem = {
   badgeBg: string;
   preview: InteractivePreview;
 };
+
+const CONTENT_ENGINE_TONES = getCuratedThemes().map((theme) => theme.name);
+const DEFAULT_CONTENT_ENGINE_TONE = CONTENT_ENGINE_TONES[0] ?? "Professional";
+
+const TONE_GUIDANCE: Record<string, string> = {
+  Professional: "Clear, polished, and business-ready language.",
+  Casual: "Relaxed, conversational phrasing with simpler structure.",
+  Educational: "Explains concepts step-by-step with teaching clarity.",
+  Storytelling: "Narrative arc with setup, tension, and payoff.",
+  Witty: "Sharper framing, concise punchlines, and clever transitions.",
+  Inspirational: "Future-facing, uplifting language that motivates action.",
+  Bold: "Direct claims, stronger conviction, and decisive framing.",
+  Actionable: "Practical next steps and implementation-first wording.",
+  Authentic: "Personal, grounded voice with transparent phrasing.",
+  "Thought Leader": "Contrarian insight and category-level perspective.",
+  "Data-Driven": "Metric-centric framing with quantified outcomes.",
+  Contrarian: "Challenges common assumptions with an alternative view.",
+};
+
+function renderToneVariantPreview(
+  item: InteractiveItem | undefined,
+  tone: string,
+): string {
+  if (!item) return "";
+
+  const baseTitle = item.preview.title;
+  const baseBody = item.preview.body;
+  const isAddon = item.group === "addons";
+
+  const snippets: Record<string, string> = {
+    Professional: `Executive summary:\n${baseTitle} is framed with concise context, clear attribution, and a practical recommendation path.\n\nKey message:\n${baseBody.split("\n")[0]}\n\nRecommended next step: publish this as a clean internal brief and route it to stakeholders who own rollout decisions.`,
+    Casual: `Quick take:\nThis one is straightforward: ${baseTitle.toLowerCase()} gives you the useful parts without extra noise.\n\nWhat stands out:\n${baseBody.split("\n")[0]}\n\nIf you want, keep this version light and friendly so it reads like a teammate update instead of a formal report.`,
+    Educational: `What this means:\n${baseTitle} helps break a long recording into teachable parts people can actually apply.\n\nHow to use it:\n1) Start with the primary insight.\n2) Add one concrete example.\n3) End with one action the reader can try this week.\n\nReference point:\n${baseBody.split("\n")[0]}`,
+    Storytelling: `Scene:\nThe conversation opens with a familiar problem and then pivots to a concrete turning point.\n\nArc:\nSetup -> friction -> framework -> outcome.\n\nNarrative line:\n${baseBody.split("\n")[0]}\n\nEnding:\nClose with what changed and why that shift matters to the audience now.`,
+    Witty: `Hot take:\nMost teams overcomplicate this. ${baseTitle} works because it cuts straight to signal.\n\nSharp line:\n${baseBody.split("\n")[0]}\n\nUse this version when you want the message to be memorable, skimmable, and a little more opinionated without losing clarity.`,
+    Inspirational: `Momentum angle:\n${baseTitle} is positioned as progress, not just output.\n\nCore message:\n${baseBody.split("\n")[0]}\n\nClosing energy:\nFrame the outcome as achievable this week, then invite the audience to take one concrete step today.`,
+    Bold: `Point of view:\nStop treating this as optional polish. ${baseTitle} directly improves downstream quality.\n\nClaim:\n${baseBody.split("\n")[0]}\n\nPositioning:\nLead with conviction, trim qualifiers, and make the call-to-action explicit and immediate.`,
+    Actionable: `Implementation brief:\n${baseTitle}\n\nAction steps:\n1) Extract the strongest signal from this output.\n2) Convert it into one channel-ready draft.\n3) Ship, measure response, and iterate.\n\nStarting line:\n${baseBody.split("\n")[0]}`,
+    Authentic: `Real-world version:\n${baseTitle} is presented in plain language with zero over-polish.\n\nHonest framing:\n${baseBody.split("\n")[0]}\n\nVoice note:\nKeep this grounded, acknowledge tradeoffs, and write like a person who actually ran the workflow.`,
+    "Thought Leader": `Category view:\n${baseTitle} is framed as a strategic advantage, not a feature checklist.\n\nThesis:\n${baseBody.split("\n")[0]}\n\nPerspective:\nConnect this output to a broader shift in how modern teams turn conversations into distribution assets.`,
+    "Data-Driven": `Performance framing:\n${baseTitle}\n\nMetrics lens:\n- Primary quality signal: attribution consistency\n- Secondary signal: edit-time reduction\n- Output signal: publish velocity\n\nEvidence line:\n${baseBody.split("\n")[0]}`,
+    Contrarian: `Counterpoint:\nThe common approach focuses on raw transcription volume. That misses the actual leverage.\n\nAlternative:\n${baseTitle} should optimize clarity and reuse, not just word capture.\n\nProof point:\n${baseBody.split("\n")[0]}`,
+  };
+
+  const fallback = `${baseTitle}\n\n${baseBody}\n\nTone applied: ${tone}.`;
+  const selected = snippets[tone] || fallback;
+  return isAddon
+    ? `${selected}\n\nAdd-on impact: better source context makes every downstream output easier to finalize.`
+    : `${selected}\n\nContent impact: this draft is structured to reduce editing time before publish.`;
+}
 
 type HowItWorksStep = {
   id: string;
@@ -2138,7 +2188,7 @@ function ContentOutputsSection() {
   }, []);
 
   const [activeItemId, setActiveItemId] = useState<string>("namedSpeakers");
-  const [openHelpItemId, setOpenHelpItemId] = useState<string | null>(null);
+  const [toneByItem, setToneByItem] = useState<Record<string, string>>({});
 
   const activeItem =
     interactiveItems.find((item) => item.id === activeItemId) ||
@@ -2147,11 +2197,20 @@ function ContentOutputsSection() {
   const contentItems = interactiveItems.filter(
     (item) => item.group === "content",
   );
+  const activeTone = activeItem
+    ? (toneByItem[activeItem.id] ?? DEFAULT_CONTENT_ENGINE_TONE)
+    : DEFAULT_CONTENT_ENGINE_TONE;
+  const toneDetail =
+    TONE_GUIDANCE[activeTone] ?? "Tone adjusts voice, pacing, and structure.";
+  const activePreviewBody =
+    activeItem?.group === "content"
+      ? renderToneVariantPreview(activeItem, activeTone)
+      : (activeItem?.preview.body ?? "");
 
   return (
     <section
       id="outputs"
-      className="relative overflow-hidden bg-[linear-gradient(180deg,#f8fbff_0%,#eef4ff_40%,#f8fafc_100%)] py-24 dark:bg-[linear-gradient(180deg,#020617_0%,#0b1120_48%,#111827_100%)]"
+      className="relative overflow-hidden bg-[linear-gradient(180deg,#f8fbff_0%,#eef4ff_40%,#f8fafc_100%)] py-20 dark:bg-[linear-gradient(180deg,#020617_0%,#0b1120_48%,#111827_100%)]"
     >
       <div className="pointer-events-none absolute inset-0 bg-[linear-gradient(to_right,rgba(37,99,235,0.05)_1px,transparent_1px),linear-gradient(to_bottom,rgba(37,99,235,0.05)_1px,transparent_1px)] bg-[size:28px_28px,28px_28px] dark:bg-[linear-gradient(to_right,rgba(148,163,184,0.08)_1px,transparent_1px),linear-gradient(to_bottom,rgba(148,163,184,0.08)_1px,transparent_1px)]" />
       <div className="pointer-events-none absolute inset-0 bg-[linear-gradient(to_right,rgba(15,23,42,0.06)_1px,transparent_1px),linear-gradient(to_bottom,rgba(15,23,42,0.06)_1px,transparent_1px)] bg-[size:140px_140px,140px_140px] dark:bg-[linear-gradient(to_right,rgba(148,163,184,0.12)_1px,transparent_1px),linear-gradient(to_bottom,rgba(148,163,184,0.12)_1px,transparent_1px)]" />
@@ -2160,7 +2219,7 @@ function ContentOutputsSection() {
 
       <div className="relative max-w-[90rem] mx-auto px-4 sm:px-6 lg:px-8">
         <motion.div
-          className="mb-14 text-center"
+          className="mb-10 text-center"
           initial="hidden"
           whileInView="show"
           viewport={SECTION_VIEWPORT}
@@ -2178,8 +2237,8 @@ function ContentOutputsSection() {
           </p>
         </motion.div>
 
-        <div className="mx-auto max-w-6xl rounded-[1.9rem] border border-slate-200/85 bg-white/80 p-3 shadow-[0_40px_100px_-70px_rgba(37,99,235,0.35)] backdrop-blur-sm dark:border-white/10 dark:bg-slate-950/55 dark:shadow-[0_45px_120px_-70px_rgba(56,189,248,0.35)] sm:p-4">
-          <div className="grid gap-4 lg:grid-cols-[minmax(0,22rem)_minmax(0,1fr)]">
+        <div className="mx-auto max-w-6xl rounded-[1.9rem] border border-slate-200/85 bg-white/80 p-4 shadow-[0_40px_100px_-70px_rgba(37,99,235,0.35)] backdrop-blur-sm dark:border-white/10 dark:bg-slate-950/55 dark:shadow-[0_45px_120px_-70px_rgba(56,189,248,0.35)] sm:p-5">
+          <div className="grid items-stretch gap-5 lg:grid-cols-[minmax(0,26rem)_minmax(0,1fr)]">
           <motion.div
             initial={{ opacity: 0, y: 20 }}
             whileInView={{ opacity: 1, y: 0 }}
@@ -2193,11 +2252,10 @@ function ContentOutputsSection() {
                 <h3 className="text-[11px] font-semibold uppercase tracking-[0.18em] text-slate-500 dark:text-blue-100/72">
                   Add-ons
                 </h3>
-                <div className="mt-3 grid gap-2 sm:grid-cols-2 lg:grid-cols-1">
+                <div className="mt-3 grid gap-2 sm:grid-cols-2 lg:grid-cols-2">
                   {addonItems.map((item) => {
                     const Icon = OUTPUT_ICONS[item.iconKey];
                     const isActive = activeItem?.id === item.id;
-                    const helpId = `help-${item.id}`;
                     return (
                       <div key={item.id} className="relative">
                         <button
@@ -2209,7 +2267,7 @@ function ContentOutputsSection() {
                             : "border-slate-200/85 bg-white/90 hover:border-slate-300 hover:bg-white dark:border-white/10 dark:bg-white/[0.03] dark:hover:border-white/20 dark:hover:bg-white/[0.06]"
                             }`}
                         >
-                          <div className="flex items-start gap-3 pr-9">
+                          <div className="flex items-start gap-3">
                             <div
                               className={`flex h-8 w-8 flex-shrink-0 items-center justify-center rounded-[0.65rem] ${item.badgeBg} text-white shadow-[0_10px_24px_-14px_rgba(15,23,42,0.7)]`}
                             >
@@ -2223,27 +2281,6 @@ function ContentOutputsSection() {
                           </div>
                           <span className={`absolute left-0 top-0 h-full w-[2px] rounded-r ${isActive ? "bg-blue-500 dark:bg-cyan-300" : "bg-transparent"}`} />
                         </button>
-                        <button
-                          type="button"
-                          aria-label={`About ${item.label}`}
-                          aria-describedby={openHelpItemId === item.id ? helpId : undefined}
-                          onClick={() =>
-                            setOpenHelpItemId((current) =>
-                              current === item.id ? null : item.id,
-                            )
-                          }
-                          className="absolute right-2 top-2 rounded-md p-1 text-slate-400 transition-colors hover:bg-slate-100 hover:text-slate-600 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-blue-500/35 dark:text-slate-400 dark:hover:bg-white/10 dark:hover:text-slate-100 dark:focus-visible:ring-cyan-400/45"
-                        >
-                          <CircleHelp className="h-4 w-4" />
-                        </button>
-                        {openHelpItemId === item.id && (
-                          <div
-                            id={helpId}
-                            className="mt-2 rounded-lg border border-slate-200/90 bg-white/95 px-3 py-2 text-xs leading-5 text-slate-600 shadow-[0_16px_35px_-25px_rgba(15,23,42,0.45)] dark:border-white/15 dark:bg-slate-950/85 dark:text-slate-300"
-                          >
-                            {item.helpText}
-                          </div>
-                        )}
                       </div>
                     );
                   })}
@@ -2254,11 +2291,10 @@ function ContentOutputsSection() {
                 <h3 className="text-[11px] font-semibold uppercase tracking-[0.18em] text-slate-500 dark:text-blue-100/72">
                   Content Types
                 </h3>
-                <div className="mt-3 grid gap-2 sm:grid-cols-2">
+                <div className="mt-3 grid gap-2 sm:grid-cols-2 lg:grid-cols-2">
                   {contentItems.map((item) => {
                     const Icon = OUTPUT_ICONS[item.iconKey];
                     const isActive = activeItem?.id === item.id;
-                    const helpId = `help-${item.id}`;
                     return (
                       <div key={item.id} className="relative">
                         <button
@@ -2270,7 +2306,7 @@ function ContentOutputsSection() {
                             : "border-slate-200/85 bg-white/90 hover:border-slate-300 hover:bg-white dark:border-white/10 dark:bg-white/[0.03] dark:hover:border-white/20 dark:hover:bg-white/[0.06]"
                             }`}
                         >
-                          <div className="flex items-start gap-3 pr-9">
+                          <div className="flex items-start gap-3">
                             <div
                               className={`flex h-8 w-8 flex-shrink-0 items-center justify-center rounded-[0.65rem] ${item.badgeBg} text-white shadow-[0_10px_24px_-14px_rgba(15,23,42,0.7)]`}
                             >
@@ -2284,27 +2320,6 @@ function ContentOutputsSection() {
                           </div>
                           <span className={`absolute left-0 top-0 h-full w-[2px] rounded-r ${isActive ? "bg-blue-500 dark:bg-cyan-300" : "bg-transparent"}`} />
                         </button>
-                        <button
-                          type="button"
-                          aria-label={`About ${item.label}`}
-                          aria-describedby={openHelpItemId === item.id ? helpId : undefined}
-                          onClick={() =>
-                            setOpenHelpItemId((current) =>
-                              current === item.id ? null : item.id,
-                            )
-                          }
-                          className="absolute right-2 top-2 rounded-md p-1 text-slate-400 transition-colors hover:bg-slate-100 hover:text-slate-600 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-blue-500/35 dark:text-slate-400 dark:hover:bg-white/10 dark:hover:text-slate-100 dark:focus-visible:ring-cyan-400/45"
-                        >
-                          <CircleHelp className="h-4 w-4" />
-                        </button>
-                        {openHelpItemId === item.id && (
-                          <div
-                            id={helpId}
-                            className="mt-2 rounded-lg border border-slate-200/90 bg-white/95 px-3 py-2 text-xs leading-5 text-slate-600 shadow-[0_16px_35px_-25px_rgba(15,23,42,0.45)] dark:border-white/15 dark:bg-slate-950/85 dark:text-slate-300"
-                          >
-                            {item.helpText}
-                          </div>
-                        )}
                       </div>
                     );
                   })}
@@ -2318,11 +2333,11 @@ function ContentOutputsSection() {
             whileInView={{ opacity: 1, y: 0 }}
             viewport={SECTION_VIEWPORT}
             transition={{ duration: 0.6, ease: "easeOut", delay: 0.08 }}
-            className="relative overflow-hidden rounded-[1.35rem] border border-slate-200/85 bg-[linear-gradient(180deg,#ffffff_0%,#f8fbff_100%)] p-5 shadow-[0_26px_60px_-45px_rgba(37,99,235,0.45)] dark:border-white/10 dark:bg-[linear-gradient(180deg,#09142e_0%,#0a1730_100%)] dark:shadow-[0_30px_70px_-48px_rgba(34,211,238,0.45)]"
+            className="relative flex h-full flex-col overflow-hidden rounded-[1.35rem] border border-slate-200/85 bg-[linear-gradient(180deg,#ffffff_0%,#f8fbff_100%)] p-5 shadow-[0_26px_60px_-45px_rgba(37,99,235,0.45)] dark:border-white/10 dark:bg-[linear-gradient(180deg,#09142e_0%,#0a1730_100%)] dark:shadow-[0_30px_70px_-48px_rgba(34,211,238,0.45)]"
           >
             <div className="pointer-events-none absolute inset-0 bg-[linear-gradient(to_right,rgba(15,23,42,0.04)_1px,transparent_1px),linear-gradient(to_bottom,rgba(15,23,42,0.04)_1px,transparent_1px)] bg-[size:24px_24px,24px_24px] dark:bg-[linear-gradient(to_right,rgba(148,163,184,0.08)_1px,transparent_1px),linear-gradient(to_bottom,rgba(148,163,184,0.08)_1px,transparent_1px)]" />
             <div className="pointer-events-none absolute -top-14 right-0 h-36 w-36 rounded-full bg-blue-500/12 blur-3xl dark:bg-cyan-400/12" />
-            <div className="relative">
+            <div className="relative flex-1">
             <AnimatePresence mode="wait">
               <motion.div
                 key={activeItem?.id || "none"}
@@ -2330,6 +2345,7 @@ function ContentOutputsSection() {
                 animate={reduceMotion ? { opacity: 1 } : { opacity: 1, y: 0 }}
                 exit={reduceMotion ? { opacity: 1 } : { opacity: 0, y: -8 }}
                 transition={{ duration: reduceMotion ? 0 : 0.24, ease: "easeOut" }}
+                className="flex h-full flex-col"
               >
                 <div className="flex items-center justify-between gap-3 border-b border-slate-200/85 pb-4 dark:border-white/10">
                   <div>
@@ -2361,18 +2377,60 @@ function ContentOutputsSection() {
                   ))}
                 </div>
 
-                <div className="relative mt-5 overflow-hidden rounded-xl border border-slate-200/85 bg-[linear-gradient(180deg,#f8fbff_0%,#f6f9ff_100%)] p-4 dark:border-white/10 dark:bg-[linear-gradient(180deg,rgba(10,23,48,0.82)_0%,rgba(9,18,38,0.82)_100%)]">
+                {activeItem?.group === "content" && (
+                  <div className="mt-4 rounded-xl border border-slate-200/85 bg-white/70 p-4 dark:border-white/10 dark:bg-white/[0.03]">
+                    <div className="flex flex-wrap items-center gap-2">
+                      <p className="mr-1 text-[10px] font-semibold uppercase tracking-[0.16em] text-slate-500 dark:text-blue-100/55">
+                        Tone
+                      </p>
+                      {CONTENT_ENGINE_TONES.map((tone) => {
+                        const selected = tone === activeTone;
+                        return (
+                          <button
+                            key={tone}
+                            type="button"
+                            onClick={() =>
+                              activeItem &&
+                              setToneByItem((prev) => ({
+                                ...prev,
+                                [activeItem.id]: tone,
+                              }))
+                            }
+                            className={`rounded-full border px-2.5 py-1 text-[11px] font-semibold transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-blue-500/45 dark:focus-visible:ring-cyan-400/45 ${selected
+                              ? "border-blue-300 bg-blue-50 text-blue-700 dark:border-cyan-300/35 dark:bg-cyan-500/12 dark:text-cyan-200"
+                              : "border-slate-200 bg-white text-slate-600 hover:border-slate-300 dark:border-white/10 dark:bg-white/[0.03] dark:text-slate-300 dark:hover:border-white/20"
+                              }`}
+                          >
+                            {tone}
+                          </button>
+                        );
+                      })}
+                    </div>
+                    <p className="mt-2 text-xs text-slate-600 dark:text-slate-300">
+                      {toneDetail}
+                    </p>
+                  </div>
+                )}
+
+                <div className="relative mt-5 overflow-hidden rounded-xl border border-slate-200/85 bg-[linear-gradient(180deg,#f8fbff_0%,#f6f9ff_100%)] p-5 dark:border-white/10 dark:bg-[linear-gradient(180deg,rgba(10,23,48,0.82)_0%,rgba(9,18,38,0.82)_100%)]">
                   <div className="pointer-events-none absolute inset-0 bg-[radial-gradient(circle_at_top_right,rgba(59,130,246,0.12),transparent_42%)] dark:bg-[radial-gradient(circle_at_top_right,rgba(34,211,238,0.12),transparent_42%)]" />
+                  <p className="relative mb-2 text-[10px] font-semibold uppercase tracking-[0.16em] text-slate-500 dark:text-blue-100/60">
+                    Generated Preview
+                  </p>
+                  {activeItem?.group === "content" && (
+                    <p className="relative mb-3 text-xs text-slate-500 dark:text-slate-400">
+                      Variant: <span className="font-semibold text-slate-700 dark:text-slate-200">{activeTone}</span>
+                    </p>
+                  )}
                   <p className="relative whitespace-pre-line text-sm leading-7 text-slate-700 dark:text-slate-300">
-                    {activeItem?.preview.body}
+                    {activePreviewBody}
                   </p>
                 </div>
-                <div className="mt-4 h-20 rounded-xl border border-dashed border-slate-200/80 bg-[linear-gradient(180deg,rgba(248,251,255,0.7),rgba(241,245,249,0.45))] dark:border-white/10 dark:bg-[linear-gradient(180deg,rgba(12,22,42,0.45),rgba(8,16,30,0.6))]" />
               </motion.div>
             </AnimatePresence>
             </div>
 
-            <div className="relative mt-6 border-t border-slate-200/85 pt-4 dark:border-white/10">
+            <div className="relative mt-5 border-t border-slate-200/85 pt-4 dark:border-white/10">
               <Link
                 href="/auth/signup"
                 className="group inline-flex items-center gap-2 rounded-lg px-1 text-sm font-semibold text-blue-700 transition-colors hover:text-blue-800 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-blue-500/45 dark:text-cyan-300 dark:hover:text-cyan-200 dark:focus-visible:ring-cyan-400/45"
