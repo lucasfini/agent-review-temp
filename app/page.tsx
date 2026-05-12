@@ -2088,6 +2088,7 @@ function HowItWorks() {
 
 // Content Outputs Section
 function ContentOutputsSection() {
+  const reduceMotion = useReducedMotion();
   const interactiveItems = useMemo<InteractiveItem[]>(() => {
     const addonItems: InteractiveItem[] = ANALYSIS_OPTION_CONFIG.map((option) => {
       const iconConfig = ADDON_ICON_MAP[option.key] || {
@@ -2150,18 +2151,23 @@ function ContentOutputsSection() {
   return (
     <section
       id="outputs"
-      className="py-24 bg-white overflow-hidden dark:bg-slate-950"
+      className="relative overflow-hidden bg-[linear-gradient(180deg,#f8fbff_0%,#eef4ff_40%,#f8fafc_100%)] py-24 dark:bg-[linear-gradient(180deg,#020617_0%,#0b1120_48%,#111827_100%)]"
     >
-      <div className="max-w-[90rem] mx-auto px-4 sm:px-6 lg:px-8">
+      <div className="pointer-events-none absolute inset-0 bg-[linear-gradient(to_right,rgba(37,99,235,0.05)_1px,transparent_1px),linear-gradient(to_bottom,rgba(37,99,235,0.05)_1px,transparent_1px)] bg-[size:28px_28px,28px_28px] dark:bg-[linear-gradient(to_right,rgba(148,163,184,0.08)_1px,transparent_1px),linear-gradient(to_bottom,rgba(148,163,184,0.08)_1px,transparent_1px)]" />
+      <div className="pointer-events-none absolute inset-0 bg-[linear-gradient(to_right,rgba(15,23,42,0.06)_1px,transparent_1px),linear-gradient(to_bottom,rgba(15,23,42,0.06)_1px,transparent_1px)] bg-[size:140px_140px,140px_140px] dark:bg-[linear-gradient(to_right,rgba(148,163,184,0.12)_1px,transparent_1px),linear-gradient(to_bottom,rgba(148,163,184,0.12)_1px,transparent_1px)]" />
+      <div className="pointer-events-none absolute left-1/2 top-24 h-56 w-[42rem] -translate-x-1/2 rounded-full bg-blue-500/16 blur-3xl dark:bg-cyan-500/12" />
+      <div className="pointer-events-none absolute right-[12%] top-1/2 h-44 w-44 rounded-full bg-cyan-400/12 blur-3xl dark:bg-indigo-500/16" />
+
+      <div className="relative max-w-[90rem] mx-auto px-4 sm:px-6 lg:px-8">
         <motion.div
-          className="text-center mb-16"
+          className="mb-14 text-center"
           initial="hidden"
           whileInView="show"
           viewport={SECTION_VIEWPORT}
           variants={sectionContainer}
         >
           <span className="text-sm font-semibold text-blue-600 uppercase tracking-widest">
-            Content Generation
+            Content Engine
           </span>
           <h2 className="text-3xl md:text-4xl font-bold text-gray-900 mt-2 dark:text-white">
             One recording, shaped for every channel.
@@ -2172,17 +2178,19 @@ function ContentOutputsSection() {
           </p>
         </motion.div>
 
-        <div className="mx-auto grid max-w-6xl gap-8 lg:grid-cols-[minmax(0,23rem)_minmax(0,1fr)]">
+        <div className="mx-auto max-w-6xl rounded-[1.9rem] border border-slate-200/85 bg-white/80 p-3 shadow-[0_40px_100px_-70px_rgba(37,99,235,0.35)] backdrop-blur-sm dark:border-white/10 dark:bg-slate-950/55 dark:shadow-[0_45px_120px_-70px_rgba(56,189,248,0.35)] sm:p-4">
+          <div className="grid gap-4 lg:grid-cols-[minmax(0,22rem)_minmax(0,1fr)]">
           <motion.div
             initial={{ opacity: 0, y: 20 }}
             whileInView={{ opacity: 1, y: 0 }}
             viewport={SECTION_VIEWPORT}
             transition={{ duration: 0.6, ease: "easeOut" }}
-            className="rounded-2xl border border-slate-200 bg-slate-50/70 p-4 dark:border-white/10 dark:bg-white/[0.03]"
+            className="relative overflow-hidden rounded-[1.35rem] border border-slate-200/85 bg-[linear-gradient(180deg,#f8fbff_0%,#f5f9ff_100%)] p-4 shadow-[0_20px_50px_-38px_rgba(37,99,235,0.28)] dark:border-white/10 dark:bg-[linear-gradient(180deg,#091128_0%,#0b1734_100%)]"
           >
-            <div className="space-y-5">
+            <div className="pointer-events-none absolute inset-0 bg-[radial-gradient(circle_at_top,rgba(59,130,246,0.08),transparent_45%)] dark:bg-[radial-gradient(circle_at_top,rgba(34,211,238,0.14),transparent_45%)]" />
+            <div className="relative space-y-5">
               <div>
-                <h3 className="text-sm font-semibold uppercase tracking-[0.16em] text-slate-500 dark:text-slate-300">
+                <h3 className="text-[11px] font-semibold uppercase tracking-[0.18em] text-slate-500 dark:text-blue-100/72">
                   Add-ons
                 </h3>
                 <div className="mt-3 grid gap-2 sm:grid-cols-2 lg:grid-cols-1">
@@ -2196,14 +2204,14 @@ function ContentOutputsSection() {
                           type="button"
                           onClick={() => setActiveItemId(item.id)}
                           aria-pressed={isActive}
-                          className={`w-full rounded-xl border px-3 py-3 text-left transition-colors ${isActive
-                            ? "border-blue-400 bg-blue-50 shadow-sm dark:border-blue-400/40 dark:bg-blue-500/10"
-                            : "border-slate-200 bg-white hover:border-slate-300 dark:border-white/10 dark:bg-white/[0.04] dark:hover:border-white/20"
+                          className={`group relative w-full rounded-xl border px-3 py-3 text-left transition-all focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-blue-500/40 focus-visible:ring-offset-2 focus-visible:ring-offset-white dark:focus-visible:ring-cyan-400/50 dark:focus-visible:ring-offset-slate-950 ${isActive
+                            ? "border-blue-300/90 bg-[linear-gradient(135deg,#eef5ff_0%,#f7faff_100%)] shadow-[0_18px_40px_-30px_rgba(37,99,235,0.42)] dark:border-cyan-400/35 dark:bg-[linear-gradient(135deg,rgba(34,211,238,0.16)_0%,rgba(59,130,246,0.10)_100%)]"
+                            : "border-slate-200/85 bg-white/90 hover:border-slate-300 hover:bg-white dark:border-white/10 dark:bg-white/[0.03] dark:hover:border-white/20 dark:hover:bg-white/[0.06]"
                             }`}
                         >
                           <div className="flex items-start gap-3 pr-9">
                             <div
-                              className={`flex h-8 w-8 flex-shrink-0 items-center justify-center rounded-lg ${item.badgeBg} text-white`}
+                              className={`flex h-8 w-8 flex-shrink-0 items-center justify-center rounded-[0.65rem] ${item.badgeBg} text-white shadow-[0_10px_24px_-14px_rgba(15,23,42,0.7)]`}
                             >
                               <Icon className="h-4 w-4" />
                             </div>
@@ -2213,6 +2221,7 @@ function ContentOutputsSection() {
                               </p>
                             </div>
                           </div>
+                          <span className={`absolute left-0 top-0 h-full w-[2px] rounded-r ${isActive ? "bg-blue-500 dark:bg-cyan-300" : "bg-transparent"}`} />
                         </button>
                         <button
                           type="button"
@@ -2223,14 +2232,14 @@ function ContentOutputsSection() {
                               current === item.id ? null : item.id,
                             )
                           }
-                          className="absolute right-2 top-2 rounded-md p-1 text-slate-500 hover:bg-slate-100 hover:text-slate-700 dark:text-slate-300 dark:hover:bg-white/10 dark:hover:text-white"
+                          className="absolute right-2 top-2 rounded-md p-1 text-slate-400 transition-colors hover:bg-slate-100 hover:text-slate-600 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-blue-500/35 dark:text-slate-400 dark:hover:bg-white/10 dark:hover:text-slate-100 dark:focus-visible:ring-cyan-400/45"
                         >
                           <CircleHelp className="h-4 w-4" />
                         </button>
                         {openHelpItemId === item.id && (
                           <div
                             id={helpId}
-                            className="mt-2 rounded-lg border border-slate-200 bg-white px-3 py-2 text-xs leading-5 text-slate-600 shadow-sm dark:border-white/15 dark:bg-slate-900 dark:text-slate-300"
+                            className="mt-2 rounded-lg border border-slate-200/90 bg-white/95 px-3 py-2 text-xs leading-5 text-slate-600 shadow-[0_16px_35px_-25px_rgba(15,23,42,0.45)] dark:border-white/15 dark:bg-slate-950/85 dark:text-slate-300"
                           >
                             {item.helpText}
                           </div>
@@ -2242,7 +2251,7 @@ function ContentOutputsSection() {
               </div>
 
               <div className="border-t border-slate-200 pt-4 dark:border-white/10">
-                <h3 className="text-sm font-semibold uppercase tracking-[0.16em] text-slate-500 dark:text-slate-300">
+                <h3 className="text-[11px] font-semibold uppercase tracking-[0.18em] text-slate-500 dark:text-blue-100/72">
                   Content Types
                 </h3>
                 <div className="mt-3 grid gap-2 sm:grid-cols-2">
@@ -2256,14 +2265,14 @@ function ContentOutputsSection() {
                           type="button"
                           onClick={() => setActiveItemId(item.id)}
                           aria-pressed={isActive}
-                          className={`w-full rounded-xl border px-3 py-3 text-left transition-colors ${isActive
-                            ? "border-blue-400 bg-blue-50 shadow-sm dark:border-blue-400/40 dark:bg-blue-500/10"
-                            : "border-slate-200 bg-white hover:border-slate-300 dark:border-white/10 dark:bg-white/[0.04] dark:hover:border-white/20"
+                          className={`group relative w-full rounded-xl border px-3 py-3 text-left transition-all focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-blue-500/40 focus-visible:ring-offset-2 focus-visible:ring-offset-white dark:focus-visible:ring-cyan-400/50 dark:focus-visible:ring-offset-slate-950 ${isActive
+                            ? "border-blue-300/90 bg-[linear-gradient(135deg,#eef5ff_0%,#f7faff_100%)] shadow-[0_18px_40px_-30px_rgba(37,99,235,0.42)] dark:border-cyan-400/35 dark:bg-[linear-gradient(135deg,rgba(34,211,238,0.16)_0%,rgba(59,130,246,0.10)_100%)]"
+                            : "border-slate-200/85 bg-white/90 hover:border-slate-300 hover:bg-white dark:border-white/10 dark:bg-white/[0.03] dark:hover:border-white/20 dark:hover:bg-white/[0.06]"
                             }`}
                         >
                           <div className="flex items-start gap-3 pr-9">
                             <div
-                              className={`flex h-8 w-8 flex-shrink-0 items-center justify-center rounded-lg ${item.badgeBg} text-white`}
+                              className={`flex h-8 w-8 flex-shrink-0 items-center justify-center rounded-[0.65rem] ${item.badgeBg} text-white shadow-[0_10px_24px_-14px_rgba(15,23,42,0.7)]`}
                             >
                               <Icon className="h-4 w-4" />
                             </div>
@@ -2273,6 +2282,7 @@ function ContentOutputsSection() {
                               </p>
                             </div>
                           </div>
+                          <span className={`absolute left-0 top-0 h-full w-[2px] rounded-r ${isActive ? "bg-blue-500 dark:bg-cyan-300" : "bg-transparent"}`} />
                         </button>
                         <button
                           type="button"
@@ -2283,14 +2293,14 @@ function ContentOutputsSection() {
                               current === item.id ? null : item.id,
                             )
                           }
-                          className="absolute right-2 top-2 rounded-md p-1 text-slate-500 hover:bg-slate-100 hover:text-slate-700 dark:text-slate-300 dark:hover:bg-white/10 dark:hover:text-white"
+                          className="absolute right-2 top-2 rounded-md p-1 text-slate-400 transition-colors hover:bg-slate-100 hover:text-slate-600 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-blue-500/35 dark:text-slate-400 dark:hover:bg-white/10 dark:hover:text-slate-100 dark:focus-visible:ring-cyan-400/45"
                         >
                           <CircleHelp className="h-4 w-4" />
                         </button>
                         {openHelpItemId === item.id && (
                           <div
                             id={helpId}
-                            className="mt-2 rounded-lg border border-slate-200 bg-white px-3 py-2 text-xs leading-5 text-slate-600 shadow-sm dark:border-white/15 dark:bg-slate-900 dark:text-slate-300"
+                            className="mt-2 rounded-lg border border-slate-200/90 bg-white/95 px-3 py-2 text-xs leading-5 text-slate-600 shadow-[0_16px_35px_-25px_rgba(15,23,42,0.45)] dark:border-white/15 dark:bg-slate-950/85 dark:text-slate-300"
                           >
                             {item.helpText}
                           </div>
@@ -2308,26 +2318,29 @@ function ContentOutputsSection() {
             whileInView={{ opacity: 1, y: 0 }}
             viewport={SECTION_VIEWPORT}
             transition={{ duration: 0.6, ease: "easeOut", delay: 0.08 }}
-            className="rounded-2xl border border-slate-200 bg-white p-5 shadow-sm dark:border-white/10 dark:bg-slate-900/80"
+            className="relative overflow-hidden rounded-[1.35rem] border border-slate-200/85 bg-[linear-gradient(180deg,#ffffff_0%,#f8fbff_100%)] p-5 shadow-[0_26px_60px_-45px_rgba(37,99,235,0.45)] dark:border-white/10 dark:bg-[linear-gradient(180deg,#09142e_0%,#0a1730_100%)] dark:shadow-[0_30px_70px_-48px_rgba(34,211,238,0.45)]"
           >
+            <div className="pointer-events-none absolute inset-0 bg-[linear-gradient(to_right,rgba(15,23,42,0.04)_1px,transparent_1px),linear-gradient(to_bottom,rgba(15,23,42,0.04)_1px,transparent_1px)] bg-[size:24px_24px,24px_24px] dark:bg-[linear-gradient(to_right,rgba(148,163,184,0.08)_1px,transparent_1px),linear-gradient(to_bottom,rgba(148,163,184,0.08)_1px,transparent_1px)]" />
+            <div className="pointer-events-none absolute -top-14 right-0 h-36 w-36 rounded-full bg-blue-500/12 blur-3xl dark:bg-cyan-400/12" />
+            <div className="relative">
             <AnimatePresence mode="wait">
               <motion.div
                 key={activeItem?.id || "none"}
-                initial={{ opacity: 0, y: 10 }}
-                animate={{ opacity: 1, y: 0 }}
-                exit={{ opacity: 0, y: -8 }}
-                transition={{ duration: 0.24, ease: "easeOut" }}
+                initial={reduceMotion ? { opacity: 1 } : { opacity: 0, y: 10 }}
+                animate={reduceMotion ? { opacity: 1 } : { opacity: 1, y: 0 }}
+                exit={reduceMotion ? { opacity: 1 } : { opacity: 0, y: -8 }}
+                transition={{ duration: reduceMotion ? 0 : 0.24, ease: "easeOut" }}
               >
-                <div className="flex items-center justify-between gap-3 border-b border-slate-200 pb-4 dark:border-white/10">
+                <div className="flex items-center justify-between gap-3 border-b border-slate-200/85 pb-4 dark:border-white/10">
                   <div>
-                    <p className="text-[11px] font-semibold uppercase tracking-[0.16em] text-slate-500 dark:text-slate-400">
+                    <p className="text-[11px] font-semibold uppercase tracking-[0.18em] text-slate-500 dark:text-blue-100/70">
                       {activeItem?.preview.eyebrow}
                     </p>
                     <h3 className="mt-1 text-xl font-bold text-slate-900 dark:text-white">
                       {activeItem?.preview.title}
                     </h3>
                   </div>
-                  <span className="rounded-full border border-slate-200 bg-slate-100 px-2.5 py-1 text-[11px] font-semibold uppercase tracking-[0.14em] text-slate-700 dark:border-white/15 dark:bg-white/10 dark:text-slate-200">
+                  <span className="rounded-full border border-blue-200/75 bg-blue-50 px-2.5 py-1 text-[11px] font-semibold uppercase tracking-[0.14em] text-blue-700 dark:border-cyan-300/25 dark:bg-cyan-500/10 dark:text-cyan-200">
                     {activeItem?.group === "addons" ? "Add-on" : "Content"}
                   </span>
                 </div>
@@ -2336,9 +2349,9 @@ function ContentOutputsSection() {
                   {activeItem?.preview.meta.map((item) => (
                     <div
                       key={item.label}
-                      className="rounded-lg border border-slate-200 bg-slate-50 px-3 py-2 dark:border-white/10 dark:bg-white/[0.04]"
+                      className="rounded-lg border border-slate-200/80 bg-white/75 px-3 py-2 shadow-[0_10px_25px_-24px_rgba(15,23,42,0.6)] dark:border-white/10 dark:bg-white/[0.04]"
                     >
-                      <p className="text-[10px] font-semibold uppercase tracking-[0.14em] text-slate-500 dark:text-slate-400">
+                      <p className="text-[10px] font-semibold uppercase tracking-[0.14em] text-slate-500 dark:text-blue-100/55">
                         {item.label}
                       </p>
                       <p className="mt-1 text-xs font-medium text-slate-800 dark:text-slate-200">
@@ -2348,23 +2361,28 @@ function ContentOutputsSection() {
                   ))}
                 </div>
 
-                <div className="mt-5 rounded-xl border border-slate-200 bg-slate-50 p-4 dark:border-white/10 dark:bg-slate-950/60">
-                  <p className="whitespace-pre-line text-sm leading-7 text-slate-700 dark:text-slate-300">
+                <div className="relative mt-5 overflow-hidden rounded-xl border border-slate-200/85 bg-[linear-gradient(180deg,#f8fbff_0%,#f6f9ff_100%)] p-4 dark:border-white/10 dark:bg-[linear-gradient(180deg,rgba(10,23,48,0.82)_0%,rgba(9,18,38,0.82)_100%)]">
+                  <div className="pointer-events-none absolute inset-0 bg-[radial-gradient(circle_at_top_right,rgba(59,130,246,0.12),transparent_42%)] dark:bg-[radial-gradient(circle_at_top_right,rgba(34,211,238,0.12),transparent_42%)]" />
+                  <p className="relative whitespace-pre-line text-sm leading-7 text-slate-700 dark:text-slate-300">
                     {activeItem?.preview.body}
                   </p>
                 </div>
+                <div className="mt-4 h-20 rounded-xl border border-dashed border-slate-200/80 bg-[linear-gradient(180deg,rgba(248,251,255,0.7),rgba(241,245,249,0.45))] dark:border-white/10 dark:bg-[linear-gradient(180deg,rgba(12,22,42,0.45),rgba(8,16,30,0.6))]" />
               </motion.div>
             </AnimatePresence>
+            </div>
 
-            <div className="mt-6 border-t border-slate-200 pt-4 dark:border-white/10">
+            <div className="relative mt-6 border-t border-slate-200/85 pt-4 dark:border-white/10">
               <Link
                 href="/auth/signup"
-                className="inline-flex items-center gap-2 text-sm font-semibold text-blue-600 transition-colors hover:text-blue-700"
+                className="group inline-flex items-center gap-2 rounded-lg px-1 text-sm font-semibold text-blue-700 transition-colors hover:text-blue-800 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-blue-500/45 dark:text-cyan-300 dark:hover:text-cyan-200 dark:focus-visible:ring-cyan-400/45"
               >
-                Generate your first batch here <ArrowRight className="h-4 w-4" />
+                Generate your first batch here{" "}
+                <ArrowRight className="h-4 w-4 transition-transform group-hover:translate-x-0.5" />
               </Link>
             </div>
           </motion.div>
+        </div>
         </div>
       </div>
     </section>
