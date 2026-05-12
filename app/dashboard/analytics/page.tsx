@@ -1344,24 +1344,39 @@ export default function AnalyticsPage() {
   };
 
   const handleRunCoverage = async (projectId: string) => {
+    if (isDemoMode) {
+      toast.error('Demo account is read-only.');
+      return;
+    }
+
+    if (!user?.id || !session?.access_token) {
+      toast.error('You need to be signed in to run analysis.');
+      return;
+    }
+
     const title = projectTitleMap[projectId] || projectId;
     startCoverage(projectId, title);
     try {
       const response = await fetch(`/api/projects/${projectId}/run-coverage`, {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ userId: user?.id, force: true })
+        headers: {
+          'Content-Type': 'application/json',
+          Authorization: `Bearer ${session.access_token}`,
+        },
+        body: JSON.stringify({ userId: user.id, force: true })
       });
 
+      const result = await response.json().catch(() => null);
+
       if (!response.ok) {
-        throw new Error('Failed to run coverage analysis');
+        throw new Error(result?.error || result?.message || 'Failed to run coverage analysis');
       }
 
       // Refresh analytics data to show new snapshot
       await fetchAnalytics();
-    } catch (error) {
+    } catch (error: any) {
       console.error('Error running coverage:', error);
-      toast.error('Coverage analysis could not be started. Please try again.');
+      toast.error(error?.message || 'Coverage analysis could not be started. Please try again.');
     } finally {
       stopCoverage(projectId);
     }
