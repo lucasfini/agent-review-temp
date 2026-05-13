@@ -1,7 +1,7 @@
 "use client";
 
 import { useState, useCallback, useEffect, useRef, useMemo } from 'react';
-import { Upload, FileAudio, X, AlertCircle, CheckCircle, Clock, History, Trash2, Eye, FileVideo, Loader2, ChevronDown, ChevronUp, Lightbulb, Users, Mic, Pencil, UserCircle, MoreHorizontal, Video, MessageSquare, Sparkles } from 'lucide-react';
+import { Upload, FileAudio, X, AlertCircle, CheckCircle, Clock, History, Trash2, Eye, FileVideo, Loader2, ChevronDown, ChevronUp, Lightbulb, Users, Mic, Pencil, UserCircle, MoreHorizontal, Video, MessageSquare } from 'lucide-react';
 import { supabase } from '@/lib/supabase/client';
 import { useAuth } from '@/lib/auth/context';
 import { calculateOverallProgress, getStageDisplayName, getUserFacingProcessingMessage, type ProcessingStage } from '@/lib/tier-progress-config';
@@ -13,12 +13,13 @@ import { ANALYSIS_OPTION_CONFIG, DEFAULT_ANALYSIS_OPTIONS, getProcessingTierForA
 import { FeatureHelp } from '@/components/ui/feature-help';
 import { useUploadProgressSync, type UploadedFile, type QueuedRosterSpeaker } from '@/lib/context/upload-progress-sync';
 import { toast } from 'sonner';
+import { isIntegrationEnabled } from '@/lib/integrations/availability';
 
 const HISTORY_PAGE_SIZE = 10;
 const UPLOAD_METHOD_TABS = [
   { id: 'local', label: 'Local', labelFull: 'Local upload', soon: false },
   { id: 'url', label: 'URL', labelFull: 'URL import', soon: false },
-  { id: 'integrations', label: 'Apps', labelFull: 'Integrations', soon: true },
+  { id: 'integrations', label: 'Apps', labelFull: 'Integrations', soon: false },
 ] as const;
 
 type UploadMethodTab = typeof UPLOAD_METHOD_TABS[number]['id'];
@@ -47,6 +48,35 @@ const COMING_SOON_INTEGRATIONS = [
     accent: 'text-emerald-600 dark:text-emerald-300',
     bg: 'bg-emerald-50 dark:bg-emerald-500/10',
     border: 'border-emerald-100 dark:border-emerald-400/20',
+  },
+];
+
+type IntegrationProvider = 'zoom' | 'microsoft' | 'youtube';
+
+type IntegrationProviderStatus = {
+  provider: IntegrationProvider;
+  connected: boolean;
+  metadata?: Record<string, unknown> | null;
+  updatedAt?: string | null;
+};
+
+const LIVE_INTEGRATIONS: Array<{
+  provider: IntegrationProvider;
+  name: string;
+  detail: string;
+  Icon: typeof Video;
+  accent: string;
+  bg: string;
+  border: string;
+}> = [
+  {
+    provider: 'youtube',
+    name: 'YouTube',
+    detail: 'Your channel uploads',
+    Icon: Video,
+    accent: 'text-rose-600 dark:text-rose-300',
+    bg: 'bg-rose-50 dark:bg-rose-500/10',
+    border: 'border-rose-100 dark:border-rose-400/20',
   },
 ];
 
@@ -482,6 +512,10 @@ export default function UploadPage() {
   const [urlTitle, setUrlTitle] = useState('');
   const [urlError, setUrlError] = useState<string | null>(null);
   const [isUrlSubmitting, setIsUrlSubmitting] = useState(false);
+  const [integrationsLoading, setIntegrationsLoading] = useState(false);
+  const [integrationsError, setIntegrationsError] = useState<string | null>(null);
+  const [integrationStatuses, setIntegrationStatuses] = useState<IntegrationProviderStatus[]>([]);
+  const [connectingProvider, setConnectingProvider] = useState<IntegrationProvider | null>(null);
   const [selectedQueuedFileId, setSelectedQueuedFileId] = useState<string | null>(null);
   const lastActiveProjectCountRef = useRef<number | null>(null);
   const forceNamedSpeakersForRoster = useCallback((options: AnalysisOptions, roster: RosterSpeaker[] | QueuedRosterSpeaker[] | undefined | null): AnalysisOptions => {
@@ -768,22 +802,71 @@ export default function UploadPage() {
     lastActiveProjectCountRef.current = activeCount;
   }, [activeProjects.length]);
 
-  const getAccessToken = async () => {
+  const getAccessToken = useCallback(async () => {
     if (session?.access_token) {
       return session.access_token;
     }
 
     const { data: { session: currentSession } } = await supabase.auth.getSession();
     return currentSession?.access_token ?? null;
-  };
+  }, [session?.access_token]);
 
-  const getAuthHeaders = async (contentType: 'json' | 'none' = 'none') => {
+  const getAuthHeaders = useCallback(async (contentType: 'json' | 'none' = 'none') => {
     const accessToken = await getAccessToken();
     return {
       ...(contentType === 'json' ? { 'Content-Type': 'application/json' } : {}),
       ...(accessToken ? { Authorization: `Bearer ${accessToken}` } : {}),
     };
-  };
+  }, [getAccessToken]);
+
+  const fetchIntegrationStatuses = useCallback(async () => {
+    if (!session?.access_token) return;
+    setIntegrationsLoading(true);
+    setIntegrationsError(null);
+    try {
+      const response = await fetch('/api/integrations/providers', {
+        headers: { Authorization: `Bearer ${session.access_token}` },
+        cache: 'no-store',
+      });
+
+      if (!response.ok) {
+        throw new Error(await readErrorMessage(response, 'Failed to load integrations'));
+      }
+
+      const payload = await response.json() as { providers?: IntegrationProviderStatus[] };
+      setIntegrationStatuses(payload.providers || []);
+    } catch (error) {
+      setIntegrationsError(error instanceof Error ? error.message : 'Failed to load integrations');
+    } finally {
+      setIntegrationsLoading(false);
+    }
+  }, [session?.access_token]);
+
+  const handleConnectIntegration = useCallback(async (provider: IntegrationProvider) => {
+    setConnectingProvider(provider);
+    try {
+      const headers = await getAuthHeaders();
+      const response = await fetch(`/api/integrations/${provider}/start?mode=json`, {
+        headers,
+      });
+
+      if (!response.ok) {
+        throw new Error(await readErrorMessage(response, `Unable to connect ${provider} right now.`));
+      }
+
+      const payload = await response.json() as { url?: string };
+      if (!payload.url) throw new Error('Missing OAuth redirect URL');
+      window.location.href = payload.url;
+    } catch (error) {
+      toast.error(error instanceof Error ? error.message : 'Failed to start integration connection');
+      setConnectingProvider(null);
+    }
+  }, [getAuthHeaders]);
+
+  useEffect(() => {
+    if (activeTab !== 'integrations') return;
+    void fetchIntegrationStatuses();
+  }, [activeTab, fetchIntegrationStatuses]);
 
   const cancelUploadOnServer = async (projectId: string) => {
     const headers = await getAuthHeaders();
@@ -1249,27 +1332,59 @@ export default function UploadPage() {
                 {activeTab === 'integrations' && (
                   <div className="relative overflow-hidden rounded-lg border border-slate-200 bg-slate-50 p-4 dark:border-slate-700 dark:bg-slate-950">
                     <div className="pointer-events-none absolute inset-x-0 top-0 h-px bg-gradient-to-r from-transparent via-cyan-400/70 to-transparent" />
-                    <div className="flex flex-col gap-4 sm:flex-row sm:items-center sm:justify-between">
-                      <div className="min-w-0">
-                        <div className="flex items-center gap-2">
-                          <span className="inline-flex h-8 w-8 items-center justify-center rounded-lg bg-slate-900 text-white shadow-sm dark:bg-white dark:text-slate-950">
-                            <Sparkles className="h-4 w-4" />
-                          </span>
-                          <div>
-                            <h2 className="text-base font-semibold text-slate-900 dark:text-slate-50">Integrations are coming soon</h2>
-                            <p className="mt-0.5 text-sm text-slate-500 dark:text-slate-400">
-                              Direct imports are being prepared. Local upload and URL import are ready now.
-                            </p>
-                          </div>
-                        </div>
-                      </div>
-                      <div className="inline-flex items-center gap-1.5 rounded-full border border-cyan-200 bg-cyan-50 px-3 py-1 text-xs font-medium text-cyan-700 dark:border-cyan-400/20 dark:bg-cyan-400/10 dark:text-cyan-200">
-                        <span className="h-1.5 w-1.5 rounded-full bg-cyan-500 motion-safe:animate-pulse" />
-                        Warming up
-                      </div>
+                    <div className="min-w-0">
+                      <h2 className="text-base font-semibold text-slate-900 dark:text-slate-50">Import from integrations</h2>
+                      <p className="mt-0.5 text-sm text-slate-500 dark:text-slate-400">
+                        Connect your account and import recordings without downloading files manually first.
+                      </p>
                     </div>
 
-                    <div className="mt-4 grid gap-2 sm:grid-cols-3">
+                    <div className="mt-5">
+                      <h3 className="text-xs font-semibold uppercase tracking-wide text-slate-500 dark:text-slate-400">Live now</h3>
+                    </div>
+                    <div className="mt-2 grid gap-2 sm:grid-cols-2">
+                      {LIVE_INTEGRATIONS.filter(({ provider }) => isIntegrationEnabled(provider)).map(({ provider, name, detail, Icon, accent, bg, border }) => {
+                        const status = integrationStatuses.find((item) => item.provider === provider);
+                        const connected = Boolean(status?.connected);
+                        const loadingThis = connectingProvider === provider;
+                        return (
+                          <div
+                            key={name}
+                            className={`rounded-lg border ${border} ${bg} p-3`}
+                          >
+                            <div className="flex items-center justify-between gap-3">
+                              <div className="flex items-center gap-2 min-w-0">
+                                <span className="inline-flex h-8 w-8 items-center justify-center rounded-md bg-white/80 shadow-sm dark:bg-slate-900/80">
+                                  <Icon className={`h-4 w-4 ${accent}`} />
+                                </span>
+                                <div className="min-w-0">
+                                  <p className="text-sm font-semibold text-slate-900 dark:text-slate-50">{name}</p>
+                                  <p className="truncate text-xs text-slate-500 dark:text-slate-400">{detail}</p>
+                                </div>
+                              </div>
+                              <button
+                                type="button"
+                                onClick={() => void handleConnectIntegration(provider)}
+                                disabled={connected || loadingThis}
+                                className="inline-flex shrink-0 items-center justify-center rounded-md border border-slate-300 bg-white px-2.5 py-1 text-xs font-medium text-slate-700 transition-colors hover:bg-slate-100 disabled:cursor-not-allowed disabled:opacity-60 dark:border-slate-600 dark:bg-slate-800 dark:text-slate-200 dark:hover:bg-slate-700"
+                              >
+                                {connected ? 'Connected' : loadingThis ? 'Connecting...' : 'Connect'}
+                              </button>
+                            </div>
+                          </div>
+                        );
+                      })}
+                    </div>
+
+                    {integrationsLoading && (
+                      <p className="mt-3 text-xs text-slate-500 dark:text-slate-400">Loading integration status...</p>
+                    )}
+                    {integrationsError && !integrationsLoading && (
+                      <p className="mt-3 text-xs text-amber-700 dark:text-amber-300">{integrationsError}</p>
+                    )}
+
+                    <h3 className="mt-5 text-xs font-semibold uppercase tracking-wide text-slate-500 dark:text-slate-400">Coming soon</h3>
+                    <div className="mt-2 grid gap-2 sm:grid-cols-3">
                       {COMING_SOON_INTEGRATIONS.map(({ name, detail, Icon, accent, bg, border }) => (
                         <div
                           key={name}
@@ -1389,7 +1504,7 @@ export default function UploadPage() {
                     {activeTab === 'url'
                       ? (isUrlSubmitting ? 'Importing...' : 'Import URL')
                       : activeTab === 'integrations'
-                        ? 'Coming soon'
+                        ? 'Manage in panel above'
                       : isStartingQueuedUploads
                         ? 'Starting...'
                         : queuedFiles.length === 1
