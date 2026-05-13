@@ -119,7 +119,11 @@ export async function GET(request: NextRequest) {
     },
   });
 
-  const response = NextResponse.redirect(new URL('/dashboard/settings', request.url));
+  const configuredAppUrl =
+    process.env.NEXT_PUBLIC_APP_URL ||
+    (process.env.APP_DOMAIN ? `https://${process.env.APP_DOMAIN}` : null);
+  const redirectBase = configuredAppUrl || new URL(request.url).origin;
+  const response = NextResponse.redirect(new URL('/dashboard/settings', redirectBase));
   response.cookies.delete('youtube_oauth_state');
   response.cookies.delete('youtube_oauth_user');
   return response;
