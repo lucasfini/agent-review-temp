@@ -60,6 +60,15 @@ type IntegrationProviderStatus = {
   updatedAt?: string | null;
 };
 
+type YouTubeUploadItem = {
+  videoId: string;
+  title: string;
+  channelTitle?: string | null;
+  publishedAt?: string | null;
+  thumbnailUrl?: string | null;
+  durationSeconds?: number | null;
+};
+
 const LIVE_INTEGRATIONS: Array<{
   provider: IntegrationProvider;
   name: string;
@@ -516,6 +525,10 @@ export default function UploadPage() {
   const [integrationsError, setIntegrationsError] = useState<string | null>(null);
   const [integrationStatuses, setIntegrationStatuses] = useState<IntegrationProviderStatus[]>([]);
   const [connectingProvider, setConnectingProvider] = useState<IntegrationProvider | null>(null);
+  const [youtubeUploads, setYouTubeUploads] = useState<YouTubeUploadItem[]>([]);
+  const [youtubeUploadsLoading, setYouTubeUploadsLoading] = useState(false);
+  const [youtubeUploadsError, setYouTubeUploadsError] = useState<string | null>(null);
+  const [youtubeImportingVideoId, setYoutubeImportingVideoId] = useState<string | null>(null);
   const [selectedQueuedFileId, setSelectedQueuedFileId] = useState<string | null>(null);
   const lastActiveProjectCountRef = useRef<number | null>(null);
   const forceNamedSpeakersForRoster = useCallback((options: AnalysisOptions, roster: RosterSpeaker[] | QueuedRosterSpeaker[] | undefined | null): AnalysisOptions => {
@@ -863,10 +876,83 @@ export default function UploadPage() {
     }
   }, [getAuthHeaders]);
 
+  const fetchYouTubeUploads = useCallback(async () => {
+    if (!session?.access_token) return;
+    setYouTubeUploadsLoading(true);
+    setYouTubeUploadsError(null);
+    try {
+      const response = await fetch('/api/integrations/youtube/uploads?limit=20', {
+        headers: { Authorization: `Bearer ${session.access_token}` },
+        cache: 'no-store',
+      });
+      if (!response.ok) {
+        throw new Error(await readErrorMessage(response, 'Failed to load YouTube uploads'));
+      }
+      const payload = await response.json() as { uploads?: YouTubeUploadItem[] };
+      setYouTubeUploads(payload.uploads || []);
+    } catch (error) {
+      setYouTubeUploadsError(error instanceof Error ? error.message : 'Failed to load YouTube uploads');
+    } finally {
+      setYouTubeUploadsLoading(false);
+    }
+  }, [session?.access_token]);
+
+  const queueYouTubeImport = useCallback((upload: YouTubeUploadItem) => {
+    const itemId = `youtube-${upload.videoId}`;
+    setUploadedFiles((prev) => {
+      if (prev.some((file) => file.id === itemId || file.importPayload?.videoId === upload.videoId)) {
+        return prev;
+      }
+      return [
+        ...prev,
+        {
+          id: itemId,
+          status: 'queued',
+          progress: 0,
+          processingStage: 'pending',
+          stageProgress: 0,
+          processingMessage: 'Ready to import...',
+          processingTier,
+          analysisOptions,
+          displayName: upload.title || 'YouTube upload',
+          sourceType: 'youtube',
+          importPayload: {
+            videoId: upload.videoId,
+            estimatedDurationSeconds: upload.durationSeconds || undefined,
+          },
+          estimatedDurationSeconds: upload.durationSeconds || undefined,
+        }
+      ];
+    });
+    setSelectedQueuedFileId((current) => current || itemId);
+    startQueuedUploads();
+  }, [analysisOptions, processingTier, setUploadedFiles, startQueuedUploads]);
+
+  const handleImportYouTubeUpload = useCallback(async (upload: YouTubeUploadItem) => {
+    setYoutubeImportingVideoId(upload.videoId);
+    try {
+      queueYouTubeImport(upload);
+      toast.success('YouTube upload added to queue.');
+    } finally {
+      setYoutubeImportingVideoId(null);
+    }
+  }, [queueYouTubeImport]);
+
   useEffect(() => {
     if (activeTab !== 'integrations') return;
     void fetchIntegrationStatuses();
   }, [activeTab, fetchIntegrationStatuses]);
+
+  useEffect(() => {
+    if (activeTab !== 'integrations') return;
+    const youtubeConnected = integrationStatuses.some((item) => item.provider === 'youtube' && item.connected);
+    if (youtubeConnected) {
+      void fetchYouTubeUploads();
+    } else {
+      setYouTubeUploads([]);
+      setYouTubeUploadsError(null);
+    }
+  }, [activeTab, fetchYouTubeUploads, integrationStatuses]);
 
   const cancelUploadOnServer = async (projectId: string) => {
     const headers = await getAuthHeaders();
@@ -1381,6 +1467,63 @@ export default function UploadPage() {
                     )}
                     {integrationsError && !integrationsLoading && (
                       <p className="mt-3 text-xs text-amber-700 dark:text-amber-300">{integrationsError}</p>
+                    )}
+
+                    {integrationStatuses.some((item) => item.provider === 'youtube' && item.connected) && (
+                      <div className="mt-4 rounded-lg border border-slate-200 bg-white p-3 dark:border-slate-700 dark:bg-slate-900">
+                        <div className="mb-2 flex items-center justify-between gap-3">
+                          <h4 className="text-sm font-semibold text-slate-900 dark:text-slate-50">YouTube uploads</h4>
+                          <button
+                            type="button"
+                            onClick={() => void fetchYouTubeUploads()}
+                            disabled={youtubeUploadsLoading}
+                            className="inline-flex items-center justify-center rounded-md border border-slate-300 bg-white px-2.5 py-1 text-xs font-medium text-slate-700 transition-colors hover:bg-slate-100 disabled:cursor-not-allowed disabled:opacity-60 dark:border-slate-600 dark:bg-slate-800 dark:text-slate-200 dark:hover:bg-slate-700"
+                          >
+                            {youtubeUploadsLoading ? 'Refreshing...' : 'Refresh'}
+                          </button>
+                        </div>
+                        {youtubeUploadsLoading && (
+                          <p className="text-xs text-slate-500 dark:text-slate-400">Loading uploads...</p>
+                        )}
+                        {youtubeUploadsError && !youtubeUploadsLoading && (
+                          <p className="text-xs text-amber-700 dark:text-amber-300">{youtubeUploadsError}</p>
+                        )}
+                        {!youtubeUploadsLoading && !youtubeUploadsError && youtubeUploads.length === 0 && (
+                          <p className="text-xs text-slate-500 dark:text-slate-400">No public uploads found on this channel yet.</p>
+                        )}
+                        {!youtubeUploadsLoading && youtubeUploads.length > 0 && (
+                          <div className="space-y-2">
+                            {youtubeUploads.slice(0, 10).map((upload) => (
+                              <div key={upload.videoId} className="flex items-center gap-3 rounded-md border border-slate-200 bg-slate-50 p-2 dark:border-slate-700 dark:bg-slate-800/60">
+                                {upload.thumbnailUrl ? (
+                                  // eslint-disable-next-line @next/next/no-img-element
+                                  <img
+                                    src={upload.thumbnailUrl}
+                                    alt={upload.title}
+                                    className="h-12 w-20 rounded object-cover"
+                                  />
+                                ) : (
+                                  <div className="h-12 w-20 rounded bg-slate-200 dark:bg-slate-700" />
+                                )}
+                                <div className="min-w-0 flex-1">
+                                  <p className="truncate text-sm font-medium text-slate-900 dark:text-slate-50">{upload.title}</p>
+                                  <p className="truncate text-xs text-slate-500 dark:text-slate-400">
+                                    {upload.channelTitle || 'YouTube'}{upload.durationSeconds ? ` · ${formatDuration(upload.durationSeconds)}` : ''}
+                                  </p>
+                                </div>
+                                <button
+                                  type="button"
+                                  onClick={() => void handleImportYouTubeUpload(upload)}
+                                  disabled={youtubeImportingVideoId === upload.videoId}
+                                  className="inline-flex shrink-0 items-center justify-center rounded-md border border-slate-300 bg-white px-2.5 py-1 text-xs font-medium text-slate-700 transition-colors hover:bg-slate-100 disabled:cursor-not-allowed disabled:opacity-60 dark:border-slate-600 dark:bg-slate-800 dark:text-slate-200 dark:hover:bg-slate-700"
+                                >
+                                  {youtubeImportingVideoId === upload.videoId ? 'Queueing...' : 'Import'}
+                                </button>
+                              </div>
+                            ))}
+                          </div>
+                        )}
+                      </div>
                     )}
 
                     <h3 className="mt-5 text-xs font-semibold uppercase tracking-wide text-slate-500 dark:text-slate-400">Coming soon</h3>

@@ -18,7 +18,7 @@ import {
 } from '@/lib/upload-queue-storage';
 import { toast } from 'sonner';
 
-type IntegrationProvider = 'zoom' | 'microsoft';
+type IntegrationProvider = 'zoom' | 'microsoft' | 'youtube';
 
 export interface QueuedRosterSpeaker {
   name: string;
@@ -293,7 +293,7 @@ export function UploadProgressSyncProvider({ children }: { children: ReactNode }
   }, [clearTrackedUploadState]);
 
   const processImportedRecording = useCallback(async (uploadedFile: UploadedFile) => {
-    if (!uploadedFile.importPayload || !uploadedFile.sourceType || !['zoom', 'microsoft'].includes(uploadedFile.sourceType)) {
+    if (!uploadedFile.importPayload || !uploadedFile.sourceType || !['zoom', 'microsoft', 'youtube'].includes(uploadedFile.sourceType)) {
       setUploadedFiles(prev => prev.map(f =>
         f.id === uploadedFile.id ? {
           ...f,
