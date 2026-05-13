@@ -352,7 +352,7 @@ export type Database = {
         Row: {
           id: string
           user_id: string
-          provider: 'zoom' | 'microsoft'
+          provider: 'zoom' | 'microsoft' | 'youtube'
           external_account_id: string
           status: 'connected' | 'revoked'
           scopes: string[] | null
@@ -367,7 +367,7 @@ export type Database = {
         Insert: {
           id?: string
           user_id: string
-          provider: 'zoom' | 'microsoft'
+          provider: 'zoom' | 'microsoft' | 'youtube'
           external_account_id: string
           status?: 'connected' | 'revoked'
           scopes?: string[] | null
@@ -382,7 +382,7 @@ export type Database = {
         Update: {
           id?: string
           user_id?: string
-          provider?: 'zoom' | 'microsoft'
+          provider?: 'zoom' | 'microsoft' | 'youtube'
           external_account_id?: string
           status?: 'connected' | 'revoked'
           scopes?: string[] | null
@@ -399,7 +399,7 @@ export type Database = {
         Row: {
           id: string
           user_id: string
-          provider: 'zoom' | 'microsoft'
+          provider: 'zoom' | 'microsoft' | 'youtube'
           external_recording_id: string
           project_id: string | null
           status: 'imported' | 'failed'
@@ -409,7 +409,7 @@ export type Database = {
         Insert: {
           id?: string
           user_id: string
-          provider: 'zoom' | 'microsoft'
+          provider: 'zoom' | 'microsoft' | 'youtube'
           external_recording_id: string
           project_id?: string | null
           status?: 'imported' | 'failed'
@@ -419,7 +419,7 @@ export type Database = {
         Update: {
           id?: string
           user_id?: string
-          provider?: 'zoom' | 'microsoft'
+          provider?: 'zoom' | 'microsoft' | 'youtube'
           external_recording_id?: string
           project_id?: string | null
           status?: 'imported' | 'failed'

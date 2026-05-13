@@ -22,6 +22,7 @@ import {
   Video,
   Users,
   MessageSquare,
+  Youtube,
   type LucideIcon,
 } from 'lucide-react';
 import {
@@ -42,7 +43,7 @@ import CreditPackages from '@/components/billing/credit-packages';
 import { supabase } from '@/lib/supabase/client';
 import { toast } from 'sonner';
 import { formatSiteCreditDeltaFromUsd, formatSiteCreditsFromUsd } from '@/lib/billing/display';
-import { INTEGRATIONS_ENABLED } from '@/lib/integrations/availability';
+import { isIntegrationEnabled } from '@/lib/integrations/availability';
 import { isValidEmail } from '@/lib/auth/validation';
 
 // ============================================================================
@@ -93,12 +94,12 @@ interface UnifiedSettingsProps {
   forcedSection?: 'preferences' | 'billing' | 'usage';
 }
 
-type IntegrationProvider = 'zoom' | 'microsoft';
+type IntegrationProvider = 'zoom' | 'microsoft' | 'youtube';
 
 interface IntegrationStatus {
   provider: IntegrationProvider;
   connected: boolean;
-  metadata?: { email?: string; name?: string } | null;
+  metadata?: { email?: string; name?: string; channelTitle?: string } | null;
   updatedAt?: string | null;
 }
 
@@ -130,6 +131,15 @@ const SETTINGS_INTEGRATIONS: Array<{
     border: 'border-indigo-100 dark:border-indigo-400/20',
   },
   {
+    provider: 'youtube',
+    name: 'YouTube',
+    detail: 'Channel access',
+    Icon: Youtube,
+    accent: 'text-red-600 dark:text-red-300',
+    bg: 'bg-red-50 dark:bg-red-500/10',
+    border: 'border-red-100 dark:border-red-400/20',
+  },
+  {
     name: 'Slack',
     detail: 'Huddles and clips',
     Icon: MessageSquare,
@@ -138,6 +148,12 @@ const SETTINGS_INTEGRATIONS: Array<{
     border: 'border-emerald-100 dark:border-emerald-400/20',
   },
 ];
+
+const integrationLabel = (provider: IntegrationProvider) => {
+  if (provider === 'zoom') return 'Zoom';
+  if (provider === 'microsoft') return 'Microsoft Teams';
+  return 'YouTube';
+};
 
 // ============================================================================
 // HELPERS
@@ -830,7 +846,7 @@ export default function UnifiedSettings({ userEmail, forcedSection }: UnifiedSet
         headers: { Authorization: `Bearer ${session.access_token}` }
       });
       if (!res.ok) {
-        throw new Error(`Unable to connect ${provider === 'zoom' ? 'Zoom' : 'Microsoft Teams'} right now.`);
+        throw new Error(`Unable to connect ${integrationLabel(provider)} right now.`);
       }
       const data = await res.json();
       if (!data?.url) {
@@ -858,12 +874,12 @@ export default function UnifiedSettings({ userEmail, forcedSection }: UnifiedSet
         body: JSON.stringify({ provider })
       });
       if (!res.ok) {
-        throw new Error(`Unable to disconnect ${provider === 'zoom' ? 'Zoom' : 'Microsoft Teams'}.`);
+        throw new Error(`Unable to disconnect ${integrationLabel(provider)}.`);
       }
       setIntegrations(prev =>
         prev.map(i => i.provider === provider ? { ...i, connected: false } : i)
       );
-      toast.success(`${provider === 'zoom' ? 'Zoom' : 'Microsoft Teams'} disconnected`);
+      toast.success(`${integrationLabel(provider)} disconnected`);
     } catch (error) {
       toast.error(friendlyError('Failed to disconnect the integration.', error));
     }
@@ -1203,9 +1219,9 @@ export default function UnifiedSettings({ userEmail, forcedSection }: UnifiedSet
                         <Sparkles className="h-4 w-4" />
                       </span>
                       <div>
-                        <h2 className="text-base font-semibold text-slate-900 dark:text-slate-50">Integrations are coming soon</h2>
+                        <h2 className="text-base font-semibold text-slate-900 dark:text-slate-50">Connected platforms</h2>
                         <p className="mt-0.5 text-sm text-slate-500 dark:text-slate-400">
-                          Direct imports are being prepared. Local upload and URL import are ready now.
+                          Connect creator channels and recording sources as they become available.
                         </p>
                       </div>
                     </div>
@@ -1227,8 +1243,10 @@ export default function UnifiedSettings({ userEmail, forcedSection }: UnifiedSet
                   {SETTINGS_INTEGRATIONS.map(({ provider, name, detail, Icon, accent, bg, border }) => {
                     const status = provider ? integrations.find(i => i.provider === provider) : undefined;
                     const connected = Boolean(status?.connected);
-                    const connectedDetail = status?.metadata?.email ? `Connected • ${status.metadata.email}` : 'Connected';
-                    const showAction = Boolean(provider && !isDemoMode && (INTEGRATIONS_ENABLED || connected) && !integrationsLoading && !integrationsError);
+                    const providerEnabled = provider ? isIntegrationEnabled(provider) : false;
+                    const connectedLabel = status?.metadata?.channelTitle || status?.metadata?.email || status?.metadata?.name;
+                    const connectedDetail = connectedLabel ? `Connected - ${connectedLabel}` : 'Connected';
+                    const showAction = Boolean(provider && !isDemoMode && (providerEnabled || connected) && !integrationsLoading && !integrationsError);
 
                     return (
                       <div
@@ -1257,7 +1275,7 @@ export default function UnifiedSettings({ userEmail, forcedSection }: UnifiedSet
                           <button
                             type="button"
                             onClick={() => connected ? disconnectProvider(provider) : startOAuth(provider)}
-                            disabled={!INTEGRATIONS_ENABLED}
+                            disabled={!providerEnabled && !connected}
                             className="mt-3 inline-flex w-fit rounded-md bg-slate-900 px-3 py-1.5 text-xs font-medium text-white transition-colors hover:bg-slate-800 disabled:cursor-not-allowed disabled:opacity-60 dark:bg-white dark:text-slate-950 dark:hover:bg-slate-200"
                           >
                             {connected ? 'Disconnect' : 'Connect'}

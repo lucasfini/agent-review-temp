@@ -2,7 +2,7 @@ import { NextRequest } from 'next/server';
 import { supabaseAdmin } from '@/lib/supabase/server';
 import { decryptToken, encryptToken } from '@/lib/integrations/crypto';
 
-export type IntegrationProvider = 'zoom' | 'microsoft';
+export type IntegrationProvider = 'zoom' | 'microsoft' | 'youtube';
 
 export async function getUserFromRequest(request: NextRequest) {
   const authHeader = request.headers.get('authorization');

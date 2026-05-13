@@ -38,6 +38,15 @@ function validatePair(env, [a, b]) {
   return null;
 }
 
+function validateAllOrNone(env, keys) {
+  const filled = keys.filter((key) => isFilled(env[key]));
+  if (filled.length > 0 && filled.length < keys.length) {
+    return `Set all of ${keys.join(', ')} or leave them all blank`;
+  }
+
+  return null;
+}
+
 function main() {
   const assemblyAiConfigured =
     isFilled(process.env.ASSEMBLYAI_API_KEY) || isFilled(process.env.ASSEMBLYAI_ACCESS_KEY);
@@ -49,6 +58,7 @@ function main() {
     validatePair(process.env, ['UPSTASH_REDIS_REST_URL', 'UPSTASH_REDIS_REST_TOKEN']),
     validatePair(process.env, ['ZOOM_CLIENT_ID', 'ZOOM_CLIENT_SECRET']),
     validatePair(process.env, ['MS_CLIENT_ID', 'MS_CLIENT_SECRET']),
+    validateAllOrNone(process.env, ['GOOGLE_OAUTH_CLIENT_ID', 'GOOGLE_OAUTH_CLIENT_SECRET', 'YOUTUBE_REDIRECT_URI']),
   ].filter(Boolean);
 
   if (!assemblyAiConfigured) {

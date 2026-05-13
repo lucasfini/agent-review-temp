@@ -57,7 +57,7 @@ export async function GET(request: NextRequest) {
         ? meta.last_name
         : fullName.split(' ').slice(1).join(' ');
 
-    const integrations = ['zoom', 'microsoft'].map((provider) => {
+    const integrations = ['zoom', 'microsoft', 'youtube'].map((provider) => {
       const row = integrationsResult.data?.find((connection: any) => connection.provider === provider && connection.status === 'connected');
       return {
         provider,
