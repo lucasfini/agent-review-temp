@@ -18,7 +18,6 @@ import {
   AlertTriangle,
   Camera,
   Trash2,
-  Sparkles,
   Video,
   Users,
   MessageSquare,
@@ -1212,25 +1211,7 @@ export default function UnifiedSettings({ userEmail, forcedSection }: UnifiedSet
             <CardContent className="p-4 sm:p-6">
               <div className="relative overflow-hidden rounded-lg border border-slate-200 bg-slate-50 p-4 dark:border-slate-700 dark:bg-slate-950">
                 <div className="pointer-events-none absolute inset-x-0 top-0 h-px bg-gradient-to-r from-transparent via-cyan-400/70 to-transparent" />
-                <div className="flex flex-col gap-4 sm:flex-row sm:items-center sm:justify-between">
-                  <div className="min-w-0">
-                    <div className="flex items-center gap-2">
-                      <span className="inline-flex h-8 w-8 shrink-0 items-center justify-center rounded-lg bg-slate-900 text-white shadow-sm dark:bg-white dark:text-slate-950">
-                        <Sparkles className="h-4 w-4" />
-                      </span>
-                      <div>
-                        <h2 className="text-base font-semibold text-slate-900 dark:text-slate-50">Connected platforms</h2>
-                        <p className="mt-0.5 text-sm text-slate-500 dark:text-slate-400">
-                          Connect creator channels and recording sources as they become available.
-                        </p>
-                      </div>
-                    </div>
-                  </div>
-                  <div className="inline-flex w-fit items-center gap-1.5 rounded-full border border-cyan-200 bg-cyan-50 px-3 py-1 text-xs font-medium text-cyan-700 dark:border-cyan-400/20 dark:bg-cyan-400/10 dark:text-cyan-200">
-                    <span className="h-1.5 w-1.5 rounded-full bg-cyan-500 motion-safe:animate-pulse" />
-                    Warming up
-                  </div>
-                </div>
+                <h2 className="text-base font-semibold text-slate-900 dark:text-slate-50">Connected platforms</h2>
 
                 {integrationsLoading && (
                   <div className="mt-4 text-sm text-slate-400">Loading integrations...</div>
@@ -1239,8 +1220,57 @@ export default function UnifiedSettings({ userEmail, forcedSection }: UnifiedSet
                   <div className="mt-4 text-sm text-red-400">{integrationsError}</div>
                 )}
 
-                <div className="mt-4 grid gap-2 lg:grid-cols-3">
-                  {SETTINGS_INTEGRATIONS.map(({ provider, name, detail, Icon, accent, bg, border }) => {
+                <h3 className="mt-4 text-xs font-semibold uppercase tracking-wide text-slate-500 dark:text-slate-400">Live</h3>
+                <div className="mt-2 grid gap-2 lg:grid-cols-3">
+                  {SETTINGS_INTEGRATIONS.filter(({ provider }) => provider && isIntegrationEnabled(provider)).map(({ provider, name, detail, Icon, accent, bg, border }) => {
+                    const status = provider ? integrations.find(i => i.provider === provider) : undefined;
+                    const connected = Boolean(status?.connected);
+                    const providerEnabled = provider ? isIntegrationEnabled(provider) : false;
+                    const connectedLabel = status?.metadata?.channelTitle || status?.metadata?.email || status?.metadata?.name;
+                    const connectedDetail = connectedLabel ? `Connected - ${connectedLabel}` : 'Connected';
+                    const showAction = Boolean(provider && !isDemoMode && (providerEnabled || connected) && !integrationsLoading && !integrationsError);
+
+                    return (
+                      <div
+                        key={name}
+                        className={`rounded-lg border ${border} ${bg} p-3`}
+                      >
+                        <div className="flex items-start justify-between gap-3">
+                          <div className="flex min-w-0 items-center gap-2">
+                            <span className="inline-flex h-8 w-8 shrink-0 items-center justify-center rounded-md bg-white/80 shadow-sm dark:bg-slate-900/80">
+                              <Icon className={`h-4 w-4 ${accent}`} />
+                            </span>
+                            <div className="min-w-0">
+                              <p className="text-sm font-semibold text-slate-900 dark:text-slate-50">{name}</p>
+                              <p className="truncate text-xs text-slate-500 dark:text-slate-400">
+                                {connected ? connectedDetail : detail}
+                              </p>
+                            </div>
+                          </div>
+                          {connected && (
+                            <span className="shrink-0 rounded-full bg-emerald-100 px-2 py-0.5 text-xs font-medium text-emerald-700 dark:bg-emerald-400/10 dark:text-emerald-300">
+                              Connected
+                            </span>
+                          )}
+                        </div>
+                        {showAction && provider && (
+                          <button
+                            type="button"
+                            onClick={() => connected ? disconnectProvider(provider) : startOAuth(provider)}
+                            disabled={!providerEnabled && !connected}
+                            className="mt-3 inline-flex w-fit rounded-md bg-slate-900 px-3 py-1.5 text-xs font-medium text-white transition-colors hover:bg-slate-800 disabled:cursor-not-allowed disabled:opacity-60 dark:bg-white dark:text-slate-950 dark:hover:bg-slate-200"
+                          >
+                            {connected ? 'Disconnect' : 'Connect'}
+                          </button>
+                        )}
+                      </div>
+                    );
+                  })}
+                </div>
+
+                <h3 className="mt-4 text-xs font-semibold uppercase tracking-wide text-slate-500 dark:text-slate-400">Coming soon</h3>
+                <div className="mt-2 grid gap-2 lg:grid-cols-3">
+                  {SETTINGS_INTEGRATIONS.filter(({ provider }) => provider && !isIntegrationEnabled(provider)).map(({ provider, name, detail, Icon, accent, bg, border }) => {
                     const status = provider ? integrations.find(i => i.provider === provider) : undefined;
                     const connected = Boolean(status?.connected);
                     const providerEnabled = provider ? isIntegrationEnabled(provider) : false;
