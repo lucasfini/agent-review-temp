@@ -5,7 +5,7 @@ export default function TermsPage() {
     <div className="min-h-screen bg-white text-slate-700 dark:bg-slate-950 dark:text-slate-200">
       <div className="max-w-3xl mx-auto px-4 py-10 sm:px-6 sm:py-12">
         <h1 className="mb-6 text-2xl font-bold text-slate-900 dark:text-slate-50 sm:text-3xl">Terms of Service</h1>
-        <p className="text-sm text-slate-500 dark:text-slate-400 mb-8">Last updated: May 11, 2026</p>
+        <p className="text-sm text-slate-500 dark:text-slate-400 mb-8">Last updated: May 13, 2026</p>
 
         <div className="space-y-6 text-sm leading-relaxed text-slate-600 dark:text-slate-300">
           <section>
@@ -21,7 +21,7 @@ export default function TermsPage() {
             <p>
               AudioRepurpose provides tools to upload or import recordings, transcribe content, identify/review speakers, and
               generate derivative outputs (such as summaries and social-ready drafts). Features, processing tiers, and model
-              providers may change over time.
+              providers may change over time, including optional YouTube-connected import features.
             </p>
           </section>
 
@@ -71,13 +71,30 @@ export default function TermsPage() {
             <h2 className="text-lg font-semibold text-slate-900 dark:text-slate-50 mb-2">8. Third-Party Services</h2>
             <p>
               The service depends on third-party providers (for example Supabase, Stripe, AssemblyAI, OpenAI, Anthropic,
-              Deepgram fallback, Cloudflare R2, Resend, Zoom, Microsoft). Your use of connected third-party services may also
+              Deepgram fallback, Cloudflare R2, Resend, Zoom, Microsoft, YouTube). Your use of connected third-party services may also
               be subject to those providers&apos; terms and policies.
             </p>
           </section>
 
           <section>
-            <h2 className="text-lg font-semibold text-slate-900 dark:text-slate-50 mb-2">9. Intellectual Property</h2>
+            <h2 className="text-lg font-semibold text-slate-900 dark:text-slate-50 mb-2">9. YouTube API Services</h2>
+            <p>
+              AudioRepurpose uses YouTube API Services for YouTube-connected features. By using those features, you agree to
+              be bound by the{' '}
+              <a
+                href="https://www.youtube.com/t/terms"
+                target="_blank"
+                rel="noopener noreferrer"
+                className="underline decoration-slate-400 underline-offset-2 hover:text-slate-900 dark:hover:text-slate-100"
+              >
+                YouTube Terms of Service
+              </a>{' '}
+              in addition to these Terms.
+            </p>
+          </section>
+
+          <section>
+            <h2 className="text-lg font-semibold text-slate-900 dark:text-slate-50 mb-2">10. Intellectual Property</h2>
             <p>
               AudioRepurpose and its platform materials, software, branding, and non-user content are protected by intellectual
               property laws. These Terms do not transfer ownership of our intellectual property to you.
@@ -85,7 +102,7 @@ export default function TermsPage() {
           </section>
 
           <section>
-            <h2 className="text-lg font-semibold text-slate-900 dark:text-slate-50 mb-2">10. Service Availability and Changes</h2>
+            <h2 className="text-lg font-semibold text-slate-900 dark:text-slate-50 mb-2">11. Service Availability and Changes</h2>
             <p>
               We may modify, pause, or discontinue features, providers, workflows, or limits at any time. We do not guarantee
               uninterrupted availability, specific model behavior, or error-free operation.
@@ -93,7 +110,7 @@ export default function TermsPage() {
           </section>
 
           <section>
-            <h2 className="text-lg font-semibold text-slate-900 dark:text-slate-50 mb-2">11. Termination or Suspension</h2>
+            <h2 className="text-lg font-semibold text-slate-900 dark:text-slate-50 mb-2">12. Termination or Suspension</h2>
             <p>
               We may suspend or terminate access for violations of these Terms, abuse, security risks, fraud concerns, or legal
               requirements. You may stop using the service at any time and may request account deletion through available
@@ -102,7 +119,7 @@ export default function TermsPage() {
           </section>
 
           <section>
-            <h2 className="text-lg font-semibold text-slate-900 dark:text-slate-50 mb-2">12. Disclaimers</h2>
+            <h2 className="text-lg font-semibold text-slate-900 dark:text-slate-50 mb-2">13. Disclaimers</h2>
             <p>
               The service is provided &quot;as is&quot; and &quot;as available&quot; without warranties of any kind to the extent permitted by
               law. AI-generated outputs can contain errors and should be reviewed before publication or reliance.
@@ -110,7 +127,7 @@ export default function TermsPage() {
           </section>
 
           <section>
-            <h2 className="text-lg font-semibold text-slate-900 dark:text-slate-50 mb-2">13. Limitation of Liability</h2>
+            <h2 className="text-lg font-semibold text-slate-900 dark:text-slate-50 mb-2">14. Limitation of Liability</h2>
             <p>
               To the maximum extent permitted by law, AudioRepurpose will not be liable for indirect, incidental, special,
               consequential, or punitive damages, or for loss of profits, data, goodwill, or business interruption.
@@ -118,7 +135,7 @@ export default function TermsPage() {
           </section>
 
           <section>
-            <h2 className="text-lg font-semibold text-slate-900 dark:text-slate-50 mb-2">14. Indemnification</h2>
+            <h2 className="text-lg font-semibold text-slate-900 dark:text-slate-50 mb-2">15. Indemnification</h2>
             <p>
               You agree to indemnify and hold harmless AudioRepurpose from claims, liabilities, damages, and expenses arising
               from your content, your use of the service, or your violation of these Terms or applicable law.
@@ -126,15 +143,19 @@ export default function TermsPage() {
           </section>
 
           <section>
-            <h2 className="text-lg font-semibold text-slate-900 dark:text-slate-50 mb-2">15. Governing Law</h2>
+            <h2 className="text-lg font-semibold text-slate-900 dark:text-slate-50 mb-2">16. Governing Law</h2>
             <p>
-              These Terms are governed by the laws of [Jurisdiction], without regard to conflict-of-law rules.
+              These Terms are governed by the laws of the Province of Ontario and the federal laws of Canada applicable therein,
+              without regard to conflict-of-law rules.
             </p>
-            {/* TODO(legal): Replace [Jurisdiction] with the correct governing law and venue. */}
+            <p className="mt-2">
+              You agree that the courts located in Toronto, Ontario have exclusive jurisdiction over disputes arising out of or
+              relating to these Terms or the service.
+            </p>
           </section>
 
           <section>
-            <h2 className="text-lg font-semibold text-slate-900 dark:text-slate-50 mb-2">16. Changes to Terms</h2>
+            <h2 className="text-lg font-semibold text-slate-900 dark:text-slate-50 mb-2">17. Changes to Terms</h2>
             <p>
               We may update these Terms from time to time. Continued use of the service after updates are posted means you
               accept the updated Terms.
@@ -142,11 +163,10 @@ export default function TermsPage() {
           </section>
 
           <section>
-            <h2 className="text-lg font-semibold text-slate-900 dark:text-slate-50 mb-2">17. Contact Information</h2>
+            <h2 className="text-lg font-semibold text-slate-900 dark:text-slate-50 mb-2">18. Contact Information</h2>
             <p>
               For questions about these Terms, contact us at {SUPPORT_EMAIL}.
             </p>
-            {/* TODO(legal): If required, add [Company Legal Name] and [Business Address]. */}
           </section>
         </div>
       </div>
