@@ -1663,6 +1663,7 @@ function Navbar({
     { label: "Outputs", href: "#outputs" },
     { label: "Analysis", href: "#analysis" },
     { label: "Pricing", href: "#pricing" },
+    { label: "Privacy", href: "/privacy" },
   ];
   const logoTheme = mounted && resolvedTheme === "light" ? "light" : "dark";
 
@@ -1829,6 +1830,32 @@ function Hero() {
               AudioRepurpose gives you one workspace to transcribe the
               recording, review speakers, pull insights, and generate
               publish-ready drafts without bouncing between separate tools.
+            </motion.p>
+            <motion.p
+              className="mx-auto mb-6 max-w-2xl text-sm leading-relaxed text-slate-700 dark:text-blue-100/85 md:text-base"
+              initial={{ opacity: 0, y: 16 }}
+              animate={{ opacity: 1, y: 0 }}
+              transition={{ duration: 0.55, delay: 0.2, ease: "easeOut" }}
+            >
+              Purpose of this app: upload one recording, generate a transcript
+              with speaker attribution, and create reusable content outputs such
+              as summaries, show notes, and social drafts.
+            </motion.p>
+            <motion.p
+              className="mx-auto mb-10 max-w-2xl text-sm text-slate-600 dark:text-blue-100/80"
+              initial={{ opacity: 0, y: 12 }}
+              animate={{ opacity: 1, y: 0 }}
+              transition={{ duration: 0.5, delay: 0.22, ease: "easeOut" }}
+            >
+              Review our{" "}
+              <Link href="/privacy" className="underline underline-offset-4 hover:text-slate-900 dark:hover:text-white">
+                Privacy Policy
+              </Link>{" "}
+              and{" "}
+              <Link href="/terms" className="underline underline-offset-4 hover:text-slate-900 dark:hover:text-white">
+                Terms of Service
+              </Link>
+              .
             </motion.p>
 
             <motion.div
