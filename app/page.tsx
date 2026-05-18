@@ -1822,30 +1822,20 @@ function Hero() {
             </motion.h1>
 
             <motion.p
-              className="mx-auto mb-10 max-w-2xl text-base leading-relaxed text-slate-600 dark:text-blue-100/72 md:text-lg"
+              className="mx-auto mb-6 max-w-2xl text-base leading-relaxed text-slate-600 dark:text-blue-100/75 md:text-lg"
               initial={{ opacity: 0, y: 16 }}
               animate={{ opacity: 1, y: 0 }}
               transition={{ duration: 0.55, delay: 0.16, ease: "easeOut" }}
             >
-              AudioRepurpose gives you one workspace to transcribe the
-              recording, review speakers, pull insights, and generate
-              publish-ready drafts without bouncing between separate tools.
-            </motion.p>
-            <motion.p
-              className="mx-auto mb-6 max-w-2xl text-sm leading-relaxed text-slate-700 dark:text-blue-100/85 md:text-base"
-              initial={{ opacity: 0, y: 16 }}
-              animate={{ opacity: 1, y: 0 }}
-              transition={{ duration: 0.55, delay: 0.2, ease: "easeOut" }}
-            >
-              Purpose of this app: upload one recording, generate a transcript
-              with speaker attribution, and create reusable content outputs such
-              as summaries, show notes, and social drafts.
+              AudioRepurpose turns one uploaded recording into a speaker-labeled
+              transcript and channel-ready content outputs, including summaries,
+              show notes, and social drafts.
             </motion.p>
             <motion.p
               className="mx-auto mb-10 max-w-2xl text-sm text-slate-600 dark:text-blue-100/80"
               initial={{ opacity: 0, y: 12 }}
               animate={{ opacity: 1, y: 0 }}
-              transition={{ duration: 0.5, delay: 0.22, ease: "easeOut" }}
+              transition={{ duration: 0.5, delay: 0.2, ease: "easeOut" }}
             >
               Review our{" "}
               <Link href="/privacy" className="underline underline-offset-4 hover:text-slate-900 dark:hover:text-white">
