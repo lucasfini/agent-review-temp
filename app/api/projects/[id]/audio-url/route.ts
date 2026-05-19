@@ -3,7 +3,7 @@ import { GetObjectCommand } from '@aws-sdk/client-s3';
 import { getSignedUrl } from '@aws-sdk/s3-request-presigner';
 import { supabaseAdmin } from '@/lib/supabase/server';
 import { r2Client, BUCKET_NAME } from '@/lib/r2';
-import { expireProjectAudio, isAudioExpired } from '@/lib/audio-retention';
+import { isAudioExpired } from '@/lib/audio-retention';
 import { getStarterAudioObjectKey } from '@/lib/starter-project';
 
 export const dynamic = 'force-dynamic';
@@ -77,17 +77,9 @@ export async function GET(
     }
 
     if (isAudioExpired(project)) {
-      if (!project.audio_deleted_at) {
-        try {
-          await expireProjectAudio(project);
-        } catch (error) {
-          console.error(`[audio-url] Failed cleanup for expired project ${projectId}:`, error);
-        }
-      }
-
       return NextResponse.json({
-        error: 'Source audio has expired',
-        code: 'AUDIO_EXPIRED',
+        error: 'Source audio has been deleted',
+        code: 'AUDIO_DELETED',
         audioExpiresAt: project.audio_expires_at,
       }, { status: 410 });
     }

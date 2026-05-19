@@ -1,6 +1,5 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { supabaseAdmin } from '@/lib/supabase/server';
-import { expireProjectAudio, isAudioExpired } from '@/lib/audio-retention';
 import { RouteAccessError, requireProjectOwner } from '@/lib/api/route-auth';
 import { isDemoUser } from '@/lib/demo-mode';
 import { deleteProjectStoragePrefix } from '@/lib/storage-lifecycle';
@@ -110,16 +109,7 @@ export async function GET(
       );
     }
 
-    // Log speaker data state for debugging
     const projectAny = project as any;
-    if (projectAny.audio_file_name && isAudioExpired(projectAny) && !projectAny.audio_deleted_at) {
-      try {
-        await expireProjectAudio(projectAny);
-        projectAny.audio_deleted_at = new Date().toISOString();
-      } catch (cleanupError) {
-        console.error(`[API] Failed to expire audio for project ${projectId}:`, cleanupError);
-      }
-    }
 
     if (projectAny.speaker_data?.speakers) {
       const speakerNames = Object.values(projectAny.speaker_data.speakers)

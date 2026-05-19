@@ -7,7 +7,6 @@ import { FileText, Clock, CheckCircle, AlertCircle, Eye, Download, RefreshCw, Tr
 import { DropdownMenu, DropdownMenuItem, DropdownMenuSeparator } from '@/components/ui/dropdown-menu';
 import ConfirmModal from '@/components/ui/confirm-modal';
 import { useAuth } from '@/lib/auth/context';
-import { useUserPrefs } from '@/lib/hooks/useUserPrefs';
 import { supabase } from '@/lib/supabase/client';
 import { useCoverageProgress } from '@/lib/context/coverage-progress';
 import { DashboardLoadErrorState } from '@/components/dashboard/load-error-state';
@@ -149,21 +148,7 @@ const getSpeakerBadgeClasses = (speakerId: string) => {
 
 const isProjectAudioExpired = (project: Project | null): boolean => {
   if (!project) return false;
-  if (project.audio_deleted_at) return true;
-  if (!project.audio_expires_at) return false;
-  return new Date(project.audio_expires_at).getTime() <= Date.now();
-};
-
-const formatAudioExpiry = (value?: string | null, locale?: string, timezone?: string): string | null => {
-  if (!value) return null;
-  return new Date(value).toLocaleString(locale, {
-    ...(timezone ? { timeZone: timezone } : {}),
-    month: 'short',
-    day: 'numeric',
-    year: 'numeric',
-    hour: 'numeric',
-    minute: '2-digit',
-  });
+  return Boolean(project.audio_deleted_at);
 };
 
 type ContentGuidanceMap = Record<string, string>;
@@ -311,12 +296,10 @@ export default function ProjectsPage() {
   const contentGuidancePersistTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const lastPersistedContentGuidanceRef = useRef<string>('');
   const { user, session, isDemoMode } = useAuth();
-  const prefs = useUserPrefs();
   const searchParams = useSearchParams();
   const router = useRouter();
   const requestedProjectId = searchParams.get('id');
   const selectedProjectAudioExpired = isProjectAudioExpired(selectedProject);
-  const selectedProjectAudioExpiryLabel = formatAudioExpiry(selectedProject?.audio_expires_at, prefs.locale, prefs.timezone);
   const mobileRequestedProjectId = isMobileViewport ? requestedProjectId : null;
   const mobileHasProjectStage = Boolean(mobileRequestedProjectId || selectedProjectLoading || selectedProject);
   const showMobileList = isMobileViewport && mobileStudioTab === 'projects';
@@ -3570,13 +3553,8 @@ export default function ProjectsPage() {
                             <div className="flex items-center gap-2 text-rose-300 text-sm">
                               <Clock className="h-3.5 w-3.5 flex-shrink-0" />
                               <span>
-                                Source audio expired{selectedProjectAudioExpiryLabel ? ` on ${selectedProjectAudioExpiryLabel}` : ''}. Transcript and generated content remain available.
+                                Source audio was deleted. Transcript and generated content remain available.
                               </span>
-                            </div>
-                          ) : selectedProjectAudioExpiryLabel ? (
-                            <div className="flex items-center gap-2 text-slate-500 dark:text-slate-400 text-sm">
-                              <Clock className="h-3.5 w-3.5 flex-shrink-0" />
-                              <span>Source audio will be deleted on {selectedProjectAudioExpiryLabel}.</span>
                             </div>
                           ) : null}
                         </div>

@@ -1,6 +1,5 @@
 import { User } from '@supabase/supabase-js';
 
-import { getAudioExpiryDate } from '@/lib/audio-retention';
 import { supabaseAdmin } from '@/lib/supabase/server';
 
 const STARTER_TEMPLATE_ENV = 'STARTER_PROJECT_TEMPLATE_ID';
@@ -201,7 +200,7 @@ export async function ensureStarterProjectForUser(user: User): Promise<EnsureSta
   const now = new Date().toISOString();
   const projectInsert = omitCloneManagedFields(sourceProject);
   projectInsert.user_id = user.id;
-  projectInsert.audio_expires_at = getAudioExpiryDate(new Date(now));
+  projectInsert.audio_expires_at = null;
   projectInsert.audio_deleted_at = null;
   projectInsert.created_at = now;
   projectInsert.updated_at = now;

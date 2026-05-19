@@ -8,7 +8,6 @@ import {
   ArrowRight,
   Database,
   FileWarning,
-  HardDrive,
   Loader2,
   RefreshCw,
   Shield,
@@ -186,14 +185,6 @@ const maintenanceJobs = [
     description: 'Delete abandoned uploads and clear dangling project rows.',
     icon: Wrench,
     payload: { limit: 50, olderThanHours: 6 },
-    destructive: true,
-  },
-  {
-    key: 'cleanup_expired_audio',
-    label: 'Clean Expired Audio',
-    description: 'Delete audio files past the retention window and mark them deleted.',
-    icon: HardDrive,
-    payload: { limit: 50 },
     destructive: true,
   },
   {

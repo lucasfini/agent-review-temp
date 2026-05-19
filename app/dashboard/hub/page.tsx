@@ -119,9 +119,7 @@ function formatDuration(seconds: number): string {
 }
 
 function isAudioExpired(project: Project): boolean {
-  if (project.audio_deleted_at) return true;
-  if (!project.audio_expires_at) return false;
-  return new Date(project.audio_expires_at).getTime() <= Date.now();
+  return Boolean(project.audio_deleted_at);
 }
 
 // ============================================================================

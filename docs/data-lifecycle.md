@@ -12,15 +12,13 @@
 ## Storage surfaces
 - Cloudflare R2 bucket `audiorepurpose`
   - project audio stored at `<project_id>/<filename>`
-  - normal retention is driven by `projects.audio_expires_at`
+  - project audio is retained until the project or account is deleted
   - account deletion purges immediately
 - Supabase storage bucket `profile-images`
   - avatar files stored at `<user_id>/<filename>`
   - account deletion purges immediately
 
 ## Cleanup and reconciliation
-- `GET/POST /api/internal/cleanup-expired-audio`
-  - removes expired audio objects for retained projects
 - `GET/POST /api/internal/cleanup-stale-uploads`
   - removes abandoned uploads and their audio
 - `GET/POST /api/internal/reconcile-billing-reservations`

@@ -5,7 +5,6 @@ import { supabaseAdmin } from '@/lib/supabase/server';
 import { updateProcessingProgress } from '@/lib/progress-tracker';
 import { computeAudioFingerprint } from '@/lib/audio-fingerprint';
 import { getInternalJobToken } from '@/lib/internal-job-auth';
-import { getAudioExpiryDate } from '@/lib/audio-retention';
 import { getInternalAppBaseUrl } from '@/lib/app-url';
 import { scheduleBackgroundTask } from '@/lib/background-task';
 import { getProcessingTierForAnalysis, normalizeAnalysisOptions, type AnalysisOptions } from '@/lib/analysis-options';
@@ -81,7 +80,7 @@ export async function importRecording(params: {
     audio_file_name: sanitizedBaseName,
     audio_file_size: size,
     audio_duration: estimatedDuration,
-    audio_expires_at: getAudioExpiryDate(),
+    audio_expires_at: null,
     audio_fingerprint: fingerprint,
     status: 'uploading',
     processing_stage: 'uploading',

@@ -11,7 +11,6 @@ import {
     MAX_FILE_SIZE_BYTES,
 } from '@/lib/upload-constants';
 import { createUploadToken } from '@/lib/upload-token';
-import { getAudioExpiryDate } from '@/lib/audio-retention';
 import { billingErrorResponse, requireCredits } from '@/lib/billing/middleware';
 import { estimateTranscriptionCostAsync } from '@/lib/billing/cost-map';
 import { getProcessingTierForAnalysis, normalizeAnalysisOptions } from '@/lib/analysis-options';
@@ -126,7 +125,7 @@ export async function POST(request: NextRequest) {
             audio_file_name: sanitizedBaseName,
             audio_file_size: size,
             audio_duration: estimatedDuration,
-            audio_expires_at: getAudioExpiryDate(),
+            audio_expires_at: null,
             audio_fingerprint: pseudoFingerprint,
             status: 'uploading',
             processing_stage: 'uploading',

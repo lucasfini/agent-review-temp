@@ -112,17 +112,6 @@ async function readErrorMessage(response: Response, fallback: string) {
   return fallback;
 }
 
-function formatExpiryDate(value?: string | null): string | null {
-  if (!value) return null;
-  return new Date(value).toLocaleString('en-US', {
-    month: 'short',
-    day: 'numeric',
-    year: 'numeric',
-    hour: 'numeric',
-    minute: '2-digit',
-  });
-}
-
 function formatAnalysisSummary(options: AnalysisOptions): string {
   const selected = getSelectedAnalysisKeys(options);
   if (selected.length === 0) {
@@ -1660,7 +1649,7 @@ export default function UploadPage() {
 
             {/* Retention notice — quiet footnote, not a warning */}
             <p className="mb-4 text-xs text-slate-400 dark:text-slate-600 text-center">
-              Source audio is stored for 7 days, then deleted. Transcripts and generated content stay permanently.
+              Source audio stays available until you delete the project. Transcripts and generated content stay with it.
             </p>
 
             {/* Advanced Options — collapsible, out of the critical path */}
@@ -1924,10 +1913,8 @@ export default function UploadPage() {
                                   {item.status === 'completed' && (
                                     <div className="mt-1 text-xs text-slate-500 dark:text-slate-400">
                                       {item.audio_deleted_at
-                                        ? 'Source audio expired and was deleted.'
-                                        : item.audio_expires_at
-                                          ? `Source audio expires ${formatExpiryDate(item.audio_expires_at)}.`
-                                          : 'Source audio is retained temporarily.'}
+                                        ? 'Source audio was deleted.'
+                                        : 'Source audio is retained until the project is deleted.'}
                                     </div>
                                   )}
                                 </div>
