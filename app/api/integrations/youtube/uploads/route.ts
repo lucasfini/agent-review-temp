@@ -68,7 +68,7 @@ export async function GET(request: NextRequest) {
     return NextResponse.json({ error: error || 'Unauthorized' }, { status: 401 });
   }
 
-  const connection = await getConnection(user.id, 'youtube');
+  let connection = await getConnection(user.id, 'youtube');
   if (!connection) {
     return NextResponse.json({ error: 'YouTube not connected' }, { status: 404 });
   }
