@@ -1,5 +1,6 @@
 import { NextRequest, NextResponse } from 'next/server';
-import { getConnection, getDecryptedTokens, getUserFromRequest } from '../../_utils';
+import { getConnection, getDecryptedTokens, getUserFromRequest, upsertConnection } from '../../_utils';
+import { supabaseAdmin } from '@/lib/supabase/server';
 
 const parseYouTubeDurationSeconds = (value?: string): number | null => {
   if (!value) return null;
@@ -10,6 +11,56 @@ const parseYouTubeDurationSeconds = (value?: string): number | null => {
   const seconds = Number(match[3] || 0);
   return (hours * 3600) + (minutes * 60) + seconds;
 };
+
+async function refreshYouTubeToken(connection: any) {
+  const clientId = process.env.GOOGLE_OAUTH_CLIENT_ID;
+  const clientSecret = process.env.GOOGLE_OAUTH_CLIENT_SECRET;
+  if (!clientId || !clientSecret) return connection;
+
+  const tokens = getDecryptedTokens(connection);
+  if (!tokens.refreshToken) return connection;
+
+  const res = await fetch('https://oauth2.googleapis.com/token', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+    body: new URLSearchParams({
+      client_id: clientId,
+      client_secret: clientSecret,
+      grant_type: 'refresh_token',
+      refresh_token: tokens.refreshToken,
+    }),
+  });
+
+  if (!res.ok) return connection;
+  const data = await res.json();
+  const expiresIn = data.expires_in as number | undefined;
+
+  if (data.access_token) {
+    const existingScopes = Array.isArray(connection.scopes)
+      ? connection.scopes
+      : String(connection.scopes || '').split(' ').filter(Boolean);
+
+    await upsertConnection({
+      userId: connection.user_id,
+      provider: 'youtube',
+      externalAccountId: connection.external_account_id,
+      scopes: String(data.scope || '').split(' ').filter(Boolean).length
+        ? String(data.scope || '').split(' ').filter(Boolean)
+        : existingScopes,
+      accessToken: data.access_token,
+      refreshToken: data.refresh_token || tokens.refreshToken,
+      expiresAt: expiresIn ? new Date(Date.now() + expiresIn * 1000).toISOString() : null,
+      metadata: connection.metadata || {},
+    });
+  }
+
+  const { data: updated } = await supabaseAdmin
+    .from('integration_connections')
+    .select('*')
+    .eq('id', connection.id)
+    .single() as { data: any };
+  return updated || connection;
+}
 
 export async function GET(request: NextRequest) {
   const { user, error } = await getUserFromRequest(request);
@@ -22,17 +73,33 @@ export async function GET(request: NextRequest) {
     return NextResponse.json({ error: 'YouTube not connected' }, { status: 404 });
   }
 
-  const { accessToken } = getDecryptedTokens(connection);
+  const expiresAt = connection.expires_at ? new Date(connection.expires_at).getTime() : null;
+  if (expiresAt && expiresAt < Date.now() + 60 * 1000) {
+    connection = await refreshYouTubeToken(connection);
+  }
+
+  let { accessToken } = getDecryptedTokens(connection);
   if (!accessToken) {
     return NextResponse.json({ error: 'YouTube token missing' }, { status: 401 });
   }
 
   const maxResults = Math.min(50, Math.max(1, Number(new URL(request.url).searchParams.get('limit') || 20)));
 
-  const channelsRes = await fetch(`https://www.googleapis.com/youtube/v3/channels?part=contentDetails,snippet&mine=true`, {
+  let channelsRes = await fetch(`https://www.googleapis.com/youtube/v3/channels?part=contentDetails,snippet&mine=true`, {
     headers: { Authorization: `Bearer ${accessToken}` },
     cache: 'no-store',
   });
+
+  if (channelsRes.status === 401) {
+    connection = await refreshYouTubeToken(connection);
+    accessToken = getDecryptedTokens(connection).accessToken;
+    if (accessToken) {
+      channelsRes = await fetch(`https://www.googleapis.com/youtube/v3/channels?part=contentDetails,snippet&mine=true`, {
+        headers: { Authorization: `Bearer ${accessToken}` },
+        cache: 'no-store',
+      });
+    }
+  }
 
   if (!channelsRes.ok) {
     const text = await channelsRes.text();
