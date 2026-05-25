@@ -87,14 +87,12 @@ type OutputIconKey = keyof typeof OUTPUT_ICONS;
 
 // Constants
 const SOCIAL_TAGS = [
-  "Creators: podcasts and interviews",
-  "Teams: meetings and customer calls",
-  "Educators: lectures and panels",
+  "B2B teams: podcasts, calls, demos, updates",
+  "Founder-led content workflows",
+  "Subscription content operations",
   "Speaker-attributed transcripts",
-  "Choose analysis runs per upload",
-  "Generate outputs only when needed",
+  "Monthly publishing systems",
   "Review and edit before export",
-  "No subscription required",
 ];
 
 const SECTION_VIEWPORT = { once: true, amount: 0.2 };
@@ -204,10 +202,10 @@ const HOW_IT_WORKS_STEPS: HowItWorksStep[] = [
   {
     id: "upload",
     n: "01",
-    title: "Upload Your Audio",
-    eyebrow: "Start with the source",
+    title: "Add the Source",
+    eyebrow: "Input",
     description:
-      "Drop in the episode, pick the import source, and start from a polished upload surface with automatic speaker recognition ready to run.",
+      "Upload a podcast, customer call, product demo, founder update, or team recording that already contains useful ideas.",
     accent: "bg-blue-500",
     ring: "ring-blue-500/20",
     Icon: Upload,
@@ -215,10 +213,10 @@ const HOW_IT_WORKS_STEPS: HowItWorksStep[] = [
   {
     id: "process",
     n: "02",
-    title: "Choose What Runs",
-    eyebrow: "Switch on the right workflow",
+    title: "Run the Content System",
+    eyebrow: "Process",
     description:
-      "Turn on automatic speaker recognition, summaries, insights, chapters, and takeaways only when you need them, without cluttering the flow.",
+      "Transcribe the conversation, identify speakers, pull key ideas, and organize the best angles for your audience.",
     accent: "bg-violet-500",
     ring: "ring-violet-500/20",
     Icon: Sparkles,
@@ -226,10 +224,10 @@ const HOW_IT_WORKS_STEPS: HowItWorksStep[] = [
   {
     id: "outputs",
     n: "03",
-    title: "Publish From One Workspace",
-    eyebrow: "Everything is ready downstream",
+    title: "Publish the Outputs",
+    eyebrow: "Output",
     description:
-      "Move from transcript, automatic speaker recognition, and cleanup into finished content assets without leaving the same workspace.",
+      "Turn the source into LinkedIn posts, X threads, newsletters, summaries, clips scripts, and client-ready exports.",
     accent: "bg-indigo-500",
     ring: "ring-indigo-500/20",
     Icon: Zap,
@@ -453,52 +451,52 @@ const CONTENT_PREVIEW_MAP: Record<string, InteractivePreview> = {
 };
 
 const HERO_ROTATING_PHRASES = [
-  "a clean transcript",
-  "speaker-attributed insights",
-  "publish-ready drafts",
-  "channel-ready content kits",
-  "assets you can ship today",
+  "a weekly content engine",
+  "founder posts",
+  "sales-ready newsletters",
+  "executive LinkedIn drafts",
+  "multi-channel content kits",
 ] as const;
 
 const ANALYSIS_METRICS = [
   {
-    label: "Coaching gaps",
-    value: "2 gaps",
-    note: "High-priority issues to fix in this or the next episode",
+    label: "Input",
+    value: "Call",
+    note: "Podcast, demo, customer call, founder update, or team recording",
   },
   {
-    label: "Missed opportunities",
-    value: "3",
-    note: "Moments where the episode could have been clearer, deeper, or stronger",
+    label: "System",
+    value: "AI",
+    note: "Transcript, speaker attribution, summary, quotes, and reusable angles",
   },
   {
-    label: "Strengths",
-    value: "4",
-    note: "Choices worth repeating because they clearly worked for listeners",
+    label: "Output",
+    value: "Posts",
+    note: "LinkedIn, X, newsletters, show notes, and short-form scripts",
   },
 ];
 
 const ANALYSIS_OPPORTUNITIES = [
   {
-    title: "The opening takes too long to reveal the real tension",
-    type: "Hook",
+    title: "Founder insight becomes a LinkedIn post",
+    type: "LinkedIn",
     severity: "High",
     action:
-      "Lead with the strongest question or disagreement in the first 30 seconds.",
+      "Pull the clearest point of view from the conversation and shape it into a post a buyer can understand.",
   },
   {
-    title: "The guest hints at a stronger example that never gets explored",
-    type: "Follow-up",
+    title: "Customer story becomes a short thread",
+    type: "X",
     severity: "Medium",
     action:
-      "Ask one more concrete follow-up so the audience gets the full story.",
+      "Turn one useful example into a concise sequence with a hook, proof, and takeaway.",
   },
   {
-    title: "The personal story sections are the most memorable moments",
-    type: "Strength",
+    title: "Product update becomes a newsletter block",
+    type: "Email",
     severity: "Low",
     action:
-      "Use more specific examples like this in future episodes and clips.",
+      "Translate a feature or launch note into plain-language value for customers and investors.",
   },
 ];
 
@@ -1658,12 +1656,12 @@ function Navbar({
 
   useEffect(() => setMounted(true), []);
   const links = [
-    { label: "Speaker AI", href: "#speaker-intelligence" },
+    { label: "Platform", href: "#speaker-intelligence" },
     { label: "How it Works", href: "#how-it-works" },
     { label: "Outputs", href: "#outputs" },
-    { label: "Analysis", href: "#analysis" },
+    { label: "Intelligence", href: "#analysis" },
     { label: "Pricing", href: "#pricing" },
-    { label: "Privacy", href: "/privacy" },
+    { label: "Agency", href: "/agency" },
   ];
   const logoTheme = mounted && resolvedTheme === "light" ? "light" : "dark";
 
@@ -1706,7 +1704,7 @@ function Navbar({
               href="/auth/signup"
               className="whitespace-nowrap rounded-lg bg-blue-600 px-4 py-2 text-sm font-semibold text-white shadow-sm transition-colors hover:bg-blue-700"
             >
-              Get Started Free
+              Start subscription
             </Link>
             <LaunchThemeToggle />
           </div>
@@ -1764,7 +1762,7 @@ function Navbar({
               onClick={() => setOpen(false)}
               className="block text-center py-2.5 text-sm font-semibold text-white bg-blue-600 rounded-xl hover:bg-blue-700"
             >
-              Get Started Free
+              Start subscription
             </Link>
           </div>
         </div>
@@ -1804,7 +1802,7 @@ function Hero() {
               transition={{ duration: 0.45, ease: "easeOut" }}
             >
               <span className="h-2 w-2 rounded-full bg-blue-500 dark:bg-cyan-300" />
-              One workflow for transcript, analysis, and content
+              B2B content operations for teams
             </motion.div>
             <motion.h1
               className="mb-6 text-[2.2rem] font-bold leading-[1.12] tracking-tight text-slate-900 dark:text-white sm:text-5xl sm:leading-tight md:text-6xl"
@@ -1817,7 +1815,7 @@ function Hero() {
                 <HeroWordPill phrase={HERO_ROTATING_PHRASES[activePhrase]} />
               </div>
               <div className="mt-2 sm:mt-3 text-[0.8em]">
-                Analyze clearly. Publish faster.
+                Review clearly. Publish every week.
               </div>
             </motion.h1>
 
@@ -1827,9 +1825,9 @@ function Hero() {
               animate={{ opacity: 1, y: 0 }}
               transition={{ duration: 0.55, delay: 0.16, ease: "easeOut" }}
             >
-              AudioRepurpose turns one uploaded recording into a speaker-labeled
-              transcript and channel-ready content outputs, including summaries,
-              show notes, and social drafts.
+              AudioRepurpose turns podcasts, sales calls, demos, and founder
+              updates into a repeatable content system for LinkedIn, X,
+              newsletters, and internal briefs.
             </motion.p>
             <motion.p
               className="mx-auto mb-10 max-w-2xl text-sm text-slate-600 dark:text-blue-100/80"
@@ -1858,7 +1856,7 @@ function Hero() {
                 href="/auth/signup"
                 className="inline-flex items-center gap-2 bg-blue-600 hover:bg-blue-500 text-white font-semibold px-7 py-3.5 rounded-xl transition-colors shadow-lg shadow-blue-900/50"
               >
-                Try it with one recording
+                Start subscription
                 <ArrowRight className="h-4 w-4" />
               </Link>
               <Link
@@ -1874,8 +1872,8 @@ function Hero() {
               animate={{ opacity: 1, y: 0 }}
               transition={{ duration: 0.5, delay: 0.28, ease: "easeOut" }}
             >
-              No subscription required. Choose analysis per upload. Review
-              before export.
+              Monthly plans for teams that need a steady pipeline of clear,
+              useful content from conversations they already have.
             </motion.p>
 
             <motion.div
@@ -1887,11 +1885,11 @@ function Hero() {
               <div className="flex flex-nowrap items-center justify-center gap-2 px-1">
                 {[
                   "Speaker-attributed transcript",
-                  "Automatic speaker recognition",
-                  "Insights + chapters",
-                  "Show notes",
-                  "LinkedIn draft",
-                  "Quote pulls",
+                  "Founder updates",
+                  "Input to output workflow",
+                  "LinkedIn posts",
+                  "X threads",
+                  "Newsletter drafts",
                 ].map((tag, index) => (
                   <motion.span
                     key={tag}
@@ -2485,15 +2483,15 @@ function AnalysisSection() {
           variants={sectionContainer}
         >
           <span className="text-sm font-semibold uppercase tracking-widest text-blue-300">
-            Analysis
+            Content intelligence
           </span>
           <h2 className="mt-2 text-3xl font-bold text-white md:text-4xl">
-            Review the conversation before you turn it into more content.
+            A simpler path from raw conversation to finished content.
           </h2>
           <p className="mx-auto mt-4 max-w-2xl text-base text-blue-100/82">
-            AudioRepurpose reads the transcript like an editor would: where the
-            hook landed, where the follow-up missed, and which moments deserve
-            to become assets.
+            The product should feel easy to understand: put in a useful source,
+            let the system find the strongest ideas, then review polished drafts
+            before publishing.
           </p>
         </motion.div>
 
@@ -2511,36 +2509,54 @@ function AnalysisSection() {
                 className="flex items-center gap-2 text-[11px] font-semibold uppercase tracking-[0.18em] text-blue-200/55"
               >
                 <BarChart3 className="h-4 w-4 text-blue-300" />
-                Creator coaching
+                Input to output
               </motion.div>
               <motion.h3
                 variants={sectionItem}
                 className="mt-4 text-4xl font-bold tracking-tight text-white"
               >
-                Analytics that connect transcript quality to what you publish
-                next.
+                Less dashboard noise. More obvious next steps.
               </motion.h3>
               <motion.p
                 variants={sectionItem}
                 className="mt-5 max-w-xl text-sm leading-7 text-blue-100/82"
               >
-                Instead of just counting outputs, AudioRepurpose shows where the
-                conversation created usable material, where it lost momentum,
-                and what to tighten before the next draft or recording.
+                Teams should immediately understand what went in, what the AI
+                extracted, and what content is ready to review.
               </motion.p>
 
               <motion.div variants={sectionItem} className="mt-8 xl:mt-8">
-                <div className="relative overflow-hidden rounded-[1.5rem] border border-white/10 bg-transparent p-5">
+                <div className="relative overflow-hidden rounded-[1.5rem] border border-white/10 bg-white/8 p-5">
                   <div className="pointer-events-none absolute inset-0 bg-[linear-gradient(to_right,rgba(255,255,255,0.04)_1px,transparent_1px),linear-gradient(to_bottom,rgba(255,255,255,0.04)_1px,transparent_1px)] bg-[size:24px_24px,24px_24px] opacity-60" />
                   <div className="relative">
                     <p className="text-[11px] font-semibold uppercase tracking-[0.16em] text-blue-100/50">
-                      Content mix
+                      Simple workflow
                     </p>
                     <h4 className="mt-1 text-lg font-semibold tracking-tight text-white">
-                      What this upload produced across formats
+                      Input to output in one view
                     </h4>
-                    <div className="mt-6">
-                      <AnalysisContentPieChart />
+                    <div className="mt-6 grid gap-3 sm:grid-cols-[1fr_auto_1fr_auto_1fr] sm:items-stretch">
+                      {[
+                        { label: "Input", value: "Call, demo, update" },
+                        { label: "AI system", value: "Transcript + angles" },
+                        { label: "Output", value: "Posts + newsletters" },
+                      ].map((step, index) => (
+                        <div key={step.label} className="contents">
+                          <div className="rounded-2xl border border-white/10 bg-white/8 p-4">
+                            <p className="text-[11px] font-semibold uppercase tracking-[0.16em] text-blue-100/50">
+                              {step.label}
+                            </p>
+                            <p className="mt-2 text-sm font-semibold leading-6 text-white">
+                              {step.value}
+                            </p>
+                          </div>
+                          {index < 2 && (
+                            <div className="hidden items-center justify-center text-blue-200/70 sm:flex">
+                              <ArrowRight className="h-5 w-5" />
+                            </div>
+                          )}
+                        </div>
+                      ))}
                     </div>
                   </div>
                 </div>
@@ -2550,15 +2566,15 @@ function AnalysisSection() {
                 {[
                   {
                     Icon: Target,
-                    text: "Catch weak openings, soft CTAs, and missed audience payoff before you publish.",
+                    text: "See the source, extracted ideas, and finished drafts without guessing where to click.",
                   },
                   {
                     Icon: Lightbulb,
-                    text: "Spot where the host should have gone deeper, clarified, or followed up.",
+                    text: "Use plain labels for posts, threads, newsletters, summaries, and review actions.",
                   },
                   {
                     Icon: BarChart3,
-                    text: "See which moments actually landed so you can repeat what works next episode.",
+                    text: "Keep advanced analysis available, but make the first view calm and easy to scan.",
                   },
                 ].map(({ Icon, text }) => (
                   <motion.div
@@ -2583,14 +2599,14 @@ function AnalysisSection() {
                 <div className="flex flex-col gap-4 border-b border-white/10 pb-5 sm:flex-row sm:items-end sm:justify-between">
                   <div>
                     <p className="text-[11px] font-semibold uppercase tracking-[0.18em] text-blue-100/50">
-                      Coaching snapshot
+                      Content snapshot
                     </p>
                     <h3 className="mt-2 text-2xl font-bold tracking-tight text-white">
-                      What to fix, keep, or improve next
+                      What came in and what is ready next
                     </h3>
                   </div>
                   <div className="flex flex-wrap gap-2">
-                    {["Gaps", "Strengths", "Next actions"].map((pill) => (
+                    {["Input", "AI work", "Output"].map((pill) => (
                       <span
                         key={pill}
                         className="rounded-md border border-white/10 bg-white/8 px-2.5 py-1.5 text-[11px] font-semibold uppercase tracking-[0.14em] text-blue-50/75"
@@ -2633,32 +2649,32 @@ function AnalysisSection() {
                     <div className="flex items-center justify-between">
                       <div>
                         <p className="text-[11px] font-semibold uppercase tracking-[0.16em] text-blue-100/50">
-                          Topic intensity
+                          Output readiness
                         </p>
                         <h4 className="mt-1 text-lg font-semibold tracking-tight text-white">
-                          Where the conversation spends its energy
+                          Simple progress by content type
                         </h4>
                       </div>
                     </div>
                     <div className="mt-6 space-y-4">
                       {[
                         {
-                          name: "AI safety",
+                          name: "LinkedIn posts",
                           width: "84%",
                           tone: "from-blue-600 to-cyan-400",
                         },
                         {
-                          name: "Future of work",
+                          name: "X threads",
                           width: "68%",
                           tone: "from-violet-600 to-indigo-400",
                         },
                         {
-                          name: "Sponsor CTA",
+                          name: "Newsletter",
                           width: "38%",
                           tone: "from-amber-500 to-orange-400",
                         },
                         {
-                          name: "Founder story",
+                          name: "Clip scripts",
                           width: "56%",
                           tone: "from-emerald-500 to-lime-400",
                         },
@@ -2703,10 +2719,10 @@ function AnalysisSection() {
                   <div className="flex items-center justify-between">
                     <div>
                       <p className="text-[11px] font-semibold uppercase tracking-[0.16em] text-blue-100/50">
-                        Creator coaching
+                        Draft queue
                       </p>
                       <h4 className="mt-1 text-lg font-semibold tracking-tight text-white">
-                        What to fix or lean into next
+                        Plain-language review actions
                       </h4>
                     </div>
                   </div>
@@ -2772,11 +2788,11 @@ function Pricing() {
             Pricing
           </span>
           <h2 className="text-3xl md:text-4xl font-bold text-slate-900 mt-2 dark:text-white">
-            Pay only for what you process
+            Monthly plans for recurring content operations
           </h2>
           <p className="text-slate-600 mt-4 max-w-xl mx-auto text-base dark:text-slate-300">
-            One pay-as-you-go workflow: base transcript, optional analysis, and
-            per-output content generation.
+            Give your team a predictable system for turning conversations,
+            updates, and demos into publish-ready content every month.
           </p>
         </div>
 
@@ -2819,14 +2835,14 @@ function Pricing() {
               href="/auth/signup"
               className="inline-flex min-w-[220px] items-center justify-center rounded-xl bg-blue-600 px-6 py-3 text-sm font-semibold text-white transition-colors hover:bg-blue-700"
             >
-              Process your first recording
+              Start subscription
             </Link>
           </div>
         </div>
 
         <p className="mt-8 text-center text-sm text-slate-500 dark:text-slate-400">
-          No subscriptions. Buy credits, upload when you need to, and trigger
-          analysis or content generation only when it adds value.
+          Plans are built around monthly project volume, content output needs,
+          and the review workflow your team wants to run.
         </p>
         <p className="mt-3 text-center text-sm text-slate-500 dark:text-slate-400">
           {PRICING_MODEL_SUMMARY}
@@ -2845,8 +2861,8 @@ function FinalCTA() {
 
   const stats = [
     { value: 11, suffix: "", label: "Content types" },
-    { value: 5, suffix: " min", label: "Per episode" },
-    { value: 0, suffix: "", label: "Subscriptions required" },
+    { value: 5, suffix: " min", label: "Fast first draft" },
+    { value: 3, suffix: "", label: "Monthly plans" },
   ] as const;
   const logoTheme = mounted && resolvedTheme === "dark" ? "dark" : "light";
 
@@ -2865,11 +2881,11 @@ function FinalCTA() {
           className="mb-6 motion-safe:animate-fade-up"
         />
         <h2 className="mb-4 text-3xl font-bold leading-tight text-slate-900 motion-safe:animate-fade-up-200 dark:text-white md:text-4xl">
-          Start Repurposing Today
+          Build a steady content pipeline from conversations.
         </h2>
         <p className="mb-10 text-lg leading-relaxed text-slate-600 motion-safe:animate-fade-up-400 dark:text-blue-200/70">
-          Turn one recording into transcripts, insights, and 11 publish-ready
-          content types.
+          Upload the source, review the strongest ideas, and ship clear posts,
+          newsletters, summaries, and scripts every month.
         </p>
 
         <div className="flex flex-col sm:flex-row items-center justify-center gap-4 motion-safe:animate-fade-up-600">
@@ -2877,7 +2893,7 @@ function FinalCTA() {
             href="/auth/signup"
             className="inline-flex items-center gap-2 bg-white text-blue-900 hover:bg-blue-50 font-bold px-8 py-4 rounded-xl transition-colors shadow-xl text-base"
           >
-            Get Started Free
+            Start subscription
             <ArrowRight className="h-5 w-5" />
           </Link>
           <Link
@@ -2925,8 +2941,9 @@ function Footer() {
               <BrandLogo theme={logoTheme} />
             </a>
             <p className="mt-4 max-w-md text-sm text-slate-500 dark:text-gray-500">
-              Turn one recording into a full content suite with accurate
-              speakers, clean summaries, and platform-ready outputs.
+              Turn podcasts, calls, demos, and founder updates into a recurring
+              B2B content engine with speaker-aware analysis and publish-ready
+              drafts.
             </p>
           </div>
           <div>
@@ -2938,7 +2955,7 @@ function Footer() {
                 href="#speaker-intelligence"
                 className="block transition-colors hover:text-slate-900 dark:hover:text-gray-200"
               >
-                Speaker Intelligence
+                Platform
               </a>
               <a
                 href="#how-it-works"
@@ -2956,7 +2973,7 @@ function Footer() {
                 href="#analysis"
                 className="block transition-colors hover:text-slate-900 dark:hover:text-gray-200"
               >
-                Analysis
+                Intelligence
               </a>
               <a
                 href="#pricing"
@@ -2981,7 +2998,7 @@ function Footer() {
                 href="/auth/signup"
                 className="block transition-colors hover:text-slate-900 dark:hover:text-gray-200"
               >
-                Get Started Free
+                Start Subscription
               </Link>
             </div>
           </div>

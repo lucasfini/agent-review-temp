@@ -45,7 +45,7 @@ const TOOLTIP_OFFSET_PX = 8;
 
 function getMobilePageTitle(pathname: string, activeSettingsSection: string | null): string {
   if (pathname === '/dashboard' || pathname === '/dashboard/hub') return 'All Projects';
-  if (pathname === '/dashboard/projects') return 'Studio';
+  if (pathname === '/dashboard/projects') return 'Project Workspace';
   if (pathname === '/dashboard/upload') return 'Upload Audio';
   if (pathname === '/dashboard/analytics') return 'Analytics';
   if (pathname === '/dashboard/billing') return 'Billing';
@@ -150,7 +150,6 @@ const sections: Array<{ label: string; items: NavItemDef[] }> = [
     label: 'WORKSPACE',
     items: [
       { name: 'Upload', href: '/dashboard/upload', icon: Upload },
-      { name: 'Studio', href: '/dashboard/projects', icon: FileText },
       { name: 'All Projects', href: '/dashboard/hub', icon: LayoutGrid },
     ],
   },
@@ -627,7 +626,7 @@ export default function DashboardNav({
     [pathname, activeSettingsSection]
   );
   const mobileActionHref = pathname === '/dashboard/upload' ? null : '/dashboard/upload';
-  const mobileActionLabel = pathname === '/dashboard/projects' ? 'Upload' : 'New';
+  const mobileActionLabel = pathname === '/dashboard/projects' ? 'Upload' : 'Upload';
 
   const activeProjectId = searchParams.get('id');
   const collapsed = isCollapsed ?? localCollapsed;

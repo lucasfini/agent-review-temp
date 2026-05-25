@@ -2800,15 +2800,15 @@ export default function ProjectsPage() {
         <div className="p-8 sm:p-10">
           <div className="inline-flex items-center gap-2 rounded-full border border-blue-200/80 dark:border-blue-500/20 bg-blue-50/80 dark:bg-blue-500/10 px-3 py-1 text-xs font-medium text-blue-700 dark:text-blue-300">
             <Sparkles className="h-3.5 w-3.5" />
-            Studio workspace
+            Project Workspace
           </div>
 
           <div className="mt-5 max-w-xl">
             <h3 className="text-2xl font-semibold tracking-tight text-slate-900 dark:text-slate-50">
-              Select a project to open the studio
+              Select a project to open the workspace
             </h3>
             <p className="mt-3 text-sm leading-6 text-slate-600 dark:text-slate-400">
-              Open a transcript to review speakers, scan insights, and work through generated content without leaving this view.
+              Open a project to review the transcript, check speaker labels, and work through generated content in one place.
             </p>
           </div>
 
@@ -2944,7 +2944,7 @@ export default function ProjectsPage() {
               {/* Header with Select Toggle */}
               <div className="flex items-center justify-between">
                 <div className="flex items-center gap-3">
-                  <h2 className="text-lg font-medium text-slate-900 dark:text-slate-50">Studio</h2>
+                  <h2 className="text-lg font-medium text-slate-900 dark:text-slate-50">Project Workspace</h2>
                   <span className="text-xs text-slate-500 hidden sm:inline">
                     {projects.length} project{projects.length !== 1 ? 's' : ''}
                   </span>

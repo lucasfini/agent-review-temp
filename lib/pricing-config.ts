@@ -26,50 +26,47 @@ export const CONTENT_OUTPUT_PRICES = {
 
 export const PAYG_SECTIONS = [
   {
-    name: "Base transcript",
-    price: BASE_TRANSCRIPTION_PRICE_LABEL,
+    name: "Starter",
+    price: "$299/mo",
     description:
-      "Per-hour transcript foundation with numbered speaker labels and timestamps.",
+      "For founders or small teams turning a few calls or recordings into consistent posts.",
     features: [
-      "Clean transcript",
-      "Speaker labels (numbered)",
-      "Word-level timestamps",
-      "Export to Markdown / Notion",
+      "Up to 4 projects per month",
+      "LinkedIn and X post drafts",
+      "Speaker-labeled transcripts",
+      "Basic summaries and quotes",
     ],
   },
   {
-    name: "Optional analysis",
-    price: "Usage-based",
+    name: "Growth",
+    price: "$799/mo",
     description:
-      "Turn on only what you need during processing. Cost scales with transcript length.",
+      "For teams that want a weekly content engine from podcasts, calls, demos, and updates.",
     features: [
-      "Named speakers with roles",
-      "Episode summary",
-      "Insights",
-      "Chapter breakdown",
-      "Key takeaways",
-      "Notable quotes",
+      "Up to 12 projects per month",
+      "Multi-channel content kits",
+      "Content intelligence and takeaways",
+      "Reusable team voice and themes",
+      "Priority processing",
     ],
   },
   {
-    name: "Per-output generation",
-    price: "Per output",
+    name: "Scale",
+    price: "Custom",
     description:
-      "Generate content later from the project page, one fixed-price output at a time.",
+      "For B2B teams with higher volume, approvals, and a recurring publishing workflow.",
     features: [
-      "X / Twitter thread",
-      "LinkedIn post",
-      "YouTube description",
-      "TikTok / Reels script",
-      "Podcast show notes",
-      "Email newsletter",
-      "Blog post",
+      "Custom monthly project volume",
+      "Founder and executive content workflows",
+      "Client-ready export packages",
+      "Team onboarding and support",
+      "Custom reporting",
     ],
   },
 ] as const;
 
 export const PRICING_MODEL_SUMMARY =
-  "Transcription stays low-friction, analysis scales with transcript length, and content outputs are charged per generated asset.";
+  "Every plan includes transcription, speaker attribution, AI analysis, and publish-ready content drafts. Usage limits can be adjusted as your team grows.";
 
 const ONE_HOUR = 1;
 const EXAMPLE_BASE_TRANSCRIPTION = BASE_TRANSCRIPTION_PRICE_PER_HOUR * ONE_HOUR;
