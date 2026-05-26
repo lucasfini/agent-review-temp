@@ -1,5 +1,6 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { requireAuthenticatedUser, RouteAccessError } from '@/lib/api/route-auth';
+import { buildOrgScopedLegacyFallbackFilter, getDashboardOrganizationContext } from '@/lib/api/dashboard-org-context';
 import { supabaseAdmin } from '@/lib/supabase/server';
 
 export const dynamic = 'force-dynamic';
@@ -8,15 +9,17 @@ export const revalidate = 0;
 export async function GET(request: NextRequest) {
   try {
     const user = await requireAuthenticatedUser(request);
+    const { organizationId } = await getDashboardOrganizationContext(request, user.id);
     const { searchParams } = new URL(request.url);
     const page = Math.max(1, Number(searchParams.get('page') || '1'));
     const limit = Math.max(1, Math.min(100, Number(searchParams.get('limit') || '10')));
     const offset = (page - 1) * limit;
+    const scopeFilter = buildOrgScopedLegacyFallbackFilter(organizationId, user.id);
 
     const { data, error, count } = await supabaseAdmin
       .from('projects')
       .select('id, title, audio_file_name, audio_file_size, audio_duration, audio_expires_at, audio_deleted_at, status, created_at, processing_completed_at', { count: 'exact' })
-      .eq('user_id', user.id)
+      .or(scopeFilter)
       .in('status', ['completed', 'failed'])
       .order('created_at', { ascending: false })
       .range(offset, offset + limit - 1) as { data: any[] | null; error: any; count?: number | null };
