@@ -13,7 +13,8 @@
  */
 
 import { NextRequest, NextResponse } from 'next/server';
-import { createClient } from '@supabase/supabase-js';
+import { RouteAccessError, requireAuthenticatedUser, requireProjectOwner } from '@/lib/api/route-auth';
+import { supabaseAdmin } from '@/lib/supabase/server';
 import {
   generateStrictJSONContent,
   generateShowNotes,
@@ -25,11 +26,6 @@ import {
   StrictJSONEngineOutput
 } from '@/lib/strict-json-content-engine';
 
-// Initialize Supabase client
-const supabaseUrl = process.env.NEXT_PUBLIC_SUPABASE_URL!;
-const supabaseServiceKey = process.env.SUPABASE_SERVICE_ROLE_KEY!;
-const supabase = createClient(supabaseUrl, supabaseServiceKey);
-
 interface RequestBody {
   // Required
   theme_name: string;
@@ -40,6 +36,7 @@ interface RequestBody {
   transcript?: string;
   speaker_data?: Record<string, { name: string; role?: string }>;
   project_id?: string;
+  // Deprecated: ignored for security; server-side auth user is always used.
   user_id?: string;
 
   // Selective generation
@@ -51,6 +48,24 @@ export async function POST(request: NextRequest) {
 
   try {
     const body: RequestBody = await request.json();
+    let authenticatedUserId: string;
+    let authorizedProjectId: string | undefined;
+
+    try {
+      if (body.project_id) {
+        const { user } = await requireProjectOwner(request, body.project_id, 'id');
+        authenticatedUserId = user.id;
+        authorizedProjectId = body.project_id;
+      } else {
+        const user = await requireAuthenticatedUser(request);
+        authenticatedUserId = user.id;
+      }
+    } catch (authError) {
+      if (authError instanceof RouteAccessError) {
+        return NextResponse.json({ error: authError.message }, { status: authError.status });
+      }
+      throw authError;
+    }
 
     // Validate required fields
     if (!body.theme_name) {
@@ -86,8 +101,8 @@ export async function POST(request: NextRequest) {
       cleaned_narrative_summary: body.cleaned_narrative_summary,
       transcript: body.transcript,
       speaker_data: body.speaker_data,
-      userId: body.user_id,
-      projectId: body.project_id,
+      userId: authenticatedUserId,
+      projectId: authorizedProjectId,
     };
 
     let result: Partial<StrictJSONEngineOutput>;
@@ -139,15 +154,15 @@ export async function POST(request: NextRequest) {
     }
 
     // Optionally save to database
-    if (body.project_id && body.user_id) {
-      console.log(`[STRICT-JSON-API] 💾 Saving to database for project ${body.project_id}`);
+    if (authorizedProjectId) {
+      console.log(`[STRICT-JSON-API] 💾 Saving to database for project ${authorizedProjectId}`);
 
       const outputs = [];
 
       if (result.show_notes) {
         outputs.push({
-          project_id: body.project_id,
-          user_id: body.user_id,
+          project_id: authorizedProjectId,
+          user_id: authenticatedUserId,
           type: 'show_notes',
           platform: 'general',
           title: result.show_notes.content.title,
@@ -165,8 +180,8 @@ export async function POST(request: NextRequest) {
 
       if (result.email_newsletter) {
         outputs.push({
-          project_id: body.project_id,
-          user_id: body.user_id,
+          project_id: authorizedProjectId,
+          user_id: authenticatedUserId,
           type: 'social_post', // Database doesn't allow 'email_newsletter'
           platform: 'general', // Database doesn't allow 'email'
           title: result.email_newsletter.content.subject_line,
@@ -186,8 +201,8 @@ export async function POST(request: NextRequest) {
 
       if (result.blog_post) {
         outputs.push({
-          project_id: body.project_id,
-          user_id: body.user_id,
+          project_id: authorizedProjectId,
+          user_id: authenticatedUserId,
           type: 'blog_post',
           platform: 'general', // Database doesn't allow 'blog'
           title: result.blog_post.content.title,
@@ -203,8 +218,8 @@ export async function POST(request: NextRequest) {
 
       if (result.quote_graphic) {
         outputs.push({
-          project_id: body.project_id,
-          user_id: body.user_id,
+          project_id: authorizedProjectId,
+          user_id: authenticatedUserId,
           type: 'quote_graphic',
           platform: 'general',
           title: `Quote by ${result.quote_graphic.content.speaker_name}`,
@@ -220,7 +235,7 @@ export async function POST(request: NextRequest) {
       }
 
       if (outputs.length > 0) {
-        const { error } = await supabase
+        const { error } = await supabaseAdmin
           .from('outputs')
           .insert(outputs);
 
@@ -275,7 +290,6 @@ export async function GET() {
             transcript: 'string - Full transcript (required for verbatim quotes)',
             speaker_data: 'object - Speaker name/role mapping',
             project_id: 'string - UUID to save outputs to database',
-            user_id: 'string - UUID of the user',
             content_types: 'array - Selective generation: ["show_notes", "email_newsletter", "blog_post", "quote_graphic"]'
           }
         },
