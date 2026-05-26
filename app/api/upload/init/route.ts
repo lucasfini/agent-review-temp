@@ -16,6 +16,7 @@ import { estimateTranscriptionCostAsync } from '@/lib/billing/cost-map';
 import { getProcessingTierForAnalysis, normalizeAnalysisOptions } from '@/lib/analysis-options';
 import { createReservation, releaseReservation } from '@/lib/billing/credit';
 import { estimateReservationAmount } from '@/lib/billing/reserve-amount';
+import { resolveOrganizationIdForWrite } from '@/lib/authz/organization-context';
 
 export const runtime = 'nodejs';
 
@@ -57,6 +58,9 @@ export async function POST(request: NextRequest) {
 
         const body = await request.json();
         const { fileName, contentType, size, title, rosterSpeakers, speakerCount } = body;
+        const requestedOrganizationId = typeof body?.organization_id === 'string'
+            ? body.organization_id
+            : null;
 
         if (!fileName || !contentType || !size || !title) {
             return NextResponse.json({ error: 'Missing required fields' }, { status: 400 });
@@ -100,9 +104,11 @@ export async function POST(request: NextRequest) {
 
         const estimatedHold = estimateReservationAmount(estimatedCost.total, 'upload_processing');
         await requireCredits(user.id, estimatedHold);
+        const organizationId = await resolveOrganizationIdForWrite(user.id, requestedOrganizationId);
 
         const reservation = await createReservation({
             userId: user.id,
+            organizationId,
             workflowType: 'upload_processing',
             amount: estimatedHold,
             metadata: {
@@ -121,6 +127,7 @@ export async function POST(request: NextRequest) {
         // Create project record
         let insertData: any = {
             user_id: user.id,
+            organization_id: organizationId,
             title: title.trim(),
             audio_file_name: sanitizedBaseName,
             audio_file_size: size,
@@ -156,6 +163,7 @@ export async function POST(request: NextRequest) {
             insertData = {
                 ...legacyBase,
                 user_id: user.id,
+                organization_id: organizationId,
                 title,
                 audio_file_name: sanitizedBaseName,
                 audio_file_size: size,

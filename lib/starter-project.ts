@@ -1,5 +1,6 @@
 import { User } from '@supabase/supabase-js';
 
+import { resolveOrganizationIdForWrite } from '@/lib/authz/organization-context';
 import { supabaseAdmin } from '@/lib/supabase/server';
 
 const STARTER_TEMPLATE_ENV = 'STARTER_PROJECT_TEMPLATE_ID';
@@ -105,10 +106,11 @@ async function copyProjectRows(params: {
   sourceProjectId: string;
   targetProjectId: string;
   targetUserId?: string;
+  targetOrganizationId?: string;
   projectTitle?: string | null;
   required?: boolean;
 }) {
-  const { table, sourceProjectId, targetProjectId, targetUserId, projectTitle, required = false } = params;
+  const { table, sourceProjectId, targetProjectId, targetUserId, targetOrganizationId, projectTitle, required = false } = params;
   const { data: rows, error: readError } = await supabaseAdmin
     .from(table)
     .select('*')
@@ -129,6 +131,7 @@ async function copyProjectRows(params: {
     clone.created_at = now;
     clone.updated_at = now;
     if (targetUserId && 'user_id' in clone) clone.user_id = targetUserId;
+    if (targetOrganizationId && 'organization_id' in clone) clone.organization_id = targetOrganizationId;
     if (projectTitle && 'project_title' in clone) clone.project_title = projectTitle;
     return clone;
   });
@@ -198,8 +201,10 @@ export async function ensureStarterProjectForUser(user: User): Promise<EnsureSta
   }
 
   const now = new Date().toISOString();
+  const resolvedOrganizationId = await resolveOrganizationIdForWrite(user.id);
   const projectInsert = omitCloneManagedFields(sourceProject);
   projectInsert.user_id = user.id;
+  projectInsert.organization_id = resolvedOrganizationId;
   projectInsert.audio_expires_at = null;
   projectInsert.audio_deleted_at = null;
   projectInsert.created_at = now;
@@ -249,6 +254,7 @@ export async function ensureStarterProjectForUser(user: User): Promise<EnsureSta
       table: 'outputs',
       sourceProjectId,
       targetProjectId: createdProject.id,
+      targetOrganizationId: resolvedOrganizationId,
       required: true,
     });
 
@@ -264,6 +270,7 @@ export async function ensureStarterProjectForUser(user: User): Promise<EnsureSta
       sourceProjectId,
       targetProjectId: createdProject.id,
       targetUserId: user.id,
+      targetOrganizationId: resolvedOrganizationId,
       projectTitle: createdProject.title,
       required: false,
     });

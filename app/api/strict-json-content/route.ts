@@ -15,6 +15,7 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { RouteAccessError, requireAuthenticatedUser, requireProjectOwner } from '@/lib/api/route-auth';
 import { supabaseAdmin } from '@/lib/supabase/server';
+import { resolveOrganizationIdForWrite } from '@/lib/authz/organization-context';
 import {
   generateStrictJSONContent,
   generateShowNotes,
@@ -50,15 +51,22 @@ export async function POST(request: NextRequest) {
     const body: RequestBody = await request.json();
     let authenticatedUserId: string;
     let authorizedProjectId: string | undefined;
+    let resolvedOrganizationId: string | null = null;
 
     try {
       if (body.project_id) {
-        const { user } = await requireProjectOwner(request, body.project_id, 'id');
+        const { user, project } = await requireProjectOwner<{ organization_id?: string | null }>(
+          request,
+          body.project_id,
+          'id, organization_id'
+        );
         authenticatedUserId = user.id;
         authorizedProjectId = body.project_id;
+        resolvedOrganizationId = project.organization_id || await resolveOrganizationIdForWrite(user.id);
       } else {
         const user = await requireAuthenticatedUser(request);
         authenticatedUserId = user.id;
+        resolvedOrganizationId = await resolveOrganizationIdForWrite(user.id);
       }
     } catch (authError) {
       if (authError instanceof RouteAccessError) {
@@ -163,6 +171,7 @@ export async function POST(request: NextRequest) {
         outputs.push({
           project_id: authorizedProjectId,
           user_id: authenticatedUserId,
+          organization_id: resolvedOrganizationId,
           type: 'show_notes',
           platform: 'general',
           title: result.show_notes.content.title,
@@ -182,6 +191,7 @@ export async function POST(request: NextRequest) {
         outputs.push({
           project_id: authorizedProjectId,
           user_id: authenticatedUserId,
+          organization_id: resolvedOrganizationId,
           type: 'social_post', // Database doesn't allow 'email_newsletter'
           platform: 'general', // Database doesn't allow 'email'
           title: result.email_newsletter.content.subject_line,
@@ -203,6 +213,7 @@ export async function POST(request: NextRequest) {
         outputs.push({
           project_id: authorizedProjectId,
           user_id: authenticatedUserId,
+          organization_id: resolvedOrganizationId,
           type: 'blog_post',
           platform: 'general', // Database doesn't allow 'blog'
           title: result.blog_post.content.title,
@@ -220,6 +231,7 @@ export async function POST(request: NextRequest) {
         outputs.push({
           project_id: authorizedProjectId,
           user_id: authenticatedUserId,
+          organization_id: resolvedOrganizationId,
           type: 'quote_graphic',
           platform: 'general',
           title: `Quote by ${result.quote_graphic.content.speaker_name}`,

@@ -10,6 +10,7 @@ import { billingErrorResponse, requireCredits } from '@/lib/billing/middleware';
 import { estimateAnalysisJobCostAsync, estimateContentGenerationCostAsync } from '@/lib/billing/cost-map';
 import { aiRatelimit } from '@/lib/rate-limit';
 import { estimateReservationAmount } from '@/lib/billing/reserve-amount';
+import { resolveOrganizationIdForWrite } from '@/lib/authz/organization-context';
 
 type GenerateItem = {
   kind: 'analysis' | 'content';
@@ -51,7 +52,7 @@ export async function POST(
 
     const { data: project, error: projectError } = await (supabaseAdmin as any)
       .from('projects')
-      .select('id, user_id, transcription_text')
+      .select('id, user_id, transcription_text, organization_id')
       .eq('id', projectId)
       .single();
 
@@ -64,6 +65,8 @@ export async function POST(
     if (!project.transcription_text) {
       return NextResponse.json({ error: 'Project transcription not available' }, { status: 400 });
     }
+
+    const projectOrganizationId = project.organization_id || await resolveOrganizationIdForWrite(project.user_id);
 
     const normalizedItems = items.filter((item) => {
       if (!item || (item.kind !== 'analysis' && item.kind !== 'content')) return false;
@@ -114,6 +117,7 @@ export async function POST(
       .map((item) => ({
         project_id: projectId,
         user_id: user.id,
+        organization_id: projectOrganizationId,
         kind: item.kind,
         target_key: item.targetKey,
         theme_id: item.kind === 'content' ? (item.themeId || DEFAULT_THEME_ID) : null,

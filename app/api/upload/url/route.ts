@@ -14,6 +14,7 @@ import { estimateTranscriptionCostAsync } from '@/lib/billing/cost-map';
 import { getProcessingTierForAnalysis, normalizeAnalysisOptions } from '@/lib/analysis-options';
 import { createReservation, releaseReservation } from '@/lib/billing/credit';
 import { estimateReservationAmount } from '@/lib/billing/reserve-amount';
+import { resolveOrganizationIdForWrite } from '@/lib/authz/organization-context';
 
 export const runtime = 'nodejs';
 export const dynamic = 'force-dynamic';
@@ -66,6 +67,9 @@ export async function POST(request: NextRequest) {
     const body = await request.json();
     const url = typeof body?.url === 'string' ? body.url.trim() : '';
     const titleInput = typeof body?.title === 'string' ? body.title : '';
+    const requestedOrganizationId = typeof body?.organization_id === 'string'
+      ? body.organization_id
+      : null;
     const rosterSpeakers = Array.isArray(body?.rosterSpeakers) ? body.rosterSpeakers : undefined;
     const analysisOptions = enforceNamedSpeakersForRoster(
       normalizeAnalysisOptions(body?.analysisOptions),
@@ -89,6 +93,7 @@ export async function POST(request: NextRequest) {
 
     const estimatedHold = estimateReservationAmount(estimatedCost.total, 'upload_processing');
     await requireCredits(user.id, estimatedHold);
+    const organizationId = await resolveOrganizationIdForWrite(user.id, requestedOrganizationId);
 
     await validatePublicUrl(url);
 
@@ -120,6 +125,7 @@ export async function POST(request: NextRequest) {
     const finalTitle = sanitizeTitle(title || getTitleFromFileName(fileName));
     const reservation = await createReservation({
       userId: user.id,
+      organizationId,
       workflowType: 'upload_processing',
       amount: estimatedHold,
       metadata: {
@@ -142,6 +148,7 @@ export async function POST(request: NextRequest) {
         buffer,
         performanceLevel: processingTier,
         analysisOptions,
+        organizationId,
         reservationId: reservation.id,
         reservationHoldAmount: estimatedHold,
         reservationEstimatedCost: estimatedCost.total,

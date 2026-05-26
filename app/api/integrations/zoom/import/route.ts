@@ -7,6 +7,7 @@ import { estimateTranscriptionCostAsync } from '@/lib/billing/cost-map';
 import { getProcessingTierForAnalysis, normalizeAnalysisOptions } from '@/lib/analysis-options';
 import { createReservation, releaseReservation } from '@/lib/billing/credit';
 import { estimateReservationAmount } from '@/lib/billing/reserve-amount';
+import { resolveOrganizationIdForWrite } from '@/lib/authz/organization-context';
 
 async function ensureAuth(request: NextRequest) {
   const authHeader = request.headers.get('authorization');
@@ -38,6 +39,7 @@ export async function POST(request: NextRequest) {
     const estimatedHold = estimateReservationAmount(estimatedCost.total, 'upload_processing');
 
     await requireCredits(user.id, estimatedHold);
+    const organizationId = await resolveOrganizationIdForWrite(user.id);
 
     if (!meetingId || !fileId) {
       return NextResponse.json({ error: 'Missing meetingId or fileId' }, { status: 400 });
@@ -91,6 +93,7 @@ export async function POST(request: NextRequest) {
 
     const reservation = await createReservation({
       userId: user.id,
+      organizationId,
       workflowType: 'upload_processing',
       amount: estimatedHold,
       metadata: {
@@ -114,6 +117,7 @@ export async function POST(request: NextRequest) {
         buffer: arrayBuffer,
         performanceLevel,
         analysisOptions,
+        organizationId,
         reservationId: reservation.id,
         reservationHoldAmount: estimatedHold,
         reservationEstimatedCost: estimatedCost.total,
@@ -128,6 +132,7 @@ export async function POST(request: NextRequest) {
 
     await supabaseAdmin.from('integration_imports').insert({
       user_id: user.id,
+      organization_id: result.organizationId || organizationId,
       provider: 'zoom',
       external_recording_id: fileId,
       project_id: result.projectId,

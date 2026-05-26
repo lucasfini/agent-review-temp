@@ -21,6 +21,7 @@ import { isAuthorizedMaintenanceRequest } from '@/lib/maintenance-auth';
 import { estimateReservationAmount } from '@/lib/billing/reserve-amount';
 import { estimateContentBlocksCostAsync } from '@/lib/billing/cost-map';
 import { isDemoUser } from '@/lib/demo-mode';
+import { resolveOrganizationIdForWrite } from '@/lib/authz/organization-context';
 
 /**
  * Parse JSON response from AI, stripping markdown code fences and conversational filler
@@ -2547,14 +2548,15 @@ function buildMetadataForInsert(metadata: any, originalType?: string, normalized
 async function saveGeneratedContent(projectId: string, generatedContent: any[]): Promise<string[]> {
   const { data: project } = await supabaseAdmin
     .from('projects')
-    .select('user_id')
+    .select('user_id, organization_id')
     .eq('id', projectId)
-    .single() as { data: { user_id: string } | null };
+    .single() as { data: { user_id: string; organization_id: string | null } | null };
 
   const userId = project?.user_id;
   if (!userId) {
     throw new Error('User ID not found for project');
   }
+  const organizationId = project.organization_id || await resolveOrganizationIdForWrite(userId);
 
   const outputs = generatedContent.map(content => {
     const normalizedType = normalizeOutputTypeForInsert(content.type);
@@ -2562,6 +2564,7 @@ async function saveGeneratedContent(projectId: string, generatedContent: any[]):
     return {
       project_id: projectId,
       user_id: userId,
+      organization_id: organizationId,
       type: normalizedType,
       platform: content.platform,
       title: content.title,

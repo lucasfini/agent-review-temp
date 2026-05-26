@@ -1,6 +1,7 @@
 import { NextRequest } from 'next/server';
 import { supabaseAdmin } from '@/lib/supabase/server';
 import { decryptToken, encryptToken } from '@/lib/integrations/crypto';
+import { resolveOrganizationIdForWrite } from '@/lib/authz/organization-context';
 
 export type IntegrationProvider = 'zoom' | 'microsoft' | 'youtube';
 
@@ -28,6 +29,7 @@ export async function getConnection(userId: string, provider: IntegrationProvide
 
 export async function upsertConnection(params: {
   userId: string;
+  organizationId?: string | null;
   provider: IntegrationProvider;
   externalAccountId: string;
   scopes: string[];
@@ -36,12 +38,14 @@ export async function upsertConnection(params: {
   expiresAt?: string | null;
   metadata?: Record<string, any>;
 }) {
-  const { userId, provider, externalAccountId, scopes, accessToken, refreshToken, expiresAt, metadata } = params;
+  const { userId, organizationId, provider, externalAccountId, scopes, accessToken, refreshToken, expiresAt, metadata } = params;
+  const resolvedOrganizationId = await resolveOrganizationIdForWrite(userId, organizationId || null);
 
   const { data, error } = await supabaseAdmin
     .from('integration_connections')
     .upsert({
       user_id: userId,
+      organization_id: resolvedOrganizationId,
       provider,
       external_account_id: externalAccountId,
       status: 'connected',

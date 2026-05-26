@@ -8,6 +8,7 @@ import { getInternalJobToken } from '@/lib/internal-job-auth';
 import { getInternalAppBaseUrl } from '@/lib/app-url';
 import { scheduleBackgroundTask } from '@/lib/background-task';
 import { getProcessingTierForAnalysis, normalizeAnalysisOptions, type AnalysisOptions } from '@/lib/analysis-options';
+import { resolveOrganizationIdForWrite } from '@/lib/authz/organization-context';
 
 type PerformanceLevel = 'transcript' | 'content_kit';
 
@@ -34,6 +35,7 @@ const normalizePerformanceLevel = (value?: string | null): PerformanceLevel => {
 
 export async function importRecording(params: {
   userId: string;
+  organizationId?: string | null;
   title: string;
   fileName: string;
   contentType: string;
@@ -48,6 +50,7 @@ export async function importRecording(params: {
 }) {
   const {
     userId,
+    organizationId,
     title,
     fileName,
     contentType,
@@ -73,9 +76,11 @@ export async function importRecording(params: {
   const sanitizedBaseName = sanitizeFileName(fileName);
   const estimatedDuration = Math.round(size / (128000 / 8));
   const fingerprint = computeAudioFingerprint(Buffer.from(buffer));
+  const resolvedOrganizationId = await resolveOrganizationIdForWrite(userId, organizationId || null);
 
   let insertData: any = {
     user_id: userId,
+    organization_id: resolvedOrganizationId,
     title,
     audio_file_name: sanitizedBaseName,
     audio_file_size: size,
@@ -174,6 +179,7 @@ export async function importRecording(params: {
 
   return {
     projectId: project.id,
+    organizationId: resolvedOrganizationId,
     fileName: storagePath,
     fingerprint,
     performanceLevel: level

@@ -14,6 +14,7 @@
 
 import { supabaseAdmin as supabase } from '@/lib/supabase/server';
 import { formatUsageEventReason } from '@/lib/billing/presentation';
+import { resolveOrganizationIdForWrite, resolveOrganizationIdFromProjectForWrite } from '@/lib/authz/organization-context';
 
 // ============================================================================
 // Types and Interfaces
@@ -36,6 +37,7 @@ export interface DisplayCreditBalance extends CreditBalance {
 export interface UsageEvent {
   id: string;
   userId: string;
+  organizationId?: string | null;
   projectId?: string;
   reservationId?: string;
   serviceKey: string;
@@ -54,6 +56,7 @@ export interface UsageEvent {
 export interface BillingReservation {
   id: string;
   userId: string;
+  organizationId?: string | null;
   projectId?: string;
   workflowType: string;
   status: 'pending' | 'active' | 'settling' | 'settled' | 'released' | 'expired' | 'failed';
@@ -432,6 +435,7 @@ export async function addCredit(
  */
 export async function logUsageEvent(params: {
   userId: string;
+  organizationId?: string;
   projectId?: string;
   projectTitle?: string;
   reservationId?: string;
@@ -459,10 +463,23 @@ export async function logUsageEvent(params: {
     resolvedProjectTitle = proj?.title ?? undefined;
   }
 
+  let resolvedOrganizationId: string | null = params.organizationId || null;
+  try {
+    if (params.projectId) {
+      const projectOrg = await resolveOrganizationIdFromProjectForWrite(supabase, params.projectId, params.userId);
+      resolvedOrganizationId = projectOrg.organizationId;
+    } else if (!resolvedOrganizationId) {
+      resolvedOrganizationId = await resolveOrganizationIdForWrite(params.userId, null, supabase);
+    }
+  } catch (error) {
+    console.warn('[BILLING] Could not resolve organization_id for usage event:', error);
+  }
+
   const { data, error } = await supabase
     .from('usage_events')
     .insert({
       user_id: params.userId,
+      organization_id: resolvedOrganizationId,
       project_id: params.projectId,
       reservation_id: params.reservationId,
       project_title: resolvedProjectTitle ?? null,
@@ -489,6 +506,7 @@ export async function logUsageEvent(params: {
   return {
     id: data.id,
     userId: data.user_id,
+    organizationId: data.organization_id ?? null,
     projectId: data.project_id,
     reservationId: data.reservation_id,
     serviceKey: data.service_key,
@@ -655,6 +673,7 @@ function mapReservationRow(row: any): BillingReservation {
   return {
     id: row.id,
     userId: row.user_id,
+    organizationId: row.organization_id ?? null,
     projectId: row.project_id,
     workflowType: row.workflow_type,
     status: row.status,
@@ -730,6 +749,7 @@ export async function getReservation(reservationId: string): Promise<BillingRese
 
 export async function createReservation(params: {
   userId: string;
+  organizationId?: string;
   projectId?: string;
   workflowType: string;
   amount: number;
@@ -738,12 +758,23 @@ export async function createReservation(params: {
 }): Promise<BillingReservation> {
   const amount = Number(params.amount.toFixed(4));
   const { balanceBefore, result } = await runBalanceRpc('reserve_user_credits', params.userId, amount);
+  let resolvedOrganizationId: string | null = null;
+
+  if (params.organizationId) {
+    resolvedOrganizationId = await resolveOrganizationIdForWrite(params.userId, params.organizationId, supabase);
+  } else if (params.projectId) {
+    const projectOrg = await resolveOrganizationIdFromProjectForWrite(supabase, params.projectId, params.userId);
+    resolvedOrganizationId = projectOrg.organizationId;
+  } else {
+    resolvedOrganizationId = await resolveOrganizationIdForWrite(params.userId, null, supabase);
+  }
 
   try {
     const { data, error } = await supabase
       .from('billing_reservations')
       .insert({
         user_id: params.userId,
+        organization_id: resolvedOrganizationId,
         project_id: params.projectId || null,
         workflow_type: params.workflowType,
         status: 'active',
