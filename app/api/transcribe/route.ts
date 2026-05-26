@@ -27,7 +27,6 @@ import { classifyProjectTypeWithAI, type ProjectType } from '@/lib/utils/classif
 import { correctDebateSpeakers, applyDebateCorrectionToSpeakerData, summarizeDebateCorrections } from '@/lib/utils/correctDebateSpeakers';
 import { getOpenAIApiKeyForUser } from '@/lib/openai/consent';
 import { r2Client, BUCKET_NAME } from '@/lib/r2';
-import { isAuthorizedMaintenanceRequest } from '@/lib/maintenance-auth';
 import { acquireGlobalJobLock, releaseGlobalJobLock, heartbeatGlobalJobLock } from '@/lib/concurrency';
 import {
   applyNeighborSmoothing,
@@ -46,6 +45,8 @@ import {
   type ShowRosterEntry,
 } from '@/lib/show-speaker-memory';
 import { runControlledSpeakerVerification } from '@/lib/speaker-verification';
+import { RouteAccessError } from '@/lib/api/route-auth';
+import { resolveTranscribeRequestAuthContext, type TranscribeProjectRecord } from '@/lib/api/transcribe-auth';
 
 const sleep = (ms: number) => new Promise<void>(resolve => setTimeout(resolve, ms));
 const TRANSCRIPTION_PREPARING_MESSAGE = 'Preparing your audio for processing...';
@@ -414,32 +415,6 @@ export async function POST(request: NextRequest) {
   let transcriptionHeartbeat: ReturnType<typeof setInterval> | null = null;
 
   try {
-    // Auth: accept internal job token (from finalize route) OR user bearer token
-    const isMaintenance = isAuthorizedMaintenanceRequest(request);
-    let callerUserId: string | null = null;
-
-    if (!isMaintenance) {
-      const authHeader = request.headers.get('authorization');
-      if (!authHeader) {
-        return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
-      }
-      const { data: { user } } = await supabaseAdmin.auth.getUser(
-        authHeader.replace('Bearer ', '')
-      );
-      if (!user) {
-        return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
-      }
-      callerUserId = user.id;
-
-      const { success } = await aiRatelimit.limit(user.id);
-      if (!success) {
-        return NextResponse.json(
-          { error: 'Rate limit exceeded for AI operations. Please wait a moment.' },
-          { status: 429 }
-        );
-      }
-    }
-
     // Parse request
     const payload = await request.json().catch(() => null);
     if (!payload) {
@@ -466,6 +441,7 @@ export async function POST(request: NextRequest) {
     }
 
     parsedProjectId = projectId;
+    let callerUserId: string | null = null;
 
     console.log(`\n========================================`);
     console.log(`[TRANSCRIPTION] 🚀 Starting upload processing`);
@@ -475,35 +451,26 @@ export async function POST(request: NextRequest) {
     if (speakerCount) console.log(`[TRANSCRIPTION] Expected speakers: ${speakerCount}`);
     console.log(`========================================\n`);
 
-    // Check if project already has cached transcription
-    const { data: existingProject, error: projectError } = await supabaseAdmin
-      .from('projects')
-      .select('transcription_text, transcription_segments, speaker_data, audio_duration, audio_file_size, user_id, title, preset_speakers, metadata, performance_level')
-      .eq('id', projectId)
-      .single() as {
-        data: {
-          transcription_text: string | null;
-          transcription_segments: any;
-          speaker_data: any;
-          audio_duration: number | null;
-          audio_file_size: number | null;
-          user_id: string;
-          title: string;
-          preset_speakers: any[] | null;
-          metadata?: any;
-          performance_level?: string | null;
-        } | null;
-        error: any
-      };
-
-    // Project must exist before any provider work begins
-    if (projectError || !existingProject) {
-      return NextResponse.json({ error: 'Project not found' }, { status: 404 });
+    let existingProject: TranscribeProjectRecord;
+    try {
+      const authContext = await resolveTranscribeRequestAuthContext(request, projectId);
+      callerUserId = authContext.callerUserId;
+      existingProject = authContext.existingProject;
+    } catch (error) {
+      if (error instanceof RouteAccessError) {
+        return NextResponse.json({ error: error.message }, { status: error.status });
+      }
+      throw error;
     }
 
-    // Non-internal callers must own the project
-    if (callerUserId && existingProject.user_id !== callerUserId) {
-      return NextResponse.json({ error: 'Forbidden' }, { status: 403 });
+    if (callerUserId) {
+      const { success } = await aiRatelimit.limit(callerUserId);
+      if (!success) {
+        return NextResponse.json(
+          { error: 'Rate limit exceeded for AI operations. Please wait a moment.' },
+          { status: 429 }
+        );
+      }
     }
 
     const normalizedProjectAnalysisOptions = existingProject
