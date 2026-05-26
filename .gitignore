@@ -39,6 +39,9 @@ build-output*.log
 # vercel
 .vercel
 
+# Supabase local CLI state
+supabase/.temp/
+
 # typescript
 *.tsbuildinfo
 next-env.d.ts
