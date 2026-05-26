@@ -1569,7 +1569,7 @@ export default function ProjectsPage() {
         })
       );
 
-      const validProjects = projectsWithOutputs.filter(p => p !== null) as Array<Project & { outputs: Output[] }>;
+      const validProjects = projectsWithOutputs.filter(p => p !== null) as unknown as Array<Project & { outputs: Output[] }>;
 
       if (validProjects.length === 0) {
         showToast('Nothing available to export');
