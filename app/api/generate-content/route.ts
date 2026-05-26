@@ -22,6 +22,7 @@ import { estimateReservationAmount } from '@/lib/billing/reserve-amount';
 import { estimateContentBlocksCostAsync } from '@/lib/billing/cost-map';
 import { isDemoUser } from '@/lib/demo-mode';
 import { resolveOrganizationIdForWrite } from '@/lib/authz/organization-context';
+import { RouteAccessError, requireProjectOwner } from '@/lib/api/route-auth';
 
 /**
  * Parse JSON response from AI, stripping markdown code fences and conversational filler
@@ -538,7 +539,6 @@ export async function POST(request: NextRequest) {
   try {
     // Auth: internal maintenance requests or authenticated users only
     const isMaintenance = isAuthorizedMaintenanceRequest(request);
-    let callerUserId: string | null = null;
 
     if (!isMaintenance) {
       const authHeader = request.headers.get('authorization');
@@ -551,7 +551,6 @@ export async function POST(request: NextRequest) {
       if (!user) {
         return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
       }
-      callerUserId = user.id;
     }
 
     const payload = await request.json();
@@ -572,22 +571,32 @@ export async function POST(request: NextRequest) {
       );
     }
 
-    // Get user_id for billing tracking
-    const { data: project } = await supabaseAdmin
-      .from('projects')
-      .select('user_id')
-      .eq('id', projectId)
-      .single() as { data: { user_id: string } | null };
+    let userId: string;
+    if (!isMaintenance) {
+      try {
+        const ownership = await requireProjectOwner<{ user_id: string }>(
+          request,
+          projectId,
+          'id, user_id'
+        );
+        userId = ownership.project.user_id;
+      } catch (error) {
+        if (error instanceof RouteAccessError) {
+          return NextResponse.json({ error: error.message }, { status: error.status });
+        }
+        throw error;
+      }
+    } else {
+      const { data: project } = await supabaseAdmin
+        .from('projects')
+        .select('user_id')
+        .eq('id', projectId)
+        .single() as { data: { user_id: string } | null };
 
-    if (!project) {
-      return NextResponse.json({ error: 'Project not found' }, { status: 404 });
-    }
-
-    const userId = project.user_id;
-
-    // Non-internal callers must own the project
-    if (callerUserId && userId !== callerUserId) {
-      return NextResponse.json({ error: 'Forbidden' }, { status: 403 });
+      if (!project) {
+        return NextResponse.json({ error: 'Project not found' }, { status: 404 });
+      }
+      userId = project.user_id;
     }
 
     if (!isMaintenance && userId) {

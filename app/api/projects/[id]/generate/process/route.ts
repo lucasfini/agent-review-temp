@@ -13,6 +13,7 @@ import {
   type ProjectGenerationJob,
 } from '@/lib/project-generation-jobs';
 import { acquireGlobalJobLock, releaseGlobalJobLock, heartbeatGlobalJobLock } from '@/lib/concurrency';
+import { RouteAccessError, requireProjectOwner } from '@/lib/api/route-auth';
 
 function isMissingFailureNotifiedAtColumn(error: any): boolean {
   return error?.code === 'PGRST204'
@@ -84,14 +85,13 @@ export async function POST(
 
     // Non-maintenance callers must own the project
     if (callerUserId) {
-      const { data: projectOwner } = await supabaseAdmin
-        .from('projects')
-        .select('user_id')
-        .eq('id', projectId)
-        .single() as { data: { user_id: string } | null };
-
-      if (!projectOwner || projectOwner.user_id !== callerUserId) {
-        return NextResponse.json({ error: 'Forbidden' }, { status: 403 });
+      try {
+        await requireProjectOwner(request, projectId, 'id');
+      } catch (error) {
+        if (error instanceof RouteAccessError) {
+          return NextResponse.json({ error: error.message }, { status: error.status });
+        }
+        throw error;
       }
     }
     const runningCheck = await (supabaseAdmin as any)
