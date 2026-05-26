@@ -9,6 +9,7 @@ import { scheduleBackgroundTask } from '@/lib/background-task';
 import { calculateBlocksCost, getContentTypeById } from '@/lib/content-types';
 import { requireSufficientCredit } from '@/lib/billing/track-usage';
 import { InsufficientCreditError } from '@/lib/billing/credit';
+import { RouteAccessError, requireProjectOwner } from '@/lib/api/route-auth';
 
 export async function POST(request: NextRequest) {
   try {
@@ -28,23 +29,23 @@ export async function POST(request: NextRequest) {
       return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
     }
     const token = authHeader.replace('Bearer ', '');
-    const { data: { user }, error: authError } = await supabaseAdmin.auth.getUser(token);
-    if (authError || !user) {
-      return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
-    }
-
-    // Get the project with transcription
-    const { data: project, error: projectError } = await supabaseAdmin
-      .from('projects')
-      .select('transcription_text, status, user_id')
-      .eq('id', projectId)
-      .single() as { data: { transcription_text: string; status: string; user_id: string } | null; error: any };
-
-    if (projectError || !project) {
-      return NextResponse.json(
-        { error: 'Project not found' },
-        { status: 404 }
-      );
+    let user: { id: string; email?: string | null };
+    let project: { id: string; user_id: string; transcription_text: string; status: string };
+    try {
+      const ownership = await requireProjectOwner<{
+        transcription_text: string;
+        status: string;
+      }>(request, projectId, 'id, user_id, transcription_text, status');
+      user = ownership.user;
+      project = ownership.project;
+    } catch (error) {
+      if (error instanceof RouteAccessError) {
+        return NextResponse.json(
+          { error: error.message },
+          { status: error.status }
+        );
+      }
+      throw error;
     }
 
     if (!project.transcription_text) {
@@ -52,11 +53,6 @@ export async function POST(request: NextRequest) {
         { error: 'Project transcription not available' },
         { status: 400 }
       );
-    }
-
-    // Ownership check
-    if (project.user_id !== user.id) {
-      return NextResponse.json({ error: 'Forbidden' }, { status: 403 });
     }
 
     // Validate all blocks reference known content types

@@ -11,6 +11,7 @@ import { estimateAnalysisJobCostAsync, estimateContentGenerationCostAsync } from
 import { aiRatelimit } from '@/lib/rate-limit';
 import { estimateReservationAmount } from '@/lib/billing/reserve-amount';
 import { resolveOrganizationIdForWrite } from '@/lib/authz/organization-context';
+import { RouteAccessError, requireProjectOwner } from '@/lib/api/route-auth';
 
 type GenerateItem = {
   kind: 'analysis' | 'content';
@@ -30,10 +31,26 @@ export async function POST(
       return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
     }
 
-    const token = authHeader.replace('Bearer ', '');
-    const { data: { user }, error: authError } = await supabaseAdmin.auth.getUser(token);
-    if (authError || !user) {
-      return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
+    const body = await request.json().catch(() => null);
+    const items = Array.isArray(body?.items) ? body.items as GenerateItem[] : [];
+    if (!items.length) {
+      return NextResponse.json({ error: 'No generation items provided' }, { status: 400 });
+    }
+
+    let user: { id: string; email?: string | null };
+    let project: { id: string; user_id: string; transcription_text: string | null; organization_id: string | null };
+    try {
+      const ownership = await requireProjectOwner<{
+        transcription_text: string | null;
+        organization_id: string | null;
+      }>(request, projectId, 'id, user_id, transcription_text, organization_id');
+      user = ownership.user;
+      project = ownership.project;
+    } catch (error) {
+      if (error instanceof RouteAccessError) {
+        return NextResponse.json({ error: error.message }, { status: error.status });
+      }
+      throw error;
     }
 
     const { success } = await aiRatelimit.limit(user.id);
@@ -44,24 +61,6 @@ export async function POST(
       );
     }
 
-    const body = await request.json().catch(() => null);
-    const items = Array.isArray(body?.items) ? body.items as GenerateItem[] : [];
-    if (!items.length) {
-      return NextResponse.json({ error: 'No generation items provided' }, { status: 400 });
-    }
-
-    const { data: project, error: projectError } = await (supabaseAdmin as any)
-      .from('projects')
-      .select('id, user_id, transcription_text, organization_id')
-      .eq('id', projectId)
-      .single();
-
-    if (projectError || !project) {
-      return NextResponse.json({ error: 'Project not found' }, { status: 404 });
-    }
-    if (project.user_id !== user.id) {
-      return NextResponse.json({ error: 'Forbidden' }, { status: 403 });
-    }
     if (!project.transcription_text) {
       return NextResponse.json({ error: 'Project transcription not available' }, { status: 400 });
     }

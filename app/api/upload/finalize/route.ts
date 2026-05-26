@@ -8,6 +8,7 @@ import { getInternalJobToken } from '@/lib/internal-job-auth';
 import { deleteProjectAudioObject } from '@/lib/audio-retention';
 import { getInternalAppBaseUrl } from '@/lib/app-url';
 import { scheduleBackgroundTask } from '@/lib/background-task';
+import { RouteAccessError, requireProjectOwner } from '@/lib/api/route-auth';
 
 export const runtime = 'nodejs';
 export const maxDuration = 300; // Allow background tasks to run up to 5 mins
@@ -15,13 +16,6 @@ export const maxDuration = 300; // Allow background tasks to run up to 5 mins
 export async function POST(request: NextRequest) {
   try {
     const authHeader = request.headers.get('authorization');
-    const { data: { user }, error: authError } = await supabaseAdmin.auth.getUser(
-      authHeader?.replace('Bearer ', '') || ''
-    );
-
-    if (authError || !user) {
-      return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
-    }
 
     const body = await request.json();
     const { projectId, objectKey, audioFingerprint, uploadToken, analysisOptions, speakerCount } = body;
@@ -31,6 +25,26 @@ export async function POST(request: NextRequest) {
     }
 
     const tokenPayload = verifyUploadToken(uploadToken);
+    let user: { id: string; email?: string | null };
+    let project: { id: string; user_id: string; status: string; audio_file_name: string | null; audio_deleted_at: string | null };
+    try {
+      const ownership = await requireProjectOwner<{
+        status: string;
+        audio_file_name: string | null;
+        audio_deleted_at: string | null;
+      }>(request, projectId, 'id, user_id, status, audio_file_name, audio_deleted_at');
+      user = ownership.user;
+      project = ownership.project;
+    } catch (error) {
+      if (error instanceof RouteAccessError) {
+        if (error.status === 401) {
+          return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
+        }
+        return NextResponse.json({ error: 'Project not found or unauthorized' }, { status: 403 });
+      }
+      throw error;
+    }
+
     if (
       !tokenPayload ||
       tokenPayload.projectId !== projectId ||
@@ -39,17 +53,6 @@ export async function POST(request: NextRequest) {
       tokenPayload.userId !== user.id
     ) {
       return NextResponse.json({ error: 'Invalid upload token' }, { status: 400 });
-    }
-
-    // Verify project belongs to user
-    const { data: project, error: getError } = await supabaseAdmin
-      .from('projects')
-      .select('user_id, status, audio_file_name, audio_deleted_at')
-      .eq('id', projectId)
-      .single();
-
-    if (getError || !project || project.user_id !== user.id) {
-      return NextResponse.json({ error: 'Project not found or unauthorized' }, { status: 403 });
     }
 
     if (project.status === 'cancelled') {

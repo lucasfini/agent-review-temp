@@ -2,6 +2,7 @@ import { NextRequest, NextResponse } from 'next/server';
 import { DeleteObjectCommand } from '@aws-sdk/client-s3';
 import { supabaseAdmin } from '@/lib/supabase/server';
 import { r2Client, BUCKET_NAME } from '@/lib/r2';
+import { RouteAccessError, requireProjectOwner } from '@/lib/api/route-auth';
 
 export async function DELETE(
   request: NextRequest,
@@ -9,28 +10,19 @@ export async function DELETE(
 ) {
   try {
     const { id: projectId } = await params;
-
-    const authHeader = request.headers.get('authorization');
-    const { data: { user }, error: authError } = await supabaseAdmin.auth.getUser(
-      authHeader?.replace('Bearer ', '') || ''
-    );
-
-    if (authError || !user) {
-      return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
-    }
-
-    const { data: project, error: projectError } = await supabaseAdmin
-      .from('projects')
-      .select('id, user_id, audio_file_name')
-      .eq('id', projectId)
-      .single() as { data: { id: string; user_id: string; audio_file_name: string | null } | null; error: any };
-
-    if (projectError || !project) {
-      return NextResponse.json({ error: 'Project not found' }, { status: 404 });
-    }
-
-    if (project.user_id !== user.id) {
-      return NextResponse.json({ error: 'Forbidden' }, { status: 403 });
+    let project: { id: string; user_id: string; audio_file_name: string | null };
+    try {
+      const ownership = await requireProjectOwner<{ audio_file_name: string | null }>(
+        request,
+        projectId,
+        'id, user_id, audio_file_name'
+      );
+      project = ownership.project;
+    } catch (error) {
+      if (error instanceof RouteAccessError) {
+        return NextResponse.json({ error: error.message }, { status: error.status });
+      }
+      throw error;
     }
 
     if (!project.audio_file_name) {

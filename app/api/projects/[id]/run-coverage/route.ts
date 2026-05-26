@@ -12,6 +12,7 @@ import { createReservation, failReservation, settleReservation } from '@/lib/bil
 import { normalizeTier } from '@/lib/tier-config';
 import { aiRatelimit } from '@/lib/rate-limit';
 import { estimateReservationAmount } from '@/lib/billing/reserve-amount';
+import { RouteAccessError, requireProjectOwner } from '@/lib/api/route-auth';
 
 export const maxDuration = 300;
 
@@ -35,12 +36,35 @@ export async function POST(
       );
     }
 
-    const authHeader = request.headers.get('authorization');
-    const { data: { user }, error: authError } = await supabaseAdmin.auth.getUser(
-      authHeader?.replace('Bearer ', '') || ''
-    );
-    if (authError || !user) {
-      return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
+    let user: { id: string; email?: string | null };
+    let project: {
+      id: string;
+      user_id: string;
+      title: string;
+      transcription_text: string;
+      ai_summary: string;
+      performance_level: string;
+      project_type?: string | null;
+    };
+    try {
+      const ownership = await requireProjectOwner<{
+        title: string;
+        transcription_text: string;
+        ai_summary: string;
+        performance_level: string;
+        project_type?: string | null;
+      }>(
+        request,
+        projectId,
+        'id, user_id, title, transcription_text, ai_summary, performance_level, project_type'
+      );
+      user = ownership.user;
+      project = ownership.project;
+    } catch (error) {
+      if (error instanceof RouteAccessError) {
+        return NextResponse.json({ error: error.message }, { status: error.status });
+      }
+      throw error;
     }
     const userId = user.id;
 
@@ -54,39 +78,6 @@ export async function POST(
 
     const payload = (await request.json().catch(() => ({}))) as RunCoveragePayload;
     const force = Boolean(payload.force);
-
-    const { data: project, error: projectError } = await supabaseAdmin
-      .from('projects')
-      .select(
-        'id, user_id, title, transcription_text, ai_summary, performance_level, project_type'
-      )
-      .eq('id', projectId)
-      .single() as {
-        data: {
-          id: string;
-          user_id: string;
-          title: string;
-          transcription_text: string;
-          ai_summary: string;
-          performance_level: string;
-          project_type?: string | null;
-        } | null;
-        error: any
-      };
-
-    if (projectError || !project) {
-      return NextResponse.json(
-        { error: 'Project not found' },
-        { status: 404 }
-      );
-    }
-
-    if (project.user_id !== userId) {
-      return NextResponse.json(
-        { error: 'You do not have permission to run coverage for this project' },
-        { status: 403 }
-      );
-    }
 
     if (!project.transcription_text) {
       return NextResponse.json(

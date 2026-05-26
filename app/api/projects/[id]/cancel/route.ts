@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { supabaseAdmin } from '@/lib/supabase/server';
 import { deleteProjectAudioObject } from '@/lib/audio-retention';
+import { RouteAccessError, requireProjectOwner } from '@/lib/api/route-auth';
 
 export async function POST(
   request: NextRequest,
@@ -9,36 +10,25 @@ export async function POST(
   try {
     const resolvedParams = await params;
     const projectId = resolvedParams.id;
-    const authHeader = request.headers.get('authorization');
-    const { data: { user }, error: authError } = await supabaseAdmin.auth.getUser(
-      authHeader?.replace('Bearer ', '') || ''
-    );
-
-    if (authError || !user) {
-      return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
-    }
-
-    const { data: project, error: projectError } = await supabaseAdmin
-      .from('projects')
-      .select('id, user_id, status, audio_file_name, audio_deleted_at')
-      .eq('id', projectId)
-      .single() as {
-        data: {
-          id: string;
-          user_id: string;
-          status: string;
-          audio_file_name: string | null;
-          audio_deleted_at: string | null;
-        } | null;
-        error: any;
-      };
-
-    if (projectError || !project) {
-      return NextResponse.json({ error: 'Project not found' }, { status: 404 });
-    }
-
-    if (project.user_id !== user.id) {
-      return NextResponse.json({ error: 'Unauthorized' }, { status: 403 });
+    let project: {
+      id: string;
+      user_id: string;
+      status: string;
+      audio_file_name: string | null;
+      audio_deleted_at: string | null;
+    };
+    try {
+      const ownership = await requireProjectOwner<{
+        status: string;
+        audio_file_name: string | null;
+        audio_deleted_at: string | null;
+      }>(request, projectId, 'id, user_id, status, audio_file_name, audio_deleted_at');
+      project = ownership.project;
+    } catch (error) {
+      if (error instanceof RouteAccessError) {
+        return NextResponse.json({ error: error.message }, { status: error.status });
+      }
+      throw error;
     }
 
     if (project.status === 'completed' || project.status === 'failed') {
@@ -69,8 +59,7 @@ export async function POST(
       for (const updatePayload of updateCandidates) {
         const attempt = await (supabaseAdmin.from('projects') as any)
           .update(updatePayload)
-          .eq('id', projectId)
-          .eq('user_id', user.id);
+          .eq('id', projectId);
 
         updateError = attempt.error;
         if (!updateError) break;

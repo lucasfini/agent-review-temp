@@ -1,6 +1,6 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { supabaseAdmin } from '@/lib/supabase/server';
-import { RouteAccessError, requireAuthenticatedUser } from '@/lib/api/route-auth';
+import { RouteAccessError, requireProjectOwner } from '@/lib/api/route-auth';
 
 // ============================================================
 // FORCE DYNAMIC: Disable all caching for this route
@@ -24,7 +24,7 @@ export async function GET(
       );
     }
 
-    const user = await requireAuthenticatedUser(request);
+    await requireProjectOwner(request, projectId, 'id');
 
     const fullSelect = 'id, user_id, status, processing_stage, processing_progress, processing_message, stage_started_at, performance_level, transcription_text, processing_time_seconds, created_at, updated_at';
     const legacySelect = 'id, user_id, status, performance_level, transcription_text, processing_time_seconds, created_at, updated_at';
@@ -55,10 +55,6 @@ export async function GET(
 
     if (error || !project) {
       throw new RouteAccessError(404, 'Project not found');
-    }
-
-    if (project.user_id !== user.id) {
-      throw new RouteAccessError(403, 'Forbidden');
     }
 
     // Get generated outputs count if completed

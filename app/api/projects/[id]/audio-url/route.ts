@@ -5,6 +5,7 @@ import { supabaseAdmin } from '@/lib/supabase/server';
 import { r2Client, BUCKET_NAME } from '@/lib/r2';
 import { isAudioExpired } from '@/lib/audio-retention';
 import { getStarterAudioObjectKey } from '@/lib/starter-project';
+import { RouteAccessError, requireProjectOwner } from '@/lib/api/route-auth';
 
 export const dynamic = 'force-dynamic';
 
@@ -14,19 +15,18 @@ export async function GET(
 ) {
   try {
     const { id: projectId } = await params;
-
-    const authHeader = request.headers.get('authorization');
-    const { data: { user }, error: authError } = await supabaseAdmin.auth.getUser(
-      authHeader?.replace('Bearer ', '') || ''
-    );
-
-    if (authError || !user) {
-      return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
+    try {
+      await requireProjectOwner(request, projectId, 'id');
+    } catch (error) {
+      if (error instanceof RouteAccessError) {
+        return NextResponse.json({ error: error.message }, { status: error.status });
+      }
+      throw error;
     }
 
     let { data: project, error: projectError } = await supabaseAdmin
       .from('projects')
-      .select('id, audio_file_name, audio_expires_at, audio_deleted_at, user_id, metadata')
+      .select('id, audio_file_name, audio_expires_at, audio_deleted_at, metadata')
       .eq('id', projectId)
       .single() as {
         data: {
@@ -34,7 +34,6 @@ export async function GET(
           audio_file_name: string | null;
           audio_expires_at: string | null;
           audio_deleted_at: string | null;
-          user_id: string;
           metadata?: unknown;
         } | null;
         error: any;
@@ -43,13 +42,12 @@ export async function GET(
     if (projectError?.message?.includes(`'audio_expires_at'`)) {
       const retry = await supabaseAdmin
         .from('projects')
-        .select('id, audio_file_name, user_id')
+        .select('id, audio_file_name')
         .eq('id', projectId)
         .single() as {
           data: {
             id: string;
             audio_file_name: string | null;
-            user_id: string;
           } | null;
           error: any;
         };
@@ -66,10 +64,6 @@ export async function GET(
 
     if (projectError || !project) {
       return NextResponse.json({ error: 'Project not found' }, { status: 404 });
-    }
-
-    if (project.user_id !== user.id) {
-      return NextResponse.json({ error: 'Forbidden' }, { status: 403 });
     }
 
     if (!project.audio_file_name) {
