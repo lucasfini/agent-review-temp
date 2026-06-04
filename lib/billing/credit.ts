@@ -15,6 +15,7 @@
 import { supabaseAdmin as supabase } from '@/lib/supabase/server';
 import { formatUsageEventReason } from '@/lib/billing/presentation';
 import { resolveOrganizationIdForWrite, resolveOrganizationIdFromProjectForWrite } from '@/lib/authz/organization-context';
+import { buildBillingOrgScopedLegacyFallbackFilter } from '@/lib/billing/organization-scope';
 
 // ============================================================================
 // Types and Interfaces
@@ -85,6 +86,75 @@ export interface CreditTransaction {
   reason?: string;
   metadata: Record<string, unknown>;
   createdAt: string;
+}
+
+function applyBillingReadScope(query: any, userId: string, organizationId?: string) {
+  if (!organizationId) {
+    return query.eq('user_id', userId);
+  }
+
+  return query.or(buildBillingOrgScopedLegacyFallbackFilter(organizationId, userId));
+}
+
+async function filterCreditTransactionsForOrganization(
+  userId: string,
+  transactions: any[],
+  organizationId?: string
+): Promise<any[]> {
+  if (!organizationId || transactions.length === 0) {
+    return transactions;
+  }
+
+  const scopeFilter = buildBillingOrgScopedLegacyFallbackFilter(organizationId, userId);
+  const reservationIds = Array.from(new Set(transactions.map((tx) => tx.reservation_id).filter(Boolean)));
+  const usageEventIds = Array.from(new Set(transactions.map((tx) => tx.usage_event_id).filter(Boolean)));
+  const allowedReservationIds = new Set<string>();
+  const allowedUsageEventIds = new Set<string>();
+
+  if (reservationIds.length > 0) {
+    const { data, error } = await supabase
+      .from('billing_reservations')
+      .select('id')
+      .in('id', reservationIds)
+      .or(scopeFilter) as { data: Array<{ id: string }> | null; error: any };
+
+    if (error) {
+      throw new Error(`Failed to scope reservation transactions: ${error.message}`);
+    }
+
+    for (const row of data || []) {
+      allowedReservationIds.add(row.id);
+    }
+  }
+
+  if (usageEventIds.length > 0) {
+    const { data, error } = await supabase
+      .from('usage_events')
+      .select('id')
+      .in('id', usageEventIds)
+      .or(scopeFilter) as { data: Array<{ id: string }> | null; error: any };
+
+    if (error) {
+      throw new Error(`Failed to scope usage transactions: ${error.message}`);
+    }
+
+    for (const row of data || []) {
+      allowedUsageEventIds.add(row.id);
+    }
+  }
+
+  return transactions.filter((tx) => {
+    if (tx.reservation_id) {
+      return allowedReservationIds.has(tx.reservation_id);
+    }
+    if (tx.usage_event_id) {
+      return allowedUsageEventIds.has(tx.usage_event_id);
+    }
+
+    // Standalone purchases, bonuses, refunds, and admin adjustments have no
+    // organization column yet, so they remain part of the user credit ledger.
+    return true;
+  });
 }
 
 export class ReservationNotFoundError extends Error {
@@ -529,6 +599,7 @@ export async function logUsageEvent(params: {
 export async function getUsageHistory(
   userId: string,
   filters?: {
+    organizationId?: string;
     projectId?: string;
     serviceKey?: string;
     provider?: string;
@@ -543,8 +614,8 @@ export async function getUsageHistory(
   let query = supabase
     .from('usage_events')
     .select('*, projects:project_id(title)', { count: 'exact' })
-    .eq('user_id', userId)
     .order('created_at', { ascending: false });
+  query = applyBillingReadScope(query, userId, filters?.organizationId);
 
   // Apply filters
   if (filters?.projectId) {
@@ -580,6 +651,7 @@ export async function getUsageHistory(
   const events: (UsageEvent & { projectTitle?: string })[] = (data || []).map((row) => ({
     id: row.id,
     userId: row.user_id,
+    organizationId: row.organization_id ?? null,
     projectId: row.project_id,
     serviceKey: row.service_key,
     serviceName: formatUsageEventReason({
@@ -611,6 +683,7 @@ export async function getUsageHistory(
 export async function getTransactionHistory(
   userId: string,
   filters?: {
+    organizationId?: string;
     transactionType?: 'purchase' | 'bonus' | 'refund' | 'debit' | 'admin_adjustment' | 'reserve' | 'release' | 'settle';
     startDate?: Date;
     endDate?: Date;
@@ -636,10 +709,11 @@ export async function getTransactionHistory(
     query = query.lte('created_at', filters.endDate.toISOString());
   }
 
-  // Pagination
   const limit = filters?.limit || 100;
   const offset = filters?.offset || 0;
-  query = query.range(offset, offset + limit - 1);
+  if (!filters?.organizationId) {
+    query = query.range(offset, offset + limit - 1);
+  }
 
   const { data, error, count } = await query as { data: any[] | null; error: any; count: number | null };
 
@@ -647,7 +721,14 @@ export async function getTransactionHistory(
     throw new Error(`Failed to get transaction history: ${error.message}`);
   }
 
-  const transactions: CreditTransaction[] = (data || []).map((row) => ({
+  const scopedRows = await filterCreditTransactionsForOrganization(
+    userId,
+    data || [],
+    filters?.organizationId
+  );
+  const pagedRows = filters?.organizationId ? scopedRows.slice(offset, offset + limit) : scopedRows;
+
+  const transactions: CreditTransaction[] = pagedRows.map((row) => ({
     id: row.id,
     userId: row.user_id,
     amount: row.amount,
@@ -665,7 +746,7 @@ export async function getTransactionHistory(
 
   return {
     transactions,
-    total: count || 0,
+    total: filters?.organizationId ? scopedRows.length : count || 0,
   };
 }
 

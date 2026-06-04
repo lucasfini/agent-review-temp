@@ -38,12 +38,14 @@ import { Badge } from '@/components/ui/badge';
 import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle } from '@/components/ui/dialog';
 import { cn } from '@/lib/utils';
 import { useAuth } from '@/lib/auth/context';
+import { useCurrentOrganization } from '@/lib/hooks/useCurrentOrganization';
 import CreditPackages from '@/components/billing/credit-packages';
 import { supabase } from '@/lib/supabase/client';
 import { toast } from 'sonner';
 import { formatSiteCreditDeltaFromUsd, formatSiteCreditsFromUsd } from '@/lib/billing/display';
 import { isIntegrationEnabled } from '@/lib/integrations/availability';
 import { isValidEmail } from '@/lib/auth/validation';
+import { withOrganizationId } from '@/lib/organizations/current-organization';
 
 // ============================================================================
 // TYPES
@@ -303,6 +305,7 @@ function UsageAreaChart({ data }: { data: Array<{ date: string; cost: number; ev
 
 export default function UnifiedSettings({ userEmail, forcedSection }: UnifiedSettingsProps) {
   const { session, isDemoMode } = useAuth();
+  const { organizationId } = useCurrentOrganization();
   const router = useRouter();
   const searchParams = useSearchParams();
   const rawSection = forcedSection || searchParams.get('section') || 'preferences';
@@ -381,7 +384,10 @@ export default function UnifiedSettings({ userEmail, forcedSection }: UnifiedSet
 
       try {
         const response = await fetch(
-          `/api/dashboard/settings?transactionLimit=${TRANSACTIONS_PER_PAGE}&transactionOffset=0&usageLimit=200`,
+          withOrganizationId(
+            `/api/dashboard/settings?transactionLimit=${TRANSACTIONS_PER_PAGE}&transactionOffset=0&usageLimit=200`,
+            organizationId
+          ),
           {
             headers: { Authorization: `Bearer ${session.access_token}` },
             cache: 'no-store',
@@ -416,7 +422,7 @@ export default function UnifiedSettings({ userEmail, forcedSection }: UnifiedSet
     };
 
     fetchDashboardSettings();
-  }, [session?.access_token]);
+  }, [organizationId, session?.access_token]);
 
   useEffect(() => {
     const fetchTransactions = async () => {
@@ -429,7 +435,10 @@ export default function UnifiedSettings({ userEmail, forcedSection }: UnifiedSet
 
       try {
         const response = await fetch(
-          `/api/billing/transactions/grouped?limit=${TRANSACTIONS_PER_PAGE}&offset=${(transactionPage - 1) * TRANSACTIONS_PER_PAGE}`,
+          withOrganizationId(
+            `/api/billing/transactions/grouped?limit=${TRANSACTIONS_PER_PAGE}&offset=${(transactionPage - 1) * TRANSACTIONS_PER_PAGE}`,
+            organizationId
+          ),
           {
             headers: { Authorization: `Bearer ${session.access_token}` },
             cache: 'no-store',
@@ -452,7 +461,7 @@ export default function UnifiedSettings({ userEmail, forcedSection }: UnifiedSet
     };
 
     fetchTransactions();
-  }, [session?.access_token, transactionPage]);
+  }, [organizationId, session?.access_token, transactionPage]);
 
   useEffect(() => {
     if (!avatarFile) {

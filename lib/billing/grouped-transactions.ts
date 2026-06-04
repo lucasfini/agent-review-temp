@@ -1,5 +1,6 @@
 import { supabaseAdmin } from '@/lib/supabase/server';
 import { formatUsageEventReason, formatWorkflowReason } from '@/lib/billing/presentation';
+import { buildBillingOrgScopedLegacyFallbackFilter } from '@/lib/billing/organization-scope';
 
 export interface GroupedTransactionChild {
   reason: string;
@@ -53,12 +54,18 @@ function getDefaultReason(type: string): string {
 export async function getGroupedTransactions(
   userId: string,
   limit: number,
-  offset: number
+  offset: number,
+  options?: {
+    organizationId?: string;
+  }
 ): Promise<{
   transactions: GroupedTransaction[];
   total: number;
   hasMore: boolean;
 }> {
+  const scopeFilter = options?.organizationId
+    ? buildBillingOrgScopedLegacyFallbackFilter(options.organizationId, userId)
+    : null;
   const { data: rawTransactions, error: txError } = await supabaseAdmin
     .from('credit_transactions')
     .select('*')
@@ -69,9 +76,9 @@ export async function getGroupedTransactions(
     throw new Error(`Failed to fetch transactions: ${txError.message}`);
   }
 
-  const transactions = rawTransactions || [];
-  const reservationIds = Array.from(new Set(transactions.map((tx: any) => tx.reservation_id).filter(Boolean)));
-  const usageEventIds = Array.from(new Set(transactions.map((tx: any) => tx.usage_event_id).filter(Boolean)));
+  const rawRows = rawTransactions || [];
+  const rawReservationIds = Array.from(new Set(rawRows.map((tx: any) => tx.reservation_id).filter(Boolean)));
+  const rawUsageEventIds = Array.from(new Set(rawRows.map((tx: any) => tx.usage_event_id).filter(Boolean)));
 
   const reservationMap: Record<string, any> = {};
   const projectIds = new Set<string>();
@@ -80,11 +87,17 @@ export async function getGroupedTransactions(
   const usageEventsByReservation = new Map<string, any[]>();
   const usageEventsById = new Map<string, any>();
 
-  if (reservationIds.length > 0) {
-    const { data: reservations } = await supabaseAdmin
+  if (rawReservationIds.length > 0) {
+    let reservationQuery = supabaseAdmin
       .from('billing_reservations')
       .select('id, project_id, workflow_type, status, reserved_amount, settled_amount, released_amount, metadata, created_at, updated_at, completed_at')
-      .in('id', reservationIds) as { data: any[] | null; error: any };
+      .in('id', rawReservationIds);
+
+    if (scopeFilter) {
+      reservationQuery = reservationQuery.or(scopeFilter);
+    }
+
+    const { data: reservations } = await reservationQuery as { data: any[] | null; error: any };
 
     for (const reservation of reservations || []) {
       reservationMap[reservation.id] = reservation;
@@ -92,17 +105,24 @@ export async function getGroupedTransactions(
     }
   }
 
-  if (usageEventIds.length > 0 || reservationIds.length > 0) {
-    const { data: usageEvents } = await supabaseAdmin
+  if (rawUsageEventIds.length > 0 || rawReservationIds.length > 0) {
+    let usageEventsQuery = supabaseAdmin
       .from('usage_events')
       .select('id, project_id, project_title, reservation_id, service_name, provider, units, unit_type, billed_cost, metadata, status, created_at')
-      .eq('user_id', userId)
-      .order('created_at', { ascending: false }) as { data: any[] | null; error: any };
+      .order('created_at', { ascending: false });
+
+    if (scopeFilter) {
+      usageEventsQuery = usageEventsQuery.or(scopeFilter);
+    } else {
+      usageEventsQuery = usageEventsQuery.eq('user_id', userId);
+    }
+
+    const { data: usageEvents } = await usageEventsQuery as { data: any[] | null; error: any };
 
     for (const usageEvent of usageEvents || []) {
       const belongsToKnownTransaction =
-        usageEventIds.includes(usageEvent.id) ||
-        (usageEvent.reservation_id && reservationIds.includes(usageEvent.reservation_id));
+        rawUsageEventIds.includes(usageEvent.id) ||
+        (usageEvent.reservation_id && rawReservationIds.includes(usageEvent.reservation_id));
 
       if (!belongsToKnownTransaction) continue;
 
@@ -123,6 +143,14 @@ export async function getGroupedTransactions(
       }
     }
   }
+
+  const transactions = scopeFilter
+    ? rawRows.filter((tx: any) => {
+        if (tx.reservation_id) return Boolean(reservationMap[tx.reservation_id]);
+        if (tx.usage_event_id) return usageEventsById.has(tx.usage_event_id);
+        return true;
+      })
+    : rawRows;
 
   for (const tx of transactions) {
     const projectId = tx.metadata?.projectId || usageEventProjectMap[tx.usage_event_id];

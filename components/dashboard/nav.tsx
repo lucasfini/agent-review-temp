@@ -642,7 +642,7 @@ export default function DashboardNav({
     }
 
     try {
-      const response = await fetch('/api/billing/balance', {
+      const response = await fetch(withOrganizationId('/api/billing/balance', organizationId), {
         headers: { Authorization: `Bearer ${session.access_token}` },
         cache: 'no-store',
       });
@@ -655,7 +655,7 @@ export default function DashboardNav({
     } finally {
       setIsLoadingBalance(false);
     }
-  }, [session?.access_token, user]);
+  }, [organizationId, session?.access_token, user]);
 
   useEffect(() => {
     setIsLoadingBalance(true);

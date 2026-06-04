@@ -4,29 +4,17 @@
  */
 
 import { NextRequest, NextResponse } from 'next/server';
-import { supabaseAdmin } from '@/lib/supabase/server';
+import { getBillingOrganizationContext } from '@/lib/api/billing-org-context';
+import { requireAuthenticatedUser, RouteAccessError } from '@/lib/api/route-auth';
 import { getDisplayBalance } from '@/lib/billing/credit';
 import { formatSiteCreditsFromUsd } from '@/lib/billing/display';
 
 export async function GET(request: NextRequest) {
   try {
-    // Get authenticated user from Authorization header
-    const authHeader = request.headers.get('Authorization');
-    if (!authHeader || !authHeader.startsWith('Bearer ')) {
-      return NextResponse.json({ error: 'Unauthorized - Missing token' }, { status: 401 });
-    }
+    const user = await requireAuthenticatedUser(request);
+    await getBillingOrganizationContext(request, user.id);
 
-    const token = authHeader.replace('Bearer ', '');
-    const {
-      data: { user },
-      error: authError,
-    } = await supabaseAdmin.auth.getUser(token);
-
-    if (authError || !user) {
-      return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
-    }
-
-    // Get user's credit balance
+    // Credit balance is still user-account scoped until account_credits has organization_id.
     const balance = await getDisplayBalance(user.id);
 
     return NextResponse.json({
@@ -40,6 +28,10 @@ export async function GET(request: NextRequest) {
       lastUpdated: balance.updatedAt,
     });
   } catch (error) {
+    if (error instanceof RouteAccessError) {
+      return NextResponse.json({ error: error.message }, { status: error.status });
+    }
+
     console.error('[BILLING API] Error fetching balance:', error);
     return NextResponse.json(
       { error: 'Failed to fetch balance' },
