@@ -9,6 +9,7 @@ import ConfirmModal from '@/components/ui/confirm-modal';
 import { useAuth } from '@/lib/auth/context';
 import { supabase } from '@/lib/supabase/client';
 import { useCoverageProgress } from '@/lib/context/coverage-progress';
+import { useCurrentOrganization } from '@/lib/hooks/useCurrentOrganization';
 import { DashboardLoadErrorState } from '@/components/dashboard/load-error-state';
 import ExportModal, { type ExportPayload } from '@/components/ExportModal';
 import { exportContent } from '@/lib/export-utils';
@@ -25,6 +26,7 @@ import { emitProjectMutation } from '@/lib/project-events';
 import { ANALYSIS_OPTION_CONFIG, getProjectAnalysisOptions, normalizeAnalysisOptions, type AnalysisOptionKey } from '@/lib/analysis-options';
 import type { ProjectGenerationJob } from '@/lib/project-generation-jobs';
 import { getDashboardErrorMessage, logDashboardLoad } from '@/lib/dashboard-load-state';
+import { withOrganizationId } from '@/lib/organizations/current-organization';
 import {
   getReviewItemsFromSpeakerData,
   getReviewSegmentIndicesFromSpeakerData,
@@ -296,6 +298,7 @@ export default function ProjectsPage() {
   const contentGuidancePersistTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const lastPersistedContentGuidanceRef = useRef<string>('');
   const { user, session, isDemoMode } = useAuth();
+  const { organizationId } = useCurrentOrganization();
   const searchParams = useSearchParams();
   const router = useRouter();
   const requestedProjectId = searchParams.get('id');
@@ -2182,7 +2185,7 @@ export default function ProjectsPage() {
       logDashboardLoad('projects', 'list_start', { userId: user.id, source });
       console.log('Fetching projects for user:', user.id);
 
-      const response = await fetch('/api/dashboard/projects?limit=100', {
+      const response = await fetch(withOrganizationId('/api/dashboard/projects?limit=100', organizationId), {
         headers: session?.access_token ? { Authorization: `Bearer ${session.access_token}` } : {},
         cache: 'no-store',
       });
@@ -2232,7 +2235,7 @@ export default function ProjectsPage() {
         setLoading(false);
       }
     }
-  }, [session?.access_token, user?.id]);
+  }, [organizationId, session?.access_token, user?.id]);
 
   const fetchProjectOutputs = useCallback(async (projectId: string) => {
     try {

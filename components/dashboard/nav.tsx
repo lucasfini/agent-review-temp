@@ -6,6 +6,7 @@ import Image from 'next/image';
 import { usePathname, useRouter, useSearchParams } from 'next/navigation';
 import type { User as SupabaseUser } from '@supabase/supabase-js';
 import { useAuth } from '@/lib/auth/context';
+import { useCurrentOrganization } from '@/lib/hooks/useCurrentOrganization';
 import { isAdminEmail } from '@/lib/admin-access';
 import { usdToSiteCredits } from '@/lib/billing/display';
 import { isDemoUser } from '@/lib/demo-mode';
@@ -13,6 +14,7 @@ import { PROJECT_MUTATION_EVENT, type ProjectMutationDetail } from '@/lib/projec
 import { supabase } from '@/lib/supabase/client';
 import BrandLogo from '@/components/site/BrandLogo';
 import { createPortal } from 'react-dom';
+import { withOrganizationId } from '@/lib/organizations/current-organization';
 import { useTheme } from 'next-themes';
 import {
   LayoutGrid,
@@ -613,6 +615,7 @@ export default function DashboardNav({
   const searchParams = useSearchParams();
   const router = useRouter();
   const { user, session, signOut } = useAuth();
+  const { organizationId } = useCurrentOrganization();
   const { resolvedTheme } = useTheme();
   const isDemo = isDemoUser(user as { email?: string } | null);
   const hideChromeForCapture = searchParams.get('capture') === '1';
@@ -680,7 +683,7 @@ export default function DashboardNav({
 
     const fetchRecentProjects = async () => {
       try {
-        const response = await fetch('/api/dashboard/projects?limit=5', {
+        const response = await fetch(withOrganizationId('/api/dashboard/projects?limit=5', organizationId), {
           headers: session?.access_token ? { Authorization: `Bearer ${session.access_token}` } : {},
           cache: 'no-store',
         });
@@ -786,7 +789,7 @@ export default function DashboardNav({
       window.removeEventListener(PROJECT_MUTATION_EVENT, handleProjectMutation);
       supabase.removeChannel(channel);
     };
-  }, [fetchBalance, session?.access_token, user]);
+  }, [fetchBalance, organizationId, session?.access_token, user]);
 
   const handleSignOut = async () => {
     await signOut();

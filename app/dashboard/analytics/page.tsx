@@ -16,6 +16,7 @@ import {
   DollarSign
 } from 'lucide-react';
 import { useAuth } from '@/lib/auth/context';
+import { useCurrentOrganization } from '@/lib/hooks/useCurrentOrganization';
 import { supabase } from '@/lib/supabase/client';
 import { useCoverageProgress } from '@/lib/context/coverage-progress';
 import { toast } from 'sonner';
@@ -31,6 +32,7 @@ import { ProjectAnalysisSection } from '@/components/analytics/ProjectAnalysisSe
 import { RunAnalysisSection } from '@/components/analytics/RunAnalysisSection';
 import { FeatureHelp } from '@/components/ui/feature-help';
 import { getDashboardErrorMessage, logDashboardLoad } from '@/lib/dashboard-load-state';
+import { withOrganizationId } from '@/lib/organizations/current-organization';
 
 // ============================================================================
 // TYPES
@@ -728,6 +730,7 @@ export default function AnalyticsPage() {
   const router = useRouter();
   const searchParams = useSearchParams();
   const { user, session, isDemoMode } = useAuth();
+  const { organizationId } = useCurrentOrganization();
 
   // URL-based project filter
   const projectIdFromUrl = searchParams.get('projectId');
@@ -778,7 +781,7 @@ export default function AnalyticsPage() {
       const startDate = new Date(now.getTime() - rangeDays * 24 * 60 * 60 * 1000);
       const prevStartDate = new Date(startDate.getTime() - rangeDays * 24 * 60 * 60 * 1000);
 
-      const response = await fetch('/api/dashboard/analytics', {
+      const response = await fetch(withOrganizationId('/api/dashboard/analytics', organizationId), {
         headers: session?.access_token ? { Authorization: `Bearer ${session.access_token}` } : {},
         cache: 'no-store',
       });
@@ -926,7 +929,7 @@ export default function AnalyticsPage() {
     } finally {
       setLoading(false);
     }
-  }, [session?.access_token, timeRange, user?.id]);
+  }, [organizationId, session?.access_token, timeRange, user?.id]);
 
   useEffect(() => {
     if (user) {

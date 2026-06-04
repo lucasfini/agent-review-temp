@@ -4,6 +4,7 @@ import { useState, useCallback, useEffect, useRef, useMemo } from 'react';
 import { Upload, FileAudio, X, AlertCircle, CheckCircle, Clock, History, Trash2, Eye, FileVideo, Loader2, ChevronDown, ChevronUp, Lightbulb, Users, Mic, Pencil, UserCircle, MoreHorizontal, Video, MessageSquare } from 'lucide-react';
 import { supabase } from '@/lib/supabase/client';
 import { useAuth } from '@/lib/auth/context';
+import { useCurrentOrganization } from '@/lib/hooks/useCurrentOrganization';
 import { calculateOverallProgress, getStageDisplayName, getUserFacingProcessingMessage, type ProcessingStage } from '@/lib/tier-progress-config';
 import { SpeakerRosterForm, type RosterSpeaker } from '@/components/SpeakerRosterForm';
 import { useActiveProcessingProjects } from '@/lib/hooks/useActiveProcessingProjects';
@@ -14,6 +15,7 @@ import { FeatureHelp } from '@/components/ui/feature-help';
 import { useUploadProgressSync, type UploadedFile, type QueuedRosterSpeaker } from '@/lib/context/upload-progress-sync';
 import { toast } from 'sonner';
 import { isIntegrationEnabled } from '@/lib/integrations/availability';
+import { withOrganizationId } from '@/lib/organizations/current-organization';
 
 const HISTORY_PAGE_SIZE = 10;
 const UPLOAD_METHOD_TABS = [
@@ -530,6 +532,7 @@ export default function UploadPage() {
   const dragCounterRef = useRef(0);
 
   const { user, session } = useAuth();
+  const { organizationId } = useCurrentOrganization();
   const {
     uploadedFiles,
     setUploadedFiles,
@@ -755,13 +758,13 @@ export default function UploadPage() {
       fetchUploadHistory(1);
       refreshActiveProjects();
     }
-  }, [user, session?.access_token]);
+  }, [organizationId, user, session?.access_token]);
 
   const fetchUploadHistory = async (page = historyPage) => {
     try {
       if (!session?.access_token) return;
       setHistoryLoading(true);
-      const response = await fetch(`/api/dashboard/upload-history?page=${page}&limit=${HISTORY_PAGE_SIZE}`, {
+      const response = await fetch(withOrganizationId(`/api/dashboard/upload-history?page=${page}&limit=${HISTORY_PAGE_SIZE}`, organizationId), {
         headers: { Authorization: `Bearer ${session.access_token}` },
         cache: 'no-store',
       });

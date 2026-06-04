@@ -30,6 +30,7 @@ import {
   X
 } from 'lucide-react';
 import { useAuth } from '@/lib/auth/context';
+import { useCurrentOrganization } from '@/lib/hooks/useCurrentOrganization';
 import { supabase } from '@/lib/supabase/client';
 import { KPICard, CollapsibleStatsRow } from '@/components/ui/kpi-card';
 import { Badge } from '@/components/ui/badge';
@@ -42,6 +43,7 @@ import { useUserPrefs } from '@/lib/hooks/useUserPrefs';
 import { DashboardLoadErrorState } from '@/components/dashboard/load-error-state';
 import { getDashboardErrorMessage, logDashboardLoad } from '@/lib/dashboard-load-state';
 import { exportContent } from '@/lib/export-utils';
+import { withOrganizationId } from '@/lib/organizations/current-organization';
 
 // ============================================================================
 // TYPES
@@ -224,6 +226,7 @@ function EmptyState() {
 
 export default function ProjectHubPage() {
   const { user, session, isDemoMode } = useAuth();
+  const { organizationId } = useCurrentOrganization();
   const prefs = useUserPrefs();
   const [projects, setProjects] = useState<Project[]>([]);
   const [outputs, setOutputs] = useState<Output[]>([]);
@@ -256,10 +259,13 @@ export default function ProjectHubPage() {
     logDashboardLoad('hub', 'start', { userId: user.id });
 
     try {
-      const response = await fetch('/api/dashboard/projects?includeOutputs=1&limit=100', {
+      const response = await fetch(
+        withOrganizationId('/api/dashboard/projects?includeOutputs=1&limit=100', organizationId),
+        {
         headers: session?.access_token ? { Authorization: `Bearer ${session.access_token}` } : {},
         cache: 'no-store',
-      });
+        }
+      );
 
       if (!response.ok) {
         const payload = await response.json().catch(() => ({ error: 'Failed to load hub projects' }));
@@ -285,7 +291,7 @@ export default function ProjectHubPage() {
     } finally {
       setLoading(false);
     }
-  }, [session?.access_token, user?.id]);
+  }, [organizationId, session?.access_token, user?.id]);
 
   useEffect(() => {
     let active = true;
