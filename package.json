@@ -9,6 +9,7 @@
     "start": "next start",
     "lint": "eslint",
     "validate:production-env": "node scripts/validate-production-env.js",
+    "validate:subscription-launch": "node scripts/verify-subscription-launch-readiness.js",
     "test": "jest",
     "test:full": "RUN_FULL_TEST_SUITE=1 jest",
     "test:api:full": "RUN_FULL_TEST_SUITE=1 jest tests/api --runInBand",
