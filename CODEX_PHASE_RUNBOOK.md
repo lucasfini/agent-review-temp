@@ -314,7 +314,9 @@ git commit -m "Add feature-flagged subscription entitlement enforcement"
 
 ---
 
-## [ ] Phase 2G: Billing Permissions and Owner/Admin Controls
+## [x] Phase 2G: Billing Permissions and Owner/Admin Controls
+
+Completed commit: da3a338
 
 ### Objective
 
