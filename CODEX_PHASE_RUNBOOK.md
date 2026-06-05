@@ -434,7 +434,9 @@ git commit -m "Restrict billing management to organization admins"
 
 ---
 
-## [ ] Phase 2H: Subscription Launch QA and Staging Checklist
+## [x] Phase 2H: Subscription Launch QA and Staging Checklist
+
+Completed commit: 925b366
 
 ### Objective
 
