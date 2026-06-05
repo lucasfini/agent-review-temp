@@ -23,7 +23,10 @@ import { estimateContentBlocksCostAsync } from '@/lib/billing/cost-map';
 import { isDemoUser } from '@/lib/demo-mode';
 import { resolveOrganizationIdForWrite } from '@/lib/authz/organization-context';
 import { RouteAccessError, requireProjectOwner } from '@/lib/api/route-auth';
-import { runEntitlementDryRunCheck } from '@/lib/billing/entitlement-guards';
+import {
+  runEntitlementGuard,
+  shouldEnforceSubscriptionEntitlements,
+} from '@/lib/billing/entitlement-guards';
 import { recordSubscriptionUsage } from '@/lib/billing/subscription-usage-counters';
 
 /**
@@ -627,17 +630,22 @@ export async function POST(request: NextRequest) {
       }
     }
 
+    if (!projectOrganizationId && !isMaintenance && shouldEnforceSubscriptionEntitlements()) {
+      projectOrganizationId = await resolveOrganizationIdForWrite(userId);
+    }
+
     const estimatedGenerationCost = await estimateContentBlocksCostAsync(
       blocks
         .filter((block: ContentBlock) => block.enabled !== false)
         .map((block: ContentBlock) => block.contentTypeId)
     );
     if (userId && estimatedGenerationCost > 0) {
-      await runEntitlementDryRunCheck({
+      const entitlementGuard = await runEntitlementGuard({
         organizationId: projectOrganizationId || null,
         legacyUserId: userId,
         action: 'content_generation',
         requestedAmount: blocks.filter((block: ContentBlock) => block.enabled !== false).length,
+        allowHardBlock: !isMaintenance,
         logContext: {
           route: 'app/api/generate-content',
           userId,
@@ -649,6 +657,10 @@ export async function POST(request: NextRequest) {
           },
         },
       });
+      if (entitlementGuard.response) {
+        return entitlementGuard.response;
+      }
+
       const estimatedHold = estimateReservationAmount(estimatedGenerationCost, 'content_generation');
       await requireCredits(userId, estimatedHold);
       const reservation = await createReservation({

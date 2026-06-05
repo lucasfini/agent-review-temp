@@ -1,4 +1,5 @@
 import type { SupabaseClient } from '@supabase/supabase-js';
+import { NextResponse } from 'next/server';
 
 import { buildBillingOrgScopedLegacyFallbackFilter } from '@/lib/billing/organization-scope';
 import type { PlanLimits, PlanSlug } from '@/lib/billing/plans';
@@ -48,6 +49,23 @@ export interface EntitlementDecision {
   currentUsage: number;
   requestedAmount: number;
   projectedUsage: number;
+  periodStart: string;
+  periodEnd: string;
+  checkedAt: string;
+}
+
+export interface EntitlementErrorBody {
+  error: string;
+  message: string;
+  reasonCode: EntitlementReasonCode;
+  action: EntitlementAction;
+  limit: number | null;
+  currentUsage: number;
+  requestedAmount: number;
+  projectedUsage: number;
+  upgradeRequired: boolean;
+  enforcementMode: SubscriptionEnforcementMode;
+  dryRun: boolean;
   periodStart: string;
   periodEnd: string;
   checkedAt: string;
@@ -124,10 +142,44 @@ export interface EntitlementDryRunLogContext {
   metadata?: Record<string, unknown>;
 }
 
+export interface RunEntitlementGuardResult {
+  decision: EntitlementDecision | null;
+  response: NextResponse<EntitlementErrorBody> | null;
+  enforcementMode: SubscriptionEnforcementMode;
+  enforcementActive: boolean;
+}
+
+export interface RunEntitlementGuardOptions extends CheckOrganizationEntitlementOptions {
+  logContext?: EntitlementDryRunLogContext;
+  allowHardBlock?: boolean;
+  enforcementMode?: SubscriptionEnforcementMode | string | null;
+}
+
+const warnedInvalidEnforcementModes = new Set<string>();
+
 export function getSubscriptionEnforcementMode(
   value: string | undefined | null = process.env.SUBSCRIPTION_ENFORCEMENT_MODE
 ): SubscriptionEnforcementMode {
-  return value === 'enforce' ? 'enforce' : 'dry_run';
+  if (value === 'enforce') return 'enforce';
+  if (value === 'dry_run' || value === undefined || value === null || value === '') {
+    return 'dry_run';
+  }
+
+  if (!warnedInvalidEnforcementModes.has(value)) {
+    warnedInvalidEnforcementModes.add(value);
+    console.warn('[ENTITLEMENT_ENFORCEMENT] Invalid SUBSCRIPTION_ENFORCEMENT_MODE value; falling back to dry_run.', {
+      value,
+      supportedValues: ['dry_run', 'enforce'],
+    });
+  }
+
+  return 'dry_run';
+}
+
+export function shouldEnforceSubscriptionEntitlements(
+  value: SubscriptionEnforcementMode | string | undefined | null = process.env.SUBSCRIPTION_ENFORCEMENT_MODE
+): boolean {
+  return getSubscriptionEnforcementMode(value) === 'enforce';
 }
 
 function roundUsage(value: number): number {
@@ -522,9 +574,11 @@ export function buildDryRunEntitlementDecision(params: BuildDecisionParams): Ent
   if (!subscription) {
     return {
       ...base,
-      allowed: true,
-      reasonCode: 'legacy_credit_mode',
-      reasonMessage: 'No organization subscription exists; legacy credit/pay-as-you-go mode remains allowed during dry-run.',
+      allowed: dryRun,
+      reasonCode: dryRun ? 'legacy_credit_mode' : 'subscription_missing',
+      reasonMessage: dryRun
+        ? 'No organization subscription exists; legacy credit/pay-as-you-go mode remains allowed during dry-run.'
+        : 'A subscription is required to use this feature.',
     };
   }
 
@@ -533,7 +587,9 @@ export function buildDryRunEntitlementDecision(params: BuildDecisionParams): Ent
       ...base,
       allowed: false,
       reasonCode: 'subscription_inactive',
-      reasonMessage: `Subscription status ${subscription.status} is not usable. Existing credit/pay-as-you-go behavior is still not blocked in this phase.`,
+      reasonMessage: dryRun
+        ? `Subscription status ${subscription.status} is not usable. Existing credit/pay-as-you-go behavior is still not blocked in dry-run.`
+        : 'Your subscription is not active. Update billing to continue.',
     };
   }
 
@@ -542,7 +598,9 @@ export function buildDryRunEntitlementDecision(params: BuildDecisionParams): Ent
       ...base,
       allowed: false,
       reasonCode: 'plan_missing',
-      reasonMessage: 'Subscription has no attached plan. Existing flow remains unblocked during dry-run.',
+      reasonMessage: dryRun
+        ? 'Subscription has no attached plan. Existing flow remains unblocked during dry-run.'
+        : 'Your subscription plan could not be verified.',
     };
   }
 
@@ -569,7 +627,9 @@ export function buildDryRunEntitlementDecision(params: BuildDecisionParams): Ent
       ...base,
       allowed: false,
       reasonCode: 'limit_exceeded',
-      reasonMessage: `Projected usage ${projectedUsage} exceeds plan limit ${params.limit}. Existing flow remains unblocked during dry-run.`,
+      reasonMessage: dryRun
+        ? `Projected usage ${projectedUsage} exceeds plan limit ${params.limit}. Existing flow remains unblocked during dry-run.`
+        : 'Your current plan limit has been reached.',
     };
   }
 
@@ -616,10 +676,11 @@ export async function checkOrganizationEntitlement(
 
 export function logEntitlementDecision(
   decision: EntitlementDecision,
-  context: EntitlementDryRunLogContext = {}
+  context: EntitlementDryRunLogContext = {},
+  enforcementMode: SubscriptionEnforcementMode = getSubscriptionEnforcementMode()
 ) {
   const payload = {
-    event: 'subscription_entitlement_dry_run',
+    event: decision.dryRun ? 'subscription_entitlement_dry_run' : 'subscription_entitlement_enforce',
     route: context.route,
     userId: context.userId,
     projectId: context.projectId,
@@ -628,6 +689,8 @@ export function logEntitlementDecision(
     organizationId: decision.organizationId,
     allowed: decision.allowed,
     dryRun: decision.dryRun,
+    enforcementMode,
+    enforcementActive: !decision.dryRun && enforcementMode === 'enforce',
     reasonCode: decision.reasonCode,
     reasonMessage: decision.reasonMessage,
     planSlug: decision.planSlug,
@@ -642,10 +705,124 @@ export function logEntitlementDecision(
     metadata: context.metadata,
   };
 
+  const label = decision.dryRun ? '[ENTITLEMENT_DRY_RUN]' : '[ENTITLEMENT_ENFORCE]';
   if (decision.allowed) {
-    console.info('[ENTITLEMENT_DRY_RUN]', payload);
+    console.info(label, payload);
   } else {
-    console.warn('[ENTITLEMENT_DRY_RUN]', payload);
+    console.warn(label, payload);
+  }
+}
+
+function getEntitlementErrorCode(reasonCode: EntitlementReasonCode): string {
+  switch (reasonCode) {
+    case 'subscription_missing':
+      return 'subscription_required';
+    case 'subscription_inactive':
+      return 'subscription_inactive';
+    case 'plan_missing':
+      return 'subscription_plan_missing';
+    case 'limit_exceeded':
+      return 'subscription_limit_exceeded';
+    default:
+      return 'subscription_entitlement_blocked';
+  }
+}
+
+function getEntitlementErrorStatus(reasonCode: EntitlementReasonCode): number {
+  switch (reasonCode) {
+    case 'limit_exceeded':
+      return 429;
+    case 'subscription_missing':
+    case 'subscription_inactive':
+    case 'plan_missing':
+      return 402;
+    default:
+      return 402;
+  }
+}
+
+export function buildEntitlementErrorBody(
+  decision: EntitlementDecision,
+  enforcementMode: SubscriptionEnforcementMode = 'enforce'
+): EntitlementErrorBody {
+  return {
+    error: getEntitlementErrorCode(decision.reasonCode),
+    message: decision.reasonMessage,
+    reasonCode: decision.reasonCode,
+    action: decision.action,
+    limit: decision.limit,
+    currentUsage: decision.currentUsage,
+    requestedAmount: decision.requestedAmount,
+    projectedUsage: decision.projectedUsage,
+    upgradeRequired: true,
+    enforcementMode,
+    dryRun: decision.dryRun,
+    periodStart: decision.periodStart,
+    periodEnd: decision.periodEnd,
+    checkedAt: decision.checkedAt,
+  };
+}
+
+export function buildEntitlementErrorResponse(
+  decision: EntitlementDecision,
+  enforcementMode: SubscriptionEnforcementMode = 'enforce'
+): NextResponse<EntitlementErrorBody> {
+  return NextResponse.json(
+    buildEntitlementErrorBody(decision, enforcementMode),
+    {
+      status: getEntitlementErrorStatus(decision.reasonCode),
+      headers: {
+        'Cache-Control': 'no-cache, no-store, must-revalidate, max-age=0',
+      },
+    }
+  );
+}
+
+export async function runEntitlementGuard(
+  options: RunEntitlementGuardOptions
+): Promise<RunEntitlementGuardResult> {
+  const enforcementMode = getSubscriptionEnforcementMode(options.enforcementMode);
+  const enforcementActive = options.allowHardBlock !== false && enforcementMode === 'enforce';
+
+  try {
+    const decision = await checkOrganizationEntitlement({
+      ...options,
+      dryRun: !enforcementActive,
+    });
+    logEntitlementDecision(decision, options.logContext, enforcementMode);
+
+    if (enforcementActive && !decision.allowed) {
+      return {
+        decision,
+        response: buildEntitlementErrorResponse(decision, enforcementMode),
+        enforcementMode,
+        enforcementActive,
+      };
+    }
+
+    return {
+      decision,
+      response: null,
+      enforcementMode,
+      enforcementActive,
+    };
+  } catch (error) {
+    console.warn('[ENTITLEMENT_ENFORCEMENT] Failed to compute entitlement decision; request remains governed by existing billing checks.', {
+      action: options.action,
+      organizationId: options.organizationId,
+      userId: options.legacyUserId,
+      route: options.logContext?.route,
+      projectId: options.logContext?.projectId,
+      enforcementMode,
+      enforcementActive,
+      error: error instanceof Error ? error.message : String(error),
+    });
+    return {
+      decision: null,
+      response: null,
+      enforcementMode,
+      enforcementActive,
+    };
   }
 }
 
@@ -657,7 +834,7 @@ export async function runEntitlementDryRunCheck(
       ...options,
       dryRun: true,
     });
-    logEntitlementDecision(decision, options.logContext);
+    logEntitlementDecision(decision, options.logContext, getSubscriptionEnforcementMode());
     return decision;
   } catch (error) {
     console.warn('[ENTITLEMENT_DRY_RUN] Failed to compute dry-run entitlement decision:', {

@@ -10,7 +10,11 @@ import { calculateBlocksCost, getContentTypeById } from '@/lib/content-types';
 import { requireSufficientCredit } from '@/lib/billing/track-usage';
 import { InsufficientCreditError } from '@/lib/billing/credit';
 import { RouteAccessError, requireProjectOwner } from '@/lib/api/route-auth';
-import { runEntitlementDryRunCheck } from '@/lib/billing/entitlement-guards';
+import {
+  runEntitlementGuard,
+  shouldEnforceSubscriptionEntitlements,
+} from '@/lib/billing/entitlement-guards';
+import { resolveOrganizationIdForWrite } from '@/lib/authz/organization-context';
 
 export async function POST(request: NextRequest) {
   try {
@@ -71,8 +75,12 @@ export async function POST(request: NextRequest) {
       }
     }
 
-    await runEntitlementDryRunCheck({
-      organizationId: project.organization_id || null,
+    const entitlementOrganizationId = project.organization_id
+      || (shouldEnforceSubscriptionEntitlements()
+        ? await resolveOrganizationIdForWrite(project.user_id)
+        : null);
+    const entitlementGuard = await runEntitlementGuard({
+      organizationId: entitlementOrganizationId,
       legacyUserId: project.user_id,
       action: 'content_generation',
       requestedAmount: blocks.filter((block: ContentBlock) => block.enabled !== false).length || blocks.length,
@@ -85,6 +93,9 @@ export async function POST(request: NextRequest) {
         },
       },
     });
+    if (entitlementGuard.response) {
+      return entitlementGuard.response;
+    }
 
     try {
       await requireSufficientCredit(user.id, calculateBlocksCost(blocks));

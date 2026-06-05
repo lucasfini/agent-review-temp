@@ -7,8 +7,10 @@ import {
   ENTITLEMENT_ACTIONS,
   checkOrganizationEntitlement,
   getSubscriptionEnforcementMode,
+  shouldEnforceSubscriptionEntitlements,
 } from '@/lib/billing/entitlement-guards';
 import { getOrganizationSubscription } from '@/lib/billing/subscriptions';
+import { getSubscriptionUsageCounters } from '@/lib/billing/subscription-usage-counters';
 import { supabaseAdmin } from '@/lib/supabase/server';
 
 export const dynamic = 'force-dynamic';
@@ -25,6 +27,12 @@ export async function GET(request: NextRequest) {
       requestedOrganizationId
     );
     const subscription = await getOrganizationSubscription(supabaseAdmin, organization.id);
+    const enforcementMode = getSubscriptionEnforcementMode();
+    const enforcementActive = shouldEnforceSubscriptionEntitlements(enforcementMode);
+    const usageCounters = await getSubscriptionUsageCounters(supabaseAdmin, {
+      organizationId: organization.id,
+      subscription,
+    });
     const decisions = await Promise.all(
       ENTITLEMENT_ACTIONS.map((action) => checkOrganizationEntitlement({
         organizationId: organization.id,
@@ -32,15 +40,16 @@ export async function GET(request: NextRequest) {
         action,
         requestedAmount: action === 'storage' ? 0 : 1,
         subscription,
-        dryRun: true,
+        dryRun: !enforcementActive,
       }))
     );
 
     return NextResponse.json(
       {
         success: true,
-        enforcementMode: getSubscriptionEnforcementMode(),
-        dryRun: true,
+        enforcementMode,
+        enforcementActive,
+        dryRun: !enforcementActive,
         organization: {
           id: organization.id,
           name: organization.name,
@@ -52,6 +61,7 @@ export async function GET(request: NextRequest) {
         },
         subscription,
         plan: subscription?.plan || null,
+        usageCounters,
         decisions,
       },
       {

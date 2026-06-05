@@ -15,6 +15,11 @@ import {
 import { acquireGlobalJobLock, releaseGlobalJobLock, heartbeatGlobalJobLock } from '@/lib/concurrency';
 import { RouteAccessError, requireProjectOwner } from '@/lib/api/route-auth';
 import { recordSubscriptionUsage } from '@/lib/billing/subscription-usage-counters';
+import {
+  runEntitlementGuard,
+  shouldEnforceSubscriptionEntitlements,
+} from '@/lib/billing/entitlement-guards';
+import { resolveOrganizationIdForWrite } from '@/lib/authz/organization-context';
 
 function isMissingFailureNotifiedAtColumn(error: any): boolean {
   return error?.code === 'PGRST204'
@@ -104,6 +109,54 @@ export async function POST(
 
     if ((runningCheck.data || []).length > 0) {
       return NextResponse.json({ success: true, skipped: 'already-running' });
+    }
+
+    if (callerUserId) {
+      const { data: projectForEntitlement, error: entitlementProjectError } = await (supabaseAdmin as any)
+        .from('projects')
+        .select('id, user_id, organization_id')
+        .eq('id', projectId)
+        .single();
+
+      if (entitlementProjectError || !projectForEntitlement) {
+        return NextResponse.json({ error: 'Project not found' }, { status: 404 });
+      }
+
+      const { count: queuedJobCount, error: queuedJobCountError } = await (supabaseAdmin as any)
+        .from('project_generation_jobs')
+        .select('id', { count: 'exact', head: true })
+        .eq('project_id', projectId)
+        .eq('status', 'queued');
+
+      if (queuedJobCountError) {
+        throw new Error(queuedJobCountError.message || 'Failed to load queued generation jobs');
+      }
+
+      if ((queuedJobCount || 0) > 0) {
+        const entitlementOrganizationId = projectForEntitlement.organization_id
+          || (shouldEnforceSubscriptionEntitlements()
+            ? await resolveOrganizationIdForWrite(projectForEntitlement.user_id)
+            : null);
+        const entitlementGuard = await runEntitlementGuard({
+          organizationId: entitlementOrganizationId,
+          legacyUserId: projectForEntitlement.user_id,
+          action: 'content_generation',
+          requestedAmount: queuedJobCount || 1,
+          allowHardBlock: true,
+          logContext: {
+            route: 'app/api/projects/[id]/generate/process',
+            userId: callerUserId,
+            projectId,
+            metadata: {
+              queuedJobCount,
+              isMaintenance,
+            },
+          },
+        });
+        if (entitlementGuard.response) {
+          return entitlementGuard.response;
+        }
+      }
     }
 
     const baseUrl = getInternalAppBaseUrl();

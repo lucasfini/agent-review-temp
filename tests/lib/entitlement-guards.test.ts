@@ -1,10 +1,14 @@
 import {
+  buildEntitlementErrorBody,
+  buildEntitlementErrorResponse,
   buildDryRunEntitlementDecision,
   checkOrganizationEntitlement,
   getActionUsageCost,
   getCurrentPeriodUsage,
   getEntitlementUsagePeriod,
   getSubscriptionEnforcementMode,
+  runEntitlementGuard,
+  shouldEnforceSubscriptionEntitlements,
   type EntitlementAction,
 } from '@/lib/billing/entitlement-guards';
 import type { Plan } from '@/lib/billing/plans';
@@ -84,11 +88,28 @@ function buildSupabaseMock(rows: Record<string, { data?: any[]; count?: number |
 }
 
 describe('entitlement guard decisions', () => {
+  beforeEach(() => {
+    jest.spyOn(console, 'info').mockImplementation(() => {});
+  });
+
+  afterEach(() => {
+    jest.restoreAllMocks();
+  });
+
   it('parses enforcement mode with dry_run as the safe default', () => {
+    const warnSpy = jest.spyOn(console, 'warn').mockImplementation(() => {});
+
     expect(getSubscriptionEnforcementMode('enforce')).toBe('enforce');
     expect(getSubscriptionEnforcementMode('dry_run')).toBe('dry_run');
     expect(getSubscriptionEnforcementMode('unexpected')).toBe('dry_run');
     expect(getSubscriptionEnforcementMode(undefined)).toBe('dry_run');
+    expect(shouldEnforceSubscriptionEntitlements('enforce')).toBe(true);
+    expect(shouldEnforceSubscriptionEntitlements('dry_run')).toBe(false);
+    expect(shouldEnforceSubscriptionEntitlements('unexpected-2f')).toBe(false);
+    expect(warnSpy).toHaveBeenCalledWith(
+      '[ENTITLEMENT_ENFORCEMENT] Invalid SUBSCRIPTION_ENFORCEMENT_MODE value; falling back to dry_run.',
+      expect.objectContaining({ supportedValues: ['dry_run', 'enforce'] })
+    );
   });
 
   it('keeps decisions dry-run by default even if enforce is configured', () => {
@@ -232,6 +253,60 @@ describe('entitlement guard decisions', () => {
     expect(decision.subscriptionStatus).toBe('missing');
   });
 
+  it('dry_run guard never returns a blocking response', async () => {
+    const supabase = buildSupabaseMock({
+      billing_reservations: { data: [] },
+    });
+
+    const result = await runEntitlementGuard({
+      supabase: supabase as any,
+      organizationId: 'org-1',
+      legacyUserId: 'user-1',
+      action: 'audio_upload',
+      subscription: subscription({ status: 'past_due' }),
+      enforcementMode: 'dry_run',
+    });
+
+    expect(result.enforcementActive).toBe(false);
+    expect(result.response).toBeNull();
+    expect(result.decision).toMatchObject({
+      allowed: false,
+      dryRun: true,
+      reasonCode: 'subscription_inactive',
+    });
+  });
+
+  it('enforce mode blocks missing subscriptions', async () => {
+    const supabase = buildSupabaseMock({
+      billing_reservations: { data: [] },
+    });
+
+    const result = await runEntitlementGuard({
+      supabase: supabase as any,
+      organizationId: 'org-1',
+      legacyUserId: 'user-1',
+      action: 'audio_upload',
+      subscription: null,
+      enforcementMode: 'enforce',
+    });
+
+    expect(result.enforcementActive).toBe(true);
+    expect(result.decision).toMatchObject({
+      allowed: false,
+      dryRun: false,
+      reasonCode: 'subscription_missing',
+    });
+    expect(result.response?.status).toBe(402);
+    await expect(result.response?.json()).resolves.toMatchObject({
+      error: 'subscription_required',
+      reasonCode: 'subscription_missing',
+      action: 'audio_upload',
+      upgradeRequired: true,
+      enforcementMode: 'enforce',
+      dryRun: false,
+    });
+  });
+
   it('reports inactive subscriptions as would-block decisions without enforcing', () => {
     const decision = buildDryRunEntitlementDecision({
       action: 'audio_upload',
@@ -248,6 +323,28 @@ describe('entitlement guard decisions', () => {
     expect(decision.allowed).toBe(false);
     expect(decision.dryRun).toBe(true);
     expect(decision.reasonCode).toBe('subscription_inactive');
+  });
+
+  it('enforce mode blocks inactive subscriptions', async () => {
+    const supabase = buildSupabaseMock({
+      billing_reservations: { data: [] },
+    });
+
+    const result = await runEntitlementGuard({
+      supabase: supabase as any,
+      organizationId: 'org-1',
+      legacyUserId: 'user-1',
+      action: 'audio_upload',
+      subscription: subscription({ status: 'past_due' }),
+      enforcementMode: 'enforce',
+    });
+
+    expect(result.response?.status).toBe(402);
+    expect(result.decision).toMatchObject({
+      allowed: false,
+      dryRun: false,
+      reasonCode: 'subscription_inactive',
+    });
   });
 
   it('reports limit exceeded decisions without enforcing', async () => {
@@ -276,6 +373,143 @@ describe('entitlement guard decisions', () => {
     expect(decision.reasonCode).toBe('limit_exceeded');
     expect(decision.currentUsage).toBe(4);
     expect(decision.projectedUsage).toBe(5);
+  });
+
+  it('enforce mode blocks limit exceeded decisions with a stable response shape', async () => {
+    const supabase = buildSupabaseMock({
+      billing_reservations: {
+        data: [
+          {
+            workflow_type: 'content_generation',
+            metadata: { blockCount: 4 },
+          },
+        ],
+      },
+    });
+
+    const result = await runEntitlementGuard({
+      supabase: supabase as any,
+      organizationId: 'org-1',
+      legacyUserId: 'user-1',
+      action: 'content_generation',
+      requestedAmount: 1,
+      subscription: subscription(),
+      enforcementMode: 'enforce',
+      now: new Date('2026-06-15T00:00:00.000Z'),
+    });
+
+    expect(result.response?.status).toBe(429);
+    const body = await result.response?.json();
+    expect(body).toEqual({
+      error: 'subscription_limit_exceeded',
+      message: 'Your current plan limit has been reached.',
+      reasonCode: 'limit_exceeded',
+      action: 'content_generation',
+      limit: 4,
+      currentUsage: 4,
+      requestedAmount: 1,
+      projectedUsage: 5,
+      upgradeRequired: true,
+      enforcementMode: 'enforce',
+      dryRun: false,
+      periodStart: '2026-06-01T00:00:00.000Z',
+      periodEnd: '2026-07-01T00:00:00.000Z',
+      checkedAt: '2026-06-15T00:00:00.000Z',
+    });
+  });
+
+  it('enforce mode allows usage within limits', async () => {
+    const supabase = buildSupabaseMock({
+      billing_reservations: {
+        data: [
+          {
+            workflow_type: 'content_generation',
+            metadata: { blockCount: 1 },
+          },
+        ],
+      },
+    });
+
+    const result = await runEntitlementGuard({
+      supabase: supabase as any,
+      organizationId: 'org-1',
+      legacyUserId: 'user-1',
+      action: 'content_generation',
+      requestedAmount: 1,
+      subscription: subscription(),
+      enforcementMode: 'enforce',
+    });
+
+    expect(result.enforcementActive).toBe(true);
+    expect(result.response).toBeNull();
+    expect(result.decision).toMatchObject({
+      allowed: true,
+      dryRun: false,
+      reasonCode: 'within_limit',
+    });
+  });
+
+  it('blocked handlers return before recording counters', async () => {
+    const supabase = buildSupabaseMock({
+      billing_reservations: {
+        data: [
+          {
+            workflow_type: 'content_generation',
+            metadata: { blockCount: 4 },
+          },
+        ],
+      },
+    });
+    const recordCounter = jest.fn();
+
+    async function fakeHandler() {
+      const guard = await runEntitlementGuard({
+        supabase: supabase as any,
+        organizationId: 'org-1',
+        legacyUserId: 'user-1',
+        action: 'content_generation',
+        requestedAmount: 1,
+        subscription: subscription(),
+        enforcementMode: 'enforce',
+      });
+      if (guard.response) return guard.response;
+      recordCounter();
+      return null;
+    }
+
+    const response = await fakeHandler();
+    expect(response?.status).toBe(429);
+    expect(recordCounter).not.toHaveBeenCalled();
+  });
+
+  it('builds entitlement error responses from decisions', async () => {
+    const decision = buildDryRunEntitlementDecision({
+      action: 'content_generation',
+      organizationId: 'org-1',
+      subscription: subscription(),
+      currentUsage: 4,
+      requestedAmount: 1,
+      limit: 4,
+      periodStart: '2026-06-01T00:00:00.000Z',
+      periodEnd: '2026-07-01T00:00:00.000Z',
+      dryRun: false,
+      now: new Date('2026-06-15T00:00:00.000Z'),
+    });
+
+    expect(buildEntitlementErrorBody(decision)).toMatchObject({
+      error: 'subscription_limit_exceeded',
+      reasonCode: 'limit_exceeded',
+      currentUsage: 4,
+      requestedAmount: 1,
+      projectedUsage: 5,
+    });
+
+    const response = buildEntitlementErrorResponse(decision);
+    expect(response.status).toBe(429);
+    await expect(response.json()).resolves.toMatchObject({
+      error: 'subscription_limit_exceeded',
+      reasonCode: 'limit_exceeded',
+    });
   });
 
   it('sums transcription usage from usage_events in minutes', async () => {

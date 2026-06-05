@@ -17,7 +17,7 @@ import { getProcessingTierForAnalysis, normalizeAnalysisOptions } from '@/lib/an
 import { createReservation, releaseReservation } from '@/lib/billing/credit';
 import { estimateReservationAmount } from '@/lib/billing/reserve-amount';
 import { resolveOrganizationIdForWrite } from '@/lib/authz/organization-context';
-import { runEntitlementDryRunCheck } from '@/lib/billing/entitlement-guards';
+import { runEntitlementGuard } from '@/lib/billing/entitlement-guards';
 
 export const runtime = 'nodejs';
 
@@ -104,9 +104,8 @@ export async function POST(request: NextRequest) {
         });
 
         const estimatedHold = estimateReservationAmount(estimatedCost.total, 'upload_processing');
-        await requireCredits(user.id, estimatedHold);
         const organizationId = await resolveOrganizationIdForWrite(user.id, requestedOrganizationId);
-        await runEntitlementDryRunCheck({
+        const entitlementGuard = await runEntitlementGuard({
             organizationId,
             legacyUserId: user.id,
             action: 'audio_upload',
@@ -121,6 +120,11 @@ export async function POST(request: NextRequest) {
                 },
             },
         });
+        if (entitlementGuard.response) {
+            return entitlementGuard.response;
+        }
+
+        await requireCredits(user.id, estimatedHold);
 
         const reservation = await createReservation({
             userId: user.id,

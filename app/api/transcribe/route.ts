@@ -47,8 +47,12 @@ import {
 import { runControlledSpeakerVerification } from '@/lib/speaker-verification';
 import { RouteAccessError } from '@/lib/api/route-auth';
 import { resolveTranscribeRequestAuthContext, type TranscribeProjectRecord } from '@/lib/api/transcribe-auth';
-import { runEntitlementDryRunCheck } from '@/lib/billing/entitlement-guards';
+import {
+  runEntitlementGuard,
+  shouldEnforceSubscriptionEntitlements,
+} from '@/lib/billing/entitlement-guards';
 import { recordSubscriptionUsage } from '@/lib/billing/subscription-usage-counters';
+import { resolveOrganizationIdForWrite } from '@/lib/authz/organization-context';
 
 const sleep = (ms: number) => new Promise<void>(resolve => setTimeout(resolve, ms));
 const TRANSCRIPTION_PREPARING_MESSAGE = 'Preparing your audio for processing...';
@@ -498,11 +502,16 @@ export async function POST(request: NextRequest) {
     if (features.keyTakeaways) selectedContentBlocks.push('takeaways');
     if (features.quotesExtraction) selectedContentBlocks.push('quotes');
 
-    await runEntitlementDryRunCheck({
-      organizationId: existingProject.organization_id || null,
+    const entitlementOrganizationId = existingProject.organization_id
+      || (callerUserId && shouldEnforceSubscriptionEntitlements()
+        ? await resolveOrganizationIdForWrite(existingProject.user_id)
+        : null);
+    const entitlementGuard = await runEntitlementGuard({
+      organizationId: entitlementOrganizationId,
       legacyUserId: existingProject.user_id,
       action: 'transcription',
       durationSeconds: existingProject.audio_duration || undefined,
+      allowHardBlock: callerUserId !== null,
       logContext: {
         route: 'app/api/transcribe',
         userId: callerUserId || existingProject.user_id,
@@ -515,6 +524,9 @@ export async function POST(request: NextRequest) {
         },
       },
     });
+    if (entitlementGuard.response) {
+      return entitlementGuard.response;
+    }
 
     const queuePayload: TranscriptionQueuePayload = {
       projectId,

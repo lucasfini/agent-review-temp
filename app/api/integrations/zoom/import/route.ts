@@ -8,7 +8,7 @@ import { getProcessingTierForAnalysis, normalizeAnalysisOptions } from '@/lib/an
 import { createReservation, releaseReservation } from '@/lib/billing/credit';
 import { estimateReservationAmount } from '@/lib/billing/reserve-amount';
 import { resolveOrganizationIdForWrite } from '@/lib/authz/organization-context';
-import { runEntitlementDryRunCheck } from '@/lib/billing/entitlement-guards';
+import { runEntitlementGuard } from '@/lib/billing/entitlement-guards';
 import { recordSubscriptionUsage } from '@/lib/billing/subscription-usage-counters';
 
 async function ensureAuth(request: NextRequest) {
@@ -40,9 +40,8 @@ export async function POST(request: NextRequest) {
     });
     const estimatedHold = estimateReservationAmount(estimatedCost.total, 'upload_processing');
 
-    await requireCredits(user.id, estimatedHold);
     const organizationId = await resolveOrganizationIdForWrite(user.id);
-    await runEntitlementDryRunCheck({
+    const entitlementGuard = await runEntitlementGuard({
       organizationId,
       legacyUserId: user.id,
       action: 'integration_import',
@@ -56,6 +55,11 @@ export async function POST(request: NextRequest) {
         },
       },
     });
+    if (entitlementGuard.response) {
+      return entitlementGuard.response;
+    }
+
+    await requireCredits(user.id, estimatedHold);
 
     if (!meetingId || !fileId) {
       return NextResponse.json({ error: 'Missing meetingId or fileId' }, { status: 400 });
