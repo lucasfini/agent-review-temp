@@ -72,6 +72,38 @@ function normalizeFeatures(value: unknown): Record<string, unknown> {
   return value as Record<string, unknown>;
 }
 
+function isUuidLike(value: string): boolean {
+  return /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(value);
+}
+
+async function getPlanByColumn(
+  supabase: SupabaseClient<any>,
+  column: 'id' | 'slug',
+  value: string,
+  activeOnly: boolean
+): Promise<Plan | null> {
+  let query = supabase
+    .from('plans')
+    .select('*')
+    .eq(column, value)
+    .limit(1);
+
+  if (activeOnly) {
+    query = query.eq('is_active', true);
+  }
+
+  const { data, error } = await query.maybeSingle() as {
+    data: PlanRow | null;
+    error: any;
+  };
+
+  if (error) {
+    throw new Error(error.message || 'Failed to load plan');
+  }
+
+  return data ? mapPlanRow(data) : null;
+}
+
 export function mapPlanRow(row: PlanRow): Plan {
   return {
     id: row.id,
@@ -127,4 +159,50 @@ export async function getActivePlans(
   }
 
   return (data || []).map(mapPlanRow);
+}
+
+export async function getPlanBySlugOrId(
+  supabase: SupabaseClient<any> = supabaseAdmin,
+  identifier: string,
+  options: { activeOnly?: boolean } = {}
+): Promise<Plan | null> {
+  const activeOnly = options.activeOnly ?? true;
+  const bySlug = await getPlanByColumn(supabase, 'slug', identifier, activeOnly);
+  if (bySlug) {
+    return bySlug;
+  }
+
+  if (!isUuidLike(identifier)) {
+    return null;
+  }
+
+  return getPlanByColumn(supabase, 'id', identifier, activeOnly);
+}
+
+export async function getPlanByStripePriceId(
+  supabase: SupabaseClient<any> = supabaseAdmin,
+  stripePriceId: string,
+  options: { activeOnly?: boolean } = {}
+): Promise<Plan | null> {
+  const activeOnly = options.activeOnly ?? false;
+  let query = supabase
+    .from('plans')
+    .select('*')
+    .eq('stripe_price_id', stripePriceId)
+    .limit(1);
+
+  if (activeOnly) {
+    query = query.eq('is_active', true);
+  }
+
+  const { data, error } = await query.maybeSingle() as {
+    data: PlanRow | null;
+    error: any;
+  };
+
+  if (error) {
+    throw new Error(error.message || 'Failed to load plan by Stripe price');
+  }
+
+  return data ? mapPlanRow(data) : null;
 }

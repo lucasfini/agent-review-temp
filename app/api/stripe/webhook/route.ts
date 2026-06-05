@@ -8,6 +8,7 @@ import Stripe from 'stripe';
 import { addCredit, debitCredit } from '@/lib/billing/credit';
 import { supabaseAdmin } from '@/lib/supabase/server';
 import { getTotalCredits, resolveCreditPackage } from '@/lib/billing/credit-packages';
+import { upsertOrganizationSubscriptionFromStripe } from '@/lib/billing/subscriptions';
 
 const stripe = new Stripe(process.env.STRIPE_SECRET_KEY!, {
   apiVersion: '2025-10-29.clover',
@@ -44,7 +45,26 @@ export async function POST(request: NextRequest) {
     switch (event.type) {
       case 'checkout.session.completed': {
         const session = event.data.object as Stripe.Checkout.Session;
-        await handleCheckoutComplete(session);
+        if (session.mode === 'subscription') {
+          await handleSubscriptionCheckoutComplete(session);
+        } else {
+          await handleCheckoutComplete(session);
+        }
+        break;
+      }
+
+      case 'customer.subscription.created':
+      case 'customer.subscription.updated':
+      case 'customer.subscription.deleted': {
+        const subscription = event.data.object as Stripe.Subscription;
+        await syncSubscriptionFromStripe(subscription, event.type);
+        break;
+      }
+
+      case 'invoice.paid':
+      case 'invoice.payment_failed': {
+        const invoice = event.data.object as Stripe.Invoice;
+        await syncSubscriptionFromInvoice(invoice, event.type);
         break;
       }
 
@@ -66,6 +86,70 @@ export async function POST(request: NextRequest) {
       { status: 500 }
     );
   }
+}
+
+function getStripeId(value: string | { id: string } | null | undefined): string | null {
+  if (!value) return null;
+  return typeof value === 'string' ? value : value.id;
+}
+
+async function retrieveSubscription(subscriptionId: string): Promise<Stripe.Subscription> {
+  return stripe.subscriptions.retrieve(subscriptionId, {
+    expand: ['items.data.price'],
+  });
+}
+
+async function syncSubscriptionFromStripe(
+  subscription: Stripe.Subscription,
+  eventType: string,
+  options: {
+    organizationId?: string | null;
+    planId?: string | null;
+    planSlug?: string | null;
+    checkoutSessionId?: string | null;
+    source?: string | null;
+  } = {}
+) {
+  await upsertOrganizationSubscriptionFromStripe(supabaseAdmin, subscription, {
+    ...options,
+    eventType,
+    source: options.source || 'stripe_webhook',
+  });
+}
+
+async function handleSubscriptionCheckoutComplete(session: Stripe.Checkout.Session) {
+  const subscriptionId = getStripeId(session.subscription);
+  if (!subscriptionId) {
+    console.warn(`[STRIPE] Subscription checkout session ${session.id} missing subscription id`);
+    return;
+  }
+
+  const subscription = await retrieveSubscription(subscriptionId);
+  await syncSubscriptionFromStripe(subscription, 'checkout.session.completed', {
+    organizationId: session.metadata?.organization_id || null,
+    planId: session.metadata?.plan_id || null,
+    planSlug: session.metadata?.plan_slug || null,
+    checkoutSessionId: session.id,
+    source: 'stripe_checkout',
+  });
+}
+
+function getInvoiceSubscriptionId(invoice: Stripe.Invoice): string | null {
+  const subscription = invoice.parent?.subscription_details?.subscription;
+  return getStripeId(subscription);
+}
+
+async function syncSubscriptionFromInvoice(invoice: Stripe.Invoice, eventType: string) {
+  const subscriptionId = getInvoiceSubscriptionId(invoice);
+  if (!subscriptionId) {
+    console.log(`[STRIPE] Invoice ${invoice.id} has no subscription reference for ${eventType}`);
+    return;
+  }
+
+  const subscription = await retrieveSubscription(subscriptionId);
+  await syncSubscriptionFromStripe(subscription, eventType, {
+    source: 'stripe_invoice',
+  });
 }
 
 /**
