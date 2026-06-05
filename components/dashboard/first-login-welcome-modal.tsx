@@ -14,18 +14,18 @@ interface FirstLoginWelcomeModalProps {
 
 const highlights = [
   {
-    title: 'Upload something real',
-    description: 'Podcasts, interviews, webinars, and team calls all fit naturally here.',
+    title: 'Start with company knowledge',
+    description: 'Customer calls, meetings, demos, webinars, founder updates, and podcasts all fit naturally here.',
     icon: Mic,
   },
   {
-    title: 'Get a cleaner transcript',
-    description: 'See speakers, structure, and the conversation more clearly.',
+    title: 'Extract the useful ideas',
+    description: 'See speakers, structure, summaries, quotes, and angles your audience can understand.',
     icon: Sparkles,
   },
   {
-    title: 'Make content from it',
-    description: 'Turn one recording into summaries, posts, notes, and more.',
+    title: 'Build the content pipeline',
+    description: 'Turn one source into posts, newsletters, summaries, announcements, and scripts for review.',
     icon: Wand2,
   },
 ];
@@ -63,7 +63,7 @@ export function FirstLoginWelcomeModal({
                 Welcome, {welcomeName}.
               </DialogTitle>
               <DialogDescription className="max-w-[34rem] text-sm leading-6 text-slate-600 dark:text-slate-300 sm:text-base sm:leading-7">
-                AudioRepurpose helps you go from one recording to clean transcripts and publish-ready content without a messy workflow.
+                AudioRepurpose is your AI content workspace for turning calls, meetings, ideas, and company knowledge into publish-ready B2B content.
               </DialogDescription>
             </DialogHeader>
 
@@ -72,7 +72,7 @@ export function FirstLoginWelcomeModal({
                 Quick start
               </p>
               <p className="mt-2 text-sm leading-6 text-slate-700 dark:text-slate-300">
-                Drop in one file and see what the workspace gives back. It is the fastest way to get a feel for the product.
+                Drop in one customer call, demo, founder update, meeting, or podcast to see how the workspace turns source material into drafts.
               </p>
             </div>
           </div>
@@ -101,7 +101,7 @@ export function FirstLoginWelcomeModal({
                 onClick={onGoToUpload}
                 className="inline-flex min-h-11 w-full items-center justify-center gap-2 rounded-lg bg-blue-600 px-4 py-2.5 text-sm font-semibold text-white transition-colors hover:bg-blue-700 sm:w-auto"
               >
-                Upload a file
+                Add source material
                 <ArrowRight className="h-4 w-4" />
               </button>
               <button

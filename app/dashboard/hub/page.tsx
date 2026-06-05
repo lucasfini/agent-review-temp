@@ -205,16 +205,16 @@ function EmptyState() {
       <div className="rounded-full bg-slate-100 dark:bg-slate-800 p-4 mb-4">
         <FolderOpen className="h-8 w-8 text-slate-500" />
       </div>
-      <h3 className="text-lg font-semibold text-slate-800 dark:text-slate-100 mb-1">No projects yet</h3>
+      <h3 className="text-lg font-semibold text-slate-800 dark:text-slate-100 mb-1">No source projects yet</h3>
       <p className="text-sm text-slate-500 dark:text-slate-400 mb-6 max-w-sm">
-        Upload your first audio file to start generating content automatically.
+        Add a call, meeting, demo, webinar, founder update, or podcast to start building your team&apos;s content pipeline.
       </p>
       <Link
         href="/dashboard/upload"
         className="inline-flex items-center gap-2 px-4 py-2 bg-blue-600 text-white text-sm font-medium rounded-lg hover:bg-blue-700 transition-colors"
       >
         <Upload className="h-4 w-4" />
-        Upload Audio
+        Add Source
       </Link>
     </div>
   );
@@ -755,9 +755,9 @@ export default function ProjectHubPage() {
         {/* Header */}
         <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-3">
           <div>
-            <h1 className="text-2xl font-bold text-slate-900 dark:text-slate-50">All Projects</h1>
+            <h1 className="text-2xl font-bold text-slate-900 dark:text-slate-50">Content Workspace</h1>
             <p className="text-sm text-slate-500 dark:text-slate-400 mt-1">
-              Start with an upload, then open any project to review transcripts, ideas, and generated content.
+              Start with source material, then review transcripts, ideas, and generated B2B content in one place.
             </p>
           </div>
           <div className="flex items-center gap-2 self-start sm:self-auto">
@@ -796,7 +796,7 @@ export default function ProjectHubPage() {
               className="inline-flex items-center gap-2 px-4 py-2 bg-blue-600 text-white text-sm font-medium rounded-lg hover:bg-blue-700 transition-colors"
             >
               <Upload className="h-4 w-4" />
-              Upload New Project
+              Add Source
             </Link>
           </div>
         </div>

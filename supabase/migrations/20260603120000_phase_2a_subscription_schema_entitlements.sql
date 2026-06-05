@@ -162,7 +162,7 @@ VALUES
   (
     'Starter',
     'starter',
-    'For founders and small teams starting with organization-based content workflows.',
+    'For founders and small teams turning calls, meetings, and ideas into a consistent B2B publishing rhythm.',
     NULL,
     29900,
     'usd',
@@ -179,7 +179,7 @@ VALUES
   (
     'Growth',
     'growth',
-    'For teams running a weekly content engine across calls, demos, podcasts, and updates.',
+    'For teams running a weekly content engine across customer calls, demos, webinars, podcasts, and founder updates.',
     NULL,
     79900,
     'usd',
@@ -196,7 +196,7 @@ VALUES
   (
     'Scale',
     'scale',
-    'For growing B2B teams with higher volume, approvals, and recurring publishing workflows.',
+    'For growing B2B teams with higher source volume, review needs, and recurring campaign workflows.',
     NULL,
     NULL,
     'usd',
@@ -213,7 +213,7 @@ VALUES
   (
     'Enterprise',
     'enterprise',
-    'For teams that need custom limits, onboarding, support, and security review.',
+    'For teams that need custom limits, onboarding, support, security review, and content operations help.',
     NULL,
     NULL,
     'usd',

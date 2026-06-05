@@ -81,7 +81,7 @@ export default function SubscriptionPlans({ organizationId }: SubscriptionPlansP
           <div>
             <CardTitle>Subscription</CardTitle>
             <CardDescription>
-              View organization plans and manage Stripe subscription billing.
+              View organization plans for recurring B2B content operations and manage Stripe subscription billing.
             </CardDescription>
           </div>
           {canOpenPortal && (
@@ -172,7 +172,7 @@ export default function SubscriptionPlans({ organizationId }: SubscriptionPlansP
                   </div>
 
                   <p className="mb-4 min-h-[48px] text-sm text-slate-500 dark:text-slate-400">
-                    {plan.description || 'Subscription plan for organization workspaces.'}
+                    {plan.description || 'Subscription plan for organization content workspaces.'}
                   </p>
 
                   <ul className="mb-4 space-y-2 text-xs text-slate-600 dark:text-slate-300">

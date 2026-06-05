@@ -1256,10 +1256,10 @@ export default function UploadPage() {
         {/* Header */}
         <div className="mb-6">
           <h1 className="text-2xl font-bold leading-7 text-slate-900 dark:text-slate-50 sm:text-3xl">
-            Upload Audio
+            Add Source Material
           </h1>
           <p className="mt-1 text-sm text-slate-500 dark:text-slate-400">
-            Drop in an episode or clip. We&apos;ll handle transcription first, then you can generate any of the 11 content types from the finished project.
+            Bring in a call, meeting, demo, webinar, founder update, or podcast. We&apos;ll handle transcription first, then your team can generate any of the 11 content types from the finished project.
           </p>
         </div>
 
@@ -1306,12 +1306,12 @@ export default function UploadPage() {
                         <h2 className="text-lg font-semibold text-slate-900 dark:text-slate-50">Upload audio or video</h2>
                         <FeatureHelp
                           title="File upload"
-                          description="Upload audio or video directly, then use the transcript and any selected analysis outputs inside the project."
-                          bestFor="local recordings or exported files you already have on your device"
+                          description="Upload audio or video directly, then use the transcript and selected analysis outputs as source material for B2B content."
+                          bestFor="local calls, meetings, demos, webinars, podcasts, or exported files already on your device"
                         />
                       </div>
                       <p className="mt-1 text-sm text-slate-500 dark:text-slate-400">
-                        Drag in a file or browse from your device. Video is converted to audio automatically before transcription.
+                        Drag in a source file or browse from your device. Video is converted to audio automatically before transcription.
                       </p>
                     </div>
                     <div
@@ -1359,12 +1359,12 @@ export default function UploadPage() {
                         <h2 className="text-lg font-semibold text-slate-900 dark:text-slate-50">Import from URL</h2>
                         <FeatureHelp
                           title="URL import"
-                          description="Import a hosted recording once, transcribe it, and use the finished project for analysis or content generation later."
+                          description="Import hosted source material once, transcribe it, and use the finished project for analysis or content generation later."
                           bestFor="YouTube links or direct audio or video URLs you do not want to download manually"
                         />
                       </div>
                       <p className="mt-1 text-sm text-slate-500 dark:text-slate-400">
-                        Paste a YouTube link or direct media URL, then transcribe once and generate whichever outputs you need later.
+                        Paste a YouTube link or direct media URL, then transcribe once and generate whichever B2B outputs you need later.
                       </p>
                     </div>
                     <div className="grid gap-3">
@@ -1652,7 +1652,7 @@ export default function UploadPage() {
 
             {/* Retention notice — quiet footnote, not a warning */}
             <p className="mb-4 text-xs text-slate-400 dark:text-slate-600 text-center">
-              Source audio stays available until you delete the project. Transcripts and generated content stay with it.
+              Source media stays available until you delete the project. Transcripts and generated content stay with it.
             </p>
 
             {/* Advanced Options — collapsible, out of the critical path */}

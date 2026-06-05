@@ -29,7 +29,7 @@ export const PAYG_SECTIONS = [
     name: "Starter",
     price: "$299/mo",
     description:
-      "For founders or small teams turning a few calls or recordings into consistent posts.",
+      "For founders or small teams turning calls, meetings, and ideas into a consistent publishing rhythm.",
     features: [
       "Up to 4 projects per month",
       "LinkedIn and X post drafts",
@@ -41,7 +41,7 @@ export const PAYG_SECTIONS = [
     name: "Growth",
     price: "$799/mo",
     description:
-      "For teams that want a weekly content engine from podcasts, calls, demos, and updates.",
+      "For teams that want a weekly content engine from customer calls, demos, webinars, and founder updates.",
     features: [
       "Up to 12 projects per month",
       "Multi-channel content kits",
@@ -54,7 +54,7 @@ export const PAYG_SECTIONS = [
     name: "Scale",
     price: "Custom",
     description:
-      "For B2B teams with higher volume, approvals, and a recurring publishing workflow.",
+      "For B2B teams with higher source volume, review needs, and recurring campaign workflows.",
     features: [
       "Custom monthly project volume",
       "Founder and executive content workflows",
@@ -66,7 +66,7 @@ export const PAYG_SECTIONS = [
 ] as const;
 
 export const PRICING_MODEL_SUMMARY =
-  "Every plan includes transcription, speaker attribution, AI analysis, and publish-ready content drafts. Usage limits can be adjusted as your team grows.";
+  "Every plan includes transcription, speaker attribution, AI analysis, and publish-ready drafts for B2B content workflows. Usage limits can be adjusted as your team grows.";
 
 const ONE_HOUR = 1;
 const EXAMPLE_BASE_TRANSCRIPTION = BASE_TRANSCRIPTION_PRICE_PER_HOUR * ONE_HOUR;

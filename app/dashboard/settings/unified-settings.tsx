@@ -1719,7 +1719,7 @@ export default function UnifiedSettings({ userEmail, forcedSection }: UnifiedSet
                 <BarChart3 className="h-12 w-12 mx-auto mb-4 text-slate-500" />
                 <h3 className="text-lg font-medium text-slate-900 dark:text-slate-50 mb-1">No usage data yet</h3>
                 <p className="text-sm text-slate-400 max-w-sm mx-auto">
-                  Start processing podcasts and generating content to see your usage statistics and trends here.
+                  Start processing calls, meetings, demos, or podcasts and generating content to see your usage statistics and trends here.
                 </p>
               </div>
             </CardContent>

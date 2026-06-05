@@ -87,8 +87,8 @@ type OutputIconKey = keyof typeof OUTPUT_ICONS;
 
 // Constants
 const SOCIAL_TAGS = [
-  "B2B teams: podcasts, calls, demos, updates",
-  "Founder-led content workflows",
+  "B2B teams: calls, meetings, demos, updates",
+  "Founder-led content systems",
   "Subscription content operations",
   "Speaker-attributed transcripts",
   "Monthly publishing systems",
@@ -205,7 +205,7 @@ const HOW_IT_WORKS_STEPS: HowItWorksStep[] = [
     title: "Add the Source",
     eyebrow: "Input",
     description:
-      "Upload a podcast, customer call, product demo, founder update, or team recording that already contains useful ideas.",
+      "Upload a customer call, meeting, webinar, product demo, founder update, or podcast that already contains useful company knowledge.",
     accent: "bg-blue-500",
     ring: "ring-blue-500/20",
     Icon: Upload,
@@ -216,7 +216,7 @@ const HOW_IT_WORKS_STEPS: HowItWorksStep[] = [
     title: "Run the Content System",
     eyebrow: "Process",
     description:
-      "Transcribe the conversation, identify speakers, pull key ideas, and organize the best angles for your audience.",
+      "Transcribe the conversation, identify speakers, extract the best ideas, and organize angles your buyers and team can understand.",
     accent: "bg-violet-500",
     ring: "ring-violet-500/20",
     Icon: Sparkles,
@@ -227,7 +227,7 @@ const HOW_IT_WORKS_STEPS: HowItWorksStep[] = [
     title: "Publish the Outputs",
     eyebrow: "Output",
     description:
-      "Turn the source into LinkedIn posts, X threads, newsletters, summaries, clips scripts, and client-ready exports.",
+      "Turn the source into LinkedIn posts, X threads, newsletters, founder updates, launch announcements, summaries, and review-ready exports.",
     accent: "bg-indigo-500",
     ring: "ring-indigo-500/20",
     Icon: Zap,
@@ -453,16 +453,16 @@ const CONTENT_PREVIEW_MAP: Record<string, InteractivePreview> = {
 const HERO_ROTATING_PHRASES = [
   "a weekly content engine",
   "founder posts",
-  "sales-ready newsletters",
+  "launch announcements",
   "executive LinkedIn drafts",
-  "multi-channel content kits",
+  "campaign content kits",
 ] as const;
 
 const ANALYSIS_METRICS = [
   {
     label: "Input",
     value: "Call",
-    note: "Podcast, demo, customer call, founder update, or team recording",
+    note: "Meeting, demo, customer call, founder update, webinar, or podcast",
   },
   {
     label: "System",
@@ -472,7 +472,7 @@ const ANALYSIS_METRICS = [
   {
     label: "Output",
     value: "Posts",
-    note: "LinkedIn, X, newsletters, show notes, and short-form scripts",
+    note: "LinkedIn, X, newsletters, launch notes, summaries, and short-form scripts",
   },
 ];
 
@@ -1661,7 +1661,6 @@ function Navbar({
     { label: "Outputs", href: "#outputs" },
     { label: "Intelligence", href: "#analysis" },
     { label: "Pricing", href: "#pricing" },
-    { label: "Agency", href: "/agency" },
   ];
   const logoTheme = mounted && resolvedTheme === "light" ? "light" : "dark";
 
@@ -1802,7 +1801,7 @@ function Hero() {
               transition={{ duration: 0.45, ease: "easeOut" }}
             >
               <span className="h-2 w-2 rounded-full bg-blue-500 dark:bg-cyan-300" />
-              B2B content operations for teams
+              AI content workspace for B2B teams
             </motion.div>
             <motion.h1
               className="mb-6 text-[2.2rem] font-bold leading-[1.12] tracking-tight text-slate-900 dark:text-white sm:text-5xl sm:leading-tight md:text-6xl"
@@ -1825,9 +1824,10 @@ function Hero() {
               animate={{ opacity: 1, y: 0 }}
               transition={{ duration: 0.55, delay: 0.16, ease: "easeOut" }}
             >
-              AudioRepurpose turns podcasts, sales calls, demos, and founder
-              updates into a repeatable content system for LinkedIn, X,
-              newsletters, and internal briefs.
+              AudioRepurpose turns calls, meetings, demos, audio, ideas, and
+              company knowledge into a repeatable content system for LinkedIn,
+              newsletters, founder updates, launch announcements, and campaign
+              drafts.
             </motion.p>
             <motion.p
               className="mx-auto mb-10 max-w-2xl text-sm text-slate-600 dark:text-blue-100/80"
@@ -1873,7 +1873,7 @@ function Hero() {
               transition={{ duration: 0.5, delay: 0.28, ease: "easeOut" }}
             >
               Monthly plans for teams that need a steady pipeline of clear,
-              useful content from conversations they already have.
+              useful content from conversations and knowledge they already have.
             </motion.p>
 
             <motion.div
@@ -1886,9 +1886,9 @@ function Hero() {
                 {[
                   "Speaker-attributed transcript",
                   "Founder updates",
-                  "Input to output workflow",
+                  "Company knowledge workflow",
                   "LinkedIn posts",
-                  "X threads",
+                  "Launch announcements",
                   "Newsletter drafts",
                 ].map((tag, index) => (
                   <motion.span
@@ -2056,11 +2056,11 @@ function HowItWorks() {
             How it Works
           </span>
           <h2 className="text-3xl md:text-4xl font-bold text-gray-900 mt-2 dark:text-white">
-            From recording to content in minutes
+            From source material to finished content in minutes
           </h2>
           <p className="text-gray-500 mt-4 max-w-xl mx-auto text-base dark:text-slate-300">
-            Pick your processing level once, then generate whichever content
-            types you need.
+            Bring in one useful source, then generate the content your team
+            needs for the next campaign, update, or publishing cycle.
           </p>
         </motion.div>
 
@@ -2244,11 +2244,11 @@ function ContentOutputsSection() {
             Content Engine
           </span>
           <h2 className="text-3xl md:text-4xl font-bold text-gray-900 mt-2 dark:text-white">
-            One recording, shaped for every channel.
+            One source, shaped for every channel.
           </h2>
           <p className="text-gray-500 mt-4 max-w-2xl mx-auto text-base dark:text-slate-300">
-            Select any add-on or content type to preview exactly how one
-            recording can turn into production-ready assets.
+            Select any add-on or content type to preview how one conversation,
+            update, or idea can become production-ready assets.
           </p>
         </motion.div>
 
@@ -2486,12 +2486,11 @@ function AnalysisSection() {
             Content intelligence
           </span>
           <h2 className="mt-2 text-3xl font-bold text-white md:text-4xl">
-            A simpler path from raw conversation to finished content.
+            A simpler path from company knowledge to finished content.
           </h2>
           <p className="mx-auto mt-4 max-w-2xl text-base text-blue-100/82">
-            The product should feel easy to understand: put in a useful source,
-            let the system find the strongest ideas, then review polished drafts
-            before publishing.
+            Put in a useful source, let the system find the strongest ideas,
+            then review polished drafts before publishing.
           </p>
         </motion.div>
 
@@ -2792,7 +2791,8 @@ function Pricing() {
           </h2>
           <p className="text-slate-600 mt-4 max-w-xl mx-auto text-base dark:text-slate-300">
             Give your team a predictable system for turning conversations,
-            updates, and demos into publish-ready content every month.
+            meetings, updates, and demos into publish-ready content every
+            month.
           </p>
         </div>
 
@@ -2841,7 +2841,7 @@ function Pricing() {
         </div>
 
         <p className="mt-8 text-center text-sm text-slate-500 dark:text-slate-400">
-          Plans are built around monthly project volume, content output needs,
+          Plans are built around monthly source volume, content output needs,
           and the review workflow your team wants to run.
         </p>
         <p className="mt-3 text-center text-sm text-slate-500 dark:text-slate-400">
@@ -2881,11 +2881,11 @@ function FinalCTA() {
           className="mb-6 motion-safe:animate-fade-up"
         />
         <h2 className="mb-4 text-3xl font-bold leading-tight text-slate-900 motion-safe:animate-fade-up-200 dark:text-white md:text-4xl">
-          Build a steady content pipeline from conversations.
+          Build a steady content pipeline from company knowledge.
         </h2>
         <p className="mb-10 text-lg leading-relaxed text-slate-600 motion-safe:animate-fade-up-400 dark:text-blue-200/70">
           Upload the source, review the strongest ideas, and ship clear posts,
-          newsletters, summaries, and scripts every month.
+          newsletters, announcements, summaries, and scripts every month.
         </p>
 
         <div className="flex flex-col sm:flex-row items-center justify-center gap-4 motion-safe:animate-fade-up-600">
@@ -2941,9 +2941,9 @@ function Footer() {
               <BrandLogo theme={logoTheme} />
             </a>
             <p className="mt-4 max-w-md text-sm text-slate-500 dark:text-gray-500">
-              Turn podcasts, calls, demos, and founder updates into a recurring
-              B2B content engine with speaker-aware analysis and publish-ready
-              drafts.
+              Turn calls, meetings, demos, ideas, and founder updates into a
+              recurring B2B content engine with speaker-aware analysis and
+              publish-ready drafts.
             </p>
           </div>
           <div>

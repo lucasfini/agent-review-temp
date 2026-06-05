@@ -38,10 +38,10 @@ function RightPanel() {
 
         {/* Headline */}
         <h2 className="mb-3 text-3xl font-bold leading-tight text-slate-900 motion-safe:animate-fade-up-200 dark:text-white">
-          One upload.<br />One clear workflow.
+          One source.<br />One content workflow.
         </h2>
         <p className="mb-10 text-sm leading-relaxed text-slate-600 motion-safe:animate-fade-up-400 dark:text-blue-200/70">
-          Transcribe the recording, review the conversation, and generate publish-ready drafts without leaving the same workspace.
+          Turn calls, meetings, demos, and founder updates into transcripts, ideas, and publish-ready drafts without leaving the same workspace.
         </p>
 
         {/* Glassmorphism card */}
@@ -88,18 +88,18 @@ function RightPanel() {
               <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-green-400 opacity-75" />
               <span className="relative inline-flex h-2 w-2 rounded-full bg-green-400" />
             </span>
-            <span className="text-xs tracking-wide text-slate-500 dark:text-white/40">Processing your episode…</span>
+            <span className="text-xs tracking-wide text-slate-500 dark:text-white/40">Processing your source…</span>
           </div>
         </div>
 
         {/* Value proposition */}
         <p className="mb-8 text-base font-medium italic leading-relaxed text-slate-700 motion-safe:animate-fade-up-600 dark:text-white/80">
-          "Transform one recording into a month of content. Instantly."
+          "Turn company knowledge into a steady B2B content pipeline."
         </p>
 
         {/* Stats row */}
         <div className="flex items-center gap-8">
-          {[['11+', 'Content types'], ['Minutes', 'not hours'], ['90%', 'Time saved']].map(([stat, label], i, arr) => (
+          {[['11+', 'Content types'], ['Team', 'workspace'], ['Weekly', 'publishing rhythm']].map(([stat, label], i, arr) => (
             <div key={stat} className="flex items-center gap-8">
               <div className={`text-center motion-safe:animate-fade-in${i === 1 ? '-200' : i === 2 ? '-400' : ''}`}>
                 <div className="text-2xl font-bold text-slate-900 dark:text-white">{stat}</div>
@@ -242,7 +242,7 @@ export default function SignupPage() {
           {/* Heading */}
           <div className="mb-8 motion-safe:animate-fade-up-200">
             <h1 className="text-2xl font-bold text-slate-900 dark:text-slate-50">Create your account</h1>
-            <p className="text-slate-500 dark:text-slate-400 text-sm mt-1.5">Start turning recordings into transcripts, analysis, and publish-ready content</p>
+            <p className="text-slate-500 dark:text-slate-400 text-sm mt-1.5">Create the workspace your team uses to turn calls, meetings, and ideas into publish-ready content</p>
           </div>
 
           {/* Google OAuth button */}
