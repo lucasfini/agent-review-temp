@@ -48,6 +48,7 @@ import { runControlledSpeakerVerification } from '@/lib/speaker-verification';
 import { RouteAccessError } from '@/lib/api/route-auth';
 import { resolveTranscribeRequestAuthContext, type TranscribeProjectRecord } from '@/lib/api/transcribe-auth';
 import { runEntitlementDryRunCheck } from '@/lib/billing/entitlement-guards';
+import { recordSubscriptionUsage } from '@/lib/billing/subscription-usage-counters';
 
 const sleep = (ms: number) => new Promise<void>(resolve => setTimeout(resolve, ms));
 const TRANSCRIPTION_PREPARING_MESSAGE = 'Preparing your audio for processing...';
@@ -785,6 +786,26 @@ export async function POST(request: NextRequest) {
         } catch (error) {
           console.error('[BILLING] ⚠️ Failed to track usage:', error);
         }
+
+        await recordSubscriptionUsage({
+          organizationId: existingProject.organization_id || null,
+          userId,
+          counterKey: 'transcription_minutes',
+          quantity: totalDuration / 60,
+          idempotencyKey: `transcription:${projectId}`,
+          metadata: {
+            source: 'transcribe_provider',
+            provider: diarizationProvider,
+            durationSeconds: totalDuration,
+            reservationId: uploadReservationId || null,
+          },
+          logContext: {
+            route: 'app/api/transcribe',
+            userId: callerUserId || userId,
+            projectId,
+            source: 'transcription',
+          },
+        });
       }
 
       // Update progress: Transcription completed

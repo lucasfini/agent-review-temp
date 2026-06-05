@@ -8,6 +8,10 @@ import {
   type OrganizationSubscription,
   type SubscriptionStatus,
 } from '@/lib/billing/subscriptions';
+import {
+  getUsageCounterKeyForAction,
+  getUsageQuantityForCounter,
+} from '@/lib/billing/subscription-usage-counters';
 import { supabaseAdmin } from '@/lib/supabase/server';
 
 export const ENTITLEMENT_ACTIONS = [
@@ -55,7 +59,13 @@ export interface EntitlementUsageSummary {
   currentUsage: number;
   periodStart: string;
   periodEnd: string;
-  source: 'usage_events' | 'billing_reservations' | 'projects' | 'organization_members' | 'unsupported';
+  source:
+    | 'subscription_usage_counters'
+    | 'usage_events'
+    | 'billing_reservations'
+    | 'projects'
+    | 'organization_members'
+    | 'unsupported';
 }
 
 export interface EntitlementUsagePeriod {
@@ -432,6 +442,35 @@ export async function getCurrentPeriodUsage(
 ): Promise<EntitlementUsageSummary> {
   const supabase = options.supabase || supabaseAdmin;
   const period = getEntitlementUsagePeriod(options.subscription, options.now);
+  const counterKey = getUsageCounterKeyForAction(options.action);
+
+  if (options.organizationId && counterKey) {
+    try {
+      const counterUsage = await getUsageQuantityForCounter(supabase, {
+        organizationId: options.organizationId,
+        counterKey,
+        subscription: options.subscription,
+        now: options.now,
+      });
+
+      if (counterUsage.counter) {
+        return {
+          action: options.action,
+          organizationId: options.organizationId,
+          currentUsage: roundUsage(counterUsage.currentUsage),
+          periodStart: counterUsage.periodStart,
+          periodEnd: counterUsage.periodEnd,
+          source: 'subscription_usage_counters',
+        };
+      }
+    } catch (error) {
+      console.warn('[ENTITLEMENT_DRY_RUN] Failed to read subscription usage counter, falling back to legacy usage approximation:', {
+        action: options.action,
+        organizationId: options.organizationId,
+        error: error instanceof Error ? error.message : String(error),
+      });
+    }
+  }
 
   switch (options.action) {
     case 'transcription':

@@ -9,6 +9,7 @@ import { createReservation, releaseReservation } from '@/lib/billing/credit';
 import { estimateReservationAmount } from '@/lib/billing/reserve-amount';
 import { resolveOrganizationIdForWrite } from '@/lib/authz/organization-context';
 import { runEntitlementDryRunCheck } from '@/lib/billing/entitlement-guards';
+import { recordSubscriptionUsage } from '@/lib/billing/subscription-usage-counters';
 
 async function ensureAuth(request: NextRequest) {
   const authHeader = request.headers.get('authorization');
@@ -148,6 +149,25 @@ export async function POST(request: NextRequest) {
       project_id: result.projectId,
       status: 'imported'
     } as any);
+
+    await recordSubscriptionUsage({
+      organizationId: result.organizationId || organizationId,
+      userId: user.id,
+      counterKey: 'integration_import',
+      quantity: 1,
+      idempotencyKey: `integration_import:microsoft:${itemId}`,
+      metadata: {
+        source: 'microsoft_import',
+        itemId,
+        projectId: result.projectId,
+      },
+      logContext: {
+        route: 'app/api/integrations/microsoft/import',
+        userId: user.id,
+        projectId: result.projectId,
+        source: 'microsoft_import',
+      },
+    });
 
     return NextResponse.json({ projectId: result.projectId });
   } catch (error) {

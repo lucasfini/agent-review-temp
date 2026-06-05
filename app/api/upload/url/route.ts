@@ -16,6 +16,7 @@ import { createReservation, releaseReservation } from '@/lib/billing/credit';
 import { estimateReservationAmount } from '@/lib/billing/reserve-amount';
 import { resolveOrganizationIdForWrite } from '@/lib/authz/organization-context';
 import { runEntitlementDryRunCheck } from '@/lib/billing/entitlement-guards';
+import { recordSubscriptionUsage } from '@/lib/billing/subscription-usage-counters';
 
 export const runtime = 'nodejs';
 export const dynamic = 'force-dynamic';
@@ -200,6 +201,24 @@ export async function POST(request: NextRequest) {
         // Non-fatal for URL imports
       }
     }
+
+    await recordSubscriptionUsage({
+      organizationId: importResult.organizationId || organizationId,
+      userId: user.id,
+      counterKey: 'audio_upload',
+      quantity: 1,
+      idempotencyKey: `audio_upload:url:${importResult.projectId}`,
+      metadata: {
+        source: 'url_import',
+        provider: isYouTubeUrl(url) ? 'youtube_url' : 'direct_url',
+      },
+      logContext: {
+        route: 'app/api/upload/url',
+        userId: user.id,
+        projectId: importResult.projectId,
+        source: 'url_import',
+      },
+    });
 
     return NextResponse.json({
       success: true,

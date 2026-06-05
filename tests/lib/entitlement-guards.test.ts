@@ -69,6 +69,12 @@ function buildSupabaseMock(rows: Record<string, { data?: any[]; count?: number |
       eq: jest.fn(() => query),
       is: jest.fn(() => query),
       or: jest.fn(() => query),
+      order: jest.fn(() => query),
+      limit: jest.fn(() => query),
+      maybeSingle: jest.fn(() => ({
+        data: (response.data || [])[0] || null,
+        error: response.error || null,
+      })),
     };
     queries.push({ table, query });
     return query;
@@ -158,9 +164,55 @@ describe('entitlement guard decisions', () => {
       projectedUsage: 2,
       limit: 4,
     });
-    expect(supabase.queries[0].query.or).toHaveBeenCalledWith(
+    const reservationQuery = supabase.queries.find((entry) => entry.table === 'billing_reservations')?.query;
+    expect(reservationQuery?.or).toHaveBeenCalledWith(
       'organization_id.eq.org-1,and(organization_id.is.null,user_id.eq.user-1)'
     );
+  });
+
+  it('prefers canonical subscription usage counters when present', async () => {
+    const supabase = buildSupabaseMock({
+      subscription_usage_counters: {
+        data: [
+          {
+            id: 'counter-1',
+            organization_id: 'org-1',
+            subscription_id: 'subscription-1',
+            period_start: '2026-06-01T00:00:00.000Z',
+            period_end: '2026-07-01T00:00:00.000Z',
+            counter_key: 'content_generation',
+            quantity: 3,
+            unit: 'count',
+            metadata_json: {},
+            created_at: '2026-06-01T00:00:00.000Z',
+            updated_at: '2026-06-01T00:00:00.000Z',
+          },
+        ],
+      },
+      billing_reservations: {
+        data: [
+          {
+            workflow_type: 'content_generation',
+            metadata: { blockCount: 1 },
+          },
+        ],
+      },
+    });
+
+    const usage = await getCurrentPeriodUsage({
+      supabase: supabase as any,
+      organizationId: 'org-1',
+      legacyUserId: 'user-1',
+      action: 'content_generation',
+      subscription: subscription(),
+      now: new Date('2026-06-15T00:00:00.000Z'),
+    });
+
+    expect(usage).toMatchObject({
+      currentUsage: 3,
+      source: 'subscription_usage_counters',
+    });
+    expect(supabase.queries.some((entry) => entry.table === 'billing_reservations')).toBe(false);
   });
 
   it('returns a non-blocking legacy credit mode decision when subscription is missing', async () => {

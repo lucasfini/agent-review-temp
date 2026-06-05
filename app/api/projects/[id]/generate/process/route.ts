@@ -14,6 +14,7 @@ import {
 } from '@/lib/project-generation-jobs';
 import { acquireGlobalJobLock, releaseGlobalJobLock, heartbeatGlobalJobLock } from '@/lib/concurrency';
 import { RouteAccessError, requireProjectOwner } from '@/lib/api/route-auth';
+import { recordSubscriptionUsage } from '@/lib/billing/subscription-usage-counters';
 
 function isMissingFailureNotifiedAtColumn(error: any): boolean {
   return error?.code === 'PGRST204'
@@ -181,7 +182,7 @@ export async function POST(
       try {
         const { data: project, error: projectError } = await (supabaseAdmin as any)
           .from('projects')
-          .select('id, user_id, transcription_text, transcription_segments, speaker_data, metadata')
+          .select('id, user_id, organization_id, transcription_text, transcription_segments, speaker_data, metadata')
           .eq('id', projectId)
           .single();
 
@@ -213,6 +214,7 @@ export async function POST(
           const reservation = estimatedCost > 0
             ? await createReservation({
                 userId: project.user_id,
+                organizationId: project.organization_id || undefined,
                 projectId,
                 workflowType: 'analysis_job',
                 amount: estimateReservationAmount(estimatedCost, 'analysis_job'),
@@ -276,6 +278,29 @@ export async function POST(
 
           if (!completedTargets.has(reconcileTarget) && reconcileResult?.message !== 'All features present') {
             throw new Error(`Reconcile did not complete ${job.target_key}`);
+          }
+
+          if (completedTargets.has(reconcileTarget)) {
+            await recordSubscriptionUsage({
+              organizationId: project.organization_id || null,
+              userId: project.user_id,
+              counterKey: 'content_generation',
+              quantity: 1,
+              idempotencyKey: `project_generation_job:${job.id}`,
+              metadata: {
+                source: 'analysis_job',
+                jobId: job.id,
+                targetKey: job.target_key,
+                reconcileTarget,
+                reservationId: reservation?.id || null,
+              },
+              logContext: {
+                route: 'app/api/projects/[id]/generate/process',
+                userId: project.user_id,
+                projectId,
+                source: 'analysis_job',
+              },
+            });
           }
         } else {
           const block = buildContentBlockForJob(

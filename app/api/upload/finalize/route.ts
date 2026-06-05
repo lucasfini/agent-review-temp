@@ -9,6 +9,7 @@ import { deleteProjectAudioObject } from '@/lib/audio-retention';
 import { getInternalAppBaseUrl } from '@/lib/app-url';
 import { scheduleBackgroundTask } from '@/lib/background-task';
 import { RouteAccessError, requireProjectOwner } from '@/lib/api/route-auth';
+import { recordSubscriptionUsage } from '@/lib/billing/subscription-usage-counters';
 
 export const runtime = 'nodejs';
 export const maxDuration = 300; // Allow background tasks to run up to 5 mins
@@ -26,13 +27,21 @@ export async function POST(request: NextRequest) {
 
     const tokenPayload = verifyUploadToken(uploadToken);
     let user: { id: string; email?: string | null };
-    let project: { id: string; user_id: string; status: string; audio_file_name: string | null; audio_deleted_at: string | null };
+    let project: {
+      id: string;
+      user_id: string;
+      organization_id: string | null;
+      status: string;
+      audio_file_name: string | null;
+      audio_deleted_at: string | null;
+    };
     try {
       const ownership = await requireProjectOwner<{
+        organization_id: string | null;
         status: string;
         audio_file_name: string | null;
         audio_deleted_at: string | null;
-      }>(request, projectId, 'id, user_id, status, audio_file_name, audio_deleted_at');
+      }>(request, projectId, 'id, user_id, organization_id, status, audio_file_name, audio_deleted_at');
       user = ownership.user;
       project = ownership.project;
     } catch (error) {
@@ -112,6 +121,24 @@ export async function POST(request: NextRequest) {
       // @ts-ignore
       .update({ processing_started_at: new Date().toISOString() })
       .eq('id', projectId);
+
+    await recordSubscriptionUsage({
+      organizationId: project.organization_id,
+      userId: project.user_id,
+      counterKey: 'audio_upload',
+      quantity: 1,
+      idempotencyKey: `audio_upload:${projectId}`,
+      metadata: {
+        source: 'direct_upload_finalize',
+        objectKey,
+      },
+      logContext: {
+        route: 'app/api/upload/finalize',
+        userId: user.id,
+        projectId,
+        source: 'direct_upload',
+      },
+    });
 
     // Call /api/transcribe using fireAndForget
     {

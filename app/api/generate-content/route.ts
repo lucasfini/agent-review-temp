@@ -24,6 +24,7 @@ import { isDemoUser } from '@/lib/demo-mode';
 import { resolveOrganizationIdForWrite } from '@/lib/authz/organization-context';
 import { RouteAccessError, requireProjectOwner } from '@/lib/api/route-auth';
 import { runEntitlementDryRunCheck } from '@/lib/billing/entitlement-guards';
+import { recordSubscriptionUsage } from '@/lib/billing/subscription-usage-counters';
 
 /**
  * Parse JSON response from AI, stripping markdown code fences and conversational filler
@@ -795,6 +796,35 @@ export async function POST(request: NextRequest) {
         });
         throw billingError;
       }
+    }
+
+    if (userId && savedContentCount > 0) {
+      const outputIdempotencyKey = savedOutputIds.length
+        ? `content_generation:outputs:${savedOutputIds.slice(0, 10).join(':')}`
+        : `content_generation:project:${projectId}:${startTime}`;
+      await recordSubscriptionUsage({
+        organizationId: projectOrganizationId,
+        userId,
+        counterKey: 'content_generation',
+        quantity: savedContentCount,
+        idempotencyKey: contentReservationId
+          ? `content_generation:reservation:${contentReservationId}`
+          : outputIdempotencyKey,
+        metadata: {
+          source: 'generate_content',
+          projectId,
+          blockCount: blocks.length,
+          savedContentCount,
+          usageEventIds,
+          reservationId: contentReservationId,
+        },
+        logContext: {
+          route: 'app/api/generate-content',
+          userId,
+          projectId,
+          source: 'content_generation',
+        },
+      });
     }
 
     // Mark generation as complete

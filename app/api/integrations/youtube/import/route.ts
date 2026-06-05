@@ -10,6 +10,7 @@ import { createReservation, releaseReservation } from '@/lib/billing/credit';
 import { estimateReservationAmount } from '@/lib/billing/reserve-amount';
 import { resolveOrganizationIdForWrite } from '@/lib/authz/organization-context';
 import { runEntitlementDryRunCheck } from '@/lib/billing/entitlement-guards';
+import { recordSubscriptionUsage } from '@/lib/billing/subscription-usage-counters';
 
 export const runtime = 'nodejs';
 export const dynamic = 'force-dynamic';
@@ -129,6 +130,25 @@ export async function POST(request: NextRequest) {
       project_id: result.projectId,
       status: 'imported'
     } as any);
+
+    await recordSubscriptionUsage({
+      organizationId: result.organizationId || organizationId,
+      userId: user.id,
+      counterKey: 'integration_import',
+      quantity: 1,
+      idempotencyKey: `integration_import:youtube:${videoId}`,
+      metadata: {
+        source: 'youtube_import',
+        videoId,
+        projectId: result.projectId,
+      },
+      logContext: {
+        route: 'app/api/integrations/youtube/import',
+        userId: user.id,
+        projectId: result.projectId,
+        source: 'youtube_import',
+      },
+    });
 
     return NextResponse.json({ projectId: result.projectId });
   } catch (error) {
