@@ -47,6 +47,7 @@ function DashboardLayoutContent({
     || pathname === '/dashboard/usage'
     || pathname === '/dashboard/contact'
     || pathname === '/dashboard/brand-voice'
+    || pathname === '/dashboard/campaigns'
     || pathname === '/dashboard/analytics';
   const syncedProjectIds = new Set(syncedUploads.map((upload) => upload.projectId).filter(Boolean));
   const displayedUploads = isUploadRoute

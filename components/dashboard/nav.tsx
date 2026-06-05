@@ -31,6 +31,7 @@ import {
   PanelLeftClose,
   PanelLeftOpen,
   Palette,
+  FolderKanban,
 } from 'lucide-react';
 
 type NavItemDef = {
@@ -50,6 +51,7 @@ function getMobilePageTitle(pathname: string, activeSettingsSection: string | nu
   if (pathname === '/dashboard/projects') return 'Project Workspace';
   if (pathname === '/dashboard/upload') return 'Upload Audio';
   if (pathname === '/dashboard/brand-voice') return 'Brand Voice';
+  if (pathname === '/dashboard/campaigns') return 'Campaigns';
   if (pathname === '/dashboard/analytics') return 'Analytics';
   if (pathname === '/dashboard/billing') return 'Billing';
   if (pathname === '/dashboard/usage') return 'Usage';
@@ -155,6 +157,7 @@ const sections: Array<{ label: string; items: NavItemDef[] }> = [
       { name: 'Upload', href: '/dashboard/upload', icon: Upload },
       { name: 'All Projects', href: '/dashboard/hub', icon: LayoutGrid },
       { name: 'Brand Voice', href: '/dashboard/brand-voice', icon: Palette },
+      { name: 'Campaigns', href: '/dashboard/campaigns', icon: FolderKanban },
     ],
   },
   {
