@@ -40,6 +40,7 @@ import { cn } from '@/lib/utils';
 import { useAuth } from '@/lib/auth/context';
 import { useCurrentOrganization } from '@/lib/hooks/useCurrentOrganization';
 import CreditPackages from '@/components/billing/credit-packages';
+import SubscriptionPlans from '@/components/billing/subscription-plans';
 import { supabase } from '@/lib/supabase/client';
 import { toast } from 'sonner';
 import { formatSiteCreditDeltaFromUsd, formatSiteCreditsFromUsd } from '@/lib/billing/display';
@@ -1435,11 +1436,13 @@ export default function UnifiedSettings({ userEmail, forcedSection }: UnifiedSet
             {/* Balance Banner */}
             <BalanceBanner balance={balance} />
 
+            <SubscriptionPlans organizationId={organizationId} />
+
             {/* Credit Packages — always visible */}
             <Card>
               <CardHeader>
-                <CardTitle>Purchase Credits</CardTitle>
-                <CardDescription>Select a package to add credits to your account</CardDescription>
+                <CardTitle>Credit Top-Ups</CardTitle>
+                <CardDescription>Pay-as-you-go credits remain available during the subscription transition</CardDescription>
               </CardHeader>
               <CardContent>
                 <CreditPackages />

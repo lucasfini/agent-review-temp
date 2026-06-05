@@ -199,7 +199,7 @@ export default function CreditPackages({ onSuccess }: CreditPackagesProps) {
 
       <div className="flex items-center justify-between mb-4">
         <p className="text-xs text-slate-500 dark:text-slate-400">
-          Pay as you go — no subscriptions, credits never expire
+          Pay-as-you-go top-ups remain available; credits never expire
         </p>
         <p className="text-xs text-slate-500 dark:text-slate-500">
           Secure payment via Stripe
