@@ -2,7 +2,7 @@ import { NextRequest, NextResponse } from 'next/server';
 import Stripe from 'stripe';
 
 import { RouteAccessError, requireAuthenticatedUser } from '@/lib/api/route-auth';
-import { getActiveOrganizationForUser } from '@/lib/authz/organization-context';
+import { requireOrganizationBillingManager } from '@/lib/authz/billing-permissions';
 import { OrganizationAccessError } from '@/lib/authz/types';
 import { getAppBaseUrl } from '@/lib/app-url';
 import { getPlanBySlugOrId } from '@/lib/billing/plans';
@@ -81,11 +81,10 @@ export async function POST(request: NextRequest) {
     const { searchParams } = new URL(request.url);
     const requestedOrganizationId =
       body?.organizationId || body?.organization_id || searchParams.get('organization_id');
-    const { organization } = await getActiveOrganizationForUser(
-      supabaseAdmin,
-      user.id,
-      typeof requestedOrganizationId === 'string' ? requestedOrganizationId : null
-    );
+    const { organization } = await requireOrganizationBillingManager({
+      userId: user.id,
+      requestedOrganizationId: typeof requestedOrganizationId === 'string' ? requestedOrganizationId : null,
+    });
     const planIdentifier = planIdentifierFromBody(body);
 
     if (!planIdentifier) {

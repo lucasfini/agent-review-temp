@@ -106,6 +106,36 @@ describe('GET /api/subscriptions/current', () => {
     );
   });
 
+  it('keeps current subscription readable for active members', async () => {
+    const { GET } = await import('@/app/api/subscriptions/current/route');
+    mockRequireAuthenticatedUser.mockResolvedValue({ id: 'user-1', email: 'user@example.com' });
+    mockGetActiveOrganizationForUser.mockResolvedValue({
+      organization: {
+        id: 'org-1',
+        name: 'Member Org',
+        type: 'saas_customer',
+      },
+      membership: {
+        role: 'member',
+        status: 'active',
+      },
+    });
+    mockGetOrganizationSubscription.mockResolvedValue(null);
+
+    const response = await GET(new Request('http://localhost/api/subscriptions/current') as any);
+    const payload = await response.json();
+
+    expect(response.status).toBe(200);
+    expect(payload.membership).toEqual({
+      role: 'member',
+      status: 'active',
+    });
+    expect(mockGetOrganizationSubscription).toHaveBeenCalledWith(
+      expect.anything(),
+      'org-1'
+    );
+  });
+
   it('does not query subscriptions when organization access is denied', async () => {
     const { GET } = await import('@/app/api/subscriptions/current/route');
     mockRequireAuthenticatedUser.mockResolvedValue({ id: 'user-1', email: 'user@example.com' });

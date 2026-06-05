@@ -1,8 +1,10 @@
+import { OrganizationAccessError } from '@/lib/authz/types';
+
 const mockCheckoutSessionCreate = jest.fn();
 const mockCustomerCreate = jest.fn();
 const mockPortalSessionCreate = jest.fn();
 const mockRequireAuthenticatedUser = jest.fn();
-const mockGetActiveOrganizationForUser = jest.fn();
+const mockRequireOrganizationBillingManager = jest.fn();
 const mockGetPlanBySlugOrId = jest.fn();
 const mockGetOrganizationStripeCustomerId = jest.fn();
 const mockStoreOrganizationStripeCustomerId = jest.fn();
@@ -43,8 +45,8 @@ jest.mock('@/lib/api/route-auth', () => {
   };
 });
 
-jest.mock('@/lib/authz/organization-context', () => ({
-  getActiveOrganizationForUser: (...args: any[]) => mockGetActiveOrganizationForUser(...args),
+jest.mock('@/lib/authz/billing-permissions', () => ({
+  requireOrganizationBillingManager: (...args: any[]) => mockRequireOrganizationBillingManager(...args),
 }));
 
 jest.mock('@/lib/billing/plans', () => ({
@@ -79,14 +81,17 @@ describe('subscription checkout and portal routes', () => {
     mockCustomerCreate.mockReset();
     mockPortalSessionCreate.mockReset();
     mockRequireAuthenticatedUser.mockReset();
-    mockGetActiveOrganizationForUser.mockReset();
+    mockRequireOrganizationBillingManager.mockReset();
     mockGetPlanBySlugOrId.mockReset();
     mockGetOrganizationStripeCustomerId.mockReset();
     mockStoreOrganizationStripeCustomerId.mockReset();
     mockIsDemoUser.mockReset();
 
     mockRequireAuthenticatedUser.mockResolvedValue(user);
-    mockGetActiveOrganizationForUser.mockResolvedValue({ organization, membership: { role: 'owner' } });
+    mockRequireOrganizationBillingManager.mockResolvedValue({
+      organization,
+      membership: { role: 'owner', status: 'active' },
+    });
     mockIsDemoUser.mockReturnValue(false);
   });
 
@@ -153,11 +158,10 @@ describe('subscription checkout and portal routes', () => {
 
     expect(response.status).toBe(200);
     expect(payload.url).toBe('https://checkout.stripe.test/cs_sub');
-    expect(mockGetActiveOrganizationForUser).toHaveBeenCalledWith(
-      expect.anything(),
-      'user-1',
-      'org-1'
-    );
+    expect(mockRequireOrganizationBillingManager).toHaveBeenCalledWith({
+      userId: 'user-1',
+      requestedOrganizationId: 'org-1',
+    });
     expect(mockCustomerCreate).toHaveBeenCalledWith(expect.objectContaining({
       email: 'user@example.com',
       name: 'Acme Workspace',
@@ -196,6 +200,49 @@ describe('subscription checkout and portal routes', () => {
     expect(checkoutPayload.cancel_url).toBe('http://localhost:3000/dashboard/billing?subscription=cancel');
   });
 
+  it('allows an organization admin to create a checkout session', async () => {
+    const { POST } = await import('@/app/api/subscriptions/checkout/route');
+    mockRequireOrganizationBillingManager.mockResolvedValue({
+      organization,
+      membership: { role: 'admin', status: 'active' },
+    });
+    mockGetPlanBySlugOrId.mockResolvedValue(plan);
+    mockGetOrganizationStripeCustomerId.mockResolvedValue('cus_existing');
+    mockCheckoutSessionCreate.mockResolvedValue({ id: 'cs_admin', url: 'https://checkout.stripe.test/cs_admin' });
+
+    const response = await POST(new Request('http://localhost/api/subscriptions/checkout', {
+      method: 'POST',
+      body: JSON.stringify({ planSlug: 'starter', organization_id: 'org-1' }),
+    }) as any);
+    const payload = await response.json();
+
+    expect(response.status).toBe(200);
+    expect(payload.url).toBe('https://checkout.stripe.test/cs_admin');
+    expect(mockCustomerCreate).not.toHaveBeenCalled();
+    expect(mockCheckoutSessionCreate).toHaveBeenCalledWith(expect.objectContaining({
+      customer: 'cus_existing',
+      client_reference_id: 'org-1',
+    }));
+  });
+
+  it('blocks non-admin members from subscription checkout', async () => {
+    const { POST } = await import('@/app/api/subscriptions/checkout/route');
+    mockRequireOrganizationBillingManager.mockRejectedValue(
+      new OrganizationAccessError(403, 'Billing management requires organization owner or admin access')
+    );
+
+    const response = await POST(new Request('http://localhost/api/subscriptions/checkout', {
+      method: 'POST',
+      body: JSON.stringify({ planSlug: 'starter', organization_id: 'org-1' }),
+    }) as any);
+    const payload = await response.json();
+
+    expect(response.status).toBe(403);
+    expect(payload.error).toBe('Billing management requires organization owner or admin access');
+    expect(mockGetPlanBySlugOrId).not.toHaveBeenCalled();
+    expect(mockCheckoutSessionCreate).not.toHaveBeenCalled();
+  });
+
   it('returns a safe error when opening the portal without an organization customer', async () => {
     const { POST } = await import('@/app/api/subscriptions/portal/route');
     mockGetOrganizationStripeCustomerId.mockResolvedValue(null);
@@ -208,6 +255,24 @@ describe('subscription checkout and portal routes', () => {
 
     expect(response.status).toBe(404);
     expect(payload.error).toBe('No Stripe customer found for this organization');
+    expect(mockPortalSessionCreate).not.toHaveBeenCalled();
+  });
+
+  it('blocks non-admin members from opening the billing portal', async () => {
+    const { POST } = await import('@/app/api/subscriptions/portal/route');
+    mockRequireOrganizationBillingManager.mockRejectedValue(
+      new OrganizationAccessError(403, 'Billing management requires organization owner or admin access')
+    );
+
+    const response = await POST(new Request('http://localhost/api/subscriptions/portal', {
+      method: 'POST',
+      body: JSON.stringify({ organization_id: 'org-1' }),
+    }) as any);
+    const payload = await response.json();
+
+    expect(response.status).toBe(403);
+    expect(payload.error).toBe('Billing management requires organization owner or admin access');
+    expect(mockGetOrganizationStripeCustomerId).not.toHaveBeenCalled();
     expect(mockPortalSessionCreate).not.toHaveBeenCalled();
   });
 });

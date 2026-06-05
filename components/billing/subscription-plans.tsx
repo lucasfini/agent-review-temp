@@ -13,6 +13,7 @@ import {
   isPlanActionDisabled,
   subscriptionHasUsableStatus,
 } from '@/lib/billing/subscription-ui';
+import { canManageOrganizationBilling } from '@/lib/authz/billing-permission-rules';
 import { useCurrentSubscription } from '@/lib/hooks/useCurrentSubscription';
 import { usePlans } from '@/lib/hooks/usePlans';
 import { useSubscriptionCheckout } from '@/lib/hooks/useSubscriptionCheckout';
@@ -53,6 +54,7 @@ export default function SubscriptionPlans({ organizationId }: SubscriptionPlansP
   const { plans, loading: loadingPlans, error: plansError } = usePlans();
   const {
     organization,
+    membership,
     subscription,
     loading: loadingSubscription,
     error: subscriptionError,
@@ -69,7 +71,8 @@ export default function SubscriptionPlans({ organizationId }: SubscriptionPlansP
   const loading = loadingPlans || loadingSubscription;
   const currentPlanName = subscription?.plan?.name || (subscription ? 'Plan unavailable' : 'No subscription plan');
   const currentStatus = formatSubscriptionStatus(subscription?.status);
-  const canOpenPortal = Boolean(subscription?.stripeCustomerId);
+  const canManageBilling = canManageOrganizationBilling(membership?.role, organization?.type);
+  const canOpenPortal = canManageBilling && Boolean(subscription?.stripeCustomerId);
 
   return (
     <Card>
@@ -138,7 +141,10 @@ export default function SubscriptionPlans({ organizationId }: SubscriptionPlansP
               const isCurrent = isCurrentSubscriptionPlan(plan, subscription);
               const hasUsableCurrentStatus = isCurrent && subscriptionHasUsableStatus(subscription?.status);
               const actionLabel = getPlanActionLabel(plan, subscription);
-              const disabled = isPlanActionDisabled(plan, subscription) || Boolean(checkoutPlanId) || openingPortal;
+              const disabled = !canManageBilling
+                || isPlanActionDisabled(plan, subscription)
+                || Boolean(checkoutPlanId)
+                || openingPortal;
               const isSubmitting = checkoutPlanId === plan.slug || checkoutPlanId === plan.id;
 
               return (
@@ -182,6 +188,7 @@ export default function SubscriptionPlans({ organizationId }: SubscriptionPlansP
                     type="button"
                     onClick={() => startCheckout({ planSlug: plan.slug })}
                     disabled={disabled}
+                    title={!canManageBilling ? 'Only organization owners and admins can manage subscription billing.' : undefined}
                     className={cn(
                       'mt-auto inline-flex w-full items-center justify-center gap-2 rounded-lg px-3 py-2 text-sm font-semibold transition-colors disabled:cursor-not-allowed disabled:opacity-55',
                       hasUsableCurrentStatus
