@@ -28,6 +28,7 @@ describe('/api/projects/[id]/generate', () => {
   let supabaseAdmin;
   let requireCredits;
   let scheduleBackgroundTask;
+  let resolveGenerationContext;
 
   beforeEach(async () => {
     jest.resetModules();
@@ -50,7 +51,7 @@ describe('/api/projects/[id]/generate', () => {
     }));
 
     jest.doMock('../../lib/app-url', () => ({
-      getAppBaseUrl: jest.fn(() => 'http://localhost:3000'),
+      getInternalAppBaseUrl: jest.fn(() => 'http://localhost:3000'),
     }));
 
     jest.doMock('../../lib/background-task', () => ({
@@ -74,13 +75,32 @@ describe('/api/projects/[id]/generate', () => {
     }));
 
     jest.doMock('../../lib/billing/cost-map', () => ({
-      estimateAnalysisJobCost: jest.fn(({ targetKey }) => (targetKey === 'summary' ? 2 : 1)),
-      estimateContentGenerationCost: jest.fn(([targetKey]) => (targetKey === 'twitter_threads' ? 3 : 1)),
+      estimateAnalysisJobCostAsync: jest.fn(({ targetKey }) => Promise.resolve(targetKey === 'summary' ? 2 : 1)),
+      estimateContentGenerationCostAsync: jest.fn(([targetKey]) => Promise.resolve(targetKey === 'twitter_threads' ? 3 : 1)),
     }));
+
+    jest.doMock('../../lib/rate-limit', () => ({
+      aiRatelimit: {
+        limit: jest.fn().mockResolvedValue({ success: true }),
+      },
+    }));
+
+    jest.doMock('../../lib/billing/entitlement-guards', () => ({
+      runEntitlementGuard: jest.fn().mockResolvedValue({ response: null }),
+    }));
+
+    jest.doMock('../../lib/generation-context', () => {
+      const actual = jest.requireActual('../../lib/generation-context');
+      return {
+        ...actual,
+        resolveGenerationContext: jest.fn().mockResolvedValue({ brandVoice: null, campaign: null }),
+      };
+    });
 
     ({ supabaseAdmin } = require('../../lib/supabase/server'));
     ({ requireCredits } = require('../../lib/billing/middleware'));
     ({ scheduleBackgroundTask } = require('../../lib/background-task'));
+    ({ resolveGenerationContext } = require('../../lib/generation-context'));
     ({ POST } = await import('../../app/api/projects/[id]/generate/route'));
   });
 
@@ -95,11 +115,11 @@ describe('/api/projects/[id]/generate', () => {
     expect(response.status).toBe(401);
   });
 
-  it('queues jobs and uses the 115 percent reserve hold for billing preflight', async () => {
+  it('queues jobs and uses the workflow reserve hold for billing preflight', async () => {
     supabaseAdmin.auth.getUser.mockResolvedValue({ data: { user: { id: 'user-1' } }, error: null });
 
     const projectSelect = createSelectBuilder({
-      data: { id: 'project-1', user_id: 'user-1', transcription_text: 'hello world' },
+      data: { id: 'project-1', user_id: 'user-1', transcription_text: 'hello world', organization_id: 'org-1' },
       error: null,
     });
     const jobsSelect = createSelectBuilder({ data: [], error: null });
@@ -129,6 +149,8 @@ describe('/api/projects/[id]/generate', () => {
           { kind: 'content', targetKey: 'twitter_threads' },
           { kind: 'analysis', targetKey: 'summary' },
         ],
+        brand_voice_id: 'voice-1',
+        campaign_id: 'campaign-1',
       }),
     });
 
@@ -136,22 +158,35 @@ describe('/api/projects/[id]/generate', () => {
     const data = await response.json();
 
     expect(response.status).toBe(200);
-    expect(requireCredits).toHaveBeenCalledWith('user-1', 5.75);
+    expect(requireCredits).toHaveBeenCalledWith('user-1', 5.04);
+    expect(resolveGenerationContext).toHaveBeenCalledWith(
+      supabaseAdmin,
+      'org-1',
+      { brandVoiceId: 'voice-1', campaignId: 'campaign-1' }
+    );
     expect(insertSingle).toHaveBeenCalledWith([
       {
         project_id: 'project-1',
         user_id: 'user-1',
+        organization_id: 'org-1',
         kind: 'content',
         target_key: 'twitter_threads',
         theme_id: 'professional',
+        custom_guidance: null,
+        brand_voice_id: 'voice-1',
+        campaign_id: 'campaign-1',
         status: 'queued',
       },
       {
         project_id: 'project-1',
         user_id: 'user-1',
+        organization_id: 'org-1',
         kind: 'analysis',
         target_key: 'summary',
         theme_id: null,
+        custom_guidance: null,
+        brand_voice_id: null,
+        campaign_id: null,
         status: 'queued',
       },
     ]);
@@ -160,7 +195,7 @@ describe('/api/projects/[id]/generate', () => {
       queued: 2,
       skipped: 0,
       estimatedCost: 5,
-      estimatedReserveAmount: 5.75,
+      estimatedReserveAmount: 5.04,
     });
     expect(global.fetch).toHaveBeenCalledWith(
       'http://localhost:3000/api/projects/project-1/generate/process',
@@ -179,7 +214,7 @@ describe('/api/projects/[id]/generate', () => {
     supabaseAdmin.auth.getUser.mockResolvedValue({ data: { user: { id: 'user-1' } }, error: null });
 
     const projectSelect = createSelectBuilder({
-      data: { id: 'project-1', user_id: 'user-1', transcription_text: 'hello world' },
+      data: { id: 'project-1', user_id: 'user-1', transcription_text: 'hello world', organization_id: 'org-1' },
       error: null,
     });
     const jobsSelect = createExistingJobsBuilder({

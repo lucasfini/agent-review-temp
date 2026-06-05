@@ -15,10 +15,18 @@ import {
   shouldEnforceSubscriptionEntitlements,
 } from '@/lib/billing/entitlement-guards';
 import { resolveOrganizationIdForWrite } from '@/lib/authz/organization-context';
+import {
+  GenerationContextValidationError,
+  hasGenerationContextIds,
+  readGenerationContextIds,
+  resolveGenerationContext,
+} from '@/lib/generation-context';
 
 export async function POST(request: NextRequest) {
   try {
-    const { projectId, blocks, estimatedCost, selectedModelId } = await request.json();
+    const payload = await request.json();
+    const { projectId, blocks, estimatedCost, selectedModelId } = payload;
+    const generationContextIds = readGenerationContextIds(payload);
 
     if (!projectId || !blocks || !Array.isArray(blocks) || blocks.length === 0) {
       return NextResponse.json(
@@ -72,6 +80,18 @@ export async function POST(request: NextRequest) {
       const contentType = getContentTypeById(block.contentTypeId);
       if (!contentType) {
         return NextResponse.json({ error: `Unknown content type: ${block.contentTypeId}` }, { status: 400 });
+      }
+    }
+
+    if (hasGenerationContextIds(generationContextIds)) {
+      const generationOrganizationId = project.organization_id || await resolveOrganizationIdForWrite(project.user_id);
+      try {
+        await resolveGenerationContext(supabaseAdmin, generationOrganizationId, generationContextIds);
+      } catch (error) {
+        if (error instanceof GenerationContextValidationError) {
+          return NextResponse.json({ error: error.message }, { status: error.status });
+        }
+        throw error;
       }
     }
 
@@ -164,7 +184,9 @@ export async function POST(request: NextRequest) {
           transcription: project.transcription_text,
           blocks, // Send blocks instead of selectedContentTypes
           segments: [],
-          modelId: selectedModelId
+          modelId: selectedModelId,
+          brand_voice_id: generationContextIds.brandVoiceId || undefined,
+          campaign_id: generationContextIds.campaignId || undefined,
         })
       }).catch(error => {
         const timeoutCode = (error as any)?.cause?.code;
@@ -186,6 +208,9 @@ export async function POST(request: NextRequest) {
     });
 
   } catch (error) {
+    if (error instanceof GenerationContextValidationError) {
+      return NextResponse.json({ error: error.message }, { status: error.status });
+    }
     console.error('[GENERATE-SELECTED] Error:', error);
     return NextResponse.json(
       { error: 'Failed to start content generation' },

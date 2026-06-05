@@ -381,6 +381,8 @@ export async function POST(
               segments: project.transcription_segments || [],
               speakerData: project.speaker_data || {},
               blocks: [block],
+              brand_voice_id: job.brand_voice_id || undefined,
+              campaign_id: job.campaign_id || undefined,
             }),
           });
 

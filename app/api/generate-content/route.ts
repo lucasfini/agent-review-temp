@@ -3,7 +3,7 @@ import { supabaseAdmin } from '@/lib/supabase/server';
 import { trackOpenAIUsage } from '@/lib/billing/track-usage';
 import { billingErrorResponse, requireCredits } from '@/lib/billing/middleware';
 import { aiRatelimit } from '@/lib/rate-limit';
-import { normalizeCustomGuidance, type ContentBlock, type OutputType } from '@/lib/content-types';
+import { getContentTypeById, normalizeCustomGuidance, type ContentBlock, type OutputType } from '@/lib/content-types';
 import { getThemeById, type ContentTheme } from '@/lib/content-themes';
 import { enforceContentLimit, PLATFORM_PSYCHOLOGY } from '@/lib/content-psychology';
 import { preProcessTranscript, type NarrativeMetadata } from '@/lib/content-generators/pre-processor';
@@ -28,6 +28,16 @@ import {
   shouldEnforceSubscriptionEntitlements,
 } from '@/lib/billing/entitlement-guards';
 import { recordSubscriptionUsage } from '@/lib/billing/subscription-usage-counters';
+import {
+  buildGenerationContextMetadata,
+  buildGenerationContextPrompt,
+  GenerationContextValidationError,
+  hasGenerationContextIds,
+  mergeGenerationContextWithStyle,
+  readGenerationContextIds,
+  resolveGenerationContext,
+  type ResolvedGenerationContext,
+} from '@/lib/generation-context';
 
 /**
  * Parse JSON response from AI, stripping markdown code fences and conversational filler
@@ -560,6 +570,7 @@ export async function POST(request: NextRequest) {
 
     const payload = await request.json();
     projectId = payload.projectId;
+    const generationContextIds = readGenerationContextIds(payload);
     const { transcription, segments, blocks, speakerData, modelId, outputStyleModifier } = payload;
 
     if (!projectId || !transcription) {
@@ -632,6 +643,19 @@ export async function POST(request: NextRequest) {
 
     if (!projectOrganizationId && !isMaintenance && shouldEnforceSubscriptionEntitlements()) {
       projectOrganizationId = await resolveOrganizationIdForWrite(userId);
+    }
+
+    let generationContext: ResolvedGenerationContext | null = null;
+    if (hasGenerationContextIds(generationContextIds)) {
+      projectOrganizationId = projectOrganizationId || await resolveOrganizationIdForWrite(userId);
+      try {
+        generationContext = await resolveGenerationContext(supabaseAdmin, projectOrganizationId, generationContextIds);
+      } catch (error) {
+        if (error instanceof GenerationContextValidationError) {
+          return NextResponse.json({ error: error.message }, { status: error.status });
+        }
+        throw error;
+      }
     }
 
     const estimatedGenerationCost = await estimateContentBlocksCostAsync(
@@ -754,7 +778,8 @@ export async function POST(request: NextRequest) {
           userId,
           projectId,
           openaiApiKey || undefined,
-          outputStyleModifier || undefined
+          outputStyleModifier || undefined,
+          generationContext
         );
         generatedContent.push(...blockResult.content);
 
@@ -798,6 +823,7 @@ export async function POST(request: NextRequest) {
       } catch (billingError) {
         console.error('[BILLING ERROR] ❌ Failed to settle content reservation:', billingError);
         if (savedOutputIds.length > 0) {
+          await deleteGeneratedContentLibraryItems(savedOutputIds);
           await supabaseAdmin
             .from('outputs')
             .delete()
@@ -855,6 +881,9 @@ export async function POST(request: NextRequest) {
     });
 
   } catch (error) {
+    if (error instanceof GenerationContextValidationError) {
+      return NextResponse.json({ error: error.message }, { status: error.status });
+    }
     if (contentReservationId) {
       await failReservation(contentReservationId, error instanceof Error ? error.message : 'Content generation failed').catch((failError) => {
         console.error('[BILLING ERROR] ❌ Failed to fail content reservation after route error:', failError);
@@ -993,60 +1022,77 @@ async function generateBlockContent(
   userId?: string,
   projectId?: string,
   openaiApiKey?: string,
-  outputStyleModifier?: string
+  outputStyleModifier?: string,
+  generationContext?: ResolvedGenerationContext | null
 ): Promise<{ content: any[], usageEventId?: string, billedCost: number }> {
   const theme = getThemeById(block.theme);
   if (!theme) {
     throw new Error(`Theme not found: ${block.theme}`);
   }
 
+  const contentType = getContentTypeById(block.contentTypeId);
+  const contextSelection = {
+    contentTypeId: block.contentTypeId,
+    contentTypeName: contentType?.name || block.name,
+    channel: contentType?.platformType || contentType?.platform || null,
+  };
+  const hasOrganizationContext = Boolean(generationContext?.brandVoice || generationContext?.campaign);
+  const contextPrompt = hasOrganizationContext
+    ? buildGenerationContextPrompt(generationContext, contextSelection)
+    : '';
+  const contextualOutputStyleModifier = mergeGenerationContextWithStyle(contextPrompt, outputStyleModifier);
+
   let result: { content: any[], usageEventId?: string, billedCost: number };
 
   switch (block.contentTypeId) {
     case 'twitter_threads':
-      result = await generateTwitterThread(block, transcription, analysis, narrativeMetadata, theme, model, userId, projectId, openaiApiKey, outputStyleModifier);
+      result = await generateTwitterThread(block, transcription, analysis, narrativeMetadata, theme, model, userId, projectId, openaiApiKey, contextualOutputStyleModifier);
       break;
     case 'linkedin_posts':
-      result = await generateLinkedInPost(block, transcription, analysis, narrativeMetadata, theme, model, userId, projectId, openaiApiKey, outputStyleModifier);
+      result = await generateLinkedInPost(block, transcription, analysis, narrativeMetadata, theme, model, userId, projectId, openaiApiKey, contextualOutputStyleModifier);
       break;
     case 'instagram_content':
-      result = await generateInstagramCarousel(block, transcription, analysis, narrativeMetadata, theme, model, userId, projectId, openaiApiKey, outputStyleModifier);
+      result = await generateInstagramCarousel(block, transcription, analysis, narrativeMetadata, theme, model, userId, projectId, openaiApiKey, contextualOutputStyleModifier);
       break;
     case 'blog_post':
-      result = await generateBlogPost(block, transcription, analysis, narrativeMetadata, theme, model, userId, projectId, openaiApiKey, outputStyleModifier);
+      result = await generateBlogPost(block, transcription, analysis, narrativeMetadata, theme, model, userId, projectId, openaiApiKey, contextualOutputStyleModifier);
       break;
     case 'newsletter':
-      result = await generateNewsletter(block, transcription, analysis, narrativeMetadata, theme, model, userId, projectId, openaiApiKey, outputStyleModifier);
+      result = await generateNewsletter(block, transcription, analysis, narrativeMetadata, theme, model, userId, projectId, openaiApiKey, contextualOutputStyleModifier);
       break;
     case 'show_notes':
-      result = await generateShowNotes(block, transcription, analysis, narrativeMetadata, theme, model, userId, projectId, openaiApiKey, outputStyleModifier);
+      result = await generateShowNotes(block, transcription, analysis, narrativeMetadata, theme, model, userId, projectId, openaiApiKey, contextualOutputStyleModifier);
       break;
     case 'quote_graphics':
-      result = await generateQuoteGraphic(block, analysis, theme, model, userId, projectId, openaiApiKey, outputStyleModifier);
+      result = await generateQuoteGraphic(block, analysis, theme, model, userId, projectId, openaiApiKey, contextualOutputStyleModifier);
       break;
     case 'facebook_post':
-      result = await generateFacebookPost(block, transcription, analysis, narrativeMetadata, theme, model, userId, projectId, openaiApiKey, outputStyleModifier);
+      result = await generateFacebookPost(block, transcription, analysis, narrativeMetadata, theme, model, userId, projectId, openaiApiKey, contextualOutputStyleModifier);
       break;
     case 'youtube_description':
-      result = await generateYoutubeDescription(block, transcription, analysis, narrativeMetadata, theme, model, userId, projectId, openaiApiKey, outputStyleModifier);
+      result = await generateYoutubeDescription(block, transcription, analysis, narrativeMetadata, theme, model, userId, projectId, openaiApiKey, contextualOutputStyleModifier);
       break;
     case 'podcast_episode_description':
-      result = await generatePodcastEpisodeDescription(block, transcription, analysis, narrativeMetadata, theme, model, userId, projectId, openaiApiKey, outputStyleModifier);
+      result = await generatePodcastEpisodeDescription(block, transcription, analysis, narrativeMetadata, theme, model, userId, projectId, openaiApiKey, contextualOutputStyleModifier);
       break;
     case 'short_form_video_script':
-      result = await generateShortFormVideoScript(block, transcription, analysis, narrativeMetadata, theme, model, userId, projectId, openaiApiKey, outputStyleModifier);
+      result = await generateShortFormVideoScript(block, transcription, analysis, narrativeMetadata, theme, model, userId, projectId, openaiApiKey, contextualOutputStyleModifier);
       break;
     default:
       throw new Error(`Unknown content type: ${block.contentTypeId}`);
   }
 
   const customGuidance = normalizeCustomGuidance(block.customGuidance);
-  if (customGuidance) {
+  const generationContextMetadata = hasOrganizationContext
+    ? buildGenerationContextMetadata(generationContext, contextSelection)
+    : undefined;
+  if (customGuidance || generationContextMetadata) {
     result.content = result.content.map((item) => ({
       ...item,
       metadata: {
         ...(item.metadata || {}),
-        customGuidance,
+        ...(customGuidance ? { customGuidance } : {}),
+        ...(generationContextMetadata ? { generationContext: generationContextMetadata } : {}),
       },
     }));
   }
@@ -2619,6 +2665,60 @@ function buildMetadataForInsert(metadata: any, originalType?: string, normalized
   return result;
 }
 
+function stringifyContent(value: unknown): string | null {
+  if (value === undefined || value === null) return null;
+  if (typeof value === 'string') return value;
+
+  try {
+    return JSON.stringify(value);
+  } catch {
+    return String(value);
+  }
+}
+
+function truncateText(value: unknown, maxLength: number): string | null {
+  const normalized = stringifyContent(value)?.trim();
+  if (!normalized) return null;
+  return normalized.length > maxLength ? normalized.slice(0, maxLength) : normalized;
+}
+
+function normalizeMetadataObject(value: unknown): Record<string, any> {
+  if (!value || typeof value !== 'object' || Array.isArray(value)) return {};
+  return value as Record<string, any>;
+}
+
+function uniqueTags(values: Array<unknown>): string[] {
+  const seen = new Set<string>();
+  const tags: string[] = [];
+
+  for (const value of values) {
+    if (typeof value !== 'string') continue;
+    const normalized = value.trim();
+    if (!normalized) continue;
+
+    const key = normalized.toLowerCase();
+    if (seen.has(key)) continue;
+
+    seen.add(key);
+    tags.push(normalized);
+  }
+
+  return tags.slice(0, 16);
+}
+
+async function deleteGeneratedContentLibraryItems(outputIds: string[]): Promise<void> {
+  if (!outputIds.length) return;
+
+  const { error } = await supabaseAdmin
+    .from('content_library_items')
+    .delete()
+    .in('output_id', outputIds);
+
+  if (error) {
+    console.error('[SAVE CLEANUP] Failed to delete content library items:', error);
+  }
+}
+
 async function saveGeneratedContent(projectId: string, generatedContent: any[]): Promise<string[]> {
   const { data: project } = await supabaseAdmin
     .from('projects')
@@ -2634,6 +2734,7 @@ async function saveGeneratedContent(projectId: string, generatedContent: any[]):
 
   const outputs = generatedContent.map(content => {
     const normalizedType = normalizeOutputTypeForInsert(content.type);
+    const metadata = buildMetadataForInsert(content.metadata, content.type, normalizedType);
 
     return {
       project_id: projectId,
@@ -2643,7 +2744,7 @@ async function saveGeneratedContent(projectId: string, generatedContent: any[]):
       platform: content.platform,
       title: content.title,
       content: content.content,
-      metadata: buildMetadataForInsert(content.metadata, content.type, normalizedType),
+      metadata,
       status: 'generated',
       created_at: new Date().toISOString()
     };
@@ -2665,6 +2766,74 @@ async function saveGeneratedContent(projectId: string, generatedContent: any[]):
     throw new Error(`Failed to save content: ${error.message}`);
   }
 
-  console.log(`[SAVE] 💾 Saved ${outputs.length} outputs to database`);
-  return ((data || []) as Array<{ id: string }>).map((row) => row.id);
+  const outputIds = ((data || []) as Array<{ id: string }>).map((row) => row.id);
+  if (outputIds.length !== outputs.length) {
+    if (outputIds.length > 0) {
+      await supabaseAdmin
+        .from('outputs')
+        .delete()
+        .in('id', outputIds);
+    }
+    throw new Error('Failed to save content: output IDs were not returned for every generated item');
+  }
+
+  const contentLibraryRows = outputs.map((output, index) => {
+    const metadata = normalizeMetadataObject(output.metadata);
+    const generationContext = normalizeMetadataObject(metadata.generationContext);
+    const originalContent = generatedContent[index] || {};
+    const contentType = truncateText(metadata.originalOutputType || originalContent.type || output.type, 240) || 'generated_content';
+    const platform = truncateText(output.platform || metadata.platform || null, 240);
+    const body = stringifyContent(output.content);
+    const title = truncateText(output.title || `${platform || contentType} output`, 160) || 'Generated content';
+
+    return {
+      organization_id: organizationId,
+      client_id: null,
+      campaign_id: typeof generationContext.campaignId === 'string' ? generationContext.campaignId : null,
+      brand_voice_id: typeof generationContext.brandVoiceId === 'string' ? generationContext.brandVoiceId : null,
+      project_id: projectId,
+      output_id: outputIds[index],
+      title,
+      content_type: contentType,
+      platform,
+      status: 'draft',
+      body,
+      excerpt: truncateText(body, 500),
+      source_label: 'AI generation',
+      tags_json: uniqueTags([
+        contentType,
+        platform,
+        metadata.platform,
+        metadata.theme,
+        generationContext.campaignName,
+        generationContext.brandVoiceName,
+      ]),
+      metadata_json: {
+        source: 'generation',
+        legacy_output_id: outputIds[index],
+        legacy_output_type: output.type,
+        original_output_type: metadata.originalOutputType || originalContent.type || output.type,
+        generation_context: generationContext,
+        output_metadata: metadata,
+      },
+      created_by: userId,
+    };
+  });
+
+  const { error: contentLibraryError } = await supabaseAdmin
+    .from('content_library_items')
+    .insert(contentLibraryRows as any);
+
+  if (contentLibraryError) {
+    console.error('[SAVE ERROR] Failed to save content library items:', contentLibraryError);
+    await deleteGeneratedContentLibraryItems(outputIds);
+    await supabaseAdmin
+      .from('outputs')
+      .delete()
+      .in('id', outputIds);
+    throw new Error(`Failed to save content library items: ${contentLibraryError.message}`);
+  }
+
+  console.log(`[SAVE] 💾 Saved ${outputs.length} outputs and content library items to database`);
+  return outputIds;
 }

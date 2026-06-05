@@ -16,6 +16,9 @@ describe('/api/projects/[id]/generate/process', () => {
       const mock = {
         auth: {
           getUser: jest.fn(),
+          admin: {
+            getUserById: jest.fn().mockResolvedValue({ data: { user: { id: 'user-1' } }, error: null }),
+          },
         },
         from: jest.fn(),
       };
@@ -27,7 +30,7 @@ describe('/api/projects/[id]/generate/process', () => {
     }));
 
     jest.doMock('../../lib/app-url', () => ({
-      getAppBaseUrl: jest.fn(() => 'http://localhost:3000'),
+      getInternalAppBaseUrl: jest.fn(() => 'http://localhost:3000'),
     }));
 
     jest.doMock('../../lib/billing/credit', () => ({
@@ -43,12 +46,22 @@ describe('/api/projects/[id]/generate/process', () => {
     }));
 
     jest.doMock('../../lib/billing/cost-map', () => ({
-      estimateAnalysisJobCost: jest.fn(() => 2),
-      estimateContentGenerationCost: jest.fn(() => 3),
+      estimateAnalysisJobCostAsync: jest.fn(() => Promise.resolve(2)),
+      estimateContentGenerationCostAsync: jest.fn(() => Promise.resolve(3)),
     }));
 
     jest.doMock('../../lib/billing/middleware', () => ({
       requireCredits: jest.fn().mockResolvedValue(undefined),
+    }));
+
+    jest.doMock('../../lib/demo-mode', () => ({
+      isDemoUser: jest.fn(() => false),
+    }));
+
+    jest.doMock('../../lib/concurrency', () => ({
+      acquireGlobalJobLock: jest.fn().mockResolvedValue(true),
+      releaseGlobalJobLock: jest.fn().mockResolvedValue(undefined),
+      heartbeatGlobalJobLock: jest.fn().mockResolvedValue(undefined),
     }));
 
     ({ supabaseAdmin } = require('../../lib/supabase/server'));
@@ -164,6 +177,8 @@ describe('/api/projects/[id]/generate/process', () => {
           kind: 'content',
           target_key: 'twitter_threads',
           theme_id: 'professional',
+          brand_voice_id: 'voice-1',
+          campaign_id: 'campaign-1',
           status: 'queued',
         },
       ],
@@ -192,6 +207,10 @@ describe('/api/projects/[id]/generate/process', () => {
         body: expect.stringContaining('"contentTypeId":"twitter_threads"'),
       })
     );
+    expect(JSON.parse(global.fetch.mock.calls[0][1].body)).toMatchObject({
+      brand_voice_id: 'voice-1',
+      campaign_id: 'campaign-1',
+    });
     expect(updates.some((entry) => entry.id === 'job-1' && entry.payload.status === 'running')).toBe(true);
     expect(updates.some((entry) => entry.id === 'job-1' && entry.payload.status === 'completed')).toBe(true);
   });

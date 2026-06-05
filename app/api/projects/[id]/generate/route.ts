@@ -13,6 +13,12 @@ import { estimateReservationAmount } from '@/lib/billing/reserve-amount';
 import { resolveOrganizationIdForWrite } from '@/lib/authz/organization-context';
 import { RouteAccessError, requireProjectOwner } from '@/lib/api/route-auth';
 import { runEntitlementGuard } from '@/lib/billing/entitlement-guards';
+import {
+  GenerationContextValidationError,
+  hasGenerationContextIds,
+  readGenerationContextIds,
+  resolveGenerationContext,
+} from '@/lib/generation-context';
 
 type GenerateItem = {
   kind: 'analysis' | 'content';
@@ -34,6 +40,7 @@ export async function POST(
 
     const body = await request.json().catch(() => null);
     const items = Array.isArray(body?.items) ? body.items as GenerateItem[] : [];
+    const generationContextIds = readGenerationContextIds(body);
     if (!items.length) {
       return NextResponse.json({ error: 'No generation items provided' }, { status: 400 });
     }
@@ -67,6 +74,16 @@ export async function POST(
     }
 
     const projectOrganizationId = project.organization_id || await resolveOrganizationIdForWrite(project.user_id);
+    if (hasGenerationContextIds(generationContextIds)) {
+      try {
+        await resolveGenerationContext(supabaseAdmin, projectOrganizationId, generationContextIds);
+      } catch (error) {
+        if (error instanceof GenerationContextValidationError) {
+          return NextResponse.json({ error: error.message }, { status: error.status });
+        }
+        throw error;
+      }
+    }
 
     const normalizedItems = items.filter((item) => {
       if (!item || (item.kind !== 'analysis' && item.kind !== 'content')) return false;
@@ -142,6 +159,8 @@ export async function POST(
         target_key: item.targetKey,
         theme_id: item.kind === 'content' ? (item.themeId || DEFAULT_THEME_ID) : null,
         custom_guidance: item.kind === 'content' ? (normalizeCustomGuidance(item.customGuidance) || null) : null,
+        brand_voice_id: item.kind === 'content' ? generationContextIds.brandVoiceId : null,
+        campaign_id: item.kind === 'content' ? generationContextIds.campaignId : null,
         status: 'queued',
       }));
 
@@ -181,6 +200,9 @@ export async function POST(
       estimatedReserveAmount,
     });
   } catch (error) {
+    if (error instanceof GenerationContextValidationError) {
+      return NextResponse.json({ error: error.message }, { status: error.status });
+    }
     const billingResponse = billingErrorResponse(error);
     if (billingResponse.status === 402) {
       return billingResponse;
