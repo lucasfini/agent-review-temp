@@ -23,6 +23,7 @@ import { estimateContentBlocksCostAsync } from '@/lib/billing/cost-map';
 import { isDemoUser } from '@/lib/demo-mode';
 import { resolveOrganizationIdForWrite } from '@/lib/authz/organization-context';
 import { RouteAccessError, requireProjectOwner } from '@/lib/api/route-auth';
+import { runEntitlementDryRunCheck } from '@/lib/billing/entitlement-guards';
 
 /**
  * Parse JSON response from AI, stripping markdown code fences and conversational filler
@@ -572,14 +573,19 @@ export async function POST(request: NextRequest) {
     }
 
     let userId: string;
+    let projectOrganizationId: string | null = null;
     if (!isMaintenance) {
       try {
-        const ownership = await requireProjectOwner<{ user_id: string }>(
+        const ownership = await requireProjectOwner<{
+          user_id: string;
+          organization_id: string | null;
+        }>(
           request,
           projectId,
-          'id, user_id'
+          'id, user_id, organization_id'
         );
         userId = ownership.project.user_id;
+        projectOrganizationId = ownership.project.organization_id;
       } catch (error) {
         if (error instanceof RouteAccessError) {
           return NextResponse.json({ error: error.message }, { status: error.status });
@@ -589,14 +595,15 @@ export async function POST(request: NextRequest) {
     } else {
       const { data: project } = await supabaseAdmin
         .from('projects')
-        .select('user_id')
+        .select('user_id, organization_id')
         .eq('id', projectId)
-        .single() as { data: { user_id: string } | null };
+        .single() as { data: { user_id: string; organization_id: string | null } | null };
 
       if (!project) {
         return NextResponse.json({ error: 'Project not found' }, { status: 404 });
       }
       userId = project.user_id;
+      projectOrganizationId = project.organization_id;
     }
 
     if (!isMaintenance && userId) {
@@ -625,6 +632,22 @@ export async function POST(request: NextRequest) {
         .map((block: ContentBlock) => block.contentTypeId)
     );
     if (userId && estimatedGenerationCost > 0) {
+      await runEntitlementDryRunCheck({
+        organizationId: projectOrganizationId || null,
+        legacyUserId: userId,
+        action: 'content_generation',
+        requestedAmount: blocks.filter((block: ContentBlock) => block.enabled !== false).length,
+        logContext: {
+          route: 'app/api/generate-content',
+          userId,
+          projectId,
+          metadata: {
+            estimatedGenerationCost,
+            blockCount: blocks.length,
+            isMaintenance,
+          },
+        },
+      });
       const estimatedHold = estimateReservationAmount(estimatedGenerationCost, 'content_generation');
       await requireCredits(userId, estimatedHold);
       const reservation = await createReservation({

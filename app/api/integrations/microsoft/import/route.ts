@@ -8,6 +8,7 @@ import { getProcessingTierForAnalysis, normalizeAnalysisOptions } from '@/lib/an
 import { createReservation, releaseReservation } from '@/lib/billing/credit';
 import { estimateReservationAmount } from '@/lib/billing/reserve-amount';
 import { resolveOrganizationIdForWrite } from '@/lib/authz/organization-context';
+import { runEntitlementDryRunCheck } from '@/lib/billing/entitlement-guards';
 
 async function ensureAuth(request: NextRequest) {
   const authHeader = request.headers.get('authorization');
@@ -39,6 +40,20 @@ export async function POST(request: NextRequest) {
 
     await requireCredits(user.id, estimatedHold);
     const organizationId = await resolveOrganizationIdForWrite(user.id);
+    await runEntitlementDryRunCheck({
+      organizationId,
+      legacyUserId: user.id,
+      action: 'integration_import',
+      requestedAmount: 1,
+      logContext: {
+        route: 'app/api/integrations/microsoft/import',
+        userId: user.id,
+        metadata: {
+          provider: 'microsoft',
+          estimatedDurationSeconds,
+        },
+      },
+    });
 
     if (!itemId) {
       return NextResponse.json({ error: 'Missing itemId' }, { status: 400 });

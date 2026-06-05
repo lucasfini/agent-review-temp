@@ -47,6 +47,7 @@ import {
 import { runControlledSpeakerVerification } from '@/lib/speaker-verification';
 import { RouteAccessError } from '@/lib/api/route-auth';
 import { resolveTranscribeRequestAuthContext, type TranscribeProjectRecord } from '@/lib/api/transcribe-auth';
+import { runEntitlementDryRunCheck } from '@/lib/billing/entitlement-guards';
 
 const sleep = (ms: number) => new Promise<void>(resolve => setTimeout(resolve, ms));
 const TRANSCRIPTION_PREPARING_MESSAGE = 'Preparing your audio for processing...';
@@ -495,6 +496,24 @@ export async function POST(request: NextRequest) {
     if (features.chapterDetection) selectedContentBlocks.push('chapters');
     if (features.keyTakeaways) selectedContentBlocks.push('takeaways');
     if (features.quotesExtraction) selectedContentBlocks.push('quotes');
+
+    await runEntitlementDryRunCheck({
+      organizationId: existingProject.organization_id || null,
+      legacyUserId: existingProject.user_id,
+      action: 'transcription',
+      durationSeconds: existingProject.audio_duration || undefined,
+      logContext: {
+        route: 'app/api/transcribe',
+        userId: callerUserId || existingProject.user_id,
+        projectId,
+        metadata: {
+          isInternal: callerUserId === null,
+          diarizationProvider,
+          selectedContentBlocks,
+          tier,
+        },
+      },
+    });
 
     const queuePayload: TranscriptionQueuePayload = {
       projectId,

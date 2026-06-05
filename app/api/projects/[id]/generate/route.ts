@@ -12,6 +12,7 @@ import { aiRatelimit } from '@/lib/rate-limit';
 import { estimateReservationAmount } from '@/lib/billing/reserve-amount';
 import { resolveOrganizationIdForWrite } from '@/lib/authz/organization-context';
 import { RouteAccessError, requireProjectOwner } from '@/lib/api/route-auth';
+import { runEntitlementDryRunCheck } from '@/lib/billing/entitlement-guards';
 
 type GenerateItem = {
   kind: 'analysis' | 'content';
@@ -77,6 +78,23 @@ export async function POST(
     if (!normalizedItems.length) {
       return NextResponse.json({ error: 'No valid generation items provided' }, { status: 400 });
     }
+
+    await runEntitlementDryRunCheck({
+      organizationId: projectOrganizationId,
+      legacyUserId: project.user_id,
+      action: 'content_generation',
+      requestedAmount: normalizedItems.length,
+      logContext: {
+        route: 'app/api/projects/[id]/generate',
+        userId: user.id,
+        projectId,
+        metadata: {
+          itemCount: normalizedItems.length,
+          contentItems: normalizedItems.filter((item) => item.kind === 'content').length,
+          analysisItems: normalizedItems.filter((item) => item.kind === 'analysis').length,
+        },
+      },
+    });
 
     const itemCosts = await Promise.all(normalizedItems.map((item) => {
       if (item.kind === 'analysis') {

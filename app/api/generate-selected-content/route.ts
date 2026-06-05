@@ -10,6 +10,7 @@ import { calculateBlocksCost, getContentTypeById } from '@/lib/content-types';
 import { requireSufficientCredit } from '@/lib/billing/track-usage';
 import { InsufficientCreditError } from '@/lib/billing/credit';
 import { RouteAccessError, requireProjectOwner } from '@/lib/api/route-auth';
+import { runEntitlementDryRunCheck } from '@/lib/billing/entitlement-guards';
 
 export async function POST(request: NextRequest) {
   try {
@@ -30,12 +31,19 @@ export async function POST(request: NextRequest) {
     }
     const token = authHeader.replace('Bearer ', '');
     let user: { id: string; email?: string | null };
-    let project: { id: string; user_id: string; transcription_text: string; status: string };
+    let project: {
+      id: string;
+      user_id: string;
+      transcription_text: string;
+      status: string;
+      organization_id: string | null;
+    };
     try {
       const ownership = await requireProjectOwner<{
         transcription_text: string;
         status: string;
-      }>(request, projectId, 'id, user_id, transcription_text, status');
+        organization_id: string | null;
+      }>(request, projectId, 'id, user_id, transcription_text, status, organization_id');
       user = ownership.user;
       project = ownership.project;
     } catch (error) {
@@ -62,6 +70,21 @@ export async function POST(request: NextRequest) {
         return NextResponse.json({ error: `Unknown content type: ${block.contentTypeId}` }, { status: 400 });
       }
     }
+
+    await runEntitlementDryRunCheck({
+      organizationId: project.organization_id || null,
+      legacyUserId: project.user_id,
+      action: 'content_generation',
+      requestedAmount: blocks.filter((block: ContentBlock) => block.enabled !== false).length || blocks.length,
+      logContext: {
+        route: 'app/api/generate-selected-content',
+        userId: user.id,
+        projectId,
+        metadata: {
+          blockCount: blocks.length,
+        },
+      },
+    });
 
     try {
       await requireSufficientCredit(user.id, calculateBlocksCost(blocks));
