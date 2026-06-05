@@ -618,6 +618,267 @@ git commit -m "Add campaigns and content library foundation"
 
 ---
 
+## [x] Phase 3D: Connect Brand Voice + Campaigns to Generation
+
+Completed commit: 81db1a1
+
+### Objective
+
+Update the existing AI generation flow so generated content can use:
+
+- organization brand voice
+- campaign context
+- selected content type
+- selected channel
+- saved templates if available
+- organization-scoped content library output
+
+### Scope
+
+Do:
+
+- connect brand voice into generation prompts
+- connect campaign context into generation prompts
+- save generated results into the new content library/content items model
+- preserve existing outputs behavior if still needed
+- keep existing generation endpoints working
+
+Do not:
+
+- rewrite the entire AI system
+- change model providers
+- implement agency clients
+- implement Slack or Granola
+- redesign the dashboard
+
+### Files likely involved
+
+- `app/api/generate-content/route.ts`
+- `app/api/generate-selected-content/route.ts`
+- `app/api/projects/[id]/generate/route.ts`
+- `app/api/projects/[id]/generate/process/route.ts`
+- `config/prompts.json`
+- `lib/prompts/*`
+- `lib/ai-providers/*`
+- brand voice API/helper files
+- campaign/content item API/helper files
+
+### Required behavior
+
+- When a generation request includes `brand_voice_id`, validate org access.
+- When a generation request includes `campaign_id`, validate org access.
+- Inject brand voice and campaign context into the prompt.
+- Save outputs to organization-scoped content library records.
+- Preserve existing legacy `outputs` records if current UI still depends on them.
+- Do not break existing generation behavior for users without brand voice/campaigns.
+
+### Review checklist
+
+- Brand voice cannot be read cross-org.
+- Campaign cannot be read cross-org.
+- Generation still works without brand voice.
+- Generation still works without campaign.
+- Output is saved with `organization_id`.
+- Existing tests pass.
+- No agency/Slack/Granola work added.
+
+### Documentation
+
+Create:
+
+```text
+PHASE_3D_GENERATION_CONTEXT_INTEGRATION.md
+```
+
+### Commit message
+
+```bash
+git add .
+git commit -m "Connect brand voice and campaigns to content generation"
+```
+
+---
+
+## [ ] Phase 3E: SaaS Onboarding Flow
+
+Status: Ready after Phase 3D is committed.
+
+### Objective
+
+Create a simple onboarding flow for new B2B SaaS users so they can set up:
+
+- organization profile
+- brand voice
+- first campaign or content goal
+- billing/subscription entry point if needed
+
+### Scope
+
+Do:
+
+- add onboarding state if needed
+- guide user through basic setup
+- keep it lightweight
+- preserve existing dashboard access
+- use existing organization/brand/campaign APIs
+
+Do not:
+
+- redesign the entire app
+- force billing enforcement
+- build agency onboarding
+- build team invites unless trivial and already supported
+
+### Candidate pages
+
+- `/dashboard/onboarding`
+- existing dashboard empty states
+- first-login redirect logic if already clean
+
+### Required behavior
+
+- Existing users should not be trapped.
+- New users should be able to skip or complete onboarding.
+- Onboarding should create/update organization profile and brand voice.
+- Onboarding should lead to content generation or campaign setup.
+
+### Review checklist
+
+- No redirect loops.
+- Existing users still reach dashboard.
+- Onboarding is org-scoped.
+- Brand voice data is saved correctly.
+- Campaign creation works if included.
+- TypeScript/lint/tests pass.
+
+### Documentation
+
+Create:
+
+```text
+PHASE_3E_SAAS_ONBOARDING.md
+```
+
+### Commit message
+
+```bash
+git add .
+git commit -m "Add SaaS onboarding flow"
+```
+
+---
+
+## [ ] Phase 3F: SaaS Dashboard Polish and Empty States
+
+Status: Ready after Phase 3E is committed.
+
+### Objective
+
+Make the B2B SaaS dashboard feel coherent now that organizations, brand voice, campaigns, billing, and content library exist.
+
+### Scope
+
+Do:
+
+- improve dashboard empty states
+- add clear quick actions
+- show active campaign/content status
+- show brand voice setup status
+- show subscription status lightly
+- preserve existing layout patterns
+
+Do not:
+
+- redesign the whole app
+- change billing backend
+- build agency features
+- build integrations
+
+### Candidate areas
+
+- dashboard home
+- nav
+- projects/content library
+- campaigns
+- brand voice
+- billing card/status card
+
+### Review checklist
+
+- UI changes are scoped and not a full redesign.
+- Existing routes still work.
+- Empty states point users to correct actions.
+- No backend behavior changed unnecessarily.
+- TypeScript/lint/tests pass.
+
+### Documentation
+
+Create:
+
+```text
+PHASE_3F_SAAS_DASHBOARD_POLISH.md
+```
+
+### Commit message
+
+```bash
+git add .
+git commit -m "Polish SaaS dashboard experience"
+```
+
+---
+
+## [ ] Phase 3G: SaaS MVP QA Pass
+
+Status: Ready after Phase 3F is committed.
+
+### Objective
+
+Run an end-to-end QA pass for the B2B SaaS MVP before moving to agency-specific work.
+
+### Scope
+
+Mostly tests, docs, and small bug fixes.
+
+Verify flows:
+
+- signup/login
+- organization creation/default org
+- subscription plan display
+- Stripe subscription checkout
+- billing portal
+- brand voice creation
+- campaign creation
+- content generation with brand voice/campaign
+- content library save/read
+- dashboard list APIs
+- entitlement dry-run/enforce behavior
+- legacy user fallback
+
+### Do not
+
+- add major features
+- build agency console
+- build Slack/Granola
+- redesign UI
+
+### Documentation
+
+Create:
+
+```text
+PHASE_3G_SAAS_MVP_QA.md
+```
+
+### Commit message
+
+```bash
+git add .
+git commit -m "Add SaaS MVP QA fixes and checklist"
+```
+
+---
+
 ## How to Update This Runbook
 
 After a phase is safely committed:
