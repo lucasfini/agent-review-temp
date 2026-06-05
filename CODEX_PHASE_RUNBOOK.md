@@ -143,7 +143,9 @@ Use the first unchecked phase below.
 
 ---
 
-## [ ] Phase 2F: Hard Subscription Enforcement Behind Feature Flag
+## [x] Phase 2F: Hard Subscription Enforcement Behind Feature Flag
+
+Completed commit: 7a7d58b
 
 ### Objective
 
