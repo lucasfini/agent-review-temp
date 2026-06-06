@@ -1,17 +1,20 @@
 "use client";
 
 import { useCallback, useEffect, useMemo, useState, type ReactNode } from 'react';
+import Link from 'next/link';
 import {
   Archive,
   CalendarRange,
   FileText,
   FolderKanban,
   Library,
+  ListChecks,
   Loader2,
   Plus,
   Save,
   Tags,
   Trash2,
+  Upload,
 } from 'lucide-react';
 
 import ConfirmModal from '@/components/ui/confirm-modal';
@@ -239,6 +242,33 @@ function SelectInput({
   );
 }
 
+function SummaryTile({
+  icon,
+  label,
+  value,
+  detail,
+}: {
+  icon: ReactNode;
+  label: string;
+  value: string;
+  detail: string;
+}) {
+  return (
+    <div className="rounded-lg border border-slate-200 bg-white p-4 dark:border-slate-800 dark:bg-slate-900">
+      <div className="flex items-start gap-3">
+        <div className="flex h-9 w-9 flex-shrink-0 items-center justify-center rounded-lg bg-slate-100 text-slate-500 dark:bg-slate-800 dark:text-slate-300">
+          {icon}
+        </div>
+        <div className="min-w-0">
+          <p className="text-xs font-semibold uppercase tracking-[0.14em] text-slate-500 dark:text-slate-400">{label}</p>
+          <p className="mt-1 text-xl font-semibold text-slate-900 dark:text-slate-50">{value}</p>
+          <p className="mt-1 text-xs leading-5 text-slate-500 dark:text-slate-400">{detail}</p>
+        </div>
+      </div>
+    </div>
+  );
+}
+
 export default function CampaignsPage() {
   const { session, isDemoMode } = useAuth();
   const { organization, organizationId, loading: loadingOrganization } = useCurrentOrganization();
@@ -267,6 +297,18 @@ export default function CampaignsPage() {
     [contentItems, selectedContentId]
   );
   const canEdit = canManage && !isDemoMode;
+  const activeCampaignCount = useMemo(
+    () => campaigns.filter((campaign) => campaign.status === 'active').length,
+    [campaigns]
+  );
+  const readyContentCount = useMemo(
+    () => contentItems.filter((item) => item.status === 'approved' || item.status === 'published').length,
+    [contentItems]
+  );
+  const draftContentCount = useMemo(
+    () => contentItems.filter((item) => item.status === 'draft' || item.status === 'review').length,
+    [contentItems]
+  );
 
   const authHeaders = useMemo<Record<string, string>>(() => {
     const headers: Record<string, string> = {};
@@ -589,7 +631,29 @@ export default function CampaignsPage() {
             <div className="h-[42rem] animate-pulse rounded-lg bg-slate-100 dark:bg-slate-900" />
           </div>
         ) : (
-          <div className="grid gap-4 xl:grid-cols-2">
+          <>
+            <div className="mb-4 grid gap-3 md:grid-cols-3">
+              <SummaryTile
+                icon={<FolderKanban className="h-4 w-4" />}
+                label="Campaign Status"
+                value={`${activeCampaignCount} active`}
+                detail={`${campaigns.length} total campaign${campaigns.length === 1 ? '' : 's'}`}
+              />
+              <SummaryTile
+                icon={<Library className="h-4 w-4" />}
+                label="Content Library"
+                value={`${contentItems.length} items`}
+                detail={`${readyContentCount} approved or published`}
+              />
+              <SummaryTile
+                icon={<Tags className="h-4 w-4" />}
+                label="Draft Queue"
+                value={`${draftContentCount} drafts`}
+                detail="Draft or in-review content awaiting action"
+              />
+            </div>
+
+            <div className="grid gap-4 xl:grid-cols-2">
             <div className="grid gap-4">
               <Card>
                 <CardHeader>
@@ -614,8 +678,34 @@ export default function CampaignsPage() {
                 </CardHeader>
                 <CardContent>
                   {campaigns.length === 0 ? (
-                    <div className="rounded-lg border border-dashed border-slate-300 px-4 py-6 text-center text-sm text-slate-500 dark:border-slate-700 dark:text-slate-400">
-                      No campaigns yet.
+                    <div className="rounded-lg border border-dashed border-slate-300 px-4 py-6 text-center dark:border-slate-700">
+                      <div className="mx-auto flex h-10 w-10 items-center justify-center rounded-lg bg-slate-100 text-slate-500 dark:bg-slate-900 dark:text-slate-300">
+                        <FolderKanban className="h-5 w-5" />
+                      </div>
+                      <h3 className="mt-3 text-sm font-semibold text-slate-900 dark:text-slate-100">
+                        No campaigns yet
+                      </h3>
+                      <p className="mx-auto mt-1 max-w-xs text-sm leading-6 text-slate-500 dark:text-slate-400">
+                        Create a campaign to give generated content a goal, audience, channel focus, and status.
+                      </p>
+                      <div className="mt-4 flex flex-col gap-2">
+                        <button
+                          type="button"
+                          onClick={startNewCampaign}
+                          disabled={!canEdit}
+                          className="inline-flex min-h-10 items-center justify-center gap-2 rounded-lg bg-blue-600 px-3 py-2 text-sm font-semibold text-white transition-colors hover:bg-blue-700 disabled:cursor-not-allowed disabled:opacity-50"
+                        >
+                          <Plus className="h-4 w-4" />
+                          Create Campaign
+                        </button>
+                        <Link
+                          href="/dashboard/onboarding"
+                          className="inline-flex min-h-10 items-center justify-center gap-2 rounded-lg border border-slate-300 bg-white px-3 py-2 text-sm font-medium text-slate-700 transition-colors hover:bg-slate-100 dark:border-slate-700 dark:bg-slate-950 dark:text-slate-200 dark:hover:bg-slate-900"
+                        >
+                          <ListChecks className="h-4 w-4" />
+                          Open Setup
+                        </Link>
+                      </div>
                     </div>
                   ) : (
                     <div className="space-y-2">
@@ -811,8 +901,34 @@ export default function CampaignsPage() {
                 </CardHeader>
                 <CardContent>
                   {contentItems.length === 0 ? (
-                    <div className="rounded-lg border border-dashed border-slate-300 px-4 py-6 text-center text-sm text-slate-500 dark:border-slate-700 dark:text-slate-400">
-                      No library items yet.
+                    <div className="rounded-lg border border-dashed border-slate-300 px-4 py-6 text-center dark:border-slate-700">
+                      <div className="mx-auto flex h-10 w-10 items-center justify-center rounded-lg bg-slate-100 text-slate-500 dark:bg-slate-900 dark:text-slate-300">
+                        <Library className="h-5 w-5" />
+                      </div>
+                      <h3 className="mt-3 text-sm font-semibold text-slate-900 dark:text-slate-100">
+                        No library items yet
+                      </h3>
+                      <p className="mx-auto mt-1 max-w-xs text-sm leading-6 text-slate-500 dark:text-slate-400">
+                        Save generated drafts, reusable snippets, and campaign assets here as your content workflow grows.
+                      </p>
+                      <div className="mt-4 flex flex-col gap-2">
+                        <button
+                          type="button"
+                          onClick={startNewContent}
+                          disabled={!canEdit}
+                          className="inline-flex min-h-10 items-center justify-center gap-2 rounded-lg bg-blue-600 px-3 py-2 text-sm font-semibold text-white transition-colors hover:bg-blue-700 disabled:cursor-not-allowed disabled:opacity-50"
+                        >
+                          <Plus className="h-4 w-4" />
+                          Create Item
+                        </button>
+                        <Link
+                          href="/dashboard/upload"
+                          className="inline-flex min-h-10 items-center justify-center gap-2 rounded-lg border border-slate-300 bg-white px-3 py-2 text-sm font-medium text-slate-700 transition-colors hover:bg-slate-100 dark:border-slate-700 dark:bg-slate-950 dark:text-slate-200 dark:hover:bg-slate-900"
+                        >
+                          <Upload className="h-4 w-4" />
+                          Add Source
+                        </Link>
+                      </div>
                     </div>
                   ) : (
                     <div className="space-y-2">
@@ -1021,6 +1137,7 @@ export default function CampaignsPage() {
               </Card>
             </div>
           </div>
+          </>
         )}
       </div>
 

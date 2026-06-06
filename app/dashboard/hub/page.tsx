@@ -1,12 +1,13 @@
 "use client";
 
-import { useState, useEffect, useMemo, useCallback } from 'react';
+import { useState, useEffect, useMemo, useCallback, type ReactNode } from 'react';
 import Link from 'next/link';
 import {
   FileText,
   Clock,
   CheckCircle,
   AlertCircle,
+  CreditCard,
   Loader2,
   Upload,
   Download,
@@ -18,6 +19,9 @@ import {
   Eye,
   Zap,
   FolderOpen,
+  FolderKanban,
+  Library,
+  Palette,
   Sparkles,
   Users,
   Mic,
@@ -44,6 +48,10 @@ import { DashboardLoadErrorState } from '@/components/dashboard/load-error-state
 import { getDashboardErrorMessage, logDashboardLoad } from '@/lib/dashboard-load-state';
 import { exportContent } from '@/lib/export-utils';
 import { withOrganizationId } from '@/lib/organizations/current-organization';
+import type { BrandVoice } from '@/lib/brand-voices';
+import type { Campaign, ContentLibraryItem } from '@/lib/campaigns-content-library';
+import type { OrganizationSubscription } from '@/lib/billing/subscriptions';
+import { formatSubscriptionStatus } from '@/lib/billing/subscription-ui';
 
 // ============================================================================
 // TYPES
@@ -107,6 +115,28 @@ interface Stats {
   totalContent: number;
   timeSavedHours: number;
 }
+
+interface WorkspaceStatus {
+  brandVoiceCount: number;
+  campaignCount: number;
+  activeCampaignCount: number;
+  contentItemCount: number;
+  readyContentCount: number;
+  subscriptionStatus: string;
+  subscriptionPlanName: string | null;
+  loading: boolean;
+}
+
+const emptyWorkspaceStatus: WorkspaceStatus = {
+  brandVoiceCount: 0,
+  campaignCount: 0,
+  activeCampaignCount: 0,
+  contentItemCount: 0,
+  readyContentCount: 0,
+  subscriptionStatus: formatSubscriptionStatus(null),
+  subscriptionPlanName: null,
+  loading: true,
+};
 
 // ============================================================================
 // HELPER FUNCTIONS
@@ -229,6 +259,53 @@ function EmptyState() {
   );
 }
 
+function WorkspaceStatusItem({
+  icon,
+  title,
+  value,
+  detail,
+  href,
+  action,
+  good,
+}: {
+  icon: ReactNode;
+  title: string;
+  value: string;
+  detail: string;
+  href: string;
+  action: string;
+  good?: boolean;
+}) {
+  return (
+    <Link
+      href={href}
+      className="group rounded-lg border border-slate-200 bg-white p-4 transition-colors hover:border-blue-200 hover:bg-blue-50/50 dark:border-slate-800 dark:bg-slate-900 dark:hover:border-blue-900/70 dark:hover:bg-blue-950/20"
+    >
+      <div className="flex items-start gap-3">
+        <div className={cn(
+          "flex h-9 w-9 flex-shrink-0 items-center justify-center rounded-lg",
+          good
+            ? "bg-emerald-100 text-emerald-700 dark:bg-emerald-950/50 dark:text-emerald-300"
+            : "bg-slate-100 text-slate-500 dark:bg-slate-800 dark:text-slate-300"
+        )}>
+          {icon}
+        </div>
+        <div className="min-w-0 flex-1">
+          <div className="flex items-center justify-between gap-2">
+            <p className="truncate text-sm font-semibold text-slate-900 dark:text-slate-100">{title}</p>
+            {good && <CheckCircle className="h-4 w-4 flex-shrink-0 text-emerald-600 dark:text-emerald-300" />}
+          </div>
+          <p className="mt-1 text-lg font-semibold leading-6 text-slate-900 dark:text-slate-50">{value}</p>
+          <p className="mt-1 text-xs leading-5 text-slate-500 dark:text-slate-400">{detail}</p>
+          <p className="mt-3 text-xs font-semibold text-blue-600 transition-colors group-hover:text-blue-700 dark:text-blue-300 dark:group-hover:text-blue-200">
+            {action}
+          </p>
+        </div>
+      </div>
+    </Link>
+  );
+}
+
 // ============================================================================
 // MAIN COMPONENT
 // ============================================================================
@@ -239,6 +316,7 @@ export default function ProjectHubPage() {
   const prefs = useUserPrefs();
   const [projects, setProjects] = useState<Project[]>([]);
   const [outputs, setOutputs] = useState<Output[]>([]);
+  const [workspaceStatus, setWorkspaceStatus] = useState<WorkspaceStatus>(emptyWorkspaceStatus);
   const [loading, setLoading] = useState(true);
   const [loadError, setLoadError] = useState<string | null>(null);
   const [searchTerm, setSearchTerm] = useState('');
@@ -256,6 +334,14 @@ export default function ProjectHubPage() {
   const [exportProjects, setExportProjects] = useState<ExportProjectRecord[]>([]);
   const [hubPage, setHubPage] = useState(1);
 
+  const authHeaders = useMemo<Record<string, string>>(() => {
+    const headers: Record<string, string> = {};
+    if (session?.access_token) {
+      headers.Authorization = `Bearer ${session.access_token}`;
+    }
+    return headers;
+  }, [session?.access_token]);
+
   // Fetch data
   const fetchData = useCallback(async () => {
     if (!user?.id) {
@@ -271,8 +357,8 @@ export default function ProjectHubPage() {
       const response = await fetch(
         withOrganizationId('/api/dashboard/projects?includeOutputs=1&limit=100', organizationId),
         {
-        headers: session?.access_token ? { Authorization: `Bearer ${session.access_token}` } : {},
-        cache: 'no-store',
+          headers: authHeaders,
+          cache: 'no-store',
         }
       );
 
@@ -300,7 +386,69 @@ export default function ProjectHubPage() {
     } finally {
       setLoading(false);
     }
-  }, [organizationId, session?.access_token, user?.id]);
+  }, [authHeaders, organizationId, user?.id]);
+
+  const fetchWorkspaceStatus = useCallback(async () => {
+    if (!user?.id || !organizationId) {
+      setWorkspaceStatus({ ...emptyWorkspaceStatus, loading: false });
+      return;
+    }
+
+    setWorkspaceStatus((current) => ({ ...current, loading: true }));
+
+    try {
+      const [brandResult, campaignResult, contentResult, subscriptionResult] = await Promise.allSettled([
+        fetch(withOrganizationId('/api/brand-voices', organizationId), {
+          headers: authHeaders,
+          cache: 'no-store',
+        }),
+        fetch(withOrganizationId('/api/campaigns', organizationId), {
+          headers: authHeaders,
+          cache: 'no-store',
+        }),
+        fetch(withOrganizationId('/api/content-library', organizationId), {
+          headers: authHeaders,
+          cache: 'no-store',
+        }),
+        fetch(withOrganizationId('/api/subscriptions/current', organizationId), {
+          headers: authHeaders,
+          cache: 'no-store',
+        }),
+      ]);
+
+      const brandPayload = brandResult.status === 'fulfilled' && brandResult.value.ok
+        ? await brandResult.value.json().catch(() => ({}))
+        : {};
+      const campaignPayload = campaignResult.status === 'fulfilled' && campaignResult.value.ok
+        ? await campaignResult.value.json().catch(() => ({}))
+        : {};
+      const contentPayload = contentResult.status === 'fulfilled' && contentResult.value.ok
+        ? await contentResult.value.json().catch(() => ({}))
+        : {};
+      const subscriptionPayload = subscriptionResult.status === 'fulfilled' && subscriptionResult.value.ok
+        ? await subscriptionResult.value.json().catch(() => ({}))
+        : {};
+
+      const brandVoices = Array.isArray(brandPayload.brandVoices) ? brandPayload.brandVoices as BrandVoice[] : [];
+      const campaigns = Array.isArray(campaignPayload.campaigns) ? campaignPayload.campaigns as Campaign[] : [];
+      const contentItems = Array.isArray(contentPayload.contentItems) ? contentPayload.contentItems as ContentLibraryItem[] : [];
+      const subscription = (subscriptionPayload.subscription || null) as OrganizationSubscription | null;
+
+      setWorkspaceStatus({
+        brandVoiceCount: brandVoices.length,
+        campaignCount: campaigns.length,
+        activeCampaignCount: campaigns.filter((campaign) => campaign.status === 'active').length,
+        contentItemCount: contentItems.length,
+        readyContentCount: contentItems.filter((item) => item.status === 'approved' || item.status === 'published').length,
+        subscriptionStatus: formatSubscriptionStatus(subscription?.status),
+        subscriptionPlanName: subscription?.plan?.name || null,
+        loading: false,
+      });
+    } catch (statusError) {
+      console.warn('[HUB] Failed to load workspace status:', statusError);
+      setWorkspaceStatus({ ...emptyWorkspaceStatus, loading: false });
+    }
+  }, [authHeaders, organizationId, user?.id]);
 
   useEffect(() => {
     let active = true;
@@ -314,6 +462,10 @@ export default function ProjectHubPage() {
       active = false;
     };
   }, [fetchData]);
+
+  useEffect(() => {
+    void fetchWorkspaceStatus();
+  }, [fetchWorkspaceStatus]);
 
   // Computed stats
   const stats = useMemo<Stats>(() => {
@@ -808,6 +960,49 @@ export default function ProjectHubPage() {
               Add Source
             </Link>
           </div>
+        </div>
+
+        <div className="grid gap-3 md:grid-cols-2 xl:grid-cols-4">
+          <WorkspaceStatusItem
+            icon={<Palette className="h-4 w-4" />}
+            title="Brand Voice"
+            value={workspaceStatus.loading ? 'Checking...' : workspaceStatus.brandVoiceCount > 0 ? 'Ready' : 'Not set'}
+            detail={
+              workspaceStatus.brandVoiceCount > 0
+                ? `${workspaceStatus.brandVoiceCount} profile${workspaceStatus.brandVoiceCount === 1 ? '' : 's'} available for generation`
+                : 'Add tone, audience, pillars, and banned phrases'
+            }
+            href="/dashboard/brand-voice"
+            action={workspaceStatus.brandVoiceCount > 0 ? 'Review voice' : 'Set up voice'}
+            good={workspaceStatus.brandVoiceCount > 0}
+          />
+          <WorkspaceStatusItem
+            icon={<FolderKanban className="h-4 w-4" />}
+            title="Campaigns"
+            value={workspaceStatus.loading ? 'Checking...' : `${workspaceStatus.activeCampaignCount} active`}
+            detail={`${workspaceStatus.campaignCount} total campaign${workspaceStatus.campaignCount === 1 ? '' : 's'} in this workspace`}
+            href="/dashboard/campaigns"
+            action={workspaceStatus.campaignCount > 0 ? 'Open campaigns' : 'Create campaign'}
+            good={workspaceStatus.activeCampaignCount > 0}
+          />
+          <WorkspaceStatusItem
+            icon={<Library className="h-4 w-4" />}
+            title="Content Library"
+            value={workspaceStatus.loading ? 'Checking...' : `${workspaceStatus.contentItemCount} items`}
+            detail={`${workspaceStatus.readyContentCount} approved or published item${workspaceStatus.readyContentCount === 1 ? '' : 's'}`}
+            href="/dashboard/campaigns"
+            action={workspaceStatus.contentItemCount > 0 ? 'Review library' : 'Add library item'}
+            good={workspaceStatus.contentItemCount > 0}
+          />
+          <WorkspaceStatusItem
+            icon={<CreditCard className="h-4 w-4" />}
+            title="Subscription"
+            value={workspaceStatus.loading ? 'Checking...' : workspaceStatus.subscriptionPlanName || workspaceStatus.subscriptionStatus}
+            detail={workspaceStatus.subscriptionPlanName ? workspaceStatus.subscriptionStatus : 'Review billing when you are ready'}
+            href="/dashboard/billing"
+            action="Review billing"
+            good={workspaceStatus.subscriptionStatus === 'Active' || workspaceStatus.subscriptionStatus === 'Trialing'}
+          />
         </div>
 
         {/* Collapsible Stats Row */}

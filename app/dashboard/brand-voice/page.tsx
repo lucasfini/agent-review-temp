@@ -1,9 +1,11 @@
 "use client";
 
 import { useCallback, useEffect, useMemo, useState, type ReactNode } from 'react';
+import Link from 'next/link';
 import {
   Ban,
   FileText,
+  ListChecks,
   Loader2,
   Megaphone,
   Palette,
@@ -383,8 +385,34 @@ export default function BrandVoicePage() {
               </CardHeader>
               <CardContent>
                 {voices.length === 0 ? (
-                  <div className="rounded-lg border border-dashed border-slate-300 px-4 py-6 text-center text-sm text-slate-500 dark:border-slate-700 dark:text-slate-400">
-                    No brand voice yet.
+                  <div className="rounded-lg border border-dashed border-slate-300 px-4 py-6 text-center dark:border-slate-700">
+                    <div className="mx-auto flex h-10 w-10 items-center justify-center rounded-lg bg-slate-100 text-slate-500 dark:bg-slate-900 dark:text-slate-300">
+                      <Palette className="h-5 w-5" />
+                    </div>
+                    <h3 className="mt-3 text-sm font-semibold text-slate-900 dark:text-slate-100">
+                      No brand voice profiles yet
+                    </h3>
+                    <p className="mx-auto mt-1 max-w-xs text-sm leading-6 text-slate-500 dark:text-slate-400">
+                      Add a default voice so generated content can reuse your tone, audience, pillars, and language rules.
+                    </p>
+                    <div className="mt-4 flex flex-col gap-2">
+                      <button
+                        type="button"
+                        onClick={startNewVoice}
+                        disabled={!canEdit}
+                        className="inline-flex min-h-10 items-center justify-center gap-2 rounded-lg bg-blue-600 px-3 py-2 text-sm font-semibold text-white transition-colors hover:bg-blue-700 disabled:cursor-not-allowed disabled:opacity-50"
+                      >
+                        <Plus className="h-4 w-4" />
+                        Create Profile
+                      </button>
+                      <Link
+                        href="/dashboard/onboarding"
+                        className="inline-flex min-h-10 items-center justify-center gap-2 rounded-lg border border-slate-300 bg-white px-3 py-2 text-sm font-medium text-slate-700 transition-colors hover:bg-slate-100 dark:border-slate-700 dark:bg-slate-950 dark:text-slate-200 dark:hover:bg-slate-900"
+                      >
+                        <ListChecks className="h-4 w-4" />
+                        Open Setup
+                      </Link>
+                    </div>
                   </div>
                 ) : (
                   <div className="space-y-2">
