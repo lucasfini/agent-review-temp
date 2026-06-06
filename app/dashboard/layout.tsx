@@ -48,6 +48,7 @@ function DashboardLayoutContent({
     || pathname === '/dashboard/contact'
     || pathname === '/dashboard/brand-voice'
     || pathname === '/dashboard/campaigns'
+    || pathname === '/dashboard/onboarding'
     || pathname === '/dashboard/analytics';
   const syncedProjectIds = new Set(syncedUploads.map((upload) => upload.projectId).filter(Boolean));
   const displayedUploads = isUploadRoute
@@ -244,6 +245,10 @@ function DashboardLayoutContent({
           onGoToUpload={async () => {
             await dismissFirstLoginWelcome();
             router.push('/dashboard/upload');
+          }}
+          onGoToOnboarding={async () => {
+            await dismissFirstLoginWelcome();
+            router.push('/dashboard/onboarding');
           }}
         />
       )}

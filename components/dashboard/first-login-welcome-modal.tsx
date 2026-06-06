@@ -10,6 +10,7 @@ interface FirstLoginWelcomeModalProps {
   isOpen: boolean;
   onClose: () => void;
   onGoToUpload: () => void;
+  onGoToOnboarding: () => void;
 }
 
 const highlights = [
@@ -34,6 +35,7 @@ export function FirstLoginWelcomeModal({
   isOpen,
   onClose,
   onGoToUpload,
+  onGoToOnboarding,
 }: FirstLoginWelcomeModalProps) {
   const { user } = useAuth();
   const { resolvedTheme } = useTheme();
@@ -98,11 +100,18 @@ export function FirstLoginWelcomeModal({
             <div className="mt-5 flex flex-col gap-2 border-t border-slate-200 pt-5 dark:border-slate-800 sm:flex-row sm:justify-start">
               <button
                 type="button"
-                onClick={onGoToUpload}
+                onClick={onGoToOnboarding}
                 className="inline-flex min-h-11 w-full items-center justify-center gap-2 rounded-lg bg-blue-600 px-4 py-2.5 text-sm font-semibold text-white transition-colors hover:bg-blue-700 sm:w-auto"
               >
-                Add source material
+                Set up workspace
                 <ArrowRight className="h-4 w-4" />
+              </button>
+              <button
+                type="button"
+                onClick={onGoToUpload}
+                className="inline-flex min-h-11 w-full items-center justify-center gap-2 rounded-lg border border-slate-300 bg-white px-4 py-2.5 text-sm font-medium text-slate-700 transition-colors hover:bg-slate-100 dark:border-slate-700 dark:bg-slate-900 dark:text-slate-200 dark:hover:bg-slate-800 sm:w-auto"
+              >
+                Add source material
               </button>
               <button
                 type="button"

@@ -8,6 +8,9 @@ export interface OrganizationRecord {
   slug: string | null;
   type: OrganizationType;
   owner_user_id: string | null;
+  onboarding_completed_at?: string | null;
+  onboarding_skipped_at?: string | null;
+  onboarding_metadata_json?: Record<string, unknown> | null;
   created_at: string;
   updated_at: string;
 }

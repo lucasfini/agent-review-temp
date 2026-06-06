@@ -22,6 +22,7 @@ import {
   BarChart3,
   Settings,
   CreditCard,
+  ListChecks,
   Mail,
   Menu,
   X,
@@ -52,6 +53,7 @@ function getMobilePageTitle(pathname: string, activeSettingsSection: string | nu
   if (pathname === '/dashboard/upload') return 'Upload Audio';
   if (pathname === '/dashboard/brand-voice') return 'Brand Voice';
   if (pathname === '/dashboard/campaigns') return 'Campaigns';
+  if (pathname === '/dashboard/onboarding') return 'Setup';
   if (pathname === '/dashboard/analytics') return 'Analytics';
   if (pathname === '/dashboard/billing') return 'Billing';
   if (pathname === '/dashboard/usage') return 'Usage';
@@ -156,6 +158,7 @@ const sections: Array<{ label: string; items: NavItemDef[] }> = [
     items: [
       { name: 'Upload', href: '/dashboard/upload', icon: Upload },
       { name: 'All Projects', href: '/dashboard/hub', icon: LayoutGrid },
+      { name: 'Setup', href: '/dashboard/onboarding', icon: ListChecks },
       { name: 'Brand Voice', href: '/dashboard/brand-voice', icon: Palette },
       { name: 'Campaigns', href: '/dashboard/campaigns', icon: FolderKanban },
     ],

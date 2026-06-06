@@ -209,13 +209,22 @@ function EmptyState() {
       <p className="text-sm text-slate-500 dark:text-slate-400 mb-6 max-w-sm">
         Add a call, meeting, demo, webinar, founder update, or podcast to start building your team&apos;s content pipeline.
       </p>
-      <Link
-        href="/dashboard/upload"
-        className="inline-flex items-center gap-2 px-4 py-2 bg-blue-600 text-white text-sm font-medium rounded-lg hover:bg-blue-700 transition-colors"
-      >
-        <Upload className="h-4 w-4" />
-        Add Source
-      </Link>
+      <div className="flex flex-col gap-2 sm:flex-row">
+        <Link
+          href="/dashboard/upload"
+          className="inline-flex items-center justify-center gap-2 px-4 py-2 bg-blue-600 text-white text-sm font-medium rounded-lg hover:bg-blue-700 transition-colors"
+        >
+          <Upload className="h-4 w-4" />
+          Add Source
+        </Link>
+        <Link
+          href="/dashboard/onboarding"
+          className="inline-flex items-center justify-center gap-2 rounded-lg border border-slate-300 bg-white px-4 py-2 text-sm font-medium text-slate-700 transition-colors hover:bg-slate-100 dark:border-slate-700 dark:bg-slate-900 dark:text-slate-200 dark:hover:bg-slate-800"
+        >
+          <ListChecks className="h-4 w-4" />
+          Set Up Workspace
+        </Link>
+      </div>
     </div>
   );
 }
