@@ -828,7 +828,7 @@ git commit -m "Polish SaaS dashboard experience"
 
 ---
 
-## [ ] Phase 3G: SaaS MVP QA Pass
+## [x] Phase 3G: SaaS MVP QA Pass
 
 Status: Ready after Phase 3F is committed.
 
