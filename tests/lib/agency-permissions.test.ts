@@ -16,6 +16,7 @@ jest.mock('@/lib/supabase/server', () => ({
 import {
   canAccessAgencyConsole,
   canManageAgencyClient,
+  canManageAgencyProductionTask,
   canManageAgencySourceImport,
   isInternalAgencyOrganization,
   requireAgencyAccess,
@@ -69,6 +70,15 @@ describe('agency permission helpers', () => {
     expect(canManageAgencySourceImport('agency_member', 'internal_agency')).toBe(true);
     expect(canManageAgencySourceImport('member', 'internal_agency')).toBe(false);
     expect(canManageAgencySourceImport('agency_member', 'saas_customer')).toBe(false);
+  });
+
+  it('allows internal agency operators to manage production tasks', () => {
+    expect(canManageAgencyProductionTask('owner', 'internal_agency')).toBe(true);
+    expect(canManageAgencyProductionTask('admin', 'internal_agency')).toBe(true);
+    expect(canManageAgencyProductionTask('agency_admin', 'internal_agency')).toBe(true);
+    expect(canManageAgencyProductionTask('agency_member', 'internal_agency')).toBe(true);
+    expect(canManageAgencyProductionTask('member', 'internal_agency')).toBe(false);
+    expect(canManageAgencyProductionTask('agency_member', 'saas_customer')).toBe(false);
   });
 
   it('denies SaaS organization members agency access', async () => {

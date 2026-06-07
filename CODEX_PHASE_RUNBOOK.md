@@ -1383,6 +1383,104 @@ git commit -m "Add agency client source imports"
 
 ---
 
+## [ ] Phase 4D: Agency Production Queue
+
+Status: Ready after Phase 4C is committed.
+
+### Objective
+
+Add the private internal agency production queue so agency operators can turn clients and captured source material into trackable production work.
+
+This phase should use the Phase 4A `production_tasks` table and stay separate from SaaS customer workflows.
+
+### Scope
+
+Do:
+
+- add production task helpers for `production_tasks`
+- add minimal internal agency production task APIs
+- support listing tasks by internal agency organization
+- support filtering by client and status
+- support creating/updating production tasks
+- add a private agency production queue page
+- show task status, priority, due date, assigned user, and client
+- keep internal agency operators able to manage tasks where RLS allows it
+- keep demo users read-only
+
+Do not:
+
+- build draft delivery
+- build Slack integration
+- build Granola integration
+- build automated task generation
+- expose production tasks to SaaS customers
+- change SaaS billing or generation behavior
+
+### Candidate Routes
+
+- `/dashboard/agency/production`
+- `/api/agency/production-tasks`
+- `/api/agency/production-tasks/:id`
+
+### Required Behavior
+
+- Production queue UI requires an active `internal_agency` organization.
+- SaaS customer org members must not be able to use production task APIs or UI.
+- Tasks are saved with `organization_id`.
+- If `client_id` is provided, validate the client belongs to the same internal agency organization.
+- Internal agency users can list tasks for their agency organization.
+- Internal agency operators can create/update tasks where RLS allows it.
+- Demo users cannot create or update tasks.
+- No Slack, Granola, draft delivery, or SaaS generation behavior is added.
+
+### Files likely involved
+
+- `app/api/agency/production-tasks/*`
+- `app/dashboard/agency/production/*`
+- `components/dashboard/nav.tsx`
+- `lib/authz/agency-permissions.ts`
+- `lib/agency-production-tasks.ts`
+- `tests/lib/agency-production-tasks*.test.ts`
+
+### Documentation
+
+Create:
+
+```text
+PHASE_4D_AGENCY_PRODUCTION_QUEUE.md
+```
+
+### Validation
+
+Run:
+
+- `npx tsc --noEmit`
+- `npm run -s lint`
+- new agency production task tests
+- relevant agency/client/org auth tests
+- browser or route smoke for the new production queue page
+- `git diff --check`
+
+### Review Checklist
+
+- SaaS orgs cannot access production task data.
+- Client-scoped tasks cannot reference cross-org agency clients.
+- Tasks are saved with internal agency `organization_id`.
+- Demo users cannot write.
+- No Slack/Granola integration was added.
+- No draft delivery behavior was added.
+- No billing/generation behavior changed.
+- Validation passes or gaps are documented.
+
+### Commit message
+
+```bash
+git add .
+git commit -m "Add agency production queue"
+```
+
+---
+
 ## How to Update This Runbook
 
 After a phase is safely committed:
