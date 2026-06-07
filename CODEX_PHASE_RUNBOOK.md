@@ -1483,6 +1483,106 @@ git commit -m "Add agency production queue"
 
 ---
 
+## [ ] Phase 4E: Draft Review and Delivery
+
+Status: Ready after Phase 4D is committed.
+
+### Objective
+
+Add a private internal agency draft review and basic delivery/export workflow on top of the organization-scoped content library.
+
+### Scope
+
+Do:
+
+- add agency draft helpers for client-linked content library items
+- add minimal internal agency draft APIs
+- support listing drafts by internal agency organization
+- support filtering drafts by client and review status
+- support creating/updating manual agency drafts
+- support marking a draft delivered with delivery metadata
+- add a private draft review page
+- add manual copy, Markdown export, and CSV export controls
+- keep draft writes restricted to roles compatible with existing content library RLS
+- keep demo users read-only
+
+Do not:
+
+- build Slack delivery
+- build Granola import
+- build Google Docs integration
+- build email sending
+- expose agency drafts to SaaS customer organizations
+- change public SaaS content library routes
+- change billing or generation behavior
+
+### Candidate Routes
+
+- `/dashboard/agency/drafts`
+- `/api/agency/drafts`
+- `/api/agency/drafts/:id`
+
+### Required Behavior
+
+- Draft review UI requires an active `internal_agency` organization.
+- SaaS customer org members must not be able to use agency draft APIs or UI.
+- Drafts are saved as content library items with internal agency `organization_id`.
+- If `client_id` is provided, validate the client belongs to the same internal agency organization.
+- If campaign or brand voice references are provided, validate they belong to the same internal agency organization.
+- Internal agency members can list drafts.
+- Internal agency owners/admins/agency_admins can create/update drafts.
+- Demo users cannot create or update drafts.
+- Basic delivery means manual copy/export and internal delivered-status tracking only.
+
+### Files likely involved
+
+- `app/api/agency/drafts/*`
+- `app/dashboard/agency/drafts/*`
+- `components/dashboard/nav.tsx`
+- `lib/authz/agency-permissions.ts`
+- `lib/agency-drafts.ts`
+- `tests/lib/agency-drafts*.test.ts`
+
+### Documentation
+
+Create:
+
+```text
+PHASE_4E_DRAFT_REVIEW_DELIVERY.md
+```
+
+### Validation
+
+Run:
+
+- `npx tsc --noEmit`
+- `npm run -s lint`
+- new agency draft tests
+- relevant agency/client/org auth tests
+- browser or route smoke for the new draft review page
+- `git diff --check`
+
+### Review Checklist
+
+- SaaS orgs cannot access agency draft data.
+- Client-scoped draft operations cannot reference cross-org agency clients.
+- Campaign/brand voice references cannot cross org boundaries.
+- Drafts are saved with internal agency `organization_id`.
+- Demo users cannot write.
+- No Slack/Granola integration was added.
+- No public delivery integration was added.
+- No billing/generation behavior changed.
+- Validation passes or gaps are documented.
+
+### Commit message
+
+```bash
+git add .
+git commit -m "Add agency draft review workflow"
+```
+
+---
+
 ## How to Update This Runbook
 
 After a phase is safely committed:

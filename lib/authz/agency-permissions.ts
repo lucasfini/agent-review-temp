@@ -37,6 +37,12 @@ const AGENCY_PRODUCTION_TASK_MANAGE_ROLES = new Set<string>([
   'agency_member',
 ]);
 
+const AGENCY_DRAFT_MANAGE_ROLES = new Set<string>([
+  'owner',
+  'admin',
+  'agency_admin',
+]);
+
 type OrganizationLike = Pick<OrganizationRecord, 'type'> | OrganizationType | string | null | undefined;
 
 export interface AgencyClientAccessRecord {
@@ -82,6 +88,13 @@ export function canManageAgencyProductionTask(
   organizationType?: OrganizationType | string | null
 ): boolean {
   return isInternalAgencyOrganization(organizationType) && Boolean(role && AGENCY_PRODUCTION_TASK_MANAGE_ROLES.has(role));
+}
+
+export function canManageAgencyDraft(
+  role?: OrganizationMemberRole | string | null,
+  organizationType?: OrganizationType | string | null
+): boolean {
+  return isInternalAgencyOrganization(organizationType) && Boolean(role && AGENCY_DRAFT_MANAGE_ROLES.has(role));
 }
 
 export async function requireAgencyAccess(
