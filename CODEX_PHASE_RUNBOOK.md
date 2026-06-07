@@ -1585,6 +1585,102 @@ git commit -m "Add agency draft review workflow"
 
 ---
 
+## [ ] Phase 4F: Granola Manual Import Workflow
+
+Status: Ready after Phase 4E is committed.
+
+### Objective
+
+Add a private internal agency workflow for manually importing Granola notes into client source material.
+
+### Scope
+
+Do:
+
+- add helper support for client integration tracking
+- add a manual Granola import API
+- save pasted Granola notes as `source_imports` with provider `granola`
+- require a valid agency client for Granola imports
+- update passive Granola integration tracking where existing RLS-compatible roles allow it
+- add a private Granola import page
+- show recent Granola imports and passive status
+- keep demo users read-only
+
+Do not:
+
+- build Granola OAuth
+- call Granola APIs
+- upload files to Granola
+- automate sync
+- build Slack integration
+- expose Granola imports to SaaS customer organizations
+- change billing or generation behavior
+
+### Candidate Routes
+
+- `/dashboard/agency/granola`
+- `/api/agency/granola/imports`
+
+### Required Behavior
+
+- Granola page requires an active `internal_agency` organization.
+- SaaS customer org members must not be able to use Granola import APIs or UI.
+- Granola imports are saved with internal agency `organization_id`.
+- Granola imports require `client_id` and validate that the client belongs to the same internal agency organization.
+- Internal agency operators can import pasted Granola notes into `source_imports`.
+- Passive `client_integrations` tracking is updated only for roles compatible with existing client integration management.
+- Demo users cannot import notes.
+- No external Granola network/API integration is added.
+
+### Files likely involved
+
+- `app/api/agency/granola/*`
+- `app/dashboard/agency/granola/*`
+- `components/dashboard/nav.tsx`
+- `lib/agency-client-integrations.ts`
+- `tests/lib/agency-client-integrations.test.ts`
+- `tests/lib/agency-granola-imports-route.test.ts`
+
+### Documentation
+
+Create:
+
+```text
+PHASE_4F_GRANOLA_MANUAL_IMPORT.md
+```
+
+### Validation
+
+Run:
+
+- `npx tsc --noEmit`
+- `npm run -s lint`
+- new Granola import tests
+- relevant source import/client/org auth tests
+- browser or route smoke for the new Granola imports page
+- `git diff --check`
+
+### Review Checklist
+
+- SaaS orgs cannot access Granola import data.
+- Granola imports cannot reference cross-org agency clients.
+- Imports are saved with internal agency `organization_id`.
+- Client integration tracking does not bypass the existing admin-only RLS boundary.
+- Demo users cannot write.
+- No Granola external API/OAuth work was added.
+- No Slack integration was added.
+- No billing/generation behavior changed.
+- Validation passes or gaps are documented.
+
+### Commit message
+
+```bash
+git add .
+git commit -m "Add Granola manual import workflow"
+```
+
+---
+
 ## How to Update This Runbook
 
 After a phase is safely committed:

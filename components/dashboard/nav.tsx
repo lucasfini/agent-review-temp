@@ -58,6 +58,7 @@ function getMobilePageTitle(pathname: string, activeSettingsSection: string | nu
   if (pathname === '/dashboard/brand-voice') return 'Brand Voice';
   if (pathname === '/dashboard/campaigns') return 'Campaigns';
   if (pathname.startsWith('/dashboard/agency/drafts')) return 'Draft Review';
+  if (pathname.startsWith('/dashboard/agency/granola')) return 'Granola Imports';
   if (pathname.startsWith('/dashboard/agency/production')) return 'Production Queue';
   if (pathname.startsWith('/dashboard/agency/sources')) return 'Source Imports';
   if (pathname.startsWith('/dashboard/agency')) return 'Agency';
@@ -828,6 +829,7 @@ export default function DashboardNav({
         { name: 'Source Imports', href: '/dashboard/agency/sources', icon: BookOpenText },
         { name: 'Production Queue', href: '/dashboard/agency/production', icon: ClipboardList },
         { name: 'Draft Review', href: '/dashboard/agency/drafts', icon: FileText },
+        { name: 'Granola Imports', href: '/dashboard/agency/granola', icon: BookOpenText },
       ],
     });
   }
