@@ -22,6 +22,7 @@ import {
   type AgencyClient,
   type AgencyClientStatus,
 } from '@/lib/agency-clients';
+import { type AgencyClientProfile } from '@/lib/agency-client-profiles';
 import { useCurrentOrganization } from '@/lib/hooks/useCurrentOrganization';
 import { withOrganizationId } from '@/lib/organizations/current-organization';
 
@@ -36,6 +37,18 @@ type ClientFormState = {
   notes: string;
 };
 
+type ClientProfileFormState = {
+  businessOverview: string;
+  idealCustomerProfile: string;
+  positioning: string;
+  offers: string;
+  competitors: string;
+  contentPillars: string;
+  customerPainPoints: string;
+  voiceNotes: string;
+  customerServiceTone: string;
+};
+
 const emptyClientForm: ClientFormState = {
   name: 'New agency client',
   website: '',
@@ -45,6 +58,18 @@ const emptyClientForm: ClientFormState = {
   packageType: '',
   status: 'active',
   notes: '',
+};
+
+const emptyProfileForm: ClientProfileFormState = {
+  businessOverview: '',
+  idealCustomerProfile: '',
+  positioning: '',
+  offers: '',
+  competitors: '',
+  contentPillars: '',
+  customerPainPoints: '',
+  voiceNotes: '',
+  customerServiceTone: '',
 };
 
 function clientToForm(client: AgencyClient): ClientFormState {
@@ -60,7 +85,38 @@ function clientToForm(client: AgencyClient): ClientFormState {
   };
 }
 
-function formToPayload(form: ClientFormState, organizationId?: string | null) {
+function listToText(value: string[] | null | undefined): string {
+  return (value || []).join('\n');
+}
+
+function textToList(value: string): string[] {
+  return value
+    .split(/\r?\n/)
+    .map((item) => item.trim())
+    .filter(Boolean);
+}
+
+function profileToForm(profile: AgencyClientProfile | null | undefined): ClientProfileFormState {
+  if (!profile) return emptyProfileForm;
+
+  return {
+    businessOverview: profile.businessOverview || '',
+    idealCustomerProfile: profile.idealCustomerProfile || '',
+    positioning: profile.positioning || '',
+    offers: listToText(profile.offers),
+    competitors: listToText(profile.competitors),
+    contentPillars: listToText(profile.contentPillars),
+    customerPainPoints: listToText(profile.customerPainPoints),
+    voiceNotes: profile.voiceNotes || '',
+    customerServiceTone: profile.customerServiceTone || '',
+  };
+}
+
+function formToPayload(
+  form: ClientFormState,
+  profileForm: ClientProfileFormState,
+  organizationId?: string | null
+) {
   return {
     organization_id: organizationId || undefined,
     name: form.name,
@@ -71,6 +127,17 @@ function formToPayload(form: ClientFormState, organizationId?: string | null) {
     packageType: form.packageType,
     status: form.status,
     notes: form.notes,
+    profile: {
+      businessOverview: profileForm.businessOverview,
+      idealCustomerProfile: profileForm.idealCustomerProfile,
+      positioning: profileForm.positioning,
+      offers: textToList(profileForm.offers),
+      competitors: textToList(profileForm.competitors),
+      contentPillars: textToList(profileForm.contentPillars),
+      customerPainPoints: textToList(profileForm.customerPainPoints),
+      voiceNotes: profileForm.voiceNotes,
+      customerServiceTone: profileForm.customerServiceTone,
+    },
   };
 }
 
@@ -215,6 +282,7 @@ export default function AgencyDashboardPage() {
   const [clients, setClients] = useState<AgencyClient[]>([]);
   const [selectedClientId, setSelectedClientId] = useState<string | null>(null);
   const [form, setForm] = useState<ClientFormState>(emptyClientForm);
+  const [profileForm, setProfileForm] = useState<ClientProfileFormState>(emptyProfileForm);
   const [canManage, setCanManage] = useState(false);
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
@@ -248,11 +316,35 @@ export default function AgencyDashboardPage() {
     [clients]
   );
 
+  const loadClientDetail = useCallback(async (clientId: string) => {
+    if (!organizationId) return;
+
+    const response = await fetch(withOrganizationId(`/api/agency/clients/${clientId}`, organizationId), {
+      headers: authHeaders,
+      cache: 'no-store',
+    });
+    const payload = await response.json().catch(() => ({}));
+
+    if (!response.ok) {
+      throw new Error(payload.error || 'Failed to load agency client');
+    }
+
+    const detailClient = payload.client as AgencyClient;
+    setClients((current) => current.map((client) => (
+      client.id === detailClient.id ? detailClient : client
+    )));
+    setSelectedClientId(detailClient.id);
+    setForm(clientToForm(detailClient));
+    setProfileForm(profileToForm(payload.profile as AgencyClientProfile | null));
+    setCanManage(Boolean(payload.membership?.canManageAgencyClient));
+  }, [authHeaders, organizationId]);
+
   const loadClients = useCallback(async () => {
     if (!organizationId || !isInternalAgency) {
       setClients([]);
       setSelectedClientId(null);
       setCanManage(false);
+      setProfileForm(emptyProfileForm);
       setLoading(false);
       return;
     }
@@ -280,16 +372,21 @@ export default function AgencyDashboardPage() {
       const nextSelected = nextClients[0] || null;
       setSelectedClientId(nextSelected?.id || null);
       setForm(nextSelected ? clientToForm(nextSelected) : emptyClientForm);
+      setProfileForm(emptyProfileForm);
+      if (nextSelected) {
+        await loadClientDetail(nextSelected.id);
+      }
     } catch (loadError) {
       setError(loadError instanceof Error ? loadError.message : 'Failed to load agency clients');
       setClients([]);
       setSelectedClientId(null);
       setForm(emptyClientForm);
+      setProfileForm(emptyProfileForm);
       setCanManage(false);
     } finally {
       setLoading(false);
     }
-  }, [authHeaders, isInternalAgency, organizationId]);
+  }, [authHeaders, isInternalAgency, loadClientDetail, organizationId]);
 
   useEffect(() => {
     if (loadingOrganization) return;
@@ -301,16 +398,29 @@ export default function AgencyDashboardPage() {
     setMessage(null);
   };
 
+  const updateProfileField = <K extends keyof ClientProfileFormState>(
+    field: K,
+    value: ClientProfileFormState[K]
+  ) => {
+    setProfileForm((current) => ({ ...current, [field]: value }));
+    setMessage(null);
+  };
+
   const selectClient = (client: AgencyClient) => {
     setSelectedClientId(client.id);
     setForm(clientToForm(client));
+    setProfileForm(emptyProfileForm);
     setError(null);
     setMessage(null);
+    void loadClientDetail(client.id).catch((detailError) => {
+      setError(detailError instanceof Error ? detailError.message : 'Failed to load agency client');
+    });
   };
 
   const startNewClient = () => {
     setSelectedClientId(null);
     setForm(emptyClientForm);
+    setProfileForm(emptyProfileForm);
     setError(null);
     setMessage(null);
   };
@@ -333,7 +443,7 @@ export default function AgencyDashboardPage() {
             ...authHeaders,
             'Content-Type': 'application/json',
           },
-          body: JSON.stringify(formToPayload(form, organizationId)),
+          body: JSON.stringify(formToPayload(form, profileForm, organizationId)),
         }
       );
       const payload = await response.json().catch(() => ({}));
@@ -343,6 +453,7 @@ export default function AgencyDashboardPage() {
       }
 
       const savedClient = payload.client as AgencyClient;
+      const savedProfile = payload.profile as AgencyClientProfile | null;
       setClients((current) => {
         if (isUpdate) {
           return current.map((client) => client.id === savedClient.id ? savedClient : client);
@@ -351,6 +462,7 @@ export default function AgencyDashboardPage() {
       });
       setSelectedClientId(savedClient.id);
       setForm(clientToForm(savedClient));
+      setProfileForm(profileToForm(savedProfile));
       setCanManage(Boolean(payload.membership?.canManageAgencyClient ?? canManage));
       setMessage(isUpdate ? 'Agency client updated.' : 'Agency client created.');
     } catch (saveError) {
@@ -659,6 +771,125 @@ export default function AgencyDashboardPage() {
                         onChange={(value) => updateField('notes', value)}
                         disabled={!canEdit}
                         placeholder="Service context, onboarding state, next action..."
+                      />
+                    </div>
+
+                    <div className="md:col-span-2">
+                      <div className="border-t border-slate-200 pt-4 dark:border-slate-800">
+                        <h3 className="text-sm font-semibold text-slate-900 dark:text-slate-100">
+                          Client Profile
+                        </h3>
+                        <p className="mt-1 text-xs leading-5 text-slate-500 dark:text-slate-400">
+                          Internal context used for agency planning, source imports, and future generation workflows.
+                        </p>
+                      </div>
+                    </div>
+
+                    <div className="md:col-span-2">
+                      <FieldLabel htmlFor="agency-profile-overview">Business overview</FieldLabel>
+                      <TextArea
+                        id="agency-profile-overview"
+                        value={profileForm.businessOverview}
+                        onChange={(value) => updateProfileField('businessOverview', value)}
+                        disabled={!canEdit}
+                        placeholder="What the client does, who they serve, and why the account matters."
+                        rows={4}
+                      />
+                    </div>
+
+                    <div>
+                      <FieldLabel htmlFor="agency-profile-icp">Ideal customer profile</FieldLabel>
+                      <TextArea
+                        id="agency-profile-icp"
+                        value={profileForm.idealCustomerProfile}
+                        onChange={(value) => updateProfileField('idealCustomerProfile', value)}
+                        disabled={!canEdit}
+                        placeholder="Buyer roles, segments, company stage, and qualification notes."
+                        rows={5}
+                      />
+                    </div>
+
+                    <div>
+                      <FieldLabel htmlFor="agency-profile-positioning">Positioning</FieldLabel>
+                      <TextArea
+                        id="agency-profile-positioning"
+                        value={profileForm.positioning}
+                        onChange={(value) => updateProfileField('positioning', value)}
+                        disabled={!canEdit}
+                        placeholder="Core positioning, category, differentiators, and proof."
+                        rows={5}
+                      />
+                    </div>
+
+                    <div>
+                      <FieldLabel htmlFor="agency-profile-offers">Offers</FieldLabel>
+                      <TextArea
+                        id="agency-profile-offers"
+                        value={profileForm.offers}
+                        onChange={(value) => updateProfileField('offers', value)}
+                        disabled={!canEdit}
+                        placeholder="One offer per line"
+                        rows={5}
+                      />
+                    </div>
+
+                    <div>
+                      <FieldLabel htmlFor="agency-profile-competitors">Competitors</FieldLabel>
+                      <TextArea
+                        id="agency-profile-competitors"
+                        value={profileForm.competitors}
+                        onChange={(value) => updateProfileField('competitors', value)}
+                        disabled={!canEdit}
+                        placeholder="One competitor per line"
+                        rows={5}
+                      />
+                    </div>
+
+                    <div>
+                      <FieldLabel htmlFor="agency-profile-pillars">Content pillars</FieldLabel>
+                      <TextArea
+                        id="agency-profile-pillars"
+                        value={profileForm.contentPillars}
+                        onChange={(value) => updateProfileField('contentPillars', value)}
+                        disabled={!canEdit}
+                        placeholder="One pillar per line"
+                        rows={5}
+                      />
+                    </div>
+
+                    <div>
+                      <FieldLabel htmlFor="agency-profile-pain-points">Customer pain points</FieldLabel>
+                      <TextArea
+                        id="agency-profile-pain-points"
+                        value={profileForm.customerPainPoints}
+                        onChange={(value) => updateProfileField('customerPainPoints', value)}
+                        disabled={!canEdit}
+                        placeholder="One pain point per line"
+                        rows={5}
+                      />
+                    </div>
+
+                    <div>
+                      <FieldLabel htmlFor="agency-profile-voice">Voice notes</FieldLabel>
+                      <TextArea
+                        id="agency-profile-voice"
+                        value={profileForm.voiceNotes}
+                        onChange={(value) => updateProfileField('voiceNotes', value)}
+                        disabled={!canEdit}
+                        placeholder="Words, tone, examples, and things to avoid."
+                        rows={5}
+                      />
+                    </div>
+
+                    <div>
+                      <FieldLabel htmlFor="agency-profile-service-tone">Customer service tone</FieldLabel>
+                      <TextArea
+                        id="agency-profile-service-tone"
+                        value={profileForm.customerServiceTone}
+                        onChange={(value) => updateProfileField('customerServiceTone', value)}
+                        disabled={!canEdit}
+                        placeholder="Support and customer communication tone."
+                        rows={5}
                       />
                     </div>
                   </div>

@@ -118,6 +118,22 @@ function isUniqueViolation(error: any): boolean {
     || (typeof error?.message === 'string' && error.message.toLowerCase().includes('duplicate'));
 }
 
+export function hasAgencyClientInput(input: AgencyClientInput): boolean {
+  return [
+    'name',
+    'website',
+    'industry',
+    'primaryContactName',
+    'primary_contact_name',
+    'primaryContactEmail',
+    'primary_contact_email',
+    'packageType',
+    'package_type',
+    'status',
+    'notes',
+  ].some((key) => (input as Record<string, unknown>)[key] !== undefined);
+}
+
 export function mapAgencyClientRow(row: AgencyClientRow): AgencyClient {
   return {
     id: row.id,

@@ -6,6 +6,11 @@ const migrationPath = path.join(
   'supabase/migrations/20260606120000_phase_4a_internal_agency_schema.sql'
 );
 const sql = readFileSync(migrationPath, 'utf8');
+const qaMigrationPath = path.join(
+  process.cwd(),
+  'supabase/migrations/20260607120000_phase_4h_agency_integrity_triggers.sql'
+);
+const qaSql = readFileSync(qaMigrationPath, 'utf8');
 
 describe('phase 4A agency schema migration', () => {
   it('creates the required agency foundation tables', () => {
@@ -55,5 +60,15 @@ describe('phase 4A agency schema migration', () => {
     expect(sql).toContain('campaign_id UUID REFERENCES public.campaigns(id) ON DELETE SET NULL');
     expect(sql).toContain('content_item_id UUID REFERENCES public.content_library_items(id) ON DELETE SET NULL');
     expect(sql).toContain('FOREIGN KEY (client_id) REFERENCES public.agency_clients(id)');
+  });
+
+  it('adds Phase 4H triggers for cross-reference integrity below API routes', () => {
+    expect(qaSql).toContain('enforce_agency_client_internal_org');
+    expect(qaSql).toContain('source_imports_enforce_agency_references');
+    expect(qaSql).toContain('production_tasks_enforce_agency_references');
+    expect(qaSql).toContain("o.type = 'internal_agency'");
+    expect(qaSql).toContain('ac.organization_id = NEW.organization_id');
+    expect(qaSql).toContain('c.organization_id = NEW.organization_id');
+    expect(qaSql).toContain('cli.organization_id = NEW.organization_id');
   });
 });

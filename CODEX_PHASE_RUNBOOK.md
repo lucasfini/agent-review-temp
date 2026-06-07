@@ -1778,6 +1778,180 @@ git commit -m "Add Slack integration foundation"
 
 ---
 
+## [ ] Phase 4H: Internal Agency System QA + Security Review
+
+Status: Ready after Phase 4G is committed.
+
+### Objective
+
+Perform a full review of the completed internal agency system before starting Phase 5 real integration/workflow work.
+
+This phase should find bugs, security gaps, role-boundary issues, RLS issues, and workflow inconsistencies across Phase 4A-4G.
+
+### Scope
+
+Do:
+
+- review agency schema/RLS
+- review agency permission helpers
+- review agency APIs
+- review agency dashboard pages
+- review client/profile/source/production/draft/Granola/Slack flows
+- fix bugs found during review
+- add missing focused tests where practical
+- verify SaaS users cannot access agency data
+- verify demo users cannot write
+- verify agency member/admin boundaries
+
+Do not:
+
+- build Slack OAuth/API integration
+- build Granola API integration
+- add new major agency features
+- change SaaS billing
+- change SaaS generation behavior
+- redesign the agency UI
+- change public marketing pages
+
+### Read First
+
+- `B2B_AGENCY_PIVOT_PRODUCT_SPEC.md`
+- `PHASE_4A_INTERNAL_AGENCY_SCHEMA.md`
+- `PHASE_4B_AGENCY_CLIENT_MANAGEMENT_UI.md`
+- `PHASE_4C_CLIENT_SOURCE_IMPORTS.md`
+- `PHASE_4D_AGENCY_PRODUCTION_QUEUE.md`
+- `PHASE_4E_DRAFT_REVIEW_DELIVERY.md`
+- `PHASE_4F_GRANOLA_MANUAL_IMPORT.md`
+- `PHASE_4G_SLACK_INTEGRATION_FOUNDATION.md`
+
+### Primary Areas to Review
+
+- `supabase/migrations/20260606120000_phase_4a_internal_agency_schema.sql`
+- `lib/authz/agency-permissions.ts`
+- `lib/agency-*.ts`
+- `app/api/agency/*`
+- `app/dashboard/agency/*`
+- `components/dashboard/nav.tsx`
+- `tests/lib/agency-*.test.ts`
+
+### Review Checklist
+
+#### Security and Access
+
+Confirm:
+
+- SaaS/personal org members cannot access agency APIs.
+- Agency access requires active membership in an `internal_agency` organization.
+- Client-scoped APIs validate both `organization_id` and `client_id`.
+- Service role is only used after route-level authorization.
+- Platform admin email access is not accidentally an agency bypass.
+- Demo users cannot write.
+- `agency_member` cannot mutate integrations or restricted draft/client settings.
+- `owner`, `admin`, and `agency_admin` can perform intended management actions.
+
+#### RLS
+
+Confirm:
+
+- Agency tables are not readable by SaaS org users.
+- Agency tables are scoped to internal agency organizations.
+- Mutation policies are not too broad.
+- Service-role policies are safe.
+- Any API-level enforcement is documented where RLS is intentionally conservative.
+
+#### Data Integrity
+
+Confirm:
+
+- `agency_clients` are always tied to internal agency organizations.
+- `agency_client_profiles` are one-to-one with clients.
+- `client_integrations` cannot be attached to a client from another org.
+- `source_imports` validate client/org scope.
+- `production_tasks` validate client/campaign/content references.
+- `drafts` validate client/campaign/brand voice references.
+- Granola imports write provider `granola`.
+- Slack readiness writes provider `slack`.
+- Metadata updates preserve existing metadata where intended.
+
+#### Workflow
+
+Manually or through tests verify:
+
+- agency client list/create/edit
+- client profile edit
+- manual source import
+- production task create/update/filter
+- draft create/edit/filter/export/mark delivered
+- Granola manual import
+- Slack readiness edit
+- read-only behavior for non-admins/demo users
+
+#### SaaS Isolation
+
+Confirm:
+
+- no SaaS dashboard routes expose agency data
+- no SaaS billing behavior changed
+- no SaaS generation behavior changed
+- public users cannot discover agency client data through APIs
+
+### Fixes
+
+If bugs are found:
+
+- fix them within Phase 4H scope
+- add focused tests when practical
+- rerun validation
+
+### Documentation
+
+Create:
+
+```text
+PHASE_4H_AGENCY_SYSTEM_QA.md
+```
+
+Document:
+
+- review areas
+- bugs found
+- fixes made
+- tests added
+- remaining risks
+- whether Phase 5 is safe to start
+
+### Validation
+
+Run:
+
+- `npx tsc --noEmit`
+- `npm run -s lint`
+- focused agency Jest suites
+- auth/org permission tests
+- route smoke tests for agency pages if available
+- `git diff --check`
+
+### Review Checklist
+
+After implementation/review:
+
+- no cross-org agency access
+- no SaaS org access to agency system
+- demo users blocked from writes
+- role boundaries correct
+- agency routes/pages still work
+- no Phase 5 integration work started
+- validation passes
+
+### Commit message
+
+```bash
+git add .
+git commit -m "Review and harden internal agency system"
+```
+
+---
+
 ## How to Update This Runbook
 
 After a phase is safely committed:

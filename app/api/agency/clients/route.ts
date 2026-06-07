@@ -5,6 +5,12 @@ import {
   createAgencyClient,
   listAgencyClients,
 } from '@/lib/agency-clients';
+import {
+  AgencyClientProfileValidationError,
+  normalizeAgencyClientProfileInput,
+  upsertAgencyClientProfile,
+  type AgencyClientProfileInput,
+} from '@/lib/agency-client-profiles';
 import { RouteAccessError } from '@/lib/api/route-auth';
 import {
   canManageAgencyClient,
@@ -18,7 +24,7 @@ export const dynamic = 'force-dynamic';
 export const revalidate = 0;
 
 function errorResponse(error: unknown, fallback: string) {
-  if (error instanceof AgencyClientValidationError) {
+  if (error instanceof AgencyClientValidationError || error instanceof AgencyClientProfileValidationError) {
     return NextResponse.json({ error: error.message }, { status: 400 });
   }
 
@@ -42,6 +48,14 @@ function membershipPayload(role: string, status: string, organizationType: strin
     status,
     canManageAgencyClient: canManageAgencyClient(role, organizationType),
   };
+}
+
+function profileInputFrom(body: any): AgencyClientProfileInput | null {
+  if (body?.profile === undefined) return null;
+  if (!body.profile || typeof body.profile !== 'object' || Array.isArray(body.profile)) {
+    throw new AgencyClientProfileValidationError('profile must be an object');
+  }
+  return body.profile as AgencyClientProfileInput;
 }
 
 export async function GET(request: NextRequest) {
@@ -78,12 +92,21 @@ export async function POST(request: NextRequest) {
       return NextResponse.json({ error: 'Demo account is read-only' }, { status: 403 });
     }
 
+    const profileInput = profileInputFrom(body);
+    if (profileInput) {
+      normalizeAgencyClientProfileInput(profileInput);
+    }
+
     const client = await createAgencyClient(supabaseAdmin, organization.id, user.id, body);
+    const profile = profileInput
+      ? await upsertAgencyClientProfile(supabaseAdmin, client.id, profileInput)
+      : null;
 
     return NextResponse.json({
       success: true,
       membership: membershipPayload(membership.role, membership.status, organization.type),
       client,
+      profile,
     }, { status: 201 });
   } catch (error) {
     return errorResponse(error, 'Failed to create agency client');

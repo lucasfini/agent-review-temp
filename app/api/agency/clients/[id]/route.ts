@@ -3,8 +3,16 @@ import { NextRequest, NextResponse } from 'next/server';
 import {
   AgencyClientValidationError,
   getAgencyClient,
+  hasAgencyClientInput,
   updateAgencyClient,
 } from '@/lib/agency-clients';
+import {
+  AgencyClientProfileValidationError,
+  getAgencyClientProfile,
+  normalizeAgencyClientProfileInput,
+  upsertAgencyClientProfile,
+  type AgencyClientProfileInput,
+} from '@/lib/agency-client-profiles';
 import { RouteAccessError } from '@/lib/api/route-auth';
 import {
   canManageAgencyClient,
@@ -18,7 +26,7 @@ export const dynamic = 'force-dynamic';
 export const revalidate = 0;
 
 function errorResponse(error: unknown, fallback: string) {
-  if (error instanceof AgencyClientValidationError) {
+  if (error instanceof AgencyClientValidationError || error instanceof AgencyClientProfileValidationError) {
     return NextResponse.json({ error: error.message }, { status: 400 });
   }
 
@@ -44,6 +52,14 @@ function membershipPayload(role: string, status: string, organizationType: strin
   };
 }
 
+function profileInputFrom(body: any): AgencyClientProfileInput | null {
+  if (body?.profile === undefined) return null;
+  if (!body.profile || typeof body.profile !== 'object' || Array.isArray(body.profile)) {
+    throw new AgencyClientProfileValidationError('profile must be an object');
+  }
+  return body.profile as AgencyClientProfileInput;
+}
+
 export async function GET(
   request: NextRequest,
   { params }: { params: Promise<{ id: string }> }
@@ -59,10 +75,13 @@ export async function GET(
       return NextResponse.json({ error: 'Agency client not found' }, { status: 404 });
     }
 
+    const profile = await getAgencyClientProfile(supabaseAdmin, id);
+
     return NextResponse.json({
       success: true,
       membership: membershipPayload(membership.role, membership.status, organization.type),
       client,
+      profile,
     });
   } catch (error) {
     return errorResponse(error, 'Failed to load agency client');
@@ -85,16 +104,34 @@ export async function PATCH(
       return NextResponse.json({ error: 'Demo account is read-only' }, { status: 403 });
     }
 
-    const client = await updateAgencyClient(supabaseAdmin, organization.id, id, body);
+    const profileInput = profileInputFrom(body);
+    const shouldUpdateClient = hasAgencyClientInput(body);
+
+    if (!shouldUpdateClient && !profileInput) {
+      throw new AgencyClientValidationError('No agency client fields provided');
+    }
+
+    if (profileInput) {
+      normalizeAgencyClientProfileInput(profileInput);
+    }
+
+    const client = shouldUpdateClient
+      ? await updateAgencyClient(supabaseAdmin, organization.id, id, body)
+      : await getAgencyClient(supabaseAdmin, organization.id, id);
 
     if (!client) {
       return NextResponse.json({ error: 'Agency client not found' }, { status: 404 });
     }
 
+    const profile = profileInput
+      ? await upsertAgencyClientProfile(supabaseAdmin, id, profileInput)
+      : await getAgencyClientProfile(supabaseAdmin, id);
+
     return NextResponse.json({
       success: true,
       membership: membershipPayload(membership.role, membership.status, organization.type),
       client,
+      profile,
     });
   } catch (error) {
     return errorResponse(error, 'Failed to update agency client');

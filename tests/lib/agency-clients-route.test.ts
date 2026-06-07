@@ -6,6 +6,8 @@ const mockListAgencyClients = jest.fn();
 const mockCreateAgencyClient = jest.fn();
 const mockGetAgencyClient = jest.fn();
 const mockUpdateAgencyClient = jest.fn();
+const mockGetAgencyClientProfile = jest.fn();
+const mockUpsertAgencyClientProfile = jest.fn();
 const mockIsDemoUser = jest.fn();
 
 jest.mock('@/lib/authz/agency-permissions', () => {
@@ -25,6 +27,15 @@ jest.mock('@/lib/agency-clients', () => {
     createAgencyClient: (...args: any[]) => mockCreateAgencyClient(...args),
     getAgencyClient: (...args: any[]) => mockGetAgencyClient(...args),
     updateAgencyClient: (...args: any[]) => mockUpdateAgencyClient(...args),
+  };
+});
+
+jest.mock('@/lib/agency-client-profiles', () => {
+  const actual = jest.requireActual('@/lib/agency-client-profiles');
+  return {
+    ...actual,
+    getAgencyClientProfile: (...args: any[]) => mockGetAgencyClientProfile(...args),
+    upsertAgencyClientProfile: (...args: any[]) => mockUpsertAgencyClientProfile(...args),
   };
 });
 
@@ -65,6 +76,22 @@ const client = {
   createdAt: '2026-06-06T00:00:00.000Z',
   updatedAt: '2026-06-06T00:00:00.000Z',
 };
+const profile = {
+  id: 'profile-1',
+  clientId: 'client-1',
+  businessOverview: 'B2B SaaS platform',
+  idealCustomerProfile: null,
+  positioning: null,
+  offers: ['Content system'],
+  competitors: [],
+  contentPillars: ['Founder POV'],
+  customerPainPoints: [],
+  voiceNotes: null,
+  customerServiceTone: null,
+  metadata: {},
+  createdAt: '2026-06-07T00:00:00.000Z',
+  updatedAt: '2026-06-07T00:00:00.000Z',
+};
 
 describe('agency client routes', () => {
   beforeEach(() => {
@@ -74,6 +101,8 @@ describe('agency client routes', () => {
     mockCreateAgencyClient.mockReset();
     mockGetAgencyClient.mockReset();
     mockUpdateAgencyClient.mockReset();
+    mockGetAgencyClientProfile.mockReset();
+    mockUpsertAgencyClientProfile.mockReset();
     mockIsDemoUser.mockReset();
 
     mockRequireAgencyAccess.mockResolvedValue({
@@ -93,6 +122,8 @@ describe('agency client routes', () => {
       },
     });
     mockIsDemoUser.mockReturnValue(false);
+    mockGetAgencyClientProfile.mockResolvedValue(profile);
+    mockUpsertAgencyClientProfile.mockResolvedValue(profile);
   });
 
   it('lists agency clients for an internal agency member', async () => {
@@ -147,6 +178,7 @@ describe('agency client routes', () => {
 
     expect(response.status).toBe(201);
     expect(payload.client).toEqual(client);
+    expect(payload.profile).toBeNull();
     expect(mockRequireAgencyAccess).toHaveBeenCalledWith(
       expect.anything(),
       {
@@ -159,6 +191,36 @@ describe('agency client routes', () => {
       'agency-org',
       'user-1',
       expect.objectContaining({ name: 'Acme' })
+    );
+    expect(mockUpsertAgencyClientProfile).not.toHaveBeenCalled();
+  });
+
+  it('creates a client profile when provided during client creation', async () => {
+    const { POST } = await import('@/app/api/agency/clients/route');
+    mockCreateAgencyClient.mockResolvedValue(client);
+
+    const response = await POST(new Request('http://localhost/api/agency/clients', {
+      method: 'POST',
+      body: JSON.stringify({
+        organization_id: 'agency-org',
+        name: 'Acme',
+        profile: {
+          businessOverview: 'B2B SaaS platform',
+          contentPillars: ['Founder POV'],
+        },
+      }),
+    }) as any);
+    const payload = await response.json();
+
+    expect(response.status).toBe(201);
+    expect(payload.profile).toEqual(profile);
+    expect(mockUpsertAgencyClientProfile).toHaveBeenCalledWith(
+      expect.anything(),
+      'client-1',
+      expect.objectContaining({
+        businessOverview: 'B2B SaaS platform',
+        contentPillars: ['Founder POV'],
+      })
     );
   });
 
@@ -189,12 +251,14 @@ describe('agency client routes', () => {
 
     expect(response.status).toBe(200);
     expect(payload.client).toEqual(client);
+    expect(payload.profile).toEqual(profile);
     expect(mockRequireAgencyClientAccess).toHaveBeenCalledWith(
       expect.anything(),
       'client-1',
       { requestedOrganizationId: 'agency-org' }
     );
     expect(mockGetAgencyClient).toHaveBeenCalledWith(expect.anything(), 'agency-org', 'client-1');
+    expect(mockGetAgencyClientProfile).toHaveBeenCalledWith(expect.anything(), 'client-1');
   });
 
   it('updates agency clients for internal agency admins', async () => {
@@ -209,6 +273,7 @@ describe('agency client routes', () => {
 
     expect(response.status).toBe(200);
     expect(payload.client.status).toBe('paused');
+    expect(payload.profile).toEqual(profile);
     expect(mockRequireAgencyClientAccess).toHaveBeenCalledWith(
       expect.anything(),
       'client-1',
@@ -222,6 +287,38 @@ describe('agency client routes', () => {
       'agency-org',
       'client-1',
       expect.objectContaining({ status: 'paused' })
+    );
+    expect(mockGetAgencyClientProfile).toHaveBeenCalledWith(expect.anything(), 'client-1');
+  });
+
+  it('updates agency client profiles without requiring basic client fields', async () => {
+    const { PATCH } = await import('@/app/api/agency/clients/[id]/route');
+    mockGetAgencyClient.mockResolvedValue(client);
+
+    const response = await PATCH(new Request('http://localhost/api/agency/clients/client-1', {
+      method: 'PATCH',
+      body: JSON.stringify({
+        organization_id: 'agency-org',
+        profile: {
+          businessOverview: 'Updated overview',
+          offers: ['Offer one'],
+        },
+      }),
+    }) as any, { params: Promise.resolve({ id: 'client-1' }) });
+    const payload = await response.json();
+
+    expect(response.status).toBe(200);
+    expect(payload.client).toEqual(client);
+    expect(payload.profile).toEqual(profile);
+    expect(mockUpdateAgencyClient).not.toHaveBeenCalled();
+    expect(mockGetAgencyClient).toHaveBeenCalledWith(expect.anything(), 'agency-org', 'client-1');
+    expect(mockUpsertAgencyClientProfile).toHaveBeenCalledWith(
+      expect.anything(),
+      'client-1',
+      expect.objectContaining({
+        businessOverview: 'Updated overview',
+        offers: ['Offer one'],
+      })
     );
   });
 });
