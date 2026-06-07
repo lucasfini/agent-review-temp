@@ -879,6 +879,308 @@ git commit -m "Add SaaS MVP QA fixes and checklist"
 
 ---
 
+## [x] Phase 4A: Internal Agency Schema Foundation
+
+Status: Ready after Phase 3G is committed.
+
+### Objective
+
+Create the private internal agency data foundation.
+
+This phase adds the schema and backend helpers needed for the agency console, but does not build the full UI yet.
+
+The agency is separate from the public B2B SaaS product. Agency clients should not see or access the SaaS dashboard by default.
+
+### Scope
+
+Do:
+
+- add agency client schema
+- add client profile/context schema
+- add client integration tracking schema
+- add source import schema
+- add production task schema
+- add internal agency authorization helpers
+- add minimal read/write APIs if useful
+- document how the agency console remains private
+
+Do not:
+
+- build full agency UI yet
+- build Slack integration yet
+- build Granola integration yet
+- expose agency clients to SaaS users
+- add public agency website pages
+- redesign SaaS dashboard
+- change subscription billing
+- change SaaS content generation behavior unless needed for shared types
+
+### Read First
+
+- `B2B_AGENCY_PIVOT_PRODUCT_SPEC.md`
+- `PHASE_3G_SAAS_MVP_QA.md`
+- existing organization/role helpers
+- existing authz helpers
+- existing content/campaign/brand voice schema
+- existing source/import/integration code
+
+### Required Schema
+
+Create a forward migration in `supabase/migrations/`.
+
+#### `agency_clients`
+
+Fields:
+
+- `id uuid primary key default gen_random_uuid()`
+- `organization_id uuid not null references organizations(id) on delete cascade`
+- `name text not null`
+- `website text`
+- `industry text`
+- `primary_contact_name text`
+- `primary_contact_email text`
+- `package_type text`
+- `status text not null default 'active'`
+- `notes text`
+- `created_by uuid references auth.users(id) on delete set null`
+- `created_at timestamptz not null default now()`
+- `updated_at timestamptz not null default now()`
+
+Status values:
+
+- `active`
+- `paused`
+- `archived`
+- `lead`
+
+#### `agency_client_profiles`
+
+Fields:
+
+- `id uuid primary key default gen_random_uuid()`
+- `client_id uuid not null references agency_clients(id) on delete cascade`
+- `business_overview text`
+- `ideal_customer_profile text`
+- `positioning text`
+- `offers_json jsonb not null default '[]'::jsonb`
+- `competitors_json jsonb not null default '[]'::jsonb`
+- `content_pillars_json jsonb not null default '[]'::jsonb`
+- `customer_pain_points_json jsonb not null default '[]'::jsonb`
+- `voice_notes text`
+- `customer_service_tone text`
+- `metadata_json jsonb not null default '{}'::jsonb`
+- `created_at timestamptz not null default now()`
+- `updated_at timestamptz not null default now()`
+
+Unique:
+
+- one profile per `client_id`
+
+#### `client_integrations`
+
+Fields:
+
+- `id uuid primary key default gen_random_uuid()`
+- `client_id uuid not null references agency_clients(id) on delete cascade`
+- `provider text not null`
+- `status text not null default 'not_connected'`
+- `metadata_json jsonb not null default '{}'::jsonb`
+- `connected_at timestamptz`
+- `last_sync_at timestamptz`
+- `created_at timestamptz not null default now()`
+- `updated_at timestamptz not null default now()`
+
+Provider values:
+
+- `slack`
+- `granola`
+- `manual`
+- `other`
+
+Status values:
+
+- `not_connected`
+- `connected`
+- `needs_attention`
+- `disabled`
+
+#### `source_imports`
+
+Fields:
+
+- `id uuid primary key default gen_random_uuid()`
+- `organization_id uuid not null references organizations(id) on delete cascade`
+- `client_id uuid references agency_clients(id) on delete set null`
+- `campaign_id uuid`
+- `provider text not null`
+- `source_title text`
+- `source_url text`
+- `raw_text text`
+- `summary text`
+- `metadata_json jsonb not null default '{}'::jsonb`
+- `imported_by uuid references auth.users(id) on delete set null`
+- `created_at timestamptz not null default now()`
+
+Provider values:
+
+- `audio_upload`
+- `transcript`
+- `slack`
+- `granola`
+- `manual_note`
+- `url`
+- `document`
+
+If campaigns table already exists, add FK to campaigns. If not, leave nullable without FK and document.
+
+#### `production_tasks`
+
+Fields:
+
+- `id uuid primary key default gen_random_uuid()`
+- `organization_id uuid not null references organizations(id) on delete cascade`
+- `client_id uuid references agency_clients(id) on delete cascade`
+- `campaign_id uuid`
+- `content_item_id uuid`
+- `title text not null`
+- `description text`
+- `status text not null default 'todo'`
+- `priority text not null default 'normal'`
+- `assigned_to uuid references auth.users(id) on delete set null`
+- `created_by uuid references auth.users(id) on delete set null`
+- `due_date timestamptz`
+- `metadata_json jsonb not null default '{}'::jsonb`
+- `created_at timestamptz not null default now()`
+- `updated_at timestamptz not null default now()`
+
+Status values:
+
+- `todo`
+- `in_progress`
+- `needs_review`
+- `ready_to_deliver`
+- `delivered`
+- `blocked`
+- `archived`
+
+Priority values:
+
+- `low`
+- `normal`
+- `high`
+- `urgent`
+
+### RLS Requirements
+
+Agency tables must be private.
+
+Rules:
+
+- Only active members of the owning internal agency organization can read agency client data.
+- Normal SaaS organizations should not accidentally access agency data.
+- Service role can manage all rows.
+- Mutation policies should be restricted to internal agency roles where possible:
+  - `agency_admin`
+  - `agency_member`
+  - maybe `owner` for internal agency organization
+
+Use existing organization membership helpers and organization `type = 'internal_agency'` where possible.
+
+If RLS gets too complex for this phase, implement safe service-role-only mutation and document API-level enforcement.
+
+### Authorization Helpers
+
+Create or update:
+
+- `lib/authz/agency-permissions.ts`
+
+Functions:
+
+- `isInternalAgencyOrganization(...)`
+- `canAccessAgencyConsole(role, organizationType)`
+- `canManageAgencyClient(role, organizationType)`
+- `requireAgencyAccess(...)`
+- `requireAgencyClientAccess(...)`
+
+Rules:
+
+- agency console access requires active membership in an `internal_agency` organization.
+- SaaS customer org members cannot access agency tables/routes.
+- platform admins may access if existing admin model supports it.
+
+### Minimal APIs
+
+Create minimal APIs only if useful for testing and next phase:
+
+- `GET /api/agency/clients`
+- `POST /api/agency/clients`
+- `GET /api/agency/clients/:id`
+- `PATCH /api/agency/clients/:id`
+
+Keep responses simple.
+
+Do not build full UI.
+
+### Documentation
+
+Create:
+
+```text
+PHASE_4A_INTERNAL_AGENCY_SCHEMA.md
+```
+
+Document:
+
+- tables added
+- RLS model
+- auth helpers
+- APIs added
+- what is private/internal-only
+- what was intentionally not built
+- next steps for Phase 4B
+
+### Tests
+
+Add focused tests for:
+
+- agency permission helper behavior
+- SaaS org member denied agency access
+- internal agency member allowed
+- client access scoped to internal agency org
+- API auth if routes are added
+
+### Validation
+
+Run:
+
+- `npx tsc --noEmit`
+- `npm run -s lint`
+- relevant auth/org tests
+- new agency tests
+- `git diff --check`
+
+### Review Checklist
+
+After implementation, review:
+
+- agency data cannot be accessed by SaaS org users
+- only internal agency org members can access agency routes
+- RLS does not expose agency data cross-org
+- mutation rules are not too permissive
+- no public UI was added
+- no Slack/Granola integration was added
+- no SaaS billing/generation behavior was changed
+- tests and validation pass
+
+### Commit message
+
+```bash
+git add .
+git commit -m "Add internal agency schema foundation"
+```
+
+---
+
 ## How to Update This Runbook
 
 After a phase is safely committed:
