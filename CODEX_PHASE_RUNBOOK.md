@@ -1181,6 +1181,104 @@ git commit -m "Add internal agency schema foundation"
 
 ---
 
+## [ ] Phase 4B: Agency Client Management UI
+
+Status: Ready after Phase 4A is committed.
+
+### Objective
+
+Build the first private internal agency client management surface on top of the Phase 4A schema and APIs.
+
+This phase should let internal agency users see and maintain basic agency client records without exposing agency workflow to normal SaaS organizations.
+
+### Scope
+
+Do:
+
+- add a private agency client management page
+- use the Phase 4A agency client APIs
+- show client list, status, contact, industry, package, and notes
+- support creating clients for internal agency admins
+- support editing clients for internal agency admins
+- show read-only/limited states for internal agency non-admin members
+- block or redirect SaaS/customer organizations from the agency UI
+- keep dashboard/nav changes minimal and hidden unless the user can resolve an internal agency org
+
+Do not:
+
+- build Slack integration
+- build Granola integration
+- build source import workflows
+- build production queue workflows
+- build draft review or delivery
+- expose agency pages to SaaS customers
+- add public agency marketing pages
+- redesign the SaaS dashboard
+- change billing or generation behavior
+
+### Candidate Routes
+
+- `/dashboard/agency`
+- `/dashboard/agency/clients`
+
+### Required Behavior
+
+- Agency UI requires an active `internal_agency` organization.
+- SaaS customer org members must not be able to use the agency UI.
+- Internal agency `owner`, `admin`, and `agency_admin` can create/update clients.
+- Internal agency `agency_member` can view clients but not create/update them.
+- Demo users remain read-only.
+- Client API failures show a recoverable state.
+- No Slack/Granola status setup beyond passive fields already in schema.
+
+### Files likely involved
+
+- `app/dashboard/agency/*`
+- `components/dashboard/nav.tsx`
+- `lib/authz/agency-permissions.ts`
+- `lib/agency-clients.ts`
+- `tests/lib/agency-clients-route.test.ts`
+- new UI tests/helpers if useful
+
+### Documentation
+
+Create:
+
+```text
+PHASE_4B_AGENCY_CLIENT_MANAGEMENT_UI.md
+```
+
+### Validation
+
+Run:
+
+- `npx tsc --noEmit`
+- `npm run -s lint`
+- new or relevant agency tests
+- relevant org/auth tests
+- browser or route smoke for the new agency page
+- `git diff --check`
+
+### Review Checklist
+
+- Agency pages are not public marketing pages.
+- SaaS orgs cannot access the agency UI.
+- Internal agency non-admins cannot mutate clients.
+- Internal agency admins can create/update clients.
+- Demo users cannot write.
+- No Slack/Granola integration was added.
+- No billing/generation behavior changed.
+- Validation passes or gaps are documented.
+
+### Commit message
+
+```bash
+git add .
+git commit -m "Add agency client management UI"
+```
+
+---
+
 ## How to Update This Runbook
 
 After a phase is safely committed:

@@ -68,6 +68,49 @@ describe('current organization helpers', () => {
     });
   });
 
+  it('requests a current organization by organization type', async () => {
+    const fetchMock = jest.spyOn(global, 'fetch' as any).mockResolvedValue({
+      ok: true,
+      json: async () => ({
+        organization: {
+          id: 'agency-org',
+          name: 'Internal Agency',
+          type: 'internal_agency',
+          onboarding: {
+            completedAt: null,
+            skippedAt: null,
+            metadata: {},
+          },
+        },
+        membership: {
+          role: 'agency_admin',
+          status: 'active',
+        },
+      }),
+    } as Response);
+
+    const organization = await fetchCurrentOrganization('token-1', {
+      organizationType: 'internal_agency',
+    });
+
+    expect(fetchMock).toHaveBeenCalledWith('/api/organizations/current?organization_type=internal_agency', {
+      headers: { Authorization: 'Bearer token-1' },
+      cache: 'no-store',
+    });
+    expect(organization).toEqual({
+      id: 'agency-org',
+      name: 'Internal Agency',
+      type: 'internal_agency',
+      role: 'agency_admin',
+      status: 'active',
+      onboarding: {
+        completedAt: null,
+        skippedAt: null,
+        metadata: {},
+      },
+    });
+  });
+
   it('patches onboarding setup for the current organization', async () => {
     const fetchMock = jest.spyOn(global, 'fetch' as any).mockResolvedValue({
       ok: true,

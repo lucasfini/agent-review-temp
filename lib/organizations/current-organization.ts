@@ -27,6 +27,13 @@ interface CurrentOrganizationResponse {
   error?: string;
 }
 
+export type CurrentOrganizationType = CurrentOrganization['type'];
+
+export type CurrentOrganizationRequestOptions = {
+  organizationId?: string | null;
+  organizationType?: CurrentOrganizationType | null;
+};
+
 export type OrganizationOnboardingProfileInput = {
   website?: string;
   description?: string;
@@ -52,10 +59,27 @@ export function withOrganizationId(path: string, organizationId?: string | null)
   return nextQuery ? `${pathname}?${nextQuery}` : pathname;
 }
 
+function withOrganizationType(path: string, organizationType?: CurrentOrganizationType | null): string {
+  if (!organizationType) return path;
+
+  const [pathname, query = ''] = path.split('?');
+  const params = new URLSearchParams(query);
+  params.set('organization_type', organizationType);
+
+  const nextQuery = params.toString();
+  return nextQuery ? `${pathname}?${nextQuery}` : pathname;
+}
+
 export async function fetchCurrentOrganization(
-  accessToken?: string | null
+  accessToken?: string | null,
+  options: CurrentOrganizationRequestOptions = {}
 ): Promise<CurrentOrganization | null> {
-  const response = await fetch('/api/organizations/current', {
+  const path = withOrganizationType(
+    withOrganizationId('/api/organizations/current', options.organizationId),
+    options.organizationType
+  );
+
+  const response = await fetch(path, {
     headers: accessToken ? { Authorization: `Bearer ${accessToken}` } : {},
     cache: 'no-store',
   });

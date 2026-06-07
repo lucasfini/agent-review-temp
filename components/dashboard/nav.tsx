@@ -22,6 +22,7 @@ import {
   BarChart3,
   Settings,
   CreditCard,
+  BriefcaseBusiness,
   ListChecks,
   Mail,
   Menu,
@@ -53,6 +54,7 @@ function getMobilePageTitle(pathname: string, activeSettingsSection: string | nu
   if (pathname === '/dashboard/upload') return 'Upload Audio';
   if (pathname === '/dashboard/brand-voice') return 'Brand Voice';
   if (pathname === '/dashboard/campaigns') return 'Campaigns';
+  if (pathname.startsWith('/dashboard/agency')) return 'Agency';
   if (pathname === '/dashboard/onboarding') return 'Setup';
   if (pathname === '/dashboard/analytics') return 'Analytics';
   if (pathname === '/dashboard/billing') return 'Billing';
@@ -623,7 +625,8 @@ export default function DashboardNav({
   const searchParams = useSearchParams();
   const router = useRouter();
   const { user, session, signOut } = useAuth();
-  const { organizationId } = useCurrentOrganization();
+  const { organization, organizationId } = useCurrentOrganization();
+  const { organization: agencyOrganization } = useCurrentOrganization({ organizationType: 'internal_agency' });
   const { resolvedTheme } = useTheme();
   const isDemo = isDemoUser(user as { email?: string } | null);
   const hideChromeForCapture = searchParams.get('capture') === '1';
@@ -810,6 +813,15 @@ export default function DashboardNav({
     ...section,
     items: [...section.items],
   }));
+
+  if (organization?.type === 'internal_agency' || agencyOrganization?.type === 'internal_agency') {
+    navSections.push({
+      label: 'AGENCY',
+      items: [
+        { name: 'Agency Clients', href: '/dashboard/agency', icon: BriefcaseBusiness },
+      ],
+    });
+  }
 
   if (isAdmin) {
     navSections.push({

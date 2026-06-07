@@ -6,6 +6,7 @@ import type {
   ActiveOrganizationContext,
   OrganizationMemberRecord,
   OrganizationRecord,
+  OrganizationType,
 } from '@/lib/authz/types';
 import { OrganizationAccessError } from '@/lib/authz/types';
 
@@ -148,6 +149,58 @@ export async function getActiveOrganizationForUser(
 
   if (!membership) {
     throw new OrganizationAccessError(500, 'Default organization membership is missing or inactive');
+  }
+
+  return { organization, membership };
+}
+
+export async function getFirstActiveOrganizationForUserByType(
+  supabase: SupabaseClient<any>,
+  userId: string,
+  organizationType: OrganizationType
+): Promise<ActiveOrganizationContext> {
+  const { data: memberships, error: membershipsError } = await supabase
+    .from('organization_members')
+    .select('*')
+    .eq('user_id', userId)
+    .eq('status', 'active')
+    .order('created_at', { ascending: true }) as {
+      data: OrganizationMemberRecord[] | null;
+      error: any;
+    };
+
+  if (membershipsError) {
+    throw new OrganizationAccessError(500, membershipsError.message || 'Failed to resolve organization memberships');
+  }
+
+  const organizationIds = (memberships || [])
+    .map((membership) => membership.organization_id)
+    .filter(Boolean);
+
+  if (organizationIds.length === 0) {
+    throw new OrganizationAccessError(403, 'Forbidden');
+  }
+
+  const { data: organization, error: organizationError } = await supabase
+    .from('organizations')
+    .select('*')
+    .in('id', organizationIds)
+    .eq('type', organizationType)
+    .order('created_at', { ascending: true })
+    .limit(1)
+    .maybeSingle() as { data: OrganizationRecord | null; error: any };
+
+  if (organizationError) {
+    throw new OrganizationAccessError(500, organizationError.message || 'Failed to resolve organization');
+  }
+
+  if (!organization) {
+    throw new OrganizationAccessError(403, 'Forbidden');
+  }
+
+  const membership = (memberships || []).find((record) => record.organization_id === organization.id);
+  if (!membership) {
+    throw new OrganizationAccessError(500, 'Organization membership is missing or inactive');
   }
 
   return { organization, membership };

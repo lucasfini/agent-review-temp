@@ -1,8 +1,12 @@
 import { NextRequest, NextResponse } from 'next/server';
 
 import { RouteAccessError, requireAuthenticatedUser } from '@/lib/api/route-auth';
-import { getActiveOrganizationForUser } from '@/lib/authz/organization-context';
+import {
+  getActiveOrganizationForUser,
+  getFirstActiveOrganizationForUserByType,
+} from '@/lib/authz/organization-context';
 import { OrganizationAccessError } from '@/lib/authz/types';
+import type { OrganizationType } from '@/lib/authz/types';
 import { isDemoUser } from '@/lib/demo-mode';
 import { supabaseAdmin } from '@/lib/supabase/server';
 
@@ -12,6 +16,7 @@ export const revalidate = 0;
 const MAX_ORGANIZATION_NAME_LENGTH = 160;
 const MAX_PROFILE_TEXT_LENGTH = 1200;
 const MAX_PROFILE_SHORT_TEXT_LENGTH = 240;
+const ORGANIZATION_TYPES: OrganizationType[] = ['personal_legacy', 'saas_customer', 'internal_agency'];
 
 function parseObject(value: unknown): Record<string, unknown> {
   if (!value || typeof value !== 'object' || Array.isArray(value)) return {};
@@ -72,6 +77,15 @@ function requestedOrganizationIdFrom(request: NextRequest, body?: any): string |
   return new URL(request.url).searchParams.get('organization_id');
 }
 
+function requestedOrganizationTypeFrom(request: NextRequest): OrganizationType | null {
+  const value = new URL(request.url).searchParams.get('organization_type');
+  if (!value) return null;
+  if (!ORGANIZATION_TYPES.includes(value as OrganizationType)) {
+    throw new RouteAccessError(400, 'Invalid organization_type');
+  }
+  return value as OrganizationType;
+}
+
 function normalizeProfile(input: unknown): Record<string, string | null> | null {
   if (input === undefined) return null;
   if (!input || typeof input !== 'object' || Array.isArray(input)) {
@@ -102,11 +116,28 @@ export async function GET(request: NextRequest) {
     const user = await requireAuthenticatedUser(request);
     const { searchParams } = new URL(request.url);
     const requestedOrganizationId = searchParams.get('organization_id');
-    const { organization, membership } = await getActiveOrganizationForUser(
-      supabaseAdmin,
-      user.id,
-      requestedOrganizationId
-    );
+    const requestedOrganizationType = requestedOrganizationTypeFrom(request);
+    const { organization, membership } = requestedOrganizationId
+      ? await getActiveOrganizationForUser(
+        supabaseAdmin,
+        user.id,
+        requestedOrganizationId
+      )
+      : requestedOrganizationType
+        ? await getFirstActiveOrganizationForUserByType(
+          supabaseAdmin,
+          user.id,
+          requestedOrganizationType
+        )
+        : await getActiveOrganizationForUser(
+          supabaseAdmin,
+          user.id,
+          null
+        );
+
+    if (requestedOrganizationType && organization.type !== requestedOrganizationType) {
+      return NextResponse.json({ error: 'Forbidden' }, { status: 403 });
+    }
 
     return NextResponse.json(organizationPayload(organization, membership));
   } catch (error) {

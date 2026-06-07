@@ -48,6 +48,7 @@ function DashboardLayoutContent({
     || pathname === '/dashboard/contact'
     || pathname === '/dashboard/brand-voice'
     || pathname === '/dashboard/campaigns'
+    || pathname.startsWith('/dashboard/agency')
     || pathname === '/dashboard/onboarding'
     || pathname === '/dashboard/analytics';
   const syncedProjectIds = new Set(syncedUploads.map((upload) => upload.projectId).filter(Boolean));

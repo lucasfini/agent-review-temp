@@ -1,5 +1,6 @@
 const mockRequireAuthenticatedUser = jest.fn();
 const mockGetActiveOrganizationForUser = jest.fn();
+const mockGetFirstActiveOrganizationForUserByType = jest.fn();
 const mockIsDemoUser = jest.fn();
 const mockFrom = jest.fn();
 const mockUpdate = jest.fn();
@@ -26,6 +27,7 @@ jest.mock('@/lib/api/route-auth', () => {
 
 jest.mock('@/lib/authz/organization-context', () => ({
   getActiveOrganizationForUser: (...args: any[]) => mockGetActiveOrganizationForUser(...args),
+  getFirstActiveOrganizationForUserByType: (...args: any[]) => mockGetFirstActiveOrganizationForUserByType(...args),
 }));
 
 jest.mock('@/lib/demo-mode', () => ({
@@ -51,8 +53,15 @@ const organization = {
     source: 'test',
   },
 };
+const internalAgencyOrganization = {
+  ...organization,
+  id: 'agency-org',
+  name: 'Internal Agency',
+  type: 'internal_agency',
+};
 const ownerMembership = { role: 'owner', status: 'active' };
 const memberMembership = { role: 'member', status: 'active' };
+const agencyAdminMembership = { role: 'agency_admin', status: 'active' };
 
 describe('current organization route', () => {
   let latestUpdatePayload: Record<string, unknown>;
@@ -60,6 +69,7 @@ describe('current organization route', () => {
   beforeEach(() => {
     mockRequireAuthenticatedUser.mockReset();
     mockGetActiveOrganizationForUser.mockReset();
+    mockGetFirstActiveOrganizationForUserByType.mockReset();
     mockIsDemoUser.mockReset();
     mockFrom.mockReset();
     mockUpdate.mockReset();
@@ -72,6 +82,10 @@ describe('current organization route', () => {
     mockGetActiveOrganizationForUser.mockResolvedValue({
       organization,
       membership: ownerMembership,
+    });
+    mockGetFirstActiveOrganizationForUserByType.mockResolvedValue({
+      organization: internalAgencyOrganization,
+      membership: agencyAdminMembership,
     });
     mockIsDemoUser.mockReturnValue(false);
     mockFrom.mockReturnValue({ update: mockUpdate });
@@ -114,6 +128,50 @@ describe('current organization route', () => {
       'user-1',
       'org-1'
     );
+  });
+
+  it('returns the first active organization matching a requested type', async () => {
+    const { GET } = await import('@/app/api/organizations/current/route');
+
+    const response = await GET(
+      new Request('http://localhost/api/organizations/current?organization_type=internal_agency') as any
+    );
+    const payload = await response.json();
+
+    expect(response.status).toBe(200);
+    expect(payload).toEqual({
+      organization: {
+        id: 'agency-org',
+        name: 'Internal Agency',
+        type: 'internal_agency',
+        onboarding: {
+          completedAt: null,
+          skippedAt: null,
+          metadata: organization.onboarding_metadata_json,
+        },
+      },
+      membership: agencyAdminMembership,
+    });
+    expect(mockGetFirstActiveOrganizationForUserByType).toHaveBeenCalledWith(
+      expect.anything(),
+      'user-1',
+      'internal_agency'
+    );
+    expect(mockGetActiveOrganizationForUser).not.toHaveBeenCalled();
+  });
+
+  it('rejects invalid requested organization types', async () => {
+    const { GET } = await import('@/app/api/organizations/current/route');
+
+    const response = await GET(
+      new Request('http://localhost/api/organizations/current?organization_type=partner') as any
+    );
+    const payload = await response.json();
+
+    expect(response.status).toBe(400);
+    expect(payload.error).toBe('Invalid organization_type');
+    expect(mockGetFirstActiveOrganizationForUserByType).not.toHaveBeenCalled();
+    expect(mockGetActiveOrganizationForUser).not.toHaveBeenCalled();
   });
 
   it('updates org-scoped onboarding profile and completion state for owners', async () => {
