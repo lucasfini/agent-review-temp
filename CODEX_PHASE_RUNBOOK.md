@@ -1683,6 +1683,99 @@ git commit -m "Add Granola manual import workflow"
 
 ---
 
+## [ ] Phase 4G: Slack Integration Foundation
+
+Status: Ready after Phase 4F is committed.
+
+### Objective
+
+Add the private internal agency Slack foundation without building a real Slack integration.
+
+### Scope
+
+Do:
+
+- add minimal internal agency Slack status APIs
+- store per-client Slack readiness/status in `client_integrations`
+- capture workspace/channel metadata needed for a later Slack integration
+- add a private Slack foundation page
+- keep Slack status writes restricted to roles compatible with existing client integration RLS
+- keep demo users read-only
+
+Do not:
+
+- build Slack OAuth
+- create a Slack app install flow
+- store bot tokens
+- call Slack APIs
+- sync channels or messages
+- import Slack source material automatically
+- expose Slack surfaces to SaaS customer organizations
+- change billing or generation behavior
+
+### Candidate Routes
+
+- `/dashboard/agency/slack`
+- `/api/agency/slack/status`
+
+### Required Behavior
+
+- Slack foundation UI requires an active `internal_agency` organization.
+- SaaS customer org members must not be able to use Slack foundation APIs or UI.
+- Slack status is scoped to an agency client that belongs to the same internal agency organization.
+- Slack status/config is stored as `client_integrations` provider `slack`.
+- Internal agency owners/admins/agency_admins can update Slack status.
+- Other internal agency members can read status but cannot update it.
+- Demo users cannot update Slack status.
+- No external Slack network/API integration is added.
+
+### Files likely involved
+
+- `app/api/agency/slack/*`
+- `app/dashboard/agency/slack/*`
+- `components/dashboard/nav.tsx`
+- `lib/agency-client-integrations.ts`
+- `tests/lib/agency-slack-status-route.test.ts`
+
+### Documentation
+
+Create:
+
+```text
+PHASE_4G_SLACK_INTEGRATION_FOUNDATION.md
+```
+
+### Validation
+
+Run:
+
+- `npx tsc --noEmit`
+- `npm run -s lint`
+- new Slack status tests
+- relevant client integration/client/org auth tests
+- browser or route smoke for the new Slack foundation page
+- `git diff --check`
+
+### Review Checklist
+
+- SaaS orgs cannot access Slack foundation data.
+- Slack status cannot reference cross-org agency clients.
+- Slack status writes stay aligned with client integration RLS.
+- Demo users cannot write.
+- No Slack OAuth/app/bot/API work was added.
+- No channel sync or message import was added.
+- No billing/generation behavior changed.
+- Validation passes or gaps are documented.
+
+### Commit message
+
+```bash
+git add .
+git commit -m "Add Slack integration foundation"
+```
+
+---
+
 ## How to Update This Runbook
 
 After a phase is safely committed:
