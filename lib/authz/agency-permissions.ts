@@ -23,6 +23,13 @@ const AGENCY_CLIENT_MANAGE_ROLES = new Set<string>([
   'agency_admin',
 ]);
 
+const AGENCY_SOURCE_IMPORT_MANAGE_ROLES = new Set<string>([
+  'owner',
+  'admin',
+  'agency_admin',
+  'agency_member',
+]);
+
 type OrganizationLike = Pick<OrganizationRecord, 'type'> | OrganizationType | string | null | undefined;
 
 export interface AgencyClientAccessRecord {
@@ -54,6 +61,13 @@ export function canManageAgencyClient(
   organizationType?: OrganizationType | string | null
 ): boolean {
   return isInternalAgencyOrganization(organizationType) && Boolean(role && AGENCY_CLIENT_MANAGE_ROLES.has(role));
+}
+
+export function canManageAgencySourceImport(
+  role?: OrganizationMemberRole | string | null,
+  organizationType?: OrganizationType | string | null
+): boolean {
+  return isInternalAgencyOrganization(organizationType) && Boolean(role && AGENCY_SOURCE_IMPORT_MANAGE_ROLES.has(role));
 }
 
 export async function requireAgencyAccess(

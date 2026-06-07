@@ -1281,6 +1281,106 @@ git commit -m "Add agency client management UI"
 
 ---
 
+## [ ] Phase 4C: Client Source Imports
+
+Status: Ready after Phase 4B is committed.
+
+### Objective
+
+Add the first internal agency workflow for capturing client source material that can later feed production tasks and draft generation.
+
+This phase should use the Phase 4A `source_imports` schema and keep imports private to the internal agency organization.
+
+### Scope
+
+Do:
+
+- add source import helpers for the `source_imports` table
+- add minimal internal agency source import APIs
+- support listing source imports by internal agency organization
+- support filtering source imports by agency client
+- support creating manual source imports for agency clients
+- support updating source import summary/metadata/status fields if useful
+- add a private agency source imports page or section
+- keep agency members able to capture sources where API/RLS allows it
+- keep demo users read-only
+- document how imported sources remain internal/private
+
+Do not:
+
+- build Slack integration
+- build Granola integration
+- build audio upload import workflow
+- build production queue workflows
+- build draft review or delivery
+- expose source imports to SaaS customer orgs
+- change SaaS generation or billing behavior
+- redesign the agency dashboard
+
+### Candidate Routes
+
+- `/dashboard/agency/sources`
+- `/api/agency/source-imports`
+- `/api/agency/source-imports/:id`
+
+### Required Behavior
+
+- Source import UI requires an active `internal_agency` organization.
+- SaaS customer org members must not be able to use source import APIs or UI.
+- Source imports are saved with `organization_id`.
+- If `client_id` is provided, validate the client belongs to the same internal agency organization.
+- Internal agency users can list source imports for their agency organization.
+- Internal agency operators can create manual imports where RLS allows it.
+- Demo users cannot create or update imports.
+- No Slack or Granola provider integration is added; providers are passive source labels only.
+
+### Files likely involved
+
+- `app/api/agency/source-imports/*`
+- `app/dashboard/agency/*`
+- `components/dashboard/nav.tsx`
+- `lib/authz/agency-permissions.ts`
+- `lib/agency-source-imports.ts`
+- `tests/lib/agency-source-imports*.test.ts`
+
+### Documentation
+
+Create:
+
+```text
+PHASE_4C_CLIENT_SOURCE_IMPORTS.md
+```
+
+### Validation
+
+Run:
+
+- `npx tsc --noEmit`
+- `npm run -s lint`
+- new agency source import tests
+- relevant agency/client/org auth tests
+- browser or route smoke for the new agency source imports page
+- `git diff --check`
+
+### Review Checklist
+
+- SaaS orgs cannot access source import data.
+- Client-scoped imports cannot reference cross-org agency clients.
+- Imports are saved with internal agency `organization_id`.
+- Demo users cannot write.
+- No Slack/Granola integration was added.
+- No billing/generation behavior changed.
+- Validation passes or gaps are documented.
+
+### Commit message
+
+```bash
+git add .
+git commit -m "Add agency client source imports"
+```
+
+---
+
 ## How to Update This Runbook
 
 After a phase is safely committed:

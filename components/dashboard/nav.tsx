@@ -23,6 +23,7 @@ import {
   Settings,
   CreditCard,
   BriefcaseBusiness,
+  BookOpenText,
   ListChecks,
   Mail,
   Menu,
@@ -54,6 +55,7 @@ function getMobilePageTitle(pathname: string, activeSettingsSection: string | nu
   if (pathname === '/dashboard/upload') return 'Upload Audio';
   if (pathname === '/dashboard/brand-voice') return 'Brand Voice';
   if (pathname === '/dashboard/campaigns') return 'Campaigns';
+  if (pathname.startsWith('/dashboard/agency/sources')) return 'Source Imports';
   if (pathname.startsWith('/dashboard/agency')) return 'Agency';
   if (pathname === '/dashboard/onboarding') return 'Setup';
   if (pathname === '/dashboard/analytics') return 'Analytics';
@@ -819,6 +821,7 @@ export default function DashboardNav({
       label: 'AGENCY',
       items: [
         { name: 'Agency Clients', href: '/dashboard/agency', icon: BriefcaseBusiness },
+        { name: 'Source Imports', href: '/dashboard/agency/sources', icon: BookOpenText },
       ],
     });
   }
