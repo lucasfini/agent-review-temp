@@ -1585,7 +1585,9 @@ git commit -m "Add agency draft review workflow"
 
 ---
 
-## [ ] Phase 4F: Granola Manual Import Workflow
+## [x] Phase 4F: Granola Manual Import Workflow
+
+Completed commit: e784162
 
 Status: Ready after Phase 4E is committed.
 
