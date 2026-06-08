@@ -9,10 +9,15 @@ import {
   checkAgencyLeadRateLimit,
   isLikelySpamLead,
 } from '@/lib/agency-lead-rate-limit';
+import { sendAgencyLeadNotification } from '@/lib/agency-lead-notifications';
 import { supabaseAdmin } from '@/lib/supabase/server';
 
 export const dynamic = 'force-dynamic';
 export const revalidate = 0;
+
+function safeLogMessage(error: unknown): string {
+  return error instanceof Error ? error.message : 'Unknown error';
+}
 
 function clientIpFrom(request: NextRequest): string {
   const forwardedFor = request.headers.get('x-forwarded-for');
@@ -60,6 +65,15 @@ export async function POST(request: NextRequest) {
     }
 
     const lead = await createAgencyLead(supabaseAdmin, body);
+
+    try {
+      const notification = await sendAgencyLeadNotification(lead);
+      if (!notification.delivered) {
+        console.warn('[AGENCY_LEADS_PUBLIC] Lead notification skipped:', notification.reason);
+      }
+    } catch (notificationError) {
+      console.error('[AGENCY_LEADS_PUBLIC] Lead notification failed:', safeLogMessage(notificationError));
+    }
 
     return NextResponse.json(
       {
