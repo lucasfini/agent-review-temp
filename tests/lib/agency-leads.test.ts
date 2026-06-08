@@ -1,9 +1,7 @@
 import {
   AgencyLeadValidationError,
   buildAgencyClientInputFromLead,
-  checkAgencyLeadRateLimit,
   normalizeAgencyLeadSubmission,
-  resetAgencyLeadRateLimitForTests,
   type AgencyLead,
 } from '@/lib/agency-leads';
 
@@ -29,10 +27,6 @@ const baseLead: AgencyLead = {
 };
 
 describe('agency lead helpers', () => {
-  beforeEach(() => {
-    resetAgencyLeadRateLimitForTests();
-  });
-
   it('normalizes valid public lead submissions', () => {
     const payload = normalizeAgencyLeadSubmission({
       name: ' Lucas ',
@@ -66,18 +60,6 @@ describe('agency lead helpers', () => {
       email: 'lucas@example.com',
       referralCode: 'spam',
     })).toThrow('Lead submission rejected');
-  });
-
-  it('rate limits repeated lead submissions per identifier', () => {
-    for (let index = 0; index < 5; index += 1) {
-      expect(checkAgencyLeadRateLimit('ip:127.0.0.1', 1_000).allowed).toBe(true);
-    }
-
-    const denied = checkAgencyLeadRateLimit('ip:127.0.0.1', 1_000);
-    expect(denied.allowed).toBe(false);
-    expect(denied.retryAfterSeconds).toBeGreaterThan(0);
-
-    expect(checkAgencyLeadRateLimit('ip:127.0.0.1', 1_000 + (10 * 60 * 1000) + 1).allowed).toBe(true);
   });
 
   it('maps a qualified lead into a manual agency client input', () => {

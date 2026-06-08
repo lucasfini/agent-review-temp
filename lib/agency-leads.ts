@@ -95,9 +95,6 @@ const MAX_SHORT_TEXT_LENGTH = 240;
 const MAX_URL_LENGTH = 500;
 const MAX_MESSAGE_LENGTH = 5000;
 const MAX_SOURCE_LENGTH = 120;
-const RATE_LIMIT_WINDOW_MS = 10 * 60 * 1000;
-const RATE_LIMIT_MAX = 5;
-const rateLimitBuckets = new Map<string, number[]>();
 
 function coalesceField(input: AgencyLeadInput, ...keys: Array<keyof AgencyLeadInput>): unknown {
   for (const key of keys) {
@@ -213,37 +210,6 @@ export function normalizeAgencyLeadSubmission(input: AgencyLeadInput): Record<st
     status: 'new',
     metadata_json: metadata,
   };
-}
-
-export function checkAgencyLeadRateLimit(
-  identifier: string,
-  now = Date.now()
-): { allowed: boolean; remaining: number; retryAfterSeconds: number } {
-  const normalized = identifier.trim().toLowerCase() || 'unknown';
-  const cutoff = now - RATE_LIMIT_WINDOW_MS;
-  const recent = (rateLimitBuckets.get(normalized) || []).filter((timestamp) => timestamp > cutoff);
-
-  if (recent.length >= RATE_LIMIT_MAX) {
-    const retryAfterMs = Math.max(0, RATE_LIMIT_WINDOW_MS - (now - recent[0]));
-    rateLimitBuckets.set(normalized, recent);
-    return {
-      allowed: false,
-      remaining: 0,
-      retryAfterSeconds: Math.ceil(retryAfterMs / 1000),
-    };
-  }
-
-  const next = [...recent, now];
-  rateLimitBuckets.set(normalized, next);
-  return {
-    allowed: true,
-    remaining: Math.max(0, RATE_LIMIT_MAX - next.length),
-    retryAfterSeconds: 0,
-  };
-}
-
-export function resetAgencyLeadRateLimitForTests() {
-  rateLimitBuckets.clear();
 }
 
 export async function createAgencyLead(

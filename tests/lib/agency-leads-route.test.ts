@@ -7,6 +7,7 @@ const mockGetAgencyLead = jest.fn();
 const mockUpdateAgencyLead = jest.fn();
 const mockConvertAgencyLeadToClient = jest.fn();
 const mockCheckAgencyLeadRateLimit = jest.fn();
+const mockIsLikelySpamLead = jest.fn();
 const mockIsDemoUser = jest.fn();
 
 jest.mock('@/lib/authz/agency-permissions', () => {
@@ -21,7 +22,6 @@ jest.mock('@/lib/agency-leads', () => {
   const actual = jest.requireActual('@/lib/agency-leads');
   return {
     ...actual,
-    checkAgencyLeadRateLimit: (...args: any[]) => mockCheckAgencyLeadRateLimit(...args),
     createAgencyLead: (...args: any[]) => mockCreateAgencyLead(...args),
     listAgencyLeads: (...args: any[]) => mockListAgencyLeads(...args),
     getAgencyLead: (...args: any[]) => mockGetAgencyLead(...args),
@@ -29,6 +29,11 @@ jest.mock('@/lib/agency-leads', () => {
     convertAgencyLeadToClient: (...args: any[]) => mockConvertAgencyLeadToClient(...args),
   };
 });
+
+jest.mock('@/lib/agency-lead-rate-limit', () => ({
+  checkAgencyLeadRateLimit: (...args: any[]) => mockCheckAgencyLeadRateLimit(...args),
+  isLikelySpamLead: (...args: any[]) => mockIsLikelySpamLead(...args),
+}));
 
 jest.mock('@/lib/demo-mode', () => ({
   isDemoUser: (...args: any[]) => mockIsDemoUser(...args),
@@ -93,14 +98,16 @@ describe('agency lead routes', () => {
     mockUpdateAgencyLead.mockReset();
     mockConvertAgencyLeadToClient.mockReset();
     mockCheckAgencyLeadRateLimit.mockReset();
+    mockIsLikelySpamLead.mockReset();
     mockIsDemoUser.mockReset();
 
     mockRequireAgencyAccess.mockResolvedValue({ user, organization, membership });
-    mockCheckAgencyLeadRateLimit.mockReturnValue({
+    mockCheckAgencyLeadRateLimit.mockResolvedValue({
       allowed: true,
       remaining: 4,
       retryAfterSeconds: 0,
     });
+    mockIsLikelySpamLead.mockReturnValue({ isSpam: false, reason: null });
     mockCreateAgencyLead.mockResolvedValue(lead);
     mockListAgencyLeads.mockResolvedValue([lead]);
     mockGetAgencyLead.mockResolvedValue(lead);
@@ -151,13 +158,14 @@ describe('agency lead routes', () => {
     expect(payload.error).toBe('Please enter a valid email address');
     expect(mockCreateAgencyLead).not.toHaveBeenCalled();
     expect(mockCheckAgencyLeadRateLimit).not.toHaveBeenCalled();
+    expect(mockIsLikelySpamLead).not.toHaveBeenCalled();
   });
 
   it('rate limits public agency lead submissions', async () => {
     const { POST } = await import('@/app/api/agency-leads/route');
     mockCheckAgencyLeadRateLimit
-      .mockReturnValueOnce({ allowed: false, remaining: 0, retryAfterSeconds: 60 })
-      .mockReturnValueOnce({ allowed: true, remaining: 4, retryAfterSeconds: 0 });
+      .mockResolvedValueOnce({ allowed: false, remaining: 0, retryAfterSeconds: 60 })
+      .mockResolvedValueOnce({ allowed: true, remaining: 4, retryAfterSeconds: 0 });
 
     const response = await POST(new Request('http://localhost/api/agency-leads', {
       method: 'POST',
@@ -167,6 +175,25 @@ describe('agency lead routes', () => {
 
     expect(response.status).toBe(429);
     expect(payload.retryAfterSeconds).toBe(60);
+    expect(mockCreateAgencyLead).not.toHaveBeenCalled();
+  });
+
+  it('rejects likely spam lead submissions before storage', async () => {
+    const { POST } = await import('@/app/api/agency-leads/route');
+    mockIsLikelySpamLead.mockReturnValue({ isSpam: true, reason: 'too_many_links' });
+
+    const response = await POST(new Request('http://localhost/api/agency-leads', {
+      method: 'POST',
+      body: JSON.stringify({
+        email: 'lead@example.com',
+        message: 'https://a.test https://b.test https://c.test https://d.test',
+      }),
+    }) as any);
+    const payload = await response.json();
+
+    expect(response.status).toBe(400);
+    expect(payload.error).toBe('Lead submission rejected');
+    expect(mockCheckAgencyLeadRateLimit).not.toHaveBeenCalled();
     expect(mockCreateAgencyLead).not.toHaveBeenCalled();
   });
 

@@ -2,10 +2,13 @@ import { NextRequest, NextResponse } from 'next/server';
 
 import {
   AgencyLeadValidationError,
-  checkAgencyLeadRateLimit,
   createAgencyLead,
   normalizeAgencyLeadSubmission,
 } from '@/lib/agency-leads';
+import {
+  checkAgencyLeadRateLimit,
+  isLikelySpamLead,
+} from '@/lib/agency-lead-rate-limit';
 import { supabaseAdmin } from '@/lib/supabase/server';
 
 export const dynamic = 'force-dynamic';
@@ -36,9 +39,16 @@ export async function POST(request: NextRequest) {
     const body = await request.json().catch(() => ({}));
     const normalized = normalizeAgencyLeadSubmission(body);
     const ip = clientIpFrom(request);
+    const spamCheck = isLikelySpamLead(body);
 
-    const ipLimit = checkAgencyLeadRateLimit(`ip:${ip}`);
-    const emailLimit = checkAgencyLeadRateLimit(`email:${normalized.email}`);
+    if (spamCheck.isSpam) {
+      console.warn('[AGENCY_LEADS_PUBLIC] Rejected likely spam lead:', spamCheck.reason);
+      throw new AgencyLeadValidationError('Lead submission rejected');
+    }
+
+    const normalizedEmail = typeof normalized.email === 'string' ? normalized.email : '';
+    const ipLimit = await checkAgencyLeadRateLimit({ kind: 'ip', value: ip });
+    const emailLimit = await checkAgencyLeadRateLimit({ kind: 'email', value: normalizedEmail });
     if (!ipLimit.allowed || !emailLimit.allowed) {
       return NextResponse.json(
         {
