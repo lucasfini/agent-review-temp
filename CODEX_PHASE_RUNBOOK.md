@@ -5133,7 +5133,9 @@ git commit -m "Add agency lead export workflow"
 
 ---
 
-## [ ] Phase 7G: Public Agency Funnel QA and Conversion Review
+## [x] Phase 7G: Public Agency Funnel QA and Conversion Review
+
+Completed commit: 94ccee7
 
 Status: Ready after Phase 7F is committed.
 
