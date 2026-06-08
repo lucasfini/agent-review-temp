@@ -188,6 +188,87 @@ describe('agency Slack status routes', () => {
     );
   });
 
+  it('preserves OAuth connected metadata when saving readiness notes', async () => {
+    const { PATCH } = await import('@/app/api/agency/slack/status/route');
+    mockGetAgencyClientIntegration.mockResolvedValue({
+      ...integration,
+      status: 'connected',
+      metadata: {
+        mode: 'oauth_connected',
+        externalConnection: true,
+        workspaceId: 'T123',
+        workspaceName: 'Client Workspace',
+      },
+    });
+
+    const response = await PATCH(new Request('http://localhost/api/agency/slack/status', {
+      method: 'PATCH',
+      body: JSON.stringify({
+        organization_id: 'agency-org',
+        client_id: 'client-1',
+        status: 'connected',
+        workspaceName: 'Client Workspace',
+        channelNames: '#support',
+      }),
+    }) as any);
+
+    expect(response.status).toBe(200);
+    expect(mockSetAgencyClientIntegration).toHaveBeenCalledWith(
+      expect.anything(),
+      'client-1',
+      expect.objectContaining({
+        provider: 'slack',
+        status: 'connected',
+        metadata: expect.objectContaining({
+          mode: 'oauth_connected',
+          workspaceName: 'Client Workspace',
+          externalConnection: true,
+        }),
+      })
+    );
+  });
+
+  it('keeps existing Slack metadata when a status patch omits optional fields', async () => {
+    const { PATCH } = await import('@/app/api/agency/slack/status/route');
+    mockGetAgencyClientIntegration.mockResolvedValue({
+      ...integration,
+      status: 'connected',
+      metadata: {
+        mode: 'oauth_connected',
+        externalConnection: true,
+        workspaceName: 'Client Workspace',
+        workspaceUrl: 'https://client.slack.com',
+        channelNames: '#support',
+        notes: 'Existing notes',
+      },
+    });
+
+    const response = await PATCH(new Request('http://localhost/api/agency/slack/status', {
+      method: 'PATCH',
+      body: JSON.stringify({
+        organization_id: 'agency-org',
+        client_id: 'client-1',
+        status: 'connected',
+      }),
+    }) as any);
+
+    expect(response.status).toBe(200);
+    expect(mockSetAgencyClientIntegration).toHaveBeenCalledWith(
+      expect.anything(),
+      'client-1',
+      expect.objectContaining({
+        metadata: expect.objectContaining({
+          mode: 'oauth_connected',
+          externalConnection: true,
+          workspaceName: 'Client Workspace',
+          workspaceUrl: 'https://client.slack.com',
+          channelNames: '#support',
+          notes: 'Existing notes',
+        }),
+      })
+    );
+  });
+
   it('blocks agency members from Slack status writes', async () => {
     const { PATCH } = await import('@/app/api/agency/slack/status/route');
     mockRequireAgencyClientAccess.mockResolvedValue({

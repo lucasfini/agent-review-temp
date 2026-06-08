@@ -29,6 +29,7 @@ import {
   ListChecks,
   Mail,
   Menu,
+  PackageCheck,
   X,
   Plus,
   Sun,
@@ -57,6 +58,7 @@ function getMobilePageTitle(pathname: string, activeSettingsSection: string | nu
   if (pathname === '/dashboard/upload') return 'Upload Audio';
   if (pathname === '/dashboard/brand-voice') return 'Brand Voice';
   if (pathname === '/dashboard/campaigns') return 'Campaigns';
+  if (pathname.startsWith('/dashboard/agency/delivery')) return 'Client Delivery';
   if (pathname.startsWith('/dashboard/agency/drafts')) return 'Draft Review';
   if (pathname.startsWith('/dashboard/agency/granola')) return 'Granola Imports';
   if (pathname.startsWith('/dashboard/agency/slack')) return 'Slack Foundation';
@@ -830,6 +832,7 @@ export default function DashboardNav({
         { name: 'Source Imports', href: '/dashboard/agency/sources', icon: BookOpenText },
         { name: 'Production Queue', href: '/dashboard/agency/production', icon: ClipboardList },
         { name: 'Draft Review', href: '/dashboard/agency/drafts', icon: FileText },
+        { name: 'Client Delivery', href: '/dashboard/agency/delivery', icon: PackageCheck },
         { name: 'Granola Imports', href: '/dashboard/agency/granola', icon: BookOpenText },
         { name: 'Slack Foundation', href: '/dashboard/agency/slack', icon: Mail },
       ],

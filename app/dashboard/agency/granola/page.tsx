@@ -4,8 +4,10 @@ import { useCallback, useEffect, useMemo, useState, type ReactNode } from 'react
 import {
   BookOpenText,
   Calendar,
+  CheckSquare,
   FileText,
   Loader2,
+  Quote,
   Save,
   ShieldAlert,
   UsersRound,
@@ -15,6 +17,7 @@ import { Badge } from '@/components/ui/badge';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
 import { type AgencyClient } from '@/lib/agency-clients';
 import { type AgencyClientIntegration } from '@/lib/agency-client-integrations';
+import { normalizeGranolaManualImport } from '@/lib/agency-granola-parser';
 import { type AgencySourceImport } from '@/lib/agency-source-imports';
 import { useAuth } from '@/lib/auth/context';
 import { useCurrentOrganization } from '@/lib/hooks/useCurrentOrganization';
@@ -24,18 +27,30 @@ type GranolaImportForm = {
   clientId: string;
   sourceTitle: string;
   meetingDate: string;
+  meetingType: string;
   participants: string;
   rawText: string;
   summary: string;
+  decisions: string;
+  actionItems: string;
+  customerPainPoints: string;
+  notableQuotes: string;
+  followUpOpportunities: string;
 };
 
 const emptyGranolaForm: GranolaImportForm = {
   clientId: '',
   sourceTitle: 'Granola meeting notes',
   meetingDate: '',
+  meetingType: '',
   participants: '',
   rawText: '',
   summary: '',
+  decisions: '',
+  actionItems: '',
+  customerPainPoints: '',
+  notableQuotes: '',
+  followUpOpportunities: '',
 };
 
 function formatDate(value: string | null): string {
@@ -122,11 +137,48 @@ function formToPayload(form: GranolaImportForm, organizationId?: string | null) 
     organization_id: organizationId || undefined,
     client_id: form.clientId,
     sourceTitle: form.sourceTitle,
+    meetingTitle: form.sourceTitle,
     rawText: form.rawText,
     summary: form.summary,
     meetingDate: form.meetingDate || null,
+    meetingType: form.meetingType || null,
     participants: form.participants || null,
+    decisions: form.decisions || null,
+    actionItems: form.actionItems || null,
+    customerPainPoints: form.customerPainPoints || null,
+    notableQuotes: form.notableQuotes || null,
+    followUpOpportunities: form.followUpOpportunities || null,
   };
+}
+
+function PreviewList({ title, values }: { title: string; values: string[] }) {
+  return (
+    <div className="rounded-lg border border-slate-200 p-3 dark:border-slate-800">
+      <p className="text-xs font-semibold uppercase tracking-[0.14em] text-slate-500 dark:text-slate-400">
+        {title}
+      </p>
+      {values.length === 0 ? (
+        <p className="mt-2 text-sm text-slate-500 dark:text-slate-400">None</p>
+      ) : (
+        <ul className="mt-2 space-y-1 text-sm leading-5 text-slate-700 dark:text-slate-300">
+          {values.slice(0, 4).map((value) => (
+            <li key={value} className="line-clamp-2">
+              {value}
+            </li>
+          ))}
+        </ul>
+      )}
+    </div>
+  );
+}
+
+function metadataString(value: unknown): string | null {
+  return typeof value === 'string' && value.trim() ? value.trim() : null;
+}
+
+function metadataList(value: unknown): string[] {
+  if (!Array.isArray(value)) return [];
+  return value.filter((item): item is string => typeof item === 'string' && item.trim().length > 0);
 }
 
 export default function AgencyGranolaImportPage() {
@@ -158,6 +210,13 @@ export default function AgencyGranolaImportPage() {
   const selectedClient = useMemo(
     () => clients.find((client) => client.id === form.clientId) || null,
     [clients, form.clientId]
+  );
+  const structuredPreview = useMemo(
+    () => normalizeGranolaManualImport({
+      ...form,
+      meetingTitle: form.sourceTitle,
+    }, 'preview').metadata,
+    [form]
   );
   const isInternalAgency = organization?.type === 'internal_agency';
   const canImport = canManage && !isDemoMode;
@@ -265,9 +324,15 @@ export default function AgencyGranolaImportPage() {
         ...current,
         sourceTitle: 'Granola meeting notes',
         meetingDate: '',
+        meetingType: '',
         participants: '',
         rawText: '',
         summary: '',
+        decisions: '',
+        actionItems: '',
+        customerPainPoints: '',
+        notableQuotes: '',
+        followUpOpportunities: '',
       }));
     } catch (saveError) {
       setError(saveError instanceof Error ? saveError.message : 'Failed to import Granola notes');
@@ -416,6 +481,17 @@ export default function AgencyGranolaImportPage() {
                   </div>
 
                   <div>
+                    <FieldLabel htmlFor="granola-type">Meeting type</FieldLabel>
+                    <TextInput
+                      id="granola-type"
+                      value={form.meetingType}
+                      onChange={(value) => updateField('meetingType', value)}
+                      disabled={!canImport}
+                      placeholder="Customer interview, strategy call"
+                    />
+                  </div>
+
+                  <div>
                     <FieldLabel htmlFor="granola-participants">Participants</FieldLabel>
                     <TextInput
                       id="granola-participants"
@@ -423,6 +499,18 @@ export default function AgencyGranolaImportPage() {
                       onChange={(value) => updateField('participants', value)}
                       disabled={!canImport}
                       placeholder="Names or roles"
+                    />
+                  </div>
+
+                  <div className="md:col-span-2">
+                    <FieldLabel htmlFor="granola-summary">Summary</FieldLabel>
+                    <TextArea
+                      id="granola-summary"
+                      value={form.summary}
+                      onChange={(value) => updateField('summary', value)}
+                      disabled={!canImport}
+                      placeholder="Optional short summary for the production team."
+                      rows={4}
                     />
                   </div>
 
@@ -438,17 +526,105 @@ export default function AgencyGranolaImportPage() {
                     />
                   </div>
 
-                  <div className="md:col-span-2">
-                    <FieldLabel htmlFor="granola-summary">Summary</FieldLabel>
+                  <div>
+                    <FieldLabel htmlFor="granola-decisions">Decisions</FieldLabel>
                     <TextArea
-                      id="granola-summary"
-                      value={form.summary}
-                      onChange={(value) => updateField('summary', value)}
+                      id="granola-decisions"
+                      value={form.decisions}
+                      onChange={(value) => updateField('decisions', value)}
                       disabled={!canImport}
-                      placeholder="Optional short summary for the production team."
-                      rows={5}
+                      placeholder="One decision per line."
+                      rows={4}
                     />
                   </div>
+
+                  <div>
+                    <FieldLabel htmlFor="granola-actions">Action items</FieldLabel>
+                    <TextArea
+                      id="granola-actions"
+                      value={form.actionItems}
+                      onChange={(value) => updateField('actionItems', value)}
+                      disabled={!canImport}
+                      placeholder="One action item per line."
+                      rows={4}
+                    />
+                  </div>
+
+                  <div>
+                    <FieldLabel htmlFor="granola-pain-points">Customer pain points</FieldLabel>
+                    <TextArea
+                      id="granola-pain-points"
+                      value={form.customerPainPoints}
+                      onChange={(value) => updateField('customerPainPoints', value)}
+                      disabled={!canImport}
+                      placeholder="Problems, objections, or friction."
+                      rows={4}
+                    />
+                  </div>
+
+                  <div>
+                    <FieldLabel htmlFor="granola-follow-ups">Follow-up opportunities</FieldLabel>
+                    <TextArea
+                      id="granola-follow-ups"
+                      value={form.followUpOpportunities}
+                      onChange={(value) => updateField('followUpOpportunities', value)}
+                      disabled={!canImport}
+                      placeholder="Ideas to revisit with the client."
+                      rows={4}
+                    />
+                  </div>
+
+                  <div className="md:col-span-2">
+                    <FieldLabel htmlFor="granola-quotes">Notable quotes</FieldLabel>
+                    <TextArea
+                      id="granola-quotes"
+                      value={form.notableQuotes}
+                      onChange={(value) => updateField('notableQuotes', value)}
+                      disabled={!canImport}
+                      placeholder="One quote per line."
+                      rows={4}
+                    />
+                  </div>
+                </div>
+
+                <div className="mt-5 rounded-lg border border-slate-200 p-3 dark:border-slate-800">
+                  <div className="flex flex-wrap items-center justify-between gap-2">
+                    <div>
+                      <p className="text-sm font-semibold text-slate-900 dark:text-slate-100">
+                        Structured Preview
+                      </p>
+                      <p className="mt-1 text-xs text-slate-500 dark:text-slate-400">
+                        Meeting details saved with this import.
+                      </p>
+                    </div>
+                    <div className="flex flex-wrap items-center gap-2 text-xs text-slate-500 dark:text-slate-400">
+                      <span className="inline-flex items-center gap-1">
+                        <UsersRound className="h-3.5 w-3.5" />
+                        {structuredPreview.participants.length}
+                      </span>
+                      <span className="inline-flex items-center gap-1">
+                        <CheckSquare className="h-3.5 w-3.5" />
+                        {structuredPreview.actionItems.length}
+                      </span>
+                      <span className="inline-flex items-center gap-1">
+                        <Quote className="h-3.5 w-3.5" />
+                        {structuredPreview.notableQuotes.length}
+                      </span>
+                    </div>
+                  </div>
+                  <div className="mt-3 grid gap-3 md:grid-cols-2">
+                    <PreviewList title="Participants" values={structuredPreview.participants} />
+                    <PreviewList title="Decisions" values={structuredPreview.decisions} />
+                    <PreviewList title="Action Items" values={structuredPreview.actionItems} />
+                    <PreviewList title="Pain Points" values={structuredPreview.customerPainPoints} />
+                    <PreviewList title="Quotes" values={structuredPreview.notableQuotes} />
+                    <PreviewList title="Follow Ups" values={structuredPreview.followUpOpportunities} />
+                  </div>
+                  {form.rawText.trim() && structuredPreview.parserWarnings.length > 0 && (
+                    <p className="mt-3 text-xs leading-5 text-slate-500 dark:text-slate-400">
+                      {structuredPreview.parserWarnings[0]}
+                    </p>
+                  )}
                 </div>
 
                 <div className="mt-5 flex flex-wrap items-center justify-between gap-3 rounded-lg border border-slate-200 p-3 dark:border-slate-800">
@@ -538,15 +714,43 @@ export default function AgencyGranolaImportPage() {
                           key={item.id}
                           className="rounded-lg border border-slate-200 p-3 dark:border-slate-800"
                         >
+                          {(() => {
+                            const meetingType = metadataString(item.metadata?.meetingType);
+                            const participants = metadataList(item.metadata?.participants);
+                            const actionItems = metadataList(item.metadata?.actionItems);
+                            return (
+                              <>
                           <p className="truncate text-sm font-semibold text-slate-900 dark:text-slate-100">
                             {item.sourceTitle || 'Granola notes'}
                           </p>
+                          {(meetingType || participants.length > 0 || actionItems.length > 0) && (
+                            <div className="mt-2 flex flex-wrap gap-1.5">
+                              {meetingType && (
+                                <Badge variant="secondary" className="text-[0.68rem]">
+                                  {meetingType}
+                                </Badge>
+                              )}
+                              {participants.length > 0 && (
+                                <Badge variant="outline" className="text-[0.68rem]">
+                                  {participants.length} participants
+                                </Badge>
+                              )}
+                              {actionItems.length > 0 && (
+                                <Badge variant="outline" className="text-[0.68rem]">
+                                  {actionItems.length} actions
+                                </Badge>
+                              )}
+                            </div>
+                          )}
                           <p className="mt-1 line-clamp-2 text-xs leading-5 text-slate-500 dark:text-slate-400">
                             {item.summary || item.rawText || 'No summary'}
                           </p>
                           <p className="mt-2 text-xs text-slate-400 dark:text-slate-500">
                             {formatDate(item.createdAt)}
                           </p>
+                              </>
+                            );
+                          })()}
                         </div>
                       ))}
                     </div>

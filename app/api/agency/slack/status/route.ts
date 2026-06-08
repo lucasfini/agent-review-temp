@@ -51,14 +51,38 @@ function membershipPayload(role: string, status: string, organizationType: strin
   };
 }
 
-function slackMetadataFrom(body: any): Record<string, unknown> {
+function metadataTextFromBodyOrExisting(
+  body: any,
+  existingMetadata: Record<string, unknown>,
+  key: string
+): string | null {
+  if (typeof body?.[key] === 'string') {
+    return body[key].trim() || null;
+  }
+
+  if (body && Object.prototype.hasOwnProperty.call(body, key)) {
+    return null;
+  }
+
+  const existingValue = existingMetadata[key];
+  return typeof existingValue === 'string' ? existingValue : null;
+}
+
+function slackMetadataFrom(
+  body: any,
+  existingIntegration?: Awaited<ReturnType<typeof getAgencyClientIntegration>> | null
+): Record<string, unknown> {
+  const existingMetadata = existingIntegration?.metadata || {};
+  const isOAuthConnected = existingMetadata.mode === 'oauth_connected'
+    || existingMetadata.externalConnection === true;
+
   return {
-    mode: 'foundation_only',
-    workspaceName: typeof body?.workspaceName === 'string' ? body.workspaceName.trim() || null : null,
-    workspaceUrl: typeof body?.workspaceUrl === 'string' ? body.workspaceUrl.trim() || null : null,
-    channelNames: typeof body?.channelNames === 'string' ? body.channelNames.trim() || null : null,
-    notes: typeof body?.notes === 'string' ? body.notes.trim() || null : null,
-    externalConnection: false,
+    mode: isOAuthConnected ? 'oauth_connected' : 'foundation_only',
+    workspaceName: metadataTextFromBodyOrExisting(body, existingMetadata, 'workspaceName'),
+    workspaceUrl: metadataTextFromBodyOrExisting(body, existingMetadata, 'workspaceUrl'),
+    channelNames: metadataTextFromBodyOrExisting(body, existingMetadata, 'channelNames'),
+    notes: metadataTextFromBodyOrExisting(body, existingMetadata, 'notes'),
+    externalConnection: isOAuthConnected,
   };
 }
 
@@ -116,10 +140,11 @@ export async function PATCH(request: NextRequest) {
       );
     }
 
+    const existingIntegration = await getAgencyClientIntegration(supabaseAdmin, clientId, 'slack');
     const integration = await setAgencyClientIntegration(supabaseAdmin, clientId, {
       provider: 'slack',
       status: body?.status || 'not_connected',
-      metadata: slackMetadataFrom(body),
+      metadata: slackMetadataFrom(body, existingIntegration),
     });
 
     return NextResponse.json({

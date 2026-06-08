@@ -10,6 +10,7 @@ import {
   listAgencySourceImports,
   sourceImportClientIdFrom,
 } from '@/lib/agency-source-imports';
+import { normalizeGranolaManualImport } from '@/lib/agency-granola-parser';
 import { RouteAccessError } from '@/lib/api/route-auth';
 import {
   canManageAgencyClient,
@@ -49,16 +50,6 @@ function membershipPayload(role: string, status: string, organizationType: strin
     status,
     canManageAgencySourceImport: canManageAgencySourceImport(role, organizationType),
     canManageAgencyClient: canManageAgencyClient(role, organizationType),
-  };
-}
-
-function granolaMetadataFrom(body: any, userId: string): Record<string, unknown> {
-  return {
-    capturedVia: 'agency_granola_manual_import',
-    importMode: 'manual_paste',
-    meetingDate: typeof body?.meetingDate === 'string' ? body.meetingDate : null,
-    participants: typeof body?.participants === 'string' ? body.participants : null,
-    importedBy: userId,
   };
 }
 
@@ -125,15 +116,20 @@ export async function POST(request: NextRequest) {
       );
     }
 
+    const granolaImport = normalizeGranolaManualImport(body, user.id);
+
     const sourceImport = await createAgencySourceImport(supabaseAdmin, organization.id, user.id, {
       ...body,
       provider: 'granola',
       client_id: clientId,
+      sourceTitle: granolaImport.sourceTitle,
+      rawText: granolaImport.rawText,
+      summary: granolaImport.summary,
       metadata: {
         ...(body?.metadata && typeof body.metadata === 'object' && !Array.isArray(body.metadata)
           ? body.metadata
           : {}),
-        ...granolaMetadataFrom(body, user.id),
+        ...granolaImport.metadata,
       },
     });
 

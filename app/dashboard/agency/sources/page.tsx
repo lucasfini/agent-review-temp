@@ -1,6 +1,7 @@
 "use client";
 
 import { useCallback, useEffect, useMemo, useState, type ReactNode } from 'react';
+import { useRouter } from 'next/navigation';
 import {
   BookOpenText,
   FileText,
@@ -10,11 +11,13 @@ import {
   Save,
   ShieldAlert,
   UserRound,
+  Wand2,
 } from 'lucide-react';
 
 import { Badge } from '@/components/ui/badge';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
 import { type AgencyClient } from '@/lib/agency-clients';
+import { CONTENT_TYPES } from '@/lib/content-types';
 import {
   MANUAL_AGENCY_SOURCE_IMPORT_PROVIDERS,
   type AgencySourceImport,
@@ -33,6 +36,13 @@ type SourceFormState = {
   summary: string;
 };
 
+type GenerationFormState = {
+  contentTypeId: string;
+  channel: string;
+  quantity: number;
+  instructions: string;
+};
+
 const emptySourceForm: SourceFormState = {
   clientId: '',
   provider: 'manual_note',
@@ -40,6 +50,13 @@ const emptySourceForm: SourceFormState = {
   sourceUrl: '',
   rawText: '',
   summary: '',
+};
+
+const emptyGenerationForm: GenerationFormState = {
+  contentTypeId: 'linkedin_posts',
+  channel: 'linkedin',
+  quantity: 1,
+  instructions: '',
 };
 
 function sourceToForm(source: AgencySourceImport): SourceFormState {
@@ -165,6 +182,7 @@ function SummaryTile({
 }
 
 export default function AgencySourceImportsPage() {
+  const router = useRouter();
   const { session, isDemoMode } = useAuth();
   const {
     organization,
@@ -176,9 +194,12 @@ export default function AgencySourceImportsPage() {
   const [selectedSourceId, setSelectedSourceId] = useState<string | null>(null);
   const [filterClientId, setFilterClientId] = useState('');
   const [form, setForm] = useState<SourceFormState>(emptySourceForm);
+  const [generationForm, setGenerationForm] = useState<GenerationFormState>(emptyGenerationForm);
   const [canManage, setCanManage] = useState(false);
+  const [canGenerateDraft, setCanGenerateDraft] = useState(false);
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
+  const [generating, setGenerating] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [message, setMessage] = useState<string | null>(null);
 
@@ -200,6 +221,11 @@ export default function AgencySourceImportsPage() {
   );
   const isInternalAgency = organization?.type === 'internal_agency';
   const canEdit = canManage && !isDemoMode;
+  const canGenerate = canGenerateDraft && !isDemoMode && Boolean(selectedSource?.clientId);
+  const generationContentTypes = useMemo(
+    () => CONTENT_TYPES.filter((contentType) => contentType.enabled && contentType.outputType),
+    []
+  );
   const withClientCount = useMemo(
     () => sourceImports.filter((source) => Boolean(source.clientId)).length,
     [sourceImports]
@@ -219,6 +245,7 @@ export default function AgencySourceImportsPage() {
       setSourceImports([]);
       setSelectedSourceId(null);
       setCanManage(false);
+      setCanGenerateDraft(false);
       setLoading(false);
       return;
     }
@@ -263,6 +290,7 @@ export default function AgencySourceImportsPage() {
       setClients(nextClients);
       setSourceImports(nextSources);
       setCanManage(Boolean(sourcesPayload.membership?.canManageAgencySourceImport));
+      setCanGenerateDraft(Boolean(sourcesPayload.membership?.canManageAgencyDraft));
 
       const nextSelected = nextSources[0] || null;
       setSelectedSourceId(nextSelected?.id || null);
@@ -277,6 +305,7 @@ export default function AgencySourceImportsPage() {
       setSelectedSourceId(null);
       setForm(emptySourceForm);
       setCanManage(false);
+      setCanGenerateDraft(false);
     } finally {
       setLoading(false);
     }
@@ -289,6 +318,11 @@ export default function AgencySourceImportsPage() {
 
   const updateField = <K extends keyof SourceFormState>(field: K, value: SourceFormState[K]) => {
     setForm((current) => ({ ...current, [field]: value }));
+    setMessage(null);
+  };
+
+  const updateGenerationField = <K extends keyof GenerationFormState>(field: K, value: GenerationFormState[K]) => {
+    setGenerationForm((current) => ({ ...current, [field]: value }));
     setMessage(null);
   };
 
@@ -346,11 +380,52 @@ export default function AgencySourceImportsPage() {
       setSelectedSourceId(savedSource.id);
       setForm(sourceToForm(savedSource));
       setCanManage(Boolean(payload.membership?.canManageAgencySourceImport ?? canManage));
+      setCanGenerateDraft(Boolean(payload.membership?.canManageAgencyDraft ?? canGenerateDraft));
       setMessage(isUpdate ? 'Source import updated.' : 'Source import captured.');
     } catch (saveError) {
       setError(saveError instanceof Error ? saveError.message : 'Failed to save source import');
     } finally {
       setSaving(false);
+    }
+  };
+
+  const generateDraft = async () => {
+    if (!canGenerate || !organizationId || !selectedSource?.id || !selectedSource.clientId) return;
+    setGenerating(true);
+    setError(null);
+    setMessage(null);
+
+    try {
+      const response = await fetch(
+        withOrganizationId(`/api/agency/source-imports/${selectedSource.id}/generate`, organizationId),
+        {
+          method: 'POST',
+          headers: {
+            ...authHeaders,
+            'Content-Type': 'application/json',
+          },
+          body: JSON.stringify({
+            organization_id: organizationId,
+            source_import_id: selectedSource.id,
+            client_id: selectedSource.clientId,
+            content_type: generationForm.contentTypeId,
+            channel: generationForm.channel || undefined,
+            quantity: generationForm.quantity,
+            instructions: generationForm.instructions || undefined,
+          }),
+        }
+      );
+      const payload = await response.json().catch(() => ({}));
+
+      if (!response.ok) {
+        throw new Error(payload.error || 'Failed to generate agency draft');
+      }
+
+      router.push(withOrganizationId('/dashboard/agency/drafts', organizationId));
+    } catch (generateError) {
+      setError(generateError instanceof Error ? generateError.message : 'Failed to generate agency draft');
+    } finally {
+      setGenerating(false);
     }
   };
 
@@ -685,6 +760,104 @@ export default function AgencySourceImportsPage() {
                       <p className="mt-2 truncate text-sm text-slate-700 dark:text-slate-300">
                         {form.sourceUrl || 'Not set'}
                       </p>
+                    </div>
+                  </div>
+
+                  <div className="mt-5 rounded-lg border border-slate-200 p-3 dark:border-slate-800">
+                    <div className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
+                      <div>
+                        <p className="text-sm font-semibold text-slate-900 dark:text-slate-100">
+                          Generate Draft
+                        </p>
+                        <p className="mt-1 text-xs leading-5 text-slate-500 dark:text-slate-400">
+                          Creates an internal review draft from the selected source.
+                        </p>
+                      </div>
+                      <button
+                        type="button"
+                        onClick={() => void generateDraft()}
+                        disabled={!canGenerate || generating}
+                        className="inline-flex min-h-10 items-center justify-center gap-2 rounded-lg bg-slate-900 px-3 py-2 text-sm font-semibold text-white transition-colors hover:bg-slate-800 disabled:cursor-not-allowed disabled:opacity-50 dark:bg-slate-100 dark:text-slate-900 dark:hover:bg-white"
+                      >
+                        {generating ? <Loader2 className="h-4 w-4 animate-spin" /> : <Wand2 className="h-4 w-4" />}
+                        Generate
+                      </button>
+                    </div>
+
+                    {!selectedSource?.clientId && (
+                      <p className="mt-3 rounded-lg bg-slate-50 px-3 py-2 text-xs text-slate-600 dark:bg-slate-900 dark:text-slate-300">
+                        Select a client-linked source before generating a draft.
+                      </p>
+                    )}
+                    {!canGenerateDraft && (
+                      <p className="mt-3 rounded-lg bg-slate-50 px-3 py-2 text-xs text-slate-600 dark:bg-slate-900 dark:text-slate-300">
+                        Draft generation requires agency draft management access.
+                      </p>
+                    )}
+
+                    <div className="mt-3 grid gap-3 md:grid-cols-[minmax(0,1fr)_9rem_7rem]">
+                      <div>
+                        <FieldLabel htmlFor="source-generate-type">Content type</FieldLabel>
+                        <select
+                          id="source-generate-type"
+                          value={generationForm.contentTypeId}
+                          onChange={(event) => {
+                            const nextType = generationContentTypes.find((item) => item.id === event.target.value);
+                            setGenerationForm((current) => ({
+                              ...current,
+                              contentTypeId: event.target.value,
+                              channel: nextType?.platformType || nextType?.platform || current.channel,
+                              quantity: Math.min(current.quantity, nextType?.maxCount || nextType?.count || current.quantity),
+                            }));
+                            setMessage(null);
+                          }}
+                          disabled={!canGenerate || generating}
+                          className="mt-1 w-full rounded-lg border border-slate-300 bg-white px-3 py-2 text-sm text-slate-900 shadow-sm outline-none transition focus:border-blue-500 focus:ring-2 focus:ring-blue-500/20 disabled:cursor-not-allowed disabled:bg-slate-100 disabled:text-slate-500 dark:border-slate-700 dark:bg-slate-950 dark:text-slate-100 dark:disabled:bg-slate-900"
+                        >
+                          {generationContentTypes.map((contentType) => (
+                            <option key={contentType.id} value={contentType.id}>
+                              {contentType.name}
+                            </option>
+                          ))}
+                        </select>
+                      </div>
+
+                      <div>
+                        <FieldLabel htmlFor="source-generate-channel">Channel</FieldLabel>
+                        <TextInput
+                          id="source-generate-channel"
+                          value={generationForm.channel}
+                          onChange={(value) => updateGenerationField('channel', value)}
+                          disabled={!canGenerate || generating}
+                          placeholder="linkedin"
+                        />
+                      </div>
+
+                      <div>
+                        <FieldLabel htmlFor="source-generate-quantity">Quantity</FieldLabel>
+                        <input
+                          id="source-generate-quantity"
+                          type="number"
+                          min={1}
+                          max={6}
+                          value={generationForm.quantity}
+                          onChange={(event) => updateGenerationField('quantity', Number(event.target.value) || 1)}
+                          disabled={!canGenerate || generating}
+                          className="mt-1 w-full rounded-lg border border-slate-300 bg-white px-3 py-2 text-sm text-slate-900 shadow-sm outline-none transition focus:border-blue-500 focus:ring-2 focus:ring-blue-500/20 disabled:cursor-not-allowed disabled:bg-slate-100 disabled:text-slate-500 dark:border-slate-700 dark:bg-slate-950 dark:text-slate-100 dark:disabled:bg-slate-900"
+                        />
+                      </div>
+
+                      <div className="md:col-span-3">
+                        <FieldLabel htmlFor="source-generate-instructions">Instructions</FieldLabel>
+                        <TextArea
+                          id="source-generate-instructions"
+                          value={generationForm.instructions}
+                          onChange={(value) => updateGenerationField('instructions', value)}
+                          disabled={!canGenerate || generating}
+                          rows={3}
+                          placeholder="Angle, offer, constraints, or format notes."
+                        />
+                      </div>
                     </div>
                   </div>
                 </CardContent>

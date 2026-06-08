@@ -1954,6 +1954,1129 @@ git commit -m "Review and harden internal agency system"
 
 ---
 
+## [ ] Phase 5: Real Agency Integrations + Workflow Automation
+
+Phase 5 builds real workflow power on top of the private internal agency system completed in Phase 4.
+
+The goal of Phase 5 is to turn the agency console from a manual operating system into an integration-assisted production workflow.
+
+Phase 5 must remain private/internal. None of this should become a public SaaS feature unless a later phase explicitly says so.
+
+### Universal Phase 5 Rules
+
+For every Phase 5 subphase:
+
+1. Implement only the current subphase.
+2. Review the implementation in the same Codex run.
+3. Fix issues found during review.
+4. Re-run validation.
+5. Produce a final report.
+6. Stop before the next phase.
+7. Do not commit unless Lucas explicitly asks.
+
+### Always Preserve
+
+- Existing SaaS dashboard behavior
+- Existing billing/subscription behavior
+- Existing agency client/profile/source/task/draft behavior
+- Existing auth and role boundaries
+- Demo-user write restrictions
+- Internal agency-only access
+
+### Do Not Do Unless Explicitly Stated
+
+- Do not expose agency workflows to SaaS customers.
+- Do not build public agency website pages.
+- Do not redesign the whole dashboard.
+- Do not change subscription enforcement.
+- Do not change Stripe checkout/webhook behavior.
+- Do not remove credit/pay-as-you-go compatibility.
+- Do not add broad new schema unless the phase requires it.
+- Do not store raw third-party tokens in plain text.
+- Do not import or store excessive third-party data without clear controls.
+- Do not start the next phase automatically.
+
+---
+
+## [ ] Phase 5A: Slack OAuth/App Install Foundation
+
+Status: Ready after Phase 4H is committed.
+
+### Objective
+
+Add the secure Slack OAuth/app installation foundation for internal agency clients.
+
+This phase should allow an internal agency admin to connect a client's Slack workspace and store the connection metadata securely.
+
+This phase must not import Slack messages yet.
+
+### Scope
+
+Do:
+
+- Add Slack OAuth start route.
+- Add Slack OAuth callback route.
+- Validate agency/client access before install.
+- Store Slack workspace metadata in `client_integrations`.
+- Securely store encrypted Slack tokens if token storage is implemented.
+- Update agency Slack status UI to show connected state.
+- Add tests and docs.
+
+Do not:
+
+- Import Slack messages.
+- Sync channels.
+- Store Slack message content.
+- Build Slack bot workflows.
+- Expose Slack functionality to SaaS customers.
+- Change billing.
+- Change generation.
+- Build Granola API integration.
+- Redesign agency UI.
+
+### Read First
+
+- `B2B_AGENCY_PIVOT_PRODUCT_SPEC.md`
+- `PHASE_4G_SLACK_INTEGRATION_FOUNDATION.md`
+- `PHASE_4H_AGENCY_SYSTEM_QA.md`
+- `lib/authz/agency-permissions.ts`
+- existing integration encryption code
+- existing OAuth/integration patterns if any
+- client_integrations schema
+
+### Required Environment Variables
+
+Use placeholders only. Do not commit secrets.
+
+Expected env vars:
+
+- `SLACK_CLIENT_ID`
+- `SLACK_CLIENT_SECRET`
+- `SLACK_REDIRECT_URI`
+- `SLACK_SIGNING_SECRET` if needed later
+- `INTEGRATIONS_ENCRYPTION_KEY` if reusing existing encryption helpers
+
+### OAuth Start Route
+
+Create:
+
+```text
+GET /api/agency/slack/oauth/start
+```
+
+Requirements:
+
+- Authenticated user only.
+- Agency access required.
+- `client_id` query param required.
+- Validate client belongs to active internal agency organization.
+- Only owner, admin, or agency_admin can start install.
+- Demo users blocked.
+- Generate CSRF/state token.
+- Store state securely using existing safe mechanism if available.
+- Redirect to Slack OAuth authorize URL.
+- Scopes should be minimal and documented.
+- Do not request message/history scopes yet unless required later and clearly documented.
+- Include client/org identifiers in signed/encrypted state, not trusted plain query params.
+
+### OAuth Callback Route
+
+Create:
+
+```text
+GET /api/agency/slack/oauth/callback
+```
+
+Requirements:
+
+- Validate OAuth state.
+- Exchange code for Slack token.
+- Validate Slack response.
+- Store workspace/team metadata in `client_integrations`.
+- Set provider slack.
+- Set status connected.
+- Metadata should include:
+  - workspace/team id
+  - workspace/team name
+  - connected_by user id
+  - connected_at
+  - `externalConnection: true`
+  - `mode: oauth_connected`
+- If storing token, encrypt it before persistence.
+- Never expose token to client.
+- Redirect back to agency Slack page with success/failure status.
+
+### Token Storage
+
+If token storage is implemented:
+
+- Do not store raw tokens in metadata_json.
+- Either add dedicated encrypted fields via migration or use existing secure integration storage pattern.
+- Document exactly where tokens are stored.
+- Tests should assert raw token is not stored.
+
+If safe token storage cannot be implemented confidently:
+
+- Store only workspace metadata.
+- Document token storage as deferred.
+- Still complete OAuth validation if possible.
+
+### UI
+
+Update:
+
+```text
+/dashboard/agency/slack
+```
+
+Requirements:
+
+- Show connected workspace state.
+- Show connect/reconnect button only for admin roles.
+- Demo users cannot connect.
+- Non-admin agency members see read-only status.
+- No message import UI yet.
+
+### Documentation
+
+Create:
+
+```text
+PHASE_5A_SLACK_OAUTH_FOUNDATION.md
+```
+
+Document:
+
+- routes added
+- env vars
+- Slack app setup steps
+- scopes requested
+- state/CSRF handling
+- token storage decision
+- security model
+- what is intentionally not built
+- next phase: channel/message import planning
+
+### Tests
+
+Add focused tests for:
+
+- start route requires agency admin
+- SaaS org denied
+- demo user denied
+- client org mismatch denied
+- OAuth state validation
+- callback handles Slack error
+- callback stores connected metadata
+- raw tokens are not exposed/stored if token storage implemented
+
+### Validation
+
+Run:
+
+- `npx tsc --noEmit`
+- `npm run -s lint`
+- focused Slack/agency tests
+- relevant agency permission tests
+- `git diff --check`
+
+### Review Checklist
+
+After implementation, review:
+
+- SaaS users cannot initiate Slack install.
+- Agency members without admin role cannot install.
+- Demo users cannot install.
+- State validation prevents CSRF.
+- No raw Slack token is exposed.
+- Scopes are minimal.
+- No message import/sync was added.
+- Existing Slack readiness metadata still works.
+- Validation passes.
+
+### Commit Message
+
+```bash
+git add .
+git commit -m "Add Slack OAuth foundation for agency clients"
+```
+
+---
+
+## [ ] Phase 5B: Slack Channel Selection + Message Import Foundation
+
+Status: Ready after Phase 5A is committed.
+
+### Objective
+
+Allow internal agency admins to select Slack channels for a connected client and manually import recent messages into `source_imports`.
+
+This phase introduces controlled Slack data import, but should remain limited and manual.
+
+### Scope
+
+Do:
+
+- Add channel listing for connected Slack workspaces.
+- Allow agency admins to choose priority/import channels.
+- Add manual message import from selected channels.
+- Store imported Slack messages or summaries in `source_imports`.
+- Preserve client/org scoping.
+- Add rate/error handling.
+- Add tests and docs.
+
+Do not:
+
+- Add automatic scheduled sync.
+- Add Slack bot posting.
+- Add real-time event subscriptions.
+- Import entire workspace history.
+- Expose Slack imports to SaaS customers.
+- Generate drafts automatically from Slack yet.
+- Change billing or subscription behavior.
+- Build Granola API integration.
+
+### Read First
+
+- `PHASE_5A_SLACK_OAUTH_FOUNDATION.md`
+- `PHASE_4C_CLIENT_SOURCE_IMPORTS.md`
+- `PHASE_4G_SLACK_INTEGRATION_FOUNDATION.md`
+- `PHASE_4H_AGENCY_SYSTEM_QA.md`
+- Slack token storage implementation from 5A
+- `source_imports` schema
+- `client_integrations` schema
+
+### Slack Channel Listing
+
+Create or update API:
+
+```text
+GET /api/agency/slack/channels?client_id=<clientId>
+```
+
+Requirements:
+
+- Authenticated internal agency user only.
+- Client must belong to active internal agency org.
+- User must have agency access.
+- Slack connection must exist.
+- Use encrypted token if available.
+- Return minimal channel data:
+  - id
+  - name
+  - is_private if available
+  - is_archived if available
+  - member count if available
+- Do not store messages here.
+- Handle Slack API errors clearly.
+
+### Channel Selection
+
+Create or update API:
+
+```text
+PATCH /api/agency/slack/status
+```
+
+or a dedicated route:
+
+```text
+POST /api/agency/slack/channels/selection
+```
+
+Requirements:
+
+- Admin-only write.
+- Demo users blocked.
+- Store selected channel IDs/names in `client_integrations.metadata_json`.
+- Preserve existing metadata.
+- Do not store tokens in metadata.
+
+### Manual Message Import
+
+Create:
+
+```text
+POST /api/agency/slack/import
+```
+
+Request body:
+
+- `client_id`
+- `channel_id`
+- optional `oldest`
+- optional `latest`
+- optional `limit`
+
+Requirements:
+
+- Authenticated agency user.
+- Client/org access validated.
+- Slack connection exists.
+- Channel must either be selected or explicitly allowed for import by admin role.
+- Fetch bounded recent messages.
+- Do not import unlimited history.
+- Suggested default limit: 50 messages.
+- Suggested max limit: 200 messages.
+- Store imported content in `source_imports` with:
+  - `provider = 'slack'`
+  - `organization_id`
+  - `client_id`
+  - `source_title`
+  - `raw_text`
+  - `summary` if cheaply produced or leave null
+  - metadata with channel id/name, message count, time range, imported_by
+- Do not auto-generate content from Slack yet.
+
+### UI
+
+Update:
+
+```text
+/dashboard/agency/slack
+```
+
+Requirements:
+
+- Show connected workspace.
+- Show channel list if connected.
+- Allow admin to select priority/import channels.
+- Allow manual import from selected channel.
+- Show import success/failure.
+- Show read-only view for non-admin agency members if appropriate.
+- Demo users cannot import.
+
+### Data Safety
+
+- Avoid storing sensitive Slack metadata unnecessarily.
+- Do not store bot/user tokens in visible metadata.
+- Do not expose imported Slack content outside agency routes.
+- Do not allow cross-client imports.
+
+### Documentation
+
+Create:
+
+```text
+PHASE_5B_SLACK_CHANNEL_IMPORT_FOUNDATION.md
+```
+
+Document:
+
+- routes added
+- scopes required
+- message import limits
+- metadata stored
+- `source_imports` behavior
+- security model
+- what is intentionally not built
+- next phase ideas
+
+### Tests
+
+Add focused tests for:
+
+- SaaS org denied
+- disconnected client cannot import
+- non-admin channel selection denied
+- demo write denied
+- import limit capped
+- imported source has correct provider/client/org
+- token not returned to client
+- cross-client/channel misuse denied where practical
+
+### Validation
+
+Run:
+
+- `npx tsc --noEmit`
+- `npm run -s lint`
+- focused Slack tests
+- agency permission tests
+- `git diff --check`
+
+### Review Checklist
+
+After implementation, review:
+
+- no cross-org Slack data access
+- no token exposure
+- import limits enforced
+- no automatic sync added
+- source imports scoped correctly
+- UI remains internal-only
+- validation passes
+
+### Commit Message
+
+```bash
+git add .
+git commit -m "Add Slack channel selection and manual import foundation"
+```
+
+---
+
+## [ ] Phase 5C: Granola Import Expansion
+
+Status: Ready after Phase 5B is committed.
+
+### Objective
+
+Improve the manual Granola workflow so agency users can turn meeting notes into structured internal source records more reliably.
+
+This phase remains manual. Do not build Granola OAuth/API sync unless official integration details are confirmed and explicitly approved.
+
+### Scope
+
+Do:
+
+- Improve manual Granola paste/import.
+- Parse structured meeting fields when possible.
+- Add meeting type, participants, date, title, decisions, action items, and customer insights.
+- Store structured metadata in `source_imports`.
+- Improve UI for reviewing imported notes.
+- Add tests and docs.
+
+Do not:
+
+- Build Granola OAuth.
+- Call Granola APIs unless already verified and approved.
+- Add scheduled sync.
+- Generate drafts automatically yet.
+- Change billing.
+- Change Slack behavior.
+- Expose Granola workflow to SaaS users.
+
+### Read First
+
+- `PHASE_4F_GRANOLA_MANUAL_IMPORT_WORKFLOW.md`
+- `PHASE_4H_AGENCY_SYSTEM_QA.md`
+- `source_imports` schema
+- existing Granola route/UI
+
+### API Enhancements
+
+Update:
+
+```text
+POST /api/agency/granola/imports
+GET /api/agency/granola/imports
+```
+
+Requirements:
+
+- Internal agency access only.
+- Client/org validation.
+- Support richer fields:
+  - meeting title
+  - meeting date
+  - participants
+  - meeting type
+  - raw notes
+  - summary
+  - decisions
+  - action items
+  - customer pain points
+  - notable quotes
+  - follow-up opportunities
+- Store raw notes in `raw_text`.
+- Store structured fields in `metadata_json`.
+- Preserve provider granola.
+
+### Optional Parser
+
+Add helper:
+
+```text
+lib/agency-granola-parser.ts
+```
+
+Requirements:
+
+- Best-effort parsing only.
+- Do not use AI unless explicitly already allowed and scoped.
+- Should not fail import if parsing fails.
+- Return parsed metadata plus warnings.
+
+### UI
+
+Update:
+
+```text
+/dashboard/agency/granola
+```
+
+Requirements:
+
+- Better form fields for meeting metadata.
+- Preview parsed structured fields if parser added.
+- Show import history.
+- Allow filtering by client.
+- Keep non-admin/member permissions consistent with existing Phase 4F decisions.
+
+### Documentation
+
+Create:
+
+```text
+PHASE_5C_GRANOLA_IMPORT_EXPANSION.md
+```
+
+Document:
+
+- manual-only design
+- fields captured
+- parser behavior
+- metadata structure
+- what is intentionally not built
+- future API integration requirements
+
+### Tests
+
+Add focused tests for:
+
+- manual import with structured fields
+- parser behavior if added
+- client/org validation
+- provider remains granola
+- SaaS users denied
+- demo write blocked if applicable
+
+### Validation
+
+Run:
+
+- `npx tsc --noEmit`
+- `npm run -s lint`
+- focused Granola/agency tests
+- `git diff --check`
+
+### Review Checklist
+
+After implementation, review:
+
+- workflow remains manual
+- no fake Granola API integration added
+- imports scoped to internal agency org
+- structured metadata is preserved
+- no SaaS exposure
+- validation passes
+
+### Commit Message
+
+```bash
+git add .
+git commit -m "Expand manual Granola import workflow"
+```
+
+---
+
+## [ ] Phase 5D: Source-to-Draft Generation Workflow
+
+Status: Ready after Phase 5C is committed.
+
+### Objective
+
+Allow internal agency users to generate draft content from agency source imports.
+
+This connects the agency source/import system to the existing generation engine and draft review workflow.
+
+### Scope
+
+Do:
+
+- Add source-to-draft generation for internal agency sources.
+- Support manual source imports, Slack imports, and Granola imports.
+- Use client profile/context where available.
+- Use brand voice/campaign context where available.
+- Save results as agency drafts/content library items.
+- Add tests and docs.
+
+Do not:
+
+- Change public SaaS generation behavior.
+- Rewrite the whole AI provider system.
+- Build automated scheduled generation.
+- Send content to clients automatically.
+- Change billing/subscription behavior.
+- Add Slack posting.
+
+### Read First
+
+- `PHASE_3D_GENERATION_CONTEXT_INTEGRATION.md`
+- `PHASE_4E_DRAFT_REVIEW_DELIVERY.md`
+- `PHASE_4C_CLIENT_SOURCE_IMPORTS.md`
+- `PHASE_5B_SLACK_CHANNEL_IMPORT_FOUNDATION.md`
+- `PHASE_5C_GRANOLA_IMPORT_EXPANSION.md`
+- existing generation routes/helpers
+- client profile helpers
+- brand voice/campaign/content library helpers
+
+### API
+
+Create:
+
+```text
+POST /api/agency/source-imports/:id/generate
+```
+
+or:
+
+```text
+POST /api/agency/drafts/generate-from-source
+```
+
+Request body:
+
+- `source_import_id`
+- `client_id`
+- optional `campaign_id`
+- optional `brand_voice_id`
+- `content_type`
+- `channel`
+- `instructions`
+- `quantity`
+
+Requirements:
+
+- Internal agency access only.
+- Validate source belongs to active internal agency org.
+- Validate client/campaign/brand voice references belong to same org/client where applicable.
+- Use source raw_text, summary, and metadata.
+- Include client profile context if available.
+- Include brand voice/campaign context if selected.
+- Generate content through existing AI provider abstraction.
+- Save generated content as agency draft/content library item.
+- Link draft to source import in metadata if no direct column exists.
+- Do not send externally.
+
+### UI
+
+Add to relevant pages:
+
+- `/dashboard/agency/sources`
+- `/dashboard/agency/granola`
+- `/dashboard/agency/slack`
+- `/dashboard/agency/drafts`
+
+Requirements:
+
+- From a source import, allow "Generate draft".
+- Let user select content type/channel.
+- Let user add instructions.
+- Show generation loading/error state.
+- Route user to created draft or draft list.
+- Keep permissions consistent:
+  - agency admins and members can generate if allowed by current draft rules
+  - demo users blocked from writes
+
+### Prompt Context
+
+Prompt should include:
+
+- source content
+- client profile
+- brand voice
+- campaign context
+- requested content type/channel
+- agency quality instructions
+- no unsupported claims instruction
+- output format requirements
+
+Do not overbuild prompt templating if existing system already handles enough.
+
+### Documentation
+
+Create:
+
+```text
+PHASE_5D_SOURCE_TO_DRAFT_GENERATION.md
+```
+
+Document:
+
+- API added
+- source/context composition
+- output storage
+- permission model
+- limitations
+- what is intentionally not built
+
+### Tests
+
+Add focused tests for:
+
+- source/org/client validation
+- SaaS org denied
+- demo write blocked
+- generate request creates draft metadata correctly
+- invalid cross-client campaign/brand voice denied
+- AI provider mocked cleanly
+
+### Validation
+
+Run:
+
+- `npx tsc --noEmit`
+- `npm run -s lint`
+- focused agency generation tests
+- existing agency draft/source tests
+- `git diff --check`
+
+### Review Checklist
+
+After implementation, review:
+
+- no cross-org source access
+- no cross-client context mixing
+- SaaS generation behavior unchanged
+- generated drafts are internal agency-scoped
+- AI provider errors handled safely
+- no external delivery performed
+- validation passes
+
+### Commit Message
+
+```bash
+git add .
+git commit -m "Add agency source-to-draft generation workflow"
+```
+
+---
+
+## [ ] Phase 5E: Client Delivery Workflow
+
+Status: Ready after Phase 5D is committed.
+
+### Objective
+
+Improve the internal agency delivery workflow so reviewed drafts can be packaged and delivered manually to clients.
+
+This phase should support clean exports and delivery tracking, not automatic posting.
+
+### Scope
+
+Do:
+
+- Add delivery package concept if needed.
+- Improve export formats.
+- Track delivery status and notes.
+- Support manual delivery workflow.
+- Add tests and docs.
+
+Do not:
+
+- Email clients automatically unless explicitly approved.
+- Post to Slack automatically.
+- Publish social posts automatically.
+- Build client portal yet.
+- Change SaaS content library behavior.
+- Change billing.
+
+### Read First
+
+- `PHASE_4E_DRAFT_REVIEW_DELIVERY.md`
+- `PHASE_5D_SOURCE_TO_DRAFT_GENERATION.md`
+- content library/draft helpers
+- production tasks helpers
+
+### Optional Schema
+
+If needed, add a forward migration for:
+
+```text
+agency_delivery_packages
+```
+
+Fields:
+
+- `id uuid primary key`
+- `organization_id`
+- `client_id`
+- `title`
+- `status`
+- `delivery_notes`
+- `metadata_json`
+- `created_by`
+- `delivered_at`
+- `created_at`
+- `updated_at`
+
+And optional join table:
+
+```text
+agency_delivery_package_items
+```
+
+Fields:
+
+- `package_id`
+- `content_item_id`
+- `sort_order`
+
+Only add schema if it clearly improves workflow. If existing content metadata is enough, avoid schema.
+
+### API
+
+Possible routes:
+
+- `GET /api/agency/delivery/packages`
+- `POST /api/agency/delivery/packages`
+- `GET /api/agency/delivery/packages/:id`
+- `PATCH /api/agency/delivery/packages/:id`
+- `POST /api/agency/delivery/packages/:id/export`
+
+Requirements:
+
+- Internal agency only.
+- Client/org scoped.
+- Validate content items belong to same internal agency org/client.
+- Demo writes blocked.
+- No automatic external send.
+
+### Exports
+
+Support:
+
+- Markdown export
+- CSV export
+- Copy-ready text bundle
+
+Optional:
+
+- JSON export for internal use
+
+### UI
+
+Add or update:
+
+- `/dashboard/agency/delivery`
+- existing drafts page delivery actions
+
+Requirements:
+
+- Select approved/ready drafts.
+- Create delivery package.
+- Export package.
+- Mark package delivered.
+- Add delivery notes.
+- Keep UI simple.
+
+### Documentation
+
+Create:
+
+```text
+PHASE_5E_CLIENT_DELIVERY_WORKFLOW.md
+```
+
+Document:
+
+- delivery model
+- APIs/UI added
+- export formats
+- no automatic external sending
+- future client portal/send options
+
+### Tests
+
+Add focused tests for:
+
+- package scoping
+- item/client mismatch denied
+- export output shape
+- mark delivered updates status/notes
+- SaaS org denied
+- demo writes blocked
+
+### Validation
+
+Run:
+
+- `npx tsc --noEmit`
+- `npm run -s lint`
+- focused delivery tests
+- existing draft tests
+- `git diff --check`
+
+### Review Checklist
+
+After implementation, review:
+
+- delivery packages are internal-only
+- no automatic client send/publish added
+- content item scoping is safe
+- exports are stable
+- draft status handling remains correct
+- validation passes
+
+### Commit Message
+
+```bash
+git add .
+git commit -m "Add agency client delivery workflow"
+```
+
+---
+
+## [ ] Phase 5F: Agency Workflow QA and Integration Safety Pass
+
+Status: Ready after Phase 5E is committed.
+
+### Objective
+
+Perform a full QA and security pass across the Phase 5 agency integration/workflow features.
+
+This phase should consolidate fixes before moving to public agency website or advanced automations.
+
+### Scope
+
+Do:
+
+- Review Slack OAuth and manual import.
+- Review Granola import expansion.
+- Review source-to-draft generation.
+- Review delivery workflow.
+- Fix bugs found.
+- Add missing tests.
+- Add final QA docs.
+
+Do not:
+
+- Add major new features.
+- Add scheduled Slack sync.
+- Add automatic Slack posting.
+- Add Granola API sync.
+- Build public agency website.
+- Change SaaS billing/generation unless fixing a regression caused by Phase 5.
+
+### Read First
+
+- `PHASE_5A_SLACK_OAUTH_FOUNDATION.md`
+- `PHASE_5B_SLACK_CHANNEL_IMPORT_FOUNDATION.md`
+- `PHASE_5C_GRANOLA_IMPORT_EXPANSION.md`
+- `PHASE_5D_SOURCE_TO_DRAFT_GENERATION.md`
+- `PHASE_5E_CLIENT_DELIVERY_WORKFLOW.md`
+- `PHASE_4H_AGENCY_SYSTEM_QA.md`
+
+### QA Checklist
+
+Verify:
+
+Access Control:
+
+- SaaS users denied all agency integration routes.
+- Internal agency members only see allowed clients.
+- Admin-only actions are admin-only.
+- Demo users cannot write.
+- Client/org scoping is enforced everywhere.
+
+Slack:
+
+- OAuth state validation works.
+- Tokens are never exposed.
+- Channel list requires connected workspace.
+- Message import is bounded.
+- Imported Slack content is stored only as internal agency source imports.
+
+Granola:
+
+- Workflow is manual.
+- Provider is granola.
+- Structured metadata is stored safely.
+- No fake API sync exists.
+
+Source-to-Draft:
+
+- Source/client/campaign/brand voice scoping is correct.
+- AI errors are handled.
+- Drafts are saved internally.
+- SaaS generation behavior is unchanged.
+
+Delivery:
+
+- Package/item scoping is correct.
+- Exports are stable.
+- Mark delivered does not corrupt draft metadata.
+- No automatic external sends exist.
+
+Data Integrity:
+
+- No cross-client references.
+- No cross-org references.
+- Metadata preservation works.
+- RLS and API checks align.
+
+### Documentation
+
+Create:
+
+```text
+PHASE_5F_AGENCY_WORKFLOW_QA.md
+```
+
+Document:
+
+- QA areas
+- bugs found
+- fixes made
+- tests added
+- remaining risks
+- readiness for Phase 6
+
+### Validation
+
+Run:
+
+- `npx tsc --noEmit`
+- `npm run -s lint`
+- focused Phase 5 tests
+- agency auth tests
+- route smoke tests
+- `git diff --check`
+
+### Review Checklist
+
+After implementation/review:
+
+- all Phase 5 workflows are internal-only
+- no cross-org/client data leaks
+- no raw third-party tokens exposed
+- no automated external publishing added
+- validation passes
+
+### Commit Message
+
+```bash
+git add .
+git commit -m "Review and harden agency workflow integrations"
+```
+
+---
+
+## Phase 5 Completion Summary Requirement
+
+After Phase 5F is committed, Codex should produce a summary for Lucas.
+
+Use this command:
+
+```text
+Read CODEX_PHASE_RUNBOOK.md and summarize all completed Phase 5 work.
+Include:
+- commits by phase
+- features added
+- files changed at a high level
+- security model
+- integrations added
+- what was intentionally not built
+- validation results
+- recommended adjustments before Phase 6
+```
+
+Lucas and ChatGPT will then review the summary and adjust Phase 6 planning.
+
+---
+
 ## How to Update This Runbook
 
 After a phase is safely committed:

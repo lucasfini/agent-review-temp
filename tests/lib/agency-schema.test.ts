@@ -11,6 +11,16 @@ const qaMigrationPath = path.join(
   'supabase/migrations/20260607120000_phase_4h_agency_integrity_triggers.sql'
 );
 const qaSql = readFileSync(qaMigrationPath, 'utf8');
+const slackTokenMigrationPath = path.join(
+  process.cwd(),
+  'supabase/migrations/20260608120000_phase_5b_slack_encrypted_tokens.sql'
+);
+const slackTokenSql = readFileSync(slackTokenMigrationPath, 'utf8');
+const deliveryMigrationPath = path.join(
+  process.cwd(),
+  'supabase/migrations/20260608130000_phase_5e_agency_delivery_packages.sql'
+);
+const deliverySql = readFileSync(deliveryMigrationPath, 'utf8');
 
 describe('phase 4A agency schema migration', () => {
   it('creates the required agency foundation tables', () => {
@@ -70,5 +80,26 @@ describe('phase 4A agency schema migration', () => {
     expect(qaSql).toContain('ac.organization_id = NEW.organization_id');
     expect(qaSql).toContain('c.organization_id = NEW.organization_id');
     expect(qaSql).toContain('cli.organization_id = NEW.organization_id');
+  });
+
+  it('adds Phase 5B encrypted token columns to client integrations', () => {
+    expect(slackTokenSql).toContain('ADD COLUMN IF NOT EXISTS access_token_enc TEXT');
+    expect(slackTokenSql).toContain('ADD COLUMN IF NOT EXISTS refresh_token_enc TEXT');
+    expect(slackTokenSql).toContain("token_scopes TEXT[] NOT NULL DEFAULT '{}'::TEXT[]");
+    expect(slackTokenSql).toContain('token_expires_at TIMESTAMPTZ');
+    expect(slackTokenSql).not.toContain('metadata_json');
+  });
+
+  it('adds Phase 5E delivery packages with internal agency RLS and item integrity', () => {
+    expect(deliverySql).toContain('CREATE TABLE IF NOT EXISTS public.agency_delivery_packages');
+    expect(deliverySql).toContain('CREATE TABLE IF NOT EXISTS public.agency_delivery_package_items');
+    expect(deliverySql).toContain('agency_delivery_packages_status_check');
+    expect(deliverySql).toContain("status IN ('draft', 'ready', 'delivered', 'archived')");
+    expect(deliverySql).toContain('agency_delivery_package_items_enforce_references');
+    expect(deliverySql).toContain("o.type = 'internal_agency'");
+    expect(deliverySql).toContain("o.type = ''internal_agency''");
+    expect(deliverySql).toContain('Internal agency members can view delivery packages');
+    expect(deliverySql).toContain('Internal agency admins can manage delivery packages');
+    expect(deliverySql).toContain('Service role can manage agency_delivery_packages');
   });
 });

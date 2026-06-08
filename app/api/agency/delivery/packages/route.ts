@@ -1,15 +1,14 @@
 import { NextRequest, NextResponse } from 'next/server';
 
 import {
-  AgencySourceImportValidationError,
-  createAgencySourceImport,
-  listAgencySourceImports,
-  sourceImportClientIdFrom,
-} from '@/lib/agency-source-imports';
+  AgencyDeliveryPackageValidationError,
+  createAgencyDeliveryPackage,
+  deliveryPackageClientIdFrom,
+  listAgencyDeliveryPackages,
+} from '@/lib/agency-delivery-packages';
 import { RouteAccessError } from '@/lib/api/route-auth';
 import {
   canManageAgencyDraft,
-  canManageAgencySourceImport,
   requireAgencyAccess,
   requireAgencyClientAccess,
 } from '@/lib/authz/agency-permissions';
@@ -21,15 +20,13 @@ export const dynamic = 'force-dynamic';
 export const revalidate = 0;
 
 function errorResponse(error: unknown, fallback: string) {
-  if (error instanceof AgencySourceImportValidationError) {
+  if (error instanceof AgencyDeliveryPackageValidationError) {
     return NextResponse.json({ error: error.message }, { status: 400 });
   }
-
   if (error instanceof OrganizationAccessError || error instanceof RouteAccessError) {
     return NextResponse.json({ error: error.message }, { status: error.status });
   }
-
-  console.error('[AGENCY_SOURCE_IMPORTS] Unexpected error:', error);
+  console.error('[AGENCY_DELIVERY_PACKAGES] Unexpected error:', error);
   return NextResponse.json({ error: fallback }, { status: 500 });
 }
 
@@ -43,12 +40,11 @@ function membershipPayload(role: string, status: string, organizationType: strin
   return {
     role,
     status,
-    canManageAgencySourceImport: canManageAgencySourceImport(role, organizationType),
-    canManageAgencyDraft: canManageAgencyDraft(role, organizationType),
+    canManageAgencyDelivery: canManageAgencyDraft(role, organizationType),
   };
 }
 
-async function requireSourceImportAccess(request: NextRequest, params: {
+async function requireDeliveryAccess(request: NextRequest, params: {
   requestedOrganizationId?: string | null;
   clientId?: string | null;
 }) {
@@ -57,7 +53,6 @@ async function requireSourceImportAccess(request: NextRequest, params: {
       requestedOrganizationId: params.requestedOrganizationId,
     });
   }
-
   return requireAgencyAccess(request, {
     requestedOrganizationId: params.requestedOrganizationId,
   });
@@ -68,13 +63,13 @@ export async function GET(request: NextRequest) {
     const { searchParams } = new URL(request.url);
     const clientId = searchParams.get('client_id');
     const rawLimit = Number(searchParams.get('limit') || '100');
-    const { organization, membership } = await requireSourceImportAccess(request, {
+    const { organization, membership } = await requireDeliveryAccess(request, {
       requestedOrganizationId: requestedOrganizationIdFrom(request),
       clientId,
     });
-    const sourceImports = await listAgencySourceImports(supabaseAdmin, organization.id, {
+    const packages = await listAgencyDeliveryPackages(supabaseAdmin, organization.id, {
       clientId,
-      provider: searchParams.get('provider'),
+      status: searchParams.get('status'),
       limit: Number.isFinite(rawLimit) ? rawLimit : 100,
     });
 
@@ -86,42 +81,40 @@ export async function GET(request: NextRequest) {
         type: organization.type,
       },
       membership: membershipPayload(membership.role, membership.status, organization.type),
-      sourceImports,
+      packages,
     });
   } catch (error) {
-    return errorResponse(error, 'Failed to load source imports');
+    return errorResponse(error, 'Failed to load delivery packages');
   }
 }
 
 export async function POST(request: NextRequest) {
   try {
     const body = await request.json().catch(() => ({}));
-    const requestedOrganizationId = requestedOrganizationIdFrom(request, body);
-    const clientId = sourceImportClientIdFrom(body);
-    const { user, organization, membership } = await requireSourceImportAccess(request, {
-      requestedOrganizationId,
+    const clientId = deliveryPackageClientIdFrom(body);
+    const { user, organization, membership } = await requireDeliveryAccess(request, {
+      requestedOrganizationId: requestedOrganizationIdFrom(request, body),
       clientId,
     });
 
     if (isDemoUser(user)) {
       return NextResponse.json({ error: 'Demo account is read-only' }, { status: 403 });
     }
-
-    if (!canManageAgencySourceImport(membership.role, organization.type)) {
+    if (!canManageAgencyDraft(membership.role, organization.type)) {
       return NextResponse.json(
-        { error: 'Agency source import management requires internal agency operator access' },
+        { error: 'Agency delivery package management requires internal agency admin access' },
         { status: 403 }
       );
     }
 
-    const sourceImport = await createAgencySourceImport(supabaseAdmin, organization.id, user.id, body);
+    const deliveryPackage = await createAgencyDeliveryPackage(supabaseAdmin, organization.id, user.id, body);
 
     return NextResponse.json({
       success: true,
       membership: membershipPayload(membership.role, membership.status, organization.type),
-      sourceImport,
+      package: deliveryPackage,
     }, { status: 201 });
   } catch (error) {
-    return errorResponse(error, 'Failed to create source import');
+    return errorResponse(error, 'Failed to create delivery package');
   }
 }

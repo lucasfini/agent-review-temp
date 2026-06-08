@@ -23,6 +23,10 @@ export interface AgencyClientIntegration {
   provider: AgencyClientIntegrationProvider;
   status: AgencyClientIntegrationStatus;
   metadata: Record<string, unknown>;
+  tokenStored: boolean;
+  tokenScopes: string[];
+  tokenType: string | null;
+  tokenExpiresAt: string | null;
   connectedAt: string | null;
   lastSyncAt: string | null;
   createdAt: string;
@@ -35,6 +39,11 @@ export interface AgencyClientIntegrationRow {
   provider: string;
   status: string;
   metadata_json: Record<string, unknown> | null;
+  access_token_enc?: string | null;
+  refresh_token_enc?: string | null;
+  token_type?: string | null;
+  token_scopes?: string[] | null;
+  token_expires_at?: string | null;
   connected_at: string | null;
   last_sync_at: string | null;
   created_at: string;
@@ -46,6 +55,16 @@ export type AgencyClientIntegrationInput = {
   status?: unknown;
   metadata?: unknown;
   metadata_json?: unknown;
+  accessTokenEncrypted?: unknown;
+  access_token_enc?: unknown;
+  refreshTokenEncrypted?: unknown;
+  refresh_token_enc?: unknown;
+  tokenType?: unknown;
+  token_type?: unknown;
+  tokenScopes?: unknown;
+  token_scopes?: unknown;
+  tokenExpiresAt?: unknown;
+  token_expires_at?: unknown;
   connectedAt?: unknown;
   connected_at?: unknown;
   lastSyncAt?: unknown;
@@ -60,6 +79,7 @@ export class AgencyClientIntegrationValidationError extends Error {
 }
 
 const MAX_SHORT_TEXT_LENGTH = 240;
+const MAX_TOKEN_LENGTH = 16000;
 
 function optionalString(value: unknown, maxLength: number, field: string): string | null | undefined {
   if (value === undefined) return undefined;
@@ -84,6 +104,20 @@ function optionalTimestamp(value: unknown, field: string): string | null | undef
     throw new AgencyClientIntegrationValidationError(`${field} must be a valid timestamp`);
   }
   return date.toISOString();
+}
+
+function optionalStringArray(value: unknown, field: string): string[] | undefined {
+  if (value === undefined) return undefined;
+  if (!Array.isArray(value)) {
+    throw new AgencyClientIntegrationValidationError(`${field} must be an array`);
+  }
+
+  return Array.from(new Set(value.map((item) => {
+    if (typeof item !== 'string') {
+      throw new AgencyClientIntegrationValidationError(`${field} must contain strings`);
+    }
+    return item.trim();
+  }).filter(Boolean)));
 }
 
 function optionalObject(value: unknown): Record<string, unknown> | undefined {
@@ -145,6 +179,10 @@ export function mapAgencyClientIntegrationRow(row: AgencyClientIntegrationRow): 
     provider: normalizeProvider(row.provider),
     status: normalizeStatus(row.status),
     metadata: row.metadata_json || {},
+    tokenStored: Boolean(row.access_token_enc),
+    tokenScopes: Array.isArray(row.token_scopes) ? row.token_scopes : [],
+    tokenType: row.token_type || null,
+    tokenExpiresAt: row.token_expires_at || null,
     connectedAt: row.connected_at,
     lastSyncAt: row.last_sync_at,
     createdAt: row.created_at,
@@ -167,6 +205,29 @@ export function normalizeAgencyClientIntegrationInput(
 
   const metadata = optionalObject(coalesceField(input, 'metadata', 'metadata_json'));
   if (metadata !== undefined) payload.metadata_json = metadata;
+
+  const accessTokenEncrypted = optionalString(
+    coalesceField(input, 'accessTokenEncrypted', 'access_token_enc'),
+    MAX_TOKEN_LENGTH,
+    'accessTokenEncrypted'
+  );
+  if (accessTokenEncrypted !== undefined) payload.access_token_enc = accessTokenEncrypted;
+
+  const refreshTokenEncrypted = optionalString(
+    coalesceField(input, 'refreshTokenEncrypted', 'refresh_token_enc'),
+    MAX_TOKEN_LENGTH,
+    'refreshTokenEncrypted'
+  );
+  if (refreshTokenEncrypted !== undefined) payload.refresh_token_enc = refreshTokenEncrypted;
+
+  const tokenType = optionalString(coalesceField(input, 'tokenType', 'token_type'), MAX_SHORT_TEXT_LENGTH, 'tokenType');
+  if (tokenType !== undefined) payload.token_type = tokenType;
+
+  const tokenScopes = optionalStringArray(coalesceField(input, 'tokenScopes', 'token_scopes'), 'tokenScopes');
+  if (tokenScopes !== undefined) payload.token_scopes = tokenScopes;
+
+  const tokenExpiresAt = optionalTimestamp(coalesceField(input, 'tokenExpiresAt', 'token_expires_at'), 'tokenExpiresAt');
+  if (tokenExpiresAt !== undefined) payload.token_expires_at = tokenExpiresAt;
 
   const connectedAt = optionalTimestamp(coalesceField(input, 'connectedAt', 'connected_at'), 'connectedAt');
   if (connectedAt !== undefined) payload.connected_at = connectedAt;

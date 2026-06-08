@@ -210,9 +210,16 @@ describe('agency Granola manual import routes', () => {
         organization_id: 'agency-org',
         client_id: 'client-1',
         sourceTitle: 'Granola notes',
-        rawText: 'Meeting notes',
+        rawText: 'Action Items:\n- Parsed action',
+        summary: 'Manual summary',
         meetingDate: '2026-06-07',
+        meetingType: 'Customer interview',
         participants: 'Lucas, Client',
+        decisions: 'Keep workflow manual',
+        actionItems: 'Send recap\nCreate delivery plan',
+        customerPainPoints: 'Hard to reuse meeting notes',
+        notableQuotes: '"We need this weekly"',
+        followUpOpportunities: 'Monthly review bundle',
       }),
     }) as any);
     const payload = await response.json();
@@ -227,9 +234,20 @@ describe('agency Granola manual import routes', () => {
       expect.objectContaining({
         provider: 'granola',
         client_id: 'client-1',
+        sourceTitle: 'Granola notes',
+        rawText: 'Action Items:\n- Parsed action',
+        summary: 'Manual summary',
         metadata: expect.objectContaining({
           capturedVia: 'agency_granola_manual_import',
           meetingDate: '2026-06-07',
+          meetingType: 'Customer interview',
+          participants: ['Lucas', 'Client'],
+          decisions: ['Keep workflow manual'],
+          actionItems: ['Send recap', 'Create delivery plan'],
+          customerPainPoints: ['Hard to reuse meeting notes'],
+          notableQuotes: ['We need this weekly'],
+          followUpOpportunities: ['Monthly review bundle'],
+          parserWarnings: [],
         }),
       })
     );
