@@ -4543,7 +4543,8 @@ git commit -m "Add agency lead notification emails"
 
 ---
 
-## [ ] Phase 7C: Public Lead Confirmation Email and Thank-You Flow
+## [x] Phase 7C: Public Lead Confirmation Email and Thank-You Flow
+Completed commit: 1864c5f
 
 Status: Ready after Phase 7B is committed.
 
