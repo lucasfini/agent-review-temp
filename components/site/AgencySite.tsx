@@ -19,6 +19,7 @@ import {
 } from 'lucide-react';
 
 import AgencyLeadForm from '@/components/site/AgencyLeadForm';
+import AgencyFunnelTracker from '@/components/site/AgencyFunnelTracker';
 import BrandLogo from '@/components/site/BrandLogo';
 import {
   agencyFaqs,
@@ -151,6 +152,7 @@ function SourceScene() {
 export function AgencyPageShell({ children }: { children: React.ReactNode }) {
   return (
     <main className="min-h-screen bg-white text-zinc-950 dark:bg-zinc-950 dark:text-white">
+      <AgencyFunnelTracker />
       <AgencyHeader />
       {children}
     </main>

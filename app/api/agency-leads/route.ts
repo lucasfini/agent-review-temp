@@ -13,6 +13,7 @@ import {
   sendAgencyLeadConfirmationEmail,
   sendAgencyLeadNotification,
 } from '@/lib/agency-lead-notifications';
+import { createAgencyFunnelEvent } from '@/lib/agency-funnel-events';
 import { supabaseAdmin } from '@/lib/supabase/server';
 
 export const dynamic = 'force-dynamic';
@@ -68,6 +69,23 @@ export async function POST(request: NextRequest) {
     }
 
     const lead = await createAgencyLead(supabaseAdmin, body);
+
+    try {
+      await createAgencyFunnelEvent(supabaseAdmin, {
+        eventName: 'agency_intake_submitted',
+        leadId: lead.id,
+        path: typeof body?.metadata?.page === 'string' ? body.metadata.page : '/agency/contact',
+        metadata: {
+          formId: 'agency_lead_form',
+          source: 'public_agency_site',
+          selectedOfferTitle: typeof body?.metadata?.selectedOfferTitle === 'string'
+            ? body.metadata.selectedOfferTitle
+            : null,
+        },
+      });
+    } catch (eventError) {
+      console.warn('[AGENCY_LEADS_PUBLIC] Lead submitted event skipped:', safeLogMessage(eventError));
+    }
 
     try {
       const notification = await sendAgencyLeadNotification(lead);

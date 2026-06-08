@@ -31,6 +31,11 @@ const leadConversionMigrationPath = path.join(
   'supabase/migrations/20260608150000_phase_6f_agency_lead_conversion.sql'
 );
 const leadConversionSql = readFileSync(leadConversionMigrationPath, 'utf8');
+const funnelEventsMigrationPath = path.join(
+  process.cwd(),
+  'supabase/migrations/20260608160000_phase_7d_agency_funnel_events.sql'
+);
+const funnelEventsSql = readFileSync(funnelEventsMigrationPath, 'utf8');
 
 describe('phase 4A agency schema migration', () => {
   it('creates the required agency foundation tables', () => {
@@ -129,5 +134,18 @@ describe('phase 4A agency schema migration', () => {
     expect(leadConversionSql).toContain('ADD COLUMN IF NOT EXISTS converted_by UUID REFERENCES auth.users(id) ON DELETE SET NULL');
     expect(leadConversionSql).toContain('idx_agency_leads_converted_client_id');
     expect(leadConversionSql).not.toContain('CREATE TRIGGER');
+  });
+
+  it('adds Phase 7D first-party funnel events as service-role-only private records', () => {
+    expect(funnelEventsSql).toContain('CREATE TABLE IF NOT EXISTS public.agency_funnel_events');
+    expect(funnelEventsSql).toContain('lead_id UUID REFERENCES public.agency_leads(id) ON DELETE SET NULL');
+    expect(funnelEventsSql).toContain('metadata_json JSONB NOT NULL DEFAULT');
+    expect(funnelEventsSql).toContain('agency_funnel_events_event_name_check');
+    expect(funnelEventsSql).toContain("'agency_page_view'");
+    expect(funnelEventsSql).toContain("'agency_intake_submitted'");
+    expect(funnelEventsSql).toContain('ALTER TABLE public.agency_funnel_events ENABLE ROW LEVEL SECURITY;');
+    expect(funnelEventsSql).toContain('Service role can manage agency_funnel_events');
+    expect(funnelEventsSql).toContain('REVOKE ALL ON public.agency_funnel_events FROM anon;');
+    expect(funnelEventsSql).toContain('REVOKE ALL ON public.agency_funnel_events FROM authenticated;');
   });
 });

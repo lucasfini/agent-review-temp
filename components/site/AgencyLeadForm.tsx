@@ -1,10 +1,11 @@
 "use client";
 
-import { useMemo, useState } from 'react';
+import { useMemo, useRef, useState } from 'react';
 import { useRouter, useSearchParams } from 'next/navigation';
 import { ArrowRight, Loader2 } from 'lucide-react';
 
 import { agencyOffers } from '@/lib/public-agency-content';
+import { trackAgencyFunnelEvent } from '@/lib/agency-funnel-client';
 
 type FormState = {
   name: string;
@@ -116,6 +117,7 @@ export default function AgencyLeadForm() {
   });
   const [submitting, setSubmitting] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const intakeStartedRef = useRef(false);
 
   const selectedOffer = useMemo(
     () => agencyOffers.find((offer) => offer.id === form.packageInterest),
@@ -123,6 +125,17 @@ export default function AgencyLeadForm() {
   );
 
   const updateField = (field: keyof FormState, value: string) => {
+    if (!intakeStartedRef.current && field !== 'referralCode') {
+      intakeStartedRef.current = true;
+      trackAgencyFunnelEvent('agency_intake_started', {
+        metadata: {
+          field,
+          formId: 'agency_lead_form',
+          source: 'public_agency_site',
+        },
+      });
+    }
+
     setForm((current) => ({
       ...current,
       [field]: value,
@@ -157,7 +170,16 @@ export default function AgencyLeadForm() {
 
       router.push('/agency/thank-you');
     } catch (submitError) {
-      setError(submitError instanceof Error ? submitError.message : 'Failed to submit agency inquiry');
+      const message = submitError instanceof Error ? submitError.message : 'Failed to submit agency inquiry';
+      setError(message);
+      trackAgencyFunnelEvent('agency_intake_validation_error', {
+        metadata: {
+          error: message,
+          errorType: 'submission_error',
+          formId: 'agency_lead_form',
+          source: 'public_agency_site',
+        },
+      });
     } finally {
       setSubmitting(false);
     }

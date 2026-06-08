@@ -10,6 +10,7 @@ const mockCheckAgencyLeadRateLimit = jest.fn();
 const mockIsLikelySpamLead = jest.fn();
 const mockSendAgencyLeadNotification = jest.fn();
 const mockSendAgencyLeadConfirmationEmail = jest.fn();
+const mockCreateAgencyFunnelEvent = jest.fn();
 const mockIsDemoUser = jest.fn();
 
 jest.mock('@/lib/authz/agency-permissions', () => {
@@ -40,6 +41,10 @@ jest.mock('@/lib/agency-lead-rate-limit', () => ({
 jest.mock('@/lib/agency-lead-notifications', () => ({
   sendAgencyLeadConfirmationEmail: (...args: any[]) => mockSendAgencyLeadConfirmationEmail(...args),
   sendAgencyLeadNotification: (...args: any[]) => mockSendAgencyLeadNotification(...args),
+}));
+
+jest.mock('@/lib/agency-funnel-events', () => ({
+  createAgencyFunnelEvent: (...args: any[]) => mockCreateAgencyFunnelEvent(...args),
 }));
 
 jest.mock('@/lib/demo-mode', () => ({
@@ -108,6 +113,7 @@ describe('agency lead routes', () => {
     mockIsLikelySpamLead.mockReset();
     mockSendAgencyLeadNotification.mockReset();
     mockSendAgencyLeadConfirmationEmail.mockReset();
+    mockCreateAgencyFunnelEvent.mockReset();
     mockIsDemoUser.mockReset();
 
     mockRequireAgencyAccess.mockResolvedValue({ user, organization, membership });
@@ -119,6 +125,7 @@ describe('agency lead routes', () => {
     mockIsLikelySpamLead.mockReturnValue({ isSpam: false, reason: null });
     mockSendAgencyLeadNotification.mockResolvedValue({ delivered: true });
     mockSendAgencyLeadConfirmationEmail.mockResolvedValue({ delivered: true });
+    mockCreateAgencyFunnelEvent.mockResolvedValue({ event_name: 'agency_intake_submitted' });
     mockCreateAgencyLead.mockResolvedValue(lead);
     mockListAgencyLeads.mockResolvedValue([lead]);
     mockGetAgencyLead.mockResolvedValue(lead);
@@ -153,6 +160,14 @@ describe('agency lead routes', () => {
         company: 'Acme',
       })
     );
+    expect(mockCreateAgencyFunnelEvent).toHaveBeenCalledWith(
+      expect.anything(),
+      expect.objectContaining({
+        eventName: 'agency_intake_submitted',
+        leadId: 'lead-1',
+        path: '/agency/contact',
+      })
+    );
     expect(mockSendAgencyLeadNotification).toHaveBeenCalledWith(lead);
     expect(mockSendAgencyLeadConfirmationEmail).toHaveBeenCalledWith(lead);
     expect(mockConvertAgencyLeadToClient).not.toHaveBeenCalled();
@@ -172,6 +187,7 @@ describe('agency lead routes', () => {
     expect(mockCreateAgencyLead).not.toHaveBeenCalled();
     expect(mockCheckAgencyLeadRateLimit).not.toHaveBeenCalled();
     expect(mockIsLikelySpamLead).not.toHaveBeenCalled();
+    expect(mockCreateAgencyFunnelEvent).not.toHaveBeenCalled();
     expect(mockSendAgencyLeadNotification).not.toHaveBeenCalled();
     expect(mockSendAgencyLeadConfirmationEmail).not.toHaveBeenCalled();
   });
@@ -191,6 +207,7 @@ describe('agency lead routes', () => {
     expect(response.status).toBe(429);
     expect(payload.retryAfterSeconds).toBe(60);
     expect(mockCreateAgencyLead).not.toHaveBeenCalled();
+    expect(mockCreateAgencyFunnelEvent).not.toHaveBeenCalled();
     expect(mockSendAgencyLeadNotification).not.toHaveBeenCalled();
     expect(mockSendAgencyLeadConfirmationEmail).not.toHaveBeenCalled();
   });
@@ -212,6 +229,7 @@ describe('agency lead routes', () => {
     expect(payload.error).toBe('Lead submission rejected');
     expect(mockCheckAgencyLeadRateLimit).not.toHaveBeenCalled();
     expect(mockCreateAgencyLead).not.toHaveBeenCalled();
+    expect(mockCreateAgencyFunnelEvent).not.toHaveBeenCalled();
     expect(mockSendAgencyLeadNotification).not.toHaveBeenCalled();
     expect(mockSendAgencyLeadConfirmationEmail).not.toHaveBeenCalled();
   });
@@ -233,6 +251,7 @@ describe('agency lead routes', () => {
     expect(response.status).toBe(201);
     expect(payload.lead).toEqual({ id: 'lead-1', status: 'new' });
     expect(mockCreateAgencyLead).toHaveBeenCalled();
+    expect(mockCreateAgencyFunnelEvent).toHaveBeenCalled();
     expect(mockSendAgencyLeadNotification).toHaveBeenCalledWith(lead);
     expect(mockSendAgencyLeadConfirmationEmail).toHaveBeenCalledWith(lead);
     errorSpy.mockRestore();
@@ -255,9 +274,32 @@ describe('agency lead routes', () => {
     expect(response.status).toBe(201);
     expect(payload.lead).toEqual({ id: 'lead-1', status: 'new' });
     expect(mockCreateAgencyLead).toHaveBeenCalled();
+    expect(mockCreateAgencyFunnelEvent).toHaveBeenCalled();
     expect(mockSendAgencyLeadNotification).toHaveBeenCalledWith(lead);
     expect(mockSendAgencyLeadConfirmationEmail).toHaveBeenCalledWith(lead);
     errorSpy.mockRestore();
+  });
+
+  it('does not fail public lead creation when submitted event tracking fails', async () => {
+    const warnSpy = jest.spyOn(console, 'warn').mockImplementation(() => {});
+    const { POST } = await import('@/app/api/agency-leads/route');
+    mockCreateAgencyFunnelEvent.mockRejectedValue(new Error('analytics unavailable'));
+
+    const response = await POST(new Request('http://localhost/api/agency-leads', {
+      method: 'POST',
+      body: JSON.stringify({
+        email: 'lucas@example.com',
+        company: 'Acme',
+      }),
+    }) as any);
+    const payload = await response.json();
+
+    expect(response.status).toBe(201);
+    expect(payload.lead).toEqual({ id: 'lead-1', status: 'new' });
+    expect(mockCreateAgencyLead).toHaveBeenCalled();
+    expect(mockSendAgencyLeadNotification).toHaveBeenCalledWith(lead);
+    expect(mockSendAgencyLeadConfirmationEmail).toHaveBeenCalledWith(lead);
+    warnSpy.mockRestore();
   });
 
   it('lists leads only for internal agency admins', async () => {
