@@ -83,6 +83,53 @@ describe('agency lead notification emails', () => {
     expect(email.text).not.toContain('a'.repeat(800));
   });
 
+  it('escapes lead-controlled fields in internal notification HTML', () => {
+    const unsafeLead = {
+      ...lead,
+      name: '<img src=x onerror=alert(1)>',
+      company: '<script>alert(1)</script>',
+      message: '<a href="https://bad.example">bad</a>',
+    };
+
+    const email = buildAgencyLeadNotificationEmail(unsafeLead, {
+      from: 'agency@example.com',
+      to: ['ops@example.com'],
+      appUrl: 'https://app.example.com',
+    });
+
+    expect(email.html).toContain('&lt;script&gt;alert(1)&lt;/script&gt;');
+    expect(email.html).toContain('&lt;a href=&quot;https://bad.example&quot;&gt;bad&lt;/a&gt;');
+    expect(email.html).not.toContain('<script>alert(1)</script>');
+    expect(email.html).not.toContain('<a href="https://bad.example">bad</a>');
+  });
+
+  it('does not include raw metadata values in lead email bodies', () => {
+    const metadataLead = {
+      ...lead,
+      metadata: {
+        rawPayload: 'raw-payload-secret',
+        requestHeader: 'authorization-token',
+      },
+    };
+
+    const notification = buildAgencyLeadNotificationEmail(metadataLead, {
+      from: 'agency@example.com',
+      to: ['ops@example.com'],
+      appUrl: 'https://app.example.com',
+    });
+    const confirmation = buildAgencyLeadConfirmationEmail(metadataLead, {
+      from: 'agency@example.com',
+      appUrl: 'https://app.example.com',
+    });
+
+    [notification.text, notification.html, confirmation.text, confirmation.html].forEach((body) => {
+      expect(body).not.toContain('raw-payload-secret');
+      expect(body).not.toContain('authorization-token');
+      expect(body).not.toContain('rawPayload');
+      expect(body).not.toContain('requestHeader');
+    });
+  });
+
   it('does not send when Resend is not configured', async () => {
     const result = await sendAgencyLeadNotification(lead);
 
