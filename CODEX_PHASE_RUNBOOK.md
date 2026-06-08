@@ -1998,7 +1998,9 @@ For every Phase 5 subphase:
 
 ---
 
-## [ ] Phase 5A: Slack OAuth/App Install Foundation
+## [x] Phase 5A: Slack OAuth/App Install Foundation
+
+Completed commit: 0dcc5cf
 
 Status: Ready after Phase 4H is committed.
 
@@ -2203,7 +2205,9 @@ git commit -m "Add Slack OAuth foundation for agency clients"
 
 ---
 
-## [ ] Phase 5B: Slack Channel Selection + Message Import Foundation
+## [x] Phase 5B: Slack Channel Selection + Message Import Foundation
+
+Completed commit: 0dcc5cf
 
 Status: Ready after Phase 5A is committed.
 
@@ -2416,7 +2420,9 @@ git commit -m "Add Slack channel selection and manual import foundation"
 
 ---
 
-## [ ] Phase 5C: Granola Import Expansion
+## [x] Phase 5C: Granola Import Expansion
+
+Completed commit: 0dcc5cf
 
 Status: Ready after Phase 5B is committed.
 
@@ -2571,7 +2577,9 @@ git commit -m "Expand manual Granola import workflow"
 
 ---
 
-## [ ] Phase 5D: Source-to-Draft Generation Workflow
+## [x] Phase 5D: Source-to-Draft Generation Workflow
+
+Completed commit: 0dcc5cf
 
 Status: Ready after Phase 5C is committed.
 
@@ -2744,7 +2752,9 @@ git commit -m "Add agency source-to-draft generation workflow"
 
 ---
 
-## [ ] Phase 5E: Client Delivery Workflow
+## [x] Phase 5E: Client Delivery Workflow
+
+Completed commit: 0dcc5cf
 
 Status: Ready after Phase 5D is committed.
 
@@ -2919,7 +2929,9 @@ git commit -m "Add agency client delivery workflow"
 
 ---
 
-## [ ] Phase 5F: Agency Workflow QA and Integration Safety Pass
+## [x] Phase 5F: Agency Workflow QA and Integration Safety Pass
+
+Completed commit: 0dcc5cf
 
 Status: Ready after Phase 5E is committed.
 
