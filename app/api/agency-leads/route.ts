@@ -4,6 +4,7 @@ import {
   AgencyLeadValidationError,
   createAgencyLead,
   normalizeAgencyLeadSubmission,
+  resolveAgencyLeadOrganizationId,
 } from '@/lib/agency-leads';
 import {
   checkAgencyLeadRateLimit,
@@ -68,7 +69,10 @@ export async function POST(request: NextRequest) {
       );
     }
 
-    const lead = await createAgencyLead(supabaseAdmin, body);
+    const organizationId = await resolveAgencyLeadOrganizationId(supabaseAdmin);
+    const lead = await createAgencyLead(supabaseAdmin, body, {
+      organizationId,
+    });
 
     try {
       await createAgencyFunnelEvent(supabaseAdmin, {

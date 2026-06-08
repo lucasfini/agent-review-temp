@@ -7,6 +7,7 @@ import type { AgencyLead } from '@/lib/agency-leads';
 
 const baseLead: AgencyLead = {
   id: 'lead-1',
+  organizationId: 'agency-org',
   name: 'Lucas',
   email: 'lucas@example.com',
   company: 'Acme',

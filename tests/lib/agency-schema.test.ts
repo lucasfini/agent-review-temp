@@ -41,6 +41,11 @@ const leadQualificationMigrationPath = path.join(
   'supabase/migrations/20260608170000_phase_7e_agency_lead_qualification.sql'
 );
 const leadQualificationSql = readFileSync(leadQualificationMigrationPath, 'utf8');
+const leadOrgScopeMigrationPath = path.join(
+  process.cwd(),
+  'supabase/migrations/20260608180000_phase_7g_agency_lead_org_scope.sql'
+);
+const leadOrgScopeSql = readFileSync(leadOrgScopeMigrationPath, 'utf8');
 
 describe('phase 4A agency schema migration', () => {
   it('creates the required agency foundation tables', () => {
@@ -164,5 +169,14 @@ describe('phase 4A agency schema migration', () => {
     expect(leadQualificationSql).toContain('agency_leads_qualification_score_check');
     expect(leadQualificationSql).toContain("qualification_tier IS NULL OR qualification_tier IN ('high', 'medium', 'low', 'unqualified')");
     expect(leadQualificationSql).not.toContain('CREATE POLICY');
+  });
+
+  it('adds Phase 7G organization scoping to public agency leads', () => {
+    expect(leadOrgScopeSql).toContain('ADD COLUMN IF NOT EXISTS organization_id UUID REFERENCES public.organizations(id) ON DELETE SET NULL');
+    expect(leadOrgScopeSql).toContain('idx_agency_leads_organization_id');
+    expect(leadOrgScopeSql).toContain('enforce_agency_lead_internal_org');
+    expect(leadOrgScopeSql).toContain("o.type = 'internal_agency'");
+    expect(leadOrgScopeSql).toContain('agency_leads_enforce_internal_org');
+    expect(leadOrgScopeSql).not.toContain('CREATE POLICY');
   });
 });

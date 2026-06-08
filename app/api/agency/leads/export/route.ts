@@ -96,6 +96,7 @@ export async function GET(request: NextRequest) {
     const format = searchParams.get('format') === 'json' ? 'json' : 'csv';
 
     const leads = await listAgencyLeads(supabaseAdmin, {
+      organizationId: organization.id,
       status,
       qualificationTier,
       packageInterest,

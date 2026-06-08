@@ -10,6 +10,7 @@ const originalEnv = process.env;
 
 const lead: AgencyLead = {
   id: 'lead-1',
+  organizationId: 'agency-org',
   name: 'Lucas',
   email: 'lucas@example.com',
   company: 'Acme',

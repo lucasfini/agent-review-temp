@@ -2,6 +2,7 @@ import { RouteAccessError } from '@/lib/api/route-auth';
 
 const mockRequireAgencyAccess = jest.fn();
 const mockCreateAgencyLead = jest.fn();
+const mockResolveAgencyLeadOrganizationId = jest.fn();
 const mockListAgencyLeads = jest.fn();
 const mockGetAgencyLead = jest.fn();
 const mockUpdateAgencyLead = jest.fn();
@@ -26,6 +27,7 @@ jest.mock('@/lib/agency-leads', () => {
   return {
     ...actual,
     createAgencyLead: (...args: any[]) => mockCreateAgencyLead(...args),
+    resolveAgencyLeadOrganizationId: (...args: any[]) => mockResolveAgencyLeadOrganizationId(...args),
     listAgencyLeads: (...args: any[]) => mockListAgencyLeads(...args),
     getAgencyLead: (...args: any[]) => mockGetAgencyLead(...args),
     updateAgencyLead: (...args: any[]) => mockUpdateAgencyLead(...args),
@@ -67,6 +69,7 @@ const membership = {
 };
 const lead = {
   id: 'lead-1',
+  organizationId: 'agency-org',
   name: 'Lucas',
   email: 'lucas@example.com',
   company: 'Acme',
@@ -111,6 +114,7 @@ describe('agency lead routes', () => {
   beforeEach(() => {
     mockRequireAgencyAccess.mockReset();
     mockCreateAgencyLead.mockReset();
+    mockResolveAgencyLeadOrganizationId.mockReset();
     mockListAgencyLeads.mockReset();
     mockGetAgencyLead.mockReset();
     mockUpdateAgencyLead.mockReset();
@@ -129,6 +133,7 @@ describe('agency lead routes', () => {
       retryAfterSeconds: 0,
     });
     mockIsLikelySpamLead.mockReturnValue({ isSpam: false, reason: null });
+    mockResolveAgencyLeadOrganizationId.mockResolvedValue('agency-org');
     mockSendAgencyLeadNotification.mockResolvedValue({ delivered: true });
     mockSendAgencyLeadConfirmationEmail.mockResolvedValue({ delivered: true });
     mockCreateAgencyFunnelEvent.mockResolvedValue({ event_name: 'agency_intake_submitted' });
@@ -165,12 +170,14 @@ describe('agency lead routes', () => {
 
     expect(response.status).toBe(201);
     expect(payload.lead).toEqual({ id: 'lead-1', status: 'new' });
+    expect(mockResolveAgencyLeadOrganizationId).toHaveBeenCalledWith(expect.anything());
     expect(mockCreateAgencyLead).toHaveBeenCalledWith(
       expect.anything(),
       expect.objectContaining({
         email: 'Lucas@Example.com',
         company: 'Acme',
-      })
+      }),
+      { organizationId: 'agency-org' }
     );
     expect(mockCreateAgencyFunnelEvent).toHaveBeenCalledWith(
       expect.anything(),
@@ -183,6 +190,31 @@ describe('agency lead routes', () => {
     expect(mockSendAgencyLeadNotification).toHaveBeenCalledWith(lead);
     expect(mockSendAgencyLeadConfirmationEmail).toHaveBeenCalledWith(lead);
     expect(mockConvertAgencyLeadToClient).not.toHaveBeenCalled();
+  });
+
+  it('fails public lead creation safely when no internal agency organization can own it', async () => {
+    const errorSpy = jest.spyOn(console, 'error').mockImplementation(() => {});
+    const { POST } = await import('@/app/api/agency-leads/route');
+    mockResolveAgencyLeadOrganizationId.mockRejectedValue(
+      new Error('AGENCY_LEAD_ORGANIZATION_ID is required when multiple internal agency organizations exist')
+    );
+
+    const response = await POST(new Request('http://localhost/api/agency-leads', {
+      method: 'POST',
+      body: JSON.stringify({
+        email: 'lucas@example.com',
+        company: 'Acme',
+      }),
+    }) as any);
+    const payload = await response.json();
+
+    expect(response.status).toBe(500);
+    expect(payload.error).toBe('Failed to submit agency inquiry. Please try again.');
+    expect(mockCreateAgencyLead).not.toHaveBeenCalled();
+    expect(mockCreateAgencyFunnelEvent).not.toHaveBeenCalled();
+    expect(mockSendAgencyLeadNotification).not.toHaveBeenCalled();
+    expect(mockSendAgencyLeadConfirmationEmail).not.toHaveBeenCalled();
+    errorSpy.mockRestore();
   });
 
   it('rejects invalid public lead emails before storage', async () => {
@@ -332,6 +364,7 @@ describe('agency lead routes', () => {
       }
     );
     expect(mockListAgencyLeads).toHaveBeenCalledWith(expect.anything(), {
+      organizationId: 'agency-org',
       status: null,
       qualificationTier: null,
       limit: 50,
@@ -347,6 +380,7 @@ describe('agency lead routes', () => {
 
     expect(response.status).toBe(200);
     expect(mockListAgencyLeads).toHaveBeenCalledWith(expect.anything(), {
+      organizationId: 'agency-org',
       status: 'new',
       qualificationTier: 'high',
       limit: 25,
@@ -376,6 +410,7 @@ describe('agency lead routes', () => {
       }
     );
     expect(mockListAgencyLeads).toHaveBeenCalledWith(expect.anything(), {
+      organizationId: 'agency-org',
       status: 'new',
       qualificationTier: 'high',
       packageInterest: 'monthly-founder-content',
@@ -397,6 +432,7 @@ describe('agency lead routes', () => {
     expect(response.status).toBe(200);
     expect(payload.leads).toEqual([lead]);
     expect(mockListAgencyLeads).toHaveBeenCalledWith(expect.anything(), {
+      organizationId: 'agency-org',
       status: null,
       qualificationTier: null,
       packageInterest: null,
@@ -455,6 +491,22 @@ describe('agency lead routes', () => {
     expect(mockListAgencyLeads).not.toHaveBeenCalled();
   });
 
+  it('loads lead detail scoped to the active internal agency organization', async () => {
+    const { GET } = await import('@/app/api/agency/leads/[id]/route');
+
+    const response = await GET(
+      new Request('http://localhost/api/agency/leads/lead-1?organization_id=agency-org') as any,
+      { params: Promise.resolve({ id: 'lead-1' }) }
+    );
+    const payload = await response.json();
+
+    expect(response.status).toBe(200);
+    expect(payload.lead).toEqual(lead);
+    expect(mockGetAgencyLead).toHaveBeenCalledWith(expect.anything(), 'lead-1', {
+      organizationId: 'agency-org',
+    });
+  });
+
   it('blocks demo users from lead status updates', async () => {
     const { PATCH } = await import('@/app/api/agency/leads/[id]/route');
     mockIsDemoUser.mockReturnValue(true);
@@ -500,7 +552,7 @@ describe('agency lead routes', () => {
       reviewNotes: 'Strong fit.',
       lastContactedAt: '2026-06-08T00:00:00.000Z',
       nextFollowUpAt: '2026-06-15T00:00:00.000Z',
-    }));
+    }), { organizationId: 'agency-org' });
   });
 
   it('converts leads into clients only after agency admin authorization', async () => {

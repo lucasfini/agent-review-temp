@@ -54,7 +54,9 @@ export async function GET(
       requestedOrganizationId: requestedOrganizationIdFrom(request),
       requireClientManagement: true,
     });
-    const lead = await getAgencyLead(supabaseAdmin, id);
+    const lead = await getAgencyLead(supabaseAdmin, id, {
+      organizationId: organization.id,
+    });
 
     if (!lead) {
       return NextResponse.json({ error: 'Agency lead not found' }, { status: 404 });
@@ -100,6 +102,8 @@ export async function PATCH(
       lastContactedAt: body.lastContactedAt ?? body.last_contacted_at,
       nextFollowUpAt: body.nextFollowUpAt ?? body.next_follow_up_at,
       metadata: Object.keys(metadata).length > 0 ? metadata : body.metadata,
+    }, {
+      organizationId: organization.id,
     });
 
     if (!lead) {

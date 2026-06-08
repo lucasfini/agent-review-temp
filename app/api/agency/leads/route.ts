@@ -73,6 +73,7 @@ export async function GET(request: NextRequest) {
     const status = normalizeStatusParam(searchParams.get('status'));
     const qualificationTier = normalizeTierParam(searchParams.get('qualification_tier'));
     const leads = await listAgencyLeads(supabaseAdmin, {
+      organizationId: organization.id,
       status,
       qualificationTier,
       limit: Number.isFinite(limitParam) ? limitParam : 50,

@@ -24,6 +24,7 @@ export type AgencyLeadStatus = typeof AGENCY_LEAD_STATUSES[number];
 
 export interface AgencyLead {
   id: string;
+  organizationId: string | null;
   name: string | null;
   email: string;
   company: string | null;
@@ -51,6 +52,7 @@ export interface AgencyLead {
 
 export interface AgencyLeadRow {
   id: string;
+  organization_id?: string | null;
   name: string | null;
   email: string;
   company: string | null;
@@ -234,6 +236,7 @@ function normalizeQualificationTier(value: string | null | undefined): AgencyLea
 export function mapAgencyLeadRow(row: AgencyLeadRow): AgencyLead {
   return {
     id: row.id,
+    organizationId: row.organization_id || null,
     name: row.name,
     email: row.email,
     company: row.company,
@@ -258,6 +261,56 @@ export function mapAgencyLeadRow(row: AgencyLeadRow): AgencyLead {
     createdAt: row.created_at,
     updatedAt: row.updated_at,
   };
+}
+
+export async function resolveAgencyLeadOrganizationId(
+  supabase: SupabaseClient<any>
+): Promise<string> {
+  const configuredOrganizationId = process.env.AGENCY_LEAD_ORGANIZATION_ID?.trim();
+
+  if (configuredOrganizationId) {
+    const { data, error } = await supabase
+      .from('organizations')
+      .select('id, type')
+      .eq('id', configuredOrganizationId)
+      .maybeSingle() as {
+        data: { id: string; type: string } | null;
+        error: any;
+      };
+
+    if (error) {
+      throw new Error(error.message || 'Failed to validate agency lead organization');
+    }
+    if (!data || data.type !== 'internal_agency') {
+      throw new Error('AGENCY_LEAD_ORGANIZATION_ID must reference an internal agency organization');
+    }
+
+    return data.id;
+  }
+
+  const { data, error } = await supabase
+    .from('organizations')
+    .select('id, type')
+    .eq('type', 'internal_agency')
+    .order('created_at', { ascending: true })
+    .limit(2) as {
+      data: Array<{ id: string; type: string }> | null;
+      error: any;
+    };
+
+  if (error) {
+    throw new Error(error.message || 'Failed to resolve agency lead organization');
+  }
+
+  if (!data || data.length === 0) {
+    throw new Error('No internal agency organization is available for agency leads');
+  }
+
+  if (data.length > 1) {
+    throw new Error('AGENCY_LEAD_ORGANIZATION_ID is required when multiple internal agency organizations exist');
+  }
+
+  return data[0].id;
 }
 
 export function normalizeAgencyLeadSubmission(input: AgencyLeadInput): Record<string, unknown> {
@@ -298,9 +351,15 @@ export function normalizeAgencyLeadSubmission(input: AgencyLeadInput): Record<st
 
 export async function createAgencyLead(
   supabase: SupabaseClient<any>,
-  input: AgencyLeadInput
+  input: AgencyLeadInput,
+  options: {
+    organizationId?: string | null;
+  } = {}
 ): Promise<AgencyLead> {
   const payload = normalizeAgencyLeadSubmission(input);
+  if (options.organizationId) {
+    payload.organization_id = options.organizationId;
+  }
 
   const { data, error } = await supabase
     .from('agency_leads')
@@ -318,6 +377,7 @@ export async function createAgencyLead(
 export async function listAgencyLeads(
   supabase: SupabaseClient<any>,
   options: {
+    organizationId?: string | null;
     status?: AgencyLeadStatus | null;
     qualificationTier?: AgencyLeadQualificationTier | null;
     packageInterest?: string | null;
@@ -336,6 +396,9 @@ export async function listAgencyLeads(
 
   if (options.status) {
     query = query.eq('status', options.status);
+  }
+  if (options.organizationId) {
+    query = query.eq('organization_id', options.organizationId);
   }
   if (options.qualificationTier) {
     query = query.eq('qualification_tier', options.qualificationTier);
@@ -361,12 +424,21 @@ export async function listAgencyLeads(
 
 export async function getAgencyLead(
   supabase: SupabaseClient<any>,
-  id: string
+  id: string,
+  options: {
+    organizationId?: string | null;
+  } = {}
 ): Promise<AgencyLead | null> {
-  const { data, error } = await supabase
+  let query = supabase
     .from('agency_leads')
     .select('*')
-    .eq('id', id)
+    .eq('id', id);
+
+  if (options.organizationId) {
+    query = query.eq('organization_id', options.organizationId);
+  }
+
+  const { data, error } = await query
     .maybeSingle() as { data: AgencyLeadRow | null; error: any };
 
   if (error) {
@@ -379,7 +451,10 @@ export async function getAgencyLead(
 export async function updateAgencyLead(
   supabase: SupabaseClient<any>,
   id: string,
-  input: AgencyLeadUpdateInput
+  input: AgencyLeadUpdateInput,
+  options: {
+    organizationId?: string | null;
+  } = {}
 ): Promise<AgencyLead | null> {
   const status = optionalStatus(input.status);
   const qualificationScore = optionalScore(coalesceField(input as any, 'qualificationScore', 'qualification_score'));
@@ -413,7 +488,9 @@ export async function updateAgencyLead(
     throw new AgencyLeadValidationError('No agency lead fields provided');
   }
 
-  const current = await getAgencyLead(supabase, id);
+  const current = await getAgencyLead(supabase, id, {
+    organizationId: options.organizationId,
+  });
   if (!current) return null;
 
   const payload: Record<string, unknown> = {};
@@ -431,10 +508,16 @@ export async function updateAgencyLead(
     };
   }
 
-  const { data, error } = await supabase
+  let query = supabase
     .from('agency_leads')
     .update(payload as any)
-    .eq('id', id)
+    .eq('id', id);
+
+  if (options.organizationId) {
+    query = query.eq('organization_id', options.organizationId);
+  }
+
+  const { data, error } = await query
     .select('*')
     .maybeSingle() as { data: AgencyLeadRow | null; error: any };
 
@@ -473,7 +556,7 @@ export async function convertAgencyLeadToClient(
   userId: string,
   leadId: string
 ): Promise<{ lead: AgencyLead; client: AgencyClient }> {
-  const lead = await getAgencyLead(supabase, leadId);
+  const lead = await getAgencyLead(supabase, leadId, { organizationId });
 
   if (!lead) {
     throw new AgencyLeadValidationError('Agency lead not found');
@@ -512,6 +595,7 @@ export async function convertAgencyLeadToClient(
       },
     } as any)
     .eq('id', lead.id)
+    .eq('organization_id', organizationId)
     .select('*')
     .maybeSingle() as { data: AgencyLeadRow | null; error: any };
 
