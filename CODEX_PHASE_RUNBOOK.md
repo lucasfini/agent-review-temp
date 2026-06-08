@@ -4266,7 +4266,8 @@ For every Phase 7 subphase:
 
 ---
 
-## [ ] Phase 7A: Durable Lead Rate Limiting and Spam Protection
+## [x] Phase 7A: Durable Lead Rate Limiting and Spam Protection
+Completed commit: f3a45aa
 
 Status: Ready after Phase 6G is committed.
 
