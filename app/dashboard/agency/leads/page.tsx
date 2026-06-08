@@ -6,6 +6,7 @@ import {
   ArrowRight,
   Building2,
   CheckCircle2,
+  Download,
   Loader2,
   Mail,
   RefreshCcw,
@@ -114,6 +115,7 @@ export default function AgencyLeadsPage() {
   const [tierFilter, setTierFilter] = useState<'all' | AgencyLeadQualificationTier>('all');
   const [canManage, setCanManage] = useState(false);
   const [loading, setLoading] = useState(true);
+  const [exporting, setExporting] = useState(false);
   const [savingLeadId, setSavingLeadId] = useState<string | null>(null);
   const [convertingLeadId, setConvertingLeadId] = useState<string | null>(null);
   const [qualificationDraft, setQualificationDraft] = useState({
@@ -329,6 +331,44 @@ export default function AgencyLeadsPage() {
     }
   };
 
+  const exportLeads = async () => {
+    if (!organizationId || !canManage) return;
+    setExporting(true);
+    setError(null);
+    setMessage(null);
+
+    try {
+      const params = new URLSearchParams({ organization_id: organizationId });
+      if (statusFilter !== 'all') params.set('status', statusFilter);
+      if (tierFilter !== 'all') params.set('qualification_tier', tierFilter);
+
+      const response = await fetch(`/api/agency/leads/export?${params.toString()}`, {
+        headers: authHeaders,
+        cache: 'no-store',
+      });
+
+      if (!response.ok) {
+        const payload = await response.json().catch(() => ({}));
+        throw new Error(payload.error || 'Failed to export agency leads');
+      }
+
+      const blob = await response.blob();
+      const objectUrl = URL.createObjectURL(blob);
+      const anchor = document.createElement('a');
+      anchor.href = objectUrl;
+      anchor.download = `agency-leads-${new Date().toISOString().slice(0, 10)}.csv`;
+      document.body.appendChild(anchor);
+      anchor.click();
+      anchor.remove();
+      URL.revokeObjectURL(objectUrl);
+      setMessage('Lead export downloaded.');
+    } catch (exportError) {
+      setError(exportError instanceof Error ? exportError.message : 'Failed to export agency leads');
+    } finally {
+      setExporting(false);
+    }
+  };
+
   if (loadingOrganization || loading) {
     return (
       <div className="flex min-h-[60vh] items-center justify-center">
@@ -369,14 +409,25 @@ export default function AgencyLeadsPage() {
             Review public agency inquiries, qualify fit, and deliberately convert approved leads into internal agency clients.
           </p>
         </div>
-        <button
-          type="button"
-          onClick={() => void loadLeads()}
-          className="inline-flex items-center justify-center gap-2 rounded-lg border border-slate-300 bg-white px-4 py-2 text-sm font-medium text-slate-700 transition hover:bg-slate-50 dark:border-slate-700 dark:bg-slate-900 dark:text-slate-200 dark:hover:bg-slate-800"
-        >
-          <RefreshCcw className="h-4 w-4" />
-          Refresh
-        </button>
+        <div className="flex flex-col gap-2 sm:flex-row">
+          <button
+            type="button"
+            onClick={() => void exportLeads()}
+            disabled={!canManage || exporting}
+            className="inline-flex items-center justify-center gap-2 rounded-lg border border-slate-300 bg-white px-4 py-2 text-sm font-medium text-slate-700 transition hover:bg-slate-50 disabled:cursor-not-allowed disabled:bg-slate-100 disabled:text-slate-500 dark:border-slate-700 dark:bg-slate-900 dark:text-slate-200 dark:hover:bg-slate-800 dark:disabled:bg-slate-950"
+          >
+            {exporting ? <Loader2 className="h-4 w-4 animate-spin" /> : <Download className="h-4 w-4" />}
+            Export CSV
+          </button>
+          <button
+            type="button"
+            onClick={() => void loadLeads()}
+            className="inline-flex items-center justify-center gap-2 rounded-lg border border-slate-300 bg-white px-4 py-2 text-sm font-medium text-slate-700 transition hover:bg-slate-50 dark:border-slate-700 dark:bg-slate-900 dark:text-slate-200 dark:hover:bg-slate-800"
+          >
+            <RefreshCcw className="h-4 w-4" />
+            Refresh
+          </button>
+        </div>
       </div>
 
       <div className="grid gap-4 md:grid-cols-4">

@@ -320,10 +320,14 @@ export async function listAgencyLeads(
   options: {
     status?: AgencyLeadStatus | null;
     qualificationTier?: AgencyLeadQualificationTier | null;
+    packageInterest?: string | null;
+    dateFrom?: string | null;
+    dateTo?: string | null;
     limit?: number;
+    maxLimit?: number;
   } = {}
 ): Promise<AgencyLead[]> {
-  const limit = Math.min(Math.max(options.limit || 50, 1), 200);
+  const limit = Math.min(Math.max(options.limit || 50, 1), options.maxLimit || 200);
   let query = supabase
     .from('agency_leads')
     .select('*')
@@ -335,6 +339,15 @@ export async function listAgencyLeads(
   }
   if (options.qualificationTier) {
     query = query.eq('qualification_tier', options.qualificationTier);
+  }
+  if (options.packageInterest) {
+    query = query.eq('package_interest', options.packageInterest);
+  }
+  if (options.dateFrom) {
+    query = query.gte('created_at', options.dateFrom);
+  }
+  if (options.dateTo) {
+    query = query.lte('created_at', options.dateTo);
   }
 
   const { data, error } = await query as { data: AgencyLeadRow[] | null; error: any };

@@ -353,6 +353,92 @@ describe('agency lead routes', () => {
     });
   });
 
+  it('exports filtered leads as CSV for internal agency admins', async () => {
+    const { GET } = await import('@/app/api/agency/leads/export/route');
+
+    const response = await GET(
+      new Request(
+        'http://localhost/api/agency/leads/export?organization_id=agency-org&status=new&qualification_tier=high&package_interest=monthly-founder-content&date_from=2026-06-01&date_to=2026-06-08'
+      ) as any
+    );
+    const body = await response.text();
+
+    expect(response.status).toBe(200);
+    expect(response.headers.get('content-type')).toContain('text/csv');
+    expect(response.headers.get('content-disposition')).toContain('attachment; filename="agency-leads-');
+    expect(body).toContain('"Submitted At","Status","Qualification Tier"');
+    expect(body).toContain('"lucas@example.com"');
+    expect(mockRequireAgencyAccess).toHaveBeenCalledWith(
+      expect.anything(),
+      {
+        requestedOrganizationId: 'agency-org',
+        requireClientManagement: true,
+      }
+    );
+    expect(mockListAgencyLeads).toHaveBeenCalledWith(expect.anything(), {
+      status: 'new',
+      qualificationTier: 'high',
+      packageInterest: 'monthly-founder-content',
+      dateFrom: '2026-06-01T00:00:00.000Z',
+      dateTo: '2026-06-08T23:59:59.999Z',
+      limit: 1000,
+      maxLimit: 1000,
+    });
+  });
+
+  it('exports filtered leads as JSON when explicitly requested', async () => {
+    const { GET } = await import('@/app/api/agency/leads/export/route');
+
+    const response = await GET(
+      new Request('http://localhost/api/agency/leads/export?organization_id=agency-org&format=json') as any
+    );
+    const payload = await response.json();
+
+    expect(response.status).toBe(200);
+    expect(payload.leads).toEqual([lead]);
+    expect(mockListAgencyLeads).toHaveBeenCalledWith(expect.anything(), {
+      status: null,
+      qualificationTier: null,
+      packageInterest: null,
+      dateFrom: null,
+      dateTo: null,
+      limit: 1000,
+      maxLimit: 1000,
+    });
+  });
+
+  it('denies SaaS organization access to lead export', async () => {
+    const { GET } = await import('@/app/api/agency/leads/export/route');
+    mockRequireAgencyAccess.mockRejectedValue(
+      new RouteAccessError(403, 'Agency client management requires internal agency admin access')
+    );
+
+    const response = await GET(
+      new Request('http://localhost/api/agency/leads/export?organization_id=saas-org') as any
+    );
+    const payload = await response.json();
+
+    expect(response.status).toBe(403);
+    expect(payload.error).toBe('Agency client management requires internal agency admin access');
+    expect(mockListAgencyLeads).not.toHaveBeenCalled();
+  });
+
+  it('denies public unauthenticated access to lead export', async () => {
+    const { GET } = await import('@/app/api/agency/leads/export/route');
+    mockRequireAgencyAccess.mockRejectedValue(
+      new RouteAccessError(401, 'Authentication required')
+    );
+
+    const response = await GET(
+      new Request('http://localhost/api/agency/leads/export') as any
+    );
+    const payload = await response.json();
+
+    expect(response.status).toBe(401);
+    expect(payload.error).toBe('Authentication required');
+    expect(mockListAgencyLeads).not.toHaveBeenCalled();
+  });
+
   it('denies SaaS organization access to internal lead review', async () => {
     const { GET } = await import('@/app/api/agency/leads/route');
     mockRequireAgencyAccess.mockRejectedValue(
