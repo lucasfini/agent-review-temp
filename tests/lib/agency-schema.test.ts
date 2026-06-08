@@ -21,6 +21,16 @@ const deliveryMigrationPath = path.join(
   'supabase/migrations/20260608130000_phase_5e_agency_delivery_packages.sql'
 );
 const deliverySql = readFileSync(deliveryMigrationPath, 'utf8');
+const leadMigrationPath = path.join(
+  process.cwd(),
+  'supabase/migrations/20260608140000_phase_6d_agency_leads.sql'
+);
+const leadSql = readFileSync(leadMigrationPath, 'utf8');
+const leadConversionMigrationPath = path.join(
+  process.cwd(),
+  'supabase/migrations/20260608150000_phase_6f_agency_lead_conversion.sql'
+);
+const leadConversionSql = readFileSync(leadConversionMigrationPath, 'utf8');
 
 describe('phase 4A agency schema migration', () => {
   it('creates the required agency foundation tables', () => {
@@ -101,5 +111,23 @@ describe('phase 4A agency schema migration', () => {
     expect(deliverySql).toContain('Internal agency members can view delivery packages');
     expect(deliverySql).toContain('Internal agency admins can manage delivery packages');
     expect(deliverySql).toContain('Service role can manage agency_delivery_packages');
+  });
+
+  it('adds Phase 6D public agency leads as service-role-only private records', () => {
+    expect(leadSql).toContain('CREATE TABLE IF NOT EXISTS public.agency_leads');
+    expect(leadSql).toContain('email TEXT NOT NULL');
+    expect(leadSql).toContain("status IN ('new', 'reviewed', 'qualified', 'converted', 'archived', 'spam')");
+    expect(leadSql).toContain('ALTER TABLE public.agency_leads ENABLE ROW LEVEL SECURITY;');
+    expect(leadSql).toContain('Service role can manage agency_leads');
+    expect(leadSql).toContain('REVOKE ALL ON public.agency_leads FROM anon;');
+    expect(leadSql).toContain('REVOKE ALL ON public.agency_leads FROM authenticated;');
+  });
+
+  it('adds Phase 6F explicit lead conversion links without auto-creating clients', () => {
+    expect(leadConversionSql).toContain('ADD COLUMN IF NOT EXISTS converted_client_id UUID REFERENCES public.agency_clients(id) ON DELETE SET NULL');
+    expect(leadConversionSql).toContain('ADD COLUMN IF NOT EXISTS converted_at TIMESTAMPTZ');
+    expect(leadConversionSql).toContain('ADD COLUMN IF NOT EXISTS converted_by UUID REFERENCES auth.users(id) ON DELETE SET NULL');
+    expect(leadConversionSql).toContain('idx_agency_leads_converted_client_id');
+    expect(leadConversionSql).not.toContain('CREATE TRIGGER');
   });
 });

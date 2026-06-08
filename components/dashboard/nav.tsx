@@ -26,6 +26,7 @@ import {
   BookOpenText,
   ClipboardList,
   FileText,
+  Inbox,
   ListChecks,
   Mail,
   Menu,
@@ -61,6 +62,7 @@ function getMobilePageTitle(pathname: string, activeSettingsSection: string | nu
   if (pathname.startsWith('/dashboard/agency/delivery')) return 'Client Delivery';
   if (pathname.startsWith('/dashboard/agency/drafts')) return 'Draft Review';
   if (pathname.startsWith('/dashboard/agency/granola')) return 'Granola Imports';
+  if (pathname.startsWith('/dashboard/agency/leads')) return 'Agency Leads';
   if (pathname.startsWith('/dashboard/agency/slack')) return 'Slack Foundation';
   if (pathname.startsWith('/dashboard/agency/production')) return 'Production Queue';
   if (pathname.startsWith('/dashboard/agency/sources')) return 'Source Imports';
@@ -829,6 +831,7 @@ export default function DashboardNav({
       label: 'AGENCY',
       items: [
         { name: 'Agency Clients', href: '/dashboard/agency', icon: BriefcaseBusiness },
+        { name: 'Agency Leads', href: '/dashboard/agency/leads', icon: Inbox },
         { name: 'Source Imports', href: '/dashboard/agency/sources', icon: BookOpenText },
         { name: 'Production Queue', href: '/dashboard/agency/production', icon: ClipboardList },
         { name: 'Draft Review', href: '/dashboard/agency/drafts', icon: FileText },

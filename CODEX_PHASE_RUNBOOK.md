@@ -3089,6 +3089,1131 @@ Lucas and ChatGPT will then review the summary and adjust Phase 6 planning.
 
 ---
 
+# Phase 6: Public Agency Website + Intake Funnel
+
+Phase 6 builds the separate public-facing agency website and lead intake flow.
+
+The agency website is **not** the SaaS product. It should sell done-for-you services, not software access.
+
+The agency customer should not be shown the internal agency console, the SaaS dashboard, prompt systems, Slack import internals, Granola workflows, or production queue. They are buying outcomes and service, not a backstage tour of the robot factory.
+
+## Universal Phase 6 Rules
+
+For every Phase 6 subphase:
+
+1. Implement only the current subphase.
+2. Review the implementation in the same Codex run.
+3. Fix issues found during review.
+4. Re-run validation.
+5. Produce a final report.
+6. Stop before the next phase.
+7. Do not commit unless Lucas explicitly asks.
+
+### Always Preserve
+
+- Existing B2B SaaS product behavior
+- Existing SaaS billing/subscription behavior
+- Existing internal agency console behavior
+- Existing agency auth and role boundaries
+- Existing Slack/Granola/internal integration behavior
+- Existing content generation behavior
+- Existing dashboard routes
+
+### Do Not Do Unless Explicitly Stated
+
+- Do not expose internal agency routes publicly.
+- Do not expose agency clients publicly.
+- Do not give agency leads SaaS dashboard access.
+- Do not build a client portal yet.
+- Do not add automatic client onboarding into paid SaaS accounts.
+- Do not change Stripe subscription billing.
+- Do not change subscription enforcement.
+- Do not redesign the SaaS dashboard.
+- Do not change Slack/Granola integration behavior.
+- Do not send lead data to third-party tools unless explicitly approved.
+- Do not store secrets in the repo.
+- Do not start the next phase automatically.
+
+---
+
+## [ ] Phase 6A: Agency Positioning and Offer Definition
+
+Status: Ready after Phase 5F is committed.
+
+### Objective
+
+Define the public agency positioning, service offers, and page content strategy before building pages.
+
+This phase should create the content/spec foundation for the agency website.
+
+The agency should be positioned as a done-for-you customer communication and content operations service for startups, not as a public wrapper around the SaaS product.
+
+### Scope
+
+Do:
+
+- Create agency positioning documentation.
+- Define core agency offers.
+- Define target customer profile.
+- Define website page structure.
+- Draft copy blocks for homepage, services, process, packages, and intake.
+- Clarify that the agency is service-based and separate from the SaaS product.
+- Add docs/tests only if relevant.
+
+Do not:
+
+- Build website pages yet unless tiny placeholder routes are needed.
+- Build intake forms yet.
+- Build client portal.
+- Expose internal agency tooling.
+- Change SaaS landing page.
+- Change billing.
+- Change internal agency console behavior.
+- Add Slack/Granola integration changes.
+
+### Read First
+
+- `B2B_AGENCY_PIVOT_PRODUCT_SPEC.md`
+- `PHASE_4H_AGENCY_SYSTEM_QA.md`
+- `PHASE_5F_AGENCY_WORKFLOW_QA.md`
+- current public marketing pages
+- current `/agency` page if it exists
+- current contact/intake APIs if any
+
+### Positioning Requirements
+
+The agency should be positioned around:
+
+- done-for-you content systems
+- customer communication systems
+- startup founder content
+- customer updates/newsletters
+- Slack/meeting-note workflow support
+- turning meetings, Slack discussions, and customer conversations into useful content and communication assets
+
+Suggested positioning:
+
+```text
+Done-for-you content and customer communication systems for startups.
+```
+
+Alternative positioning:
+
+```text
+We help startups turn meetings, customer conversations, and internal knowledge into content, customer updates, and support workflows.
+```
+
+### Target Customers
+
+Define primary customers:
+
+- early-stage startups
+- founder-led B2B companies
+- small teams without marketing/customer communication ops
+- teams using Slack, meeting notes, customer calls, and internal knowledge but not turning them into consistent output
+
+### Offers to Define
+
+At minimum define:
+
+#### Content Operations Setup
+
+One-time setup:
+
+- brand voice
+- content pillars
+- source workflows
+- Slack/Granola/manual note intake
+- newsletter/founder content templates
+
+#### Monthly Founder Content System
+
+Recurring:
+
+- LinkedIn posts
+- founder updates
+- newsletter drafts
+- campaign content
+- review/delivery rhythm
+
+#### Customer Communication System
+
+Recurring or setup:
+
+- customer updates
+- support response templates
+- release/update communication
+- customer pain point extraction
+- meeting-to-message workflows
+
+#### Custom Startup Ops Package
+
+Custom:
+
+- mixed content + communication + integration workflow support
+
+### Website Structure Proposal
+
+Document proposed public pages:
+
+- Agency home
+- Services
+- Process
+- Packages
+- About/Why us
+- Contact/intake
+- Optional case studies later
+
+### Documentation
+
+Create:
+
+```text
+PHASE_6A_AGENCY_POSITIONING_OFFERS.md
+```
+
+Document:
+
+- positioning
+- target customer
+- service offers
+- key differentiators
+- page structure
+- copy blocks
+- what not to reveal publicly
+- next phase page-build plan
+
+### Review Checklist
+
+After implementation, review:
+
+- agency is clearly separate from SaaS
+- copy sells service outcomes, not internal tooling
+- no internal system details are exposed
+- offers are concrete enough to build pages
+- no code behavior changed unnecessarily
+- no SaaS product positioning was accidentally overwritten
+
+### Validation
+
+Run:
+
+- `npx tsc --noEmit` if code changed
+- `npm run -s lint` if code changed
+- `git diff --check`
+
+### Commit Message
+
+```bash
+git add .
+git commit -m "Define public agency positioning and offers"
+```
+
+---
+
+## [ ] Phase 6B: Public Agency Website Foundation
+
+Status: Ready after Phase 6A is committed.
+
+### Objective
+
+Build the public agency website foundation using the positioning and page structure from Phase 6A.
+
+This should be a separate public surface from the SaaS product. It may live in the same repo, but the user experience and messaging must be separate.
+
+### Scope
+
+Do:
+
+- Build public agency pages/routes.
+- Add agency-specific layout/content sections.
+- Add service-oriented copy.
+- Add clear CTAs to intake/contact.
+- Keep public agency website visually coherent.
+- Add docs/tests.
+
+Do not:
+
+- Build full intake backend yet unless minimal contact CTA exists already.
+- Build client portal.
+- Expose internal agency console.
+- Change SaaS dashboard.
+- Change SaaS billing.
+- Add Slack/Granola integration behavior.
+- Add public SaaS signup CTAs as the primary conversion path.
+
+### Candidate Routes
+
+Use existing routing conventions.
+
+Possible routes:
+
+- `/agency`
+- `/agency/services`
+- `/agency/process`
+- `/agency/packages`
+- `/agency/contact`
+
+If a separate domain will later point to these routes, document how.
+
+### Page Requirements
+
+#### Agency Home
+
+Should include:
+
+- hero positioning
+- target customer
+- core outcome
+- service overview
+- process summary
+- CTA to intake/contact
+- trust/credibility section if available
+- "not another SaaS login" style reassurance, but phrase professionally
+
+#### Services Page
+
+Should describe:
+
+- content operations setup
+- founder content system
+- customer communication system
+- custom startup ops package
+
+#### Process Page
+
+Should describe:
+
+1. discovery/intake
+2. source setup
+3. brand/context setup
+4. content/customer communication production
+5. review/delivery
+6. ongoing improvement
+
+#### Packages Page
+
+Should show service package structure without needing exact pricing if pricing is not finalized.
+
+Acceptable CTA:
+
+- "Apply"
+- "Book a call"
+- "Request an audit"
+- "Start intake"
+
+#### Contact/Intake Placeholder
+
+If Phase 6D will build full intake later, this page can initially link to existing contact form or placeholder CTA.
+
+### Branding Separation
+
+Agency pages should not feel like the SaaS pricing page.
+
+Rules:
+
+- Do not talk about "users subscribing to software."
+- Do not emphasize credits.
+- Do not expose dashboard internals.
+- Do not show internal Slack/Granola workflows in detail.
+- Sell service outcomes.
+
+### Documentation
+
+Create:
+
+```text
+PHASE_6B_PUBLIC_AGENCY_WEBSITE_FOUNDATION.md
+```
+
+Document:
+
+- routes added
+- components added
+- copy approach
+- domain/separation notes
+- what was intentionally not built
+- next phase
+
+### Tests
+
+Add focused tests if existing test setup supports:
+
+- public pages render
+- primary CTAs exist
+- internal dashboard routes are not linked publicly
+- no auth required for public pages
+
+### Validation
+
+Run:
+
+- `npx tsc --noEmit`
+- `npm run -s lint`
+- relevant page/render tests if available
+- `git diff --check`
+
+### Review Checklist
+
+After implementation, review:
+
+- public agency pages do not expose internal tooling
+- agency is separate from SaaS
+- CTAs point to appropriate next steps
+- no internal agency auth routes are leaked
+- no SaaS billing/generation behavior changed
+- validation passes
+
+### Commit Message
+
+```bash
+git add .
+git commit -m "Add public agency website foundation"
+```
+
+---
+
+## [ ] Phase 6C: Agency Service Packages and Conversion Copy
+
+Status: Ready after Phase 6B is committed.
+
+### Objective
+
+Refine the public agency website into a clearer conversion surface with stronger service package descriptions, objections, FAQs, and CTAs.
+
+This phase improves the public-facing sales content without changing backend workflow.
+
+### Scope
+
+Do:
+
+- Improve packages/services content.
+- Add FAQ.
+- Add objection handling.
+- Add "who this is for / not for."
+- Add CTA consistency.
+- Add lightweight SEO metadata if current app conventions support it.
+- Add docs/tests.
+
+Do not:
+
+- Build intake backend yet unless minimal frontend field changes are needed.
+- Add payment.
+- Add client portal.
+- Change SaaS pricing.
+- Change internal agency console.
+- Add integration behavior.
+
+### Content Sections to Add or Improve
+
+#### Who This Is For
+
+Examples:
+
+- founder-led B2B startups
+- teams with lots of calls/Slack knowledge but inconsistent content
+- startups needing customer updates and founder presence
+- teams that want done-for-you execution
+
+#### Who This Is Not For
+
+Examples:
+
+- companies wanting generic AI spam
+- teams unwilling to provide context/source material
+- businesses needing fully automated publishing on day one
+- consumer influencer brands if not target
+
+#### FAQ
+
+Include:
+
+- Do clients get software access?
+- How do you get source material?
+- Can you work from Slack or meeting notes?
+- Do you write in our brand voice?
+- Do you support newsletters and LinkedIn?
+- Do you post for us automatically?
+- How is this different from a generic AI tool?
+- How long does setup take?
+
+#### Package Detail
+
+For each package:
+
+- outcome
+- what is included
+- typical cadence
+- best-fit customer
+- CTA
+
+### Documentation
+
+Create:
+
+```text
+PHASE_6C_AGENCY_PACKAGES_CONVERSION_COPY.md
+```
+
+Document:
+
+- copy sections added
+- package structure
+- CTA strategy
+- SEO metadata changes if any
+- what was intentionally not built
+
+### Tests
+
+Add/adjust tests if practical:
+
+- package cards render
+- FAQ renders
+- CTA links route correctly
+- no internal-only links are public
+
+### Validation
+
+Run:
+
+- `npx tsc --noEmit`
+- `npm run -s lint`
+- relevant tests
+- `git diff --check`
+
+### Review Checklist
+
+After implementation, review:
+
+- copy is service-focused
+- no internal tooling details exposed
+- CTAs are consistent
+- claims are not exaggerated
+- no backend behavior changed unnecessarily
+- validation passes
+
+### Commit Message
+
+```bash
+git add .
+git commit -m "Refine agency packages and conversion copy"
+```
+
+---
+
+## [ ] Phase 6D: Agency Lead Intake Schema and API
+
+Status: Ready after Phase 6C is committed.
+
+### Objective
+
+Add the backend foundation for public agency lead intake.
+
+Public visitors should be able to submit an agency inquiry. Submissions should be stored safely and should not automatically create full agency clients unless explicitly approved in a later phase.
+
+### Scope
+
+Do:
+
+- Add agency lead/intake schema.
+- Add public intake API with spam/rate protections.
+- Store inquiry data.
+- Add admin/internal read path if useful.
+- Add docs/tests.
+
+Do not:
+
+- Automatically create `agency_clients` from every lead.
+- Give leads dashboard access.
+- Send data to external CRMs unless explicitly approved.
+- Add payment.
+- Change SaaS signup.
+- Change internal agency client workflows except optional lead review/read API.
+
+### Read First
+
+- existing contact/waitlist APIs
+- `PHASE_6B_PUBLIC_AGENCY_WEBSITE_FOUNDATION.md`
+- `PHASE_6C_AGENCY_PACKAGES_CONVERSION_COPY.md`
+- existing agency client schema
+- rate limit helpers
+- contact mailer if any
+
+### Schema
+
+Create a forward migration.
+
+Add table:
+
+```text
+agency_leads
+```
+
+Fields:
+
+- `id uuid primary key default gen_random_uuid()`
+- `name text`
+- `email text not null`
+- `company text`
+- `website text`
+- `role text`
+- `package_interest text`
+- `budget_range text`
+- `timeline text`
+- `message text`
+- `source text not null default 'agency_website'`
+- `status text not null default 'new'`
+- `metadata_json jsonb not null default '{}'::jsonb`
+- `created_at timestamptz not null default now()`
+- `updated_at timestamptz not null default now()`
+
+Status values:
+
+- `new`
+- `reviewed`
+- `qualified`
+- `converted`
+- `archived`
+- `spam`
+
+Indexes:
+
+- email
+- status
+- created_at
+
+### RLS
+
+Public insert may be handled through API only, not direct table insert.
+
+Recommended:
+
+- no anonymous direct table access
+- service role can manage
+- platform/internal agency admin read access through API
+
+### Public API
+
+Create:
+
+```text
+POST /api/agency-leads
+```
+
+Requirements:
+
+- Public route.
+- Validate email.
+- Validate length limits.
+- Rate limit by IP/email if existing helper supports it.
+- Honeypot field if frontend will use it.
+- Store sanitized inquiry.
+- Do not expose internal errors.
+- Return safe success response.
+- Do not create agency client automatically.
+
+### Internal API
+
+Optional but useful:
+
+```text
+GET /api/agency/leads
+PATCH /api/agency/leads/:id
+```
+
+Requirements:
+
+- Internal agency admin access only.
+- Demo writes blocked.
+- Allow status updates.
+- Do not overbuild CRM.
+
+### Documentation
+
+Create:
+
+```text
+PHASE_6D_AGENCY_LEAD_INTAKE_SCHEMA_API.md
+```
+
+Document:
+
+- schema
+- public API
+- validation/rate limits
+- RLS/security
+- why leads do not auto-create clients
+- next phase frontend form
+
+### Tests
+
+Add focused tests for:
+
+- valid lead submission
+- invalid email rejected
+- overly long fields rejected
+- honeypot rejected if implemented
+- rate limit behavior if practical
+- no auto client creation
+- internal read/update auth if implemented
+
+### Validation
+
+Run:
+
+- `npx tsc --noEmit`
+- `npm run -s lint`
+- focused lead tests
+- `git diff --check`
+
+### Review Checklist
+
+After implementation, review:
+
+- public route cannot leak data
+- spam/rate handling exists
+- no client auto-creation
+- internal read/update is agency-admin protected
+- validation passes
+
+### Commit Message
+
+```bash
+git add .
+git commit -m "Add agency lead intake backend"
+```
+
+---
+
+## [ ] Phase 6E: Public Agency Intake Form and Lead Review
+
+Status: Ready after Phase 6D is committed.
+
+### Objective
+
+Add the public agency intake form and connect it to the `agency_leads` backend.
+
+Also add a minimal internal lead review surface if not already added in Phase 6D.
+
+### Scope
+
+Do:
+
+- Build public intake form.
+- Submit to `/api/agency-leads`.
+- Add validation/loading/success/error states.
+- Add thank-you state/page.
+- Add minimal internal lead review UI if useful.
+- Add docs/tests.
+
+Do not:
+
+- Automatically create agency clients.
+- Add payment.
+- Add client portal.
+- Add external CRM integration.
+- Change SaaS signup.
+- Expose internal agency console publicly.
+
+### Public Form Fields
+
+Suggested fields:
+
+- name
+- email
+- company
+- website
+- role
+- package interest
+- timeline
+- budget range
+- message
+- source hidden field
+- honeypot hidden field
+
+### Candidate Routes
+
+Public:
+
+- `/agency/contact`
+- `/agency/apply`
+- `/agency/intake`
+- `/agency/thank-you`
+
+Internal optional:
+
+- `/dashboard/agency/leads`
+
+### UX Requirements
+
+Public form:
+
+- clear service-focused intro
+- no SaaS signup language
+- safe field validation
+- loading state
+- success state
+- user-safe error state
+- no internal implementation details
+
+Internal lead review:
+
+- list leads
+- filter by status
+- update status
+- view details
+- optional "convert later" placeholder, not actual conversion unless explicitly scoped
+
+### Documentation
+
+Create:
+
+```text
+PHASE_6E_AGENCY_INTAKE_FORM_LEAD_REVIEW.md
+```
+
+Document:
+
+- pages/components added
+- form fields
+- validation behavior
+- internal review behavior
+- what was intentionally not built
+
+### Tests
+
+Add focused tests for:
+
+- form renders
+- required email validation
+- successful submit state
+- API error state
+- internal leads page protected if implemented
+- no internal routes linked incorrectly on public pages
+
+### Validation
+
+Run:
+
+- `npx tsc --noEmit`
+- `npm run -s lint`
+- relevant form/API tests
+- `git diff --check`
+
+### Review Checklist
+
+After implementation, review:
+
+- form submits correctly
+- public users cannot read leads
+- internal review is protected
+- no auto client creation
+- no SaaS signup confusion
+- validation passes
+
+### Commit Message
+
+```bash
+git add .
+git commit -m "Add public agency intake form"
+```
+
+---
+
+## [ ] Phase 6F: Lead-to-Client Conversion Workflow
+
+Status: Ready after Phase 6E is committed.
+
+### Objective
+
+Allow an internal agency admin to convert a qualified agency lead into an `agency_client`.
+
+This should be a deliberate internal action, not automatic.
+
+### Scope
+
+Do:
+
+- Add conversion action from lead to client.
+- Preserve original lead record.
+- Link converted lead to created client if schema supports it.
+- Add tests and docs.
+
+Do not:
+
+- Automatically convert all leads.
+- Give lead/customer SaaS access.
+- Send onboarding emails unless explicitly approved.
+- Add payment.
+- Build client portal.
+- Change public form behavior except showing post-submit success.
+
+### Schema Update
+
+If useful, add fields to `agency_leads`:
+
+- `converted_client_id uuid references agency_clients(id) on delete set null`
+- `converted_at timestamptz`
+- `converted_by uuid references auth.users(id) on delete set null`
+
+Add via forward migration.
+
+### API
+
+Create:
+
+```text
+POST /api/agency/leads/:id/convert
+```
+
+Requirements:
+
+- Internal agency admin only.
+- Demo users blocked.
+- Lead must exist.
+- Lead should not already be converted.
+- Creates `agency_clients` row in the active internal agency org.
+- Maps lead fields:
+  - company/name to client name
+  - website
+  - primary_contact_name
+  - primary_contact_email
+  - package interest
+  - notes/message
+- Updates lead status to `converted`.
+- Stores converted client link.
+- Returns created client.
+
+### UI
+
+Update internal leads page:
+
+- show convert action for qualified/new leads
+- show converted status/link
+- confirm before conversion
+- show success/error states
+
+### Documentation
+
+Create:
+
+```text
+PHASE_6F_LEAD_TO_CLIENT_CONVERSION.md
+```
+
+Document:
+
+- conversion behavior
+- field mapping
+- permissions
+- why conversion is manual
+- what was intentionally not built
+
+### Tests
+
+Add focused tests for:
+
+- admin can convert
+- member cannot convert
+- demo cannot convert
+- already converted lead cannot convert twice
+- created client is internal agency scoped
+- lead status/link updated
+- SaaS org denied
+
+### Validation
+
+Run:
+
+- `npx tsc --noEmit`
+- `npm run -s lint`
+- focused lead/client tests
+- `git diff --check`
+
+### Review Checklist
+
+After implementation, review:
+
+- conversion is manual/admin-only
+- no SaaS access is granted
+- client org scope is correct
+- duplicate conversion prevented
+- original lead data preserved
+- validation passes
+
+### Commit Message
+
+```bash
+git add .
+git commit -m "Add agency lead to client conversion"
+```
+
+---
+
+## [ ] Phase 6G: Public Agency Website QA and Launch Checklist
+
+Status: Ready after Phase 6F is committed.
+
+### Objective
+
+Run a full QA pass on the public agency website and lead funnel before considering it launch-ready.
+
+This phase should mostly be review, bug fixes, tests, and documentation.
+
+### Scope
+
+Do:
+
+- QA all public agency pages.
+- QA intake submission.
+- QA internal lead review.
+- QA lead conversion.
+- Fix bugs found.
+- Add launch checklist.
+- Add SEO/social metadata checks if current app supports it.
+
+Do not:
+
+- Add major new features.
+- Add client portal.
+- Add payment.
+- Add external CRM integration.
+- Change SaaS billing/generation.
+- Add Slack/Granola behavior.
+
+### QA Checklist
+
+#### Public Pages
+
+Verify:
+
+- `/agency`
+- `/agency/services`
+- `/agency/process`
+- `/agency/packages`
+- `/agency/contact` or intake route
+- thank-you page if present
+
+Check:
+
+- pages render unauthenticated
+- CTAs work
+- no internal links exposed
+- no SaaS dashboard confusion
+- service positioning is clear
+- mobile layout is acceptable
+- metadata exists where practical
+
+#### Lead Intake
+
+Verify:
+
+- valid form submission works
+- invalid email blocked
+- long/spam fields blocked
+- honeypot works if implemented
+- safe success/error states
+- no lead data exposed publicly
+
+#### Internal Lead Review
+
+Verify:
+
+- unauthenticated users denied
+- SaaS users denied
+- internal agency admins can view/update leads
+- demo users cannot mutate
+- conversion works
+- duplicate conversion blocked
+
+#### Isolation
+
+Verify:
+
+- SaaS dashboard unaffected
+- billing unaffected
+- agency console unaffected
+- Slack/Granola unaffected
+
+### Documentation
+
+Create:
+
+```text
+PHASE_6G_AGENCY_WEBSITE_QA_LAUNCH.md
+```
+
+Document:
+
+- QA results
+- bugs found/fixed
+- remaining risks
+- launch checklist
+- domain/deployment notes
+- next recommended phase
+
+### Validation
+
+Run:
+
+- `npx tsc --noEmit`
+- `npm run -s lint`
+- public page tests if available
+- lead API tests
+- agency permission tests
+- route smoke tests
+- `git diff --check`
+
+### Review Checklist
+
+After implementation/review:
+
+- public agency site is launch-ready enough for early traffic
+- lead funnel works
+- internal lead review works
+- no internal tools exposed publicly
+- validation passes
+
+### Commit Message
+
+```bash
+git add .
+git commit -m "QA public agency website and lead funnel"
+```
+
+---
+
+## Phase 6 Completion Summary Requirement
+
+After Phase 6G is committed, Codex should produce a summary for Lucas.
+
+Use this command:
+
+```text
+Read CODEX_PHASE_RUNBOOK.md and summarize all completed Phase 6 work.
+
+Include:
+- commits by phase
+- public pages added
+- lead intake/backend features added
+- internal lead review/conversion features
+- security model
+- what was intentionally not built
+- validation results
+- remaining risks
+- recommended adjustments before Phase 7
+```
+
+Lucas and ChatGPT will then review the summary and decide whether Phase 7 should focus on:
+
+- client portal
+- advanced agency automations
+- production launch hardening
+- public SaaS marketing
+- deeper analytics/reporting
+
+---
+
 ## How to Update This Runbook
 
 After a phase is safely committed:
