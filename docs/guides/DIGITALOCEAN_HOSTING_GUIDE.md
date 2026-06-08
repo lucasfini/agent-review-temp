@@ -64,31 +64,51 @@ Fill in real values for:
 - `NEXT_PUBLIC_SUPABASE_URL`
 - `NEXT_PUBLIC_SUPABASE_ANON_KEY`
 - `SUPABASE_SERVICE_ROLE_KEY`
+- `RESEND_API_KEY`
+- `AGENCY_LEAD_FROM_EMAIL`
+- `AGENCY_LEAD_NOTIFICATION_EMAIL`
+- `AGENCY_LEAD_ORGANIZATION_ID`
 - `ASSEMBLYAI_API_KEY`
 - `OPENAI_API_KEY`
 - `STRIPE_SECRET_KEY`
 - `NEXT_PUBLIC_STRIPE_PUBLISHABLE_KEY`
 - `STRIPE_WEBHOOK_SECRET`
+- `SLACK_CLIENT_ID`
+- `SLACK_CLIENT_SECRET`
+- `SLACK_REDIRECT_URI`
+- `INTEGRATIONS_ENCRYPTION_KEY`
 - `R2_ACCOUNT_ID`
 - `R2_ACCESS_KEY_ID`
 - `R2_SECRET_ACCESS_KEY`
 - `R2_BUCKET_NAME`
+- `UPSTASH_REDIS_REST_URL`
+- `UPSTASH_REDIS_REST_TOKEN`
 - `CRON_SECRET`
 - `INTERNAL_JOB_SECRET`
 - `UPLOAD_TOKEN_SECRET`
+- `SUBSCRIPTION_ENFORCEMENT_MODE=dry_run`
 
 Optional but recommended:
 
-- `UPSTASH_REDIS_REST_URL`
-- `UPSTASH_REDIS_REST_TOKEN`
 - `ADMIN_EMAILS`
-- Zoom / Microsoft OAuth credentials if those imports will be live
+- `CONTACT_FROM_EMAIL`
+- `CONTACT_TO_EMAIL`
+- Stripe checkout/portal return URL overrides
+- Zoom / Microsoft / YouTube OAuth credentials if those imports will be live
 
 Notes:
 
 - Runtime OpenAI-backed features use `OPENAI_API_KEY`.
 - `OPENAI_API_KEY_OPTIN` is still accepted only for backward compatibility.
 - `ANTHROPIC_API_KEY` is optional if Anthropic-backed features are not in use.
+- Subscription Stripe price IDs are stored in `plans.stripe_price_id`, not env vars. Run `npm run validate:subscription-launch` after the database is reachable.
+- `SLACK_SIGNING_SECRET` is not required unless a Slack event or interactivity endpoint is added.
+
+Validate the file before starting the stack:
+
+```bash
+npm run validate:production-env -- --env-file .env.production
+```
 
 ## 4. DNS And App URL Alignment
 

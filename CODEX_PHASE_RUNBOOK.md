@@ -5309,6 +5309,932 @@ Lucas and ChatGPT will then review the summary and decide whether Phase 8 should
 
 ---
 
+# Phase 8: Production Launch Hardening
+
+Phase 8 prepares the full platform for real deployment and real traffic.
+
+The goal is to verify production readiness across:
+- SaaS product
+- internal agency console
+- public agency website
+- lead funnel
+- billing/subscriptions
+- Slack/Granola workflows
+- deployment
+- monitoring
+- security
+
+Phase 8 should mostly be validation, safety checks, bug fixes, documentation, and launch checklists.
+
+Do not add major new product features in Phase 8.
+
+## Universal Phase 8 Rules
+
+For every Phase 8 subphase:
+
+1. Implement only the current subphase.
+2. Review the implementation in the same Codex run.
+3. Fix issues found during review.
+4. Re-run validation.
+5. Produce a final report.
+6. Stop before the next phase.
+7. Do not commit unless Lucas explicitly asks.
+
+### Always Preserve
+
+- Existing SaaS behavior
+- Existing agency console behavior
+- Existing public agency funnel behavior
+- Existing billing/subscription behavior
+- Existing Slack/Granola workflows
+- Existing lead funnel behavior
+- Existing auth and role boundaries
+
+### Do Not Do Unless Explicitly Stated
+
+- Do not build client portal.
+- Do not build advanced automation.
+- Do not redesign public pages.
+- Do not change pricing strategy.
+- Do not change Stripe webhook behavior unless fixing a launch bug.
+- Do not change subscription enforcement defaults.
+- Do not expose internal agency routes publicly.
+- Do not send data to external CRMs.
+- Do not add new third-party trackers.
+- Do not store secrets in the repo.
+- Do not start the next phase automatically.
+
+---
+
+## [ ] Phase 8A: Production Environment and Secrets Audit
+Status: Ready after Phase 7G is committed.
+
+### Objective
+
+Audit all required production environment variables and deployment configuration.
+
+This phase ensures production has the required env vars for:
+- Supabase
+- Stripe
+- Resend/email
+- Slack
+- OpenAI/AI providers
+- Cloudflare R2
+- Upstash/Redis rate limiting
+- agency lead ownership
+- subscription enforcement mode
+
+### Scope
+
+Do:
+- Audit `.env.example`
+- Audit `.env.production.example`
+- Audit deployment docs
+- Audit runtime env access in code
+- Add missing env placeholders
+- Create production env checklist
+- Add safe validation helper/script if useful
+
+Do not:
+- Commit real secrets.
+- Change deployment provider.
+- Change app behavior except safe env validation.
+- Enable subscription enforcement by default.
+- Modify Stripe webhook behavior unless documenting required vars.
+
+### Required Env Areas
+
+Verify/document:
+
+```text
+Supabase:
+- NEXT_PUBLIC_SUPABASE_URL
+- NEXT_PUBLIC_SUPABASE_ANON_KEY
+- SUPABASE_SERVICE_ROLE_KEY
+
+Stripe:
+- STRIPE_SECRET_KEY
+- STRIPE_WEBHOOK_SECRET
+- Stripe price IDs for plans
+
+Email:
+- RESEND_API_KEY
+- AGENCY_LEAD_NOTIFICATION_EMAIL
+- AGENCY_LEAD_FROM_EMAIL
+
+Agency:
+- AGENCY_LEAD_ORGANIZATION_ID
+
+Slack:
+- SLACK_CLIENT_ID
+- SLACK_CLIENT_SECRET
+- SLACK_REDIRECT_URI
+- SLACK_SIGNING_SECRET if used
+
+Integrations:
+- INTEGRATIONS_ENCRYPTION_KEY
+
+AI:
+- OPENAI_API_KEY
+- other provider keys if used
+
+Storage:
+- Cloudflare R2 vars
+
+Rate limiting:
+- UPSTASH_REDIS_REST_URL
+- UPSTASH_REDIS_REST_TOKEN
+
+Subscriptions:
+- SUBSCRIPTION_ENFORCEMENT_MODE=dry_run by default
+```
+
+### Documentation
+
+Create:
+
+```text
+PHASE_8A_PRODUCTION_ENV_AUDIT.md
+```
+
+Document:
+
+* required env vars
+* optional env vars
+* defaults
+* production values that must be configured
+* values that must never be committed
+* local/staging/production differences
+* launch blockers
+
+### Optional Script
+
+If safe, add a read-only env validation script:
+
+```text
+scripts/validate-production-env.ts
+```
+
+It should:
+
+* check presence of required vars
+* never print secret values
+* report missing/placeholder vars
+* support dry-run local execution
+
+### Tests
+
+Add focused tests for env validation helper if created.
+
+### Validation
+
+Run:
+
+* `npx tsc --noEmit`
+* `npm run -s lint`
+* env helper tests if added
+* `git diff --check`
+
+### Review Checklist
+
+After implementation, review:
+
+* no secrets committed
+* all production env vars documented
+* subscription enforcement defaults to dry_run
+* agency lead org config is documented
+* Slack/email/Stripe/Redis requirements are clear
+* validation passes
+
+### Commit Message
+
+```bash
+git add .
+git commit -m "Audit production environment configuration"
+```
+
+---
+
+## [ ] Phase 8B: Supabase Migration and RLS Launch Verification
+
+Status: Ready after Phase 8A is committed.
+
+### Objective
+
+Create a staging/production verification checklist for Supabase migrations, RLS, and cross-org data isolation.
+
+Phase 7 noted that live Supabase RLS execution was not tested locally. This phase addresses that launch risk.
+
+### Scope
+
+Do:
+
+* Add SQL verification scripts/checklists.
+* Add read-only RLS verification queries.
+* Add role/isolation test plan.
+* Add docs for migration order and rollback awareness.
+* Add tests where practical.
+
+Do not:
+
+* Rewrite major RLS policies unless a bug is found.
+* Remove legacy fallback behavior.
+* Make organization_id NOT NULL.
+* Change schema broadly.
+* Add product features.
+
+### Areas to Verify
+
+```text
+organizations
+organization_members
+projects
+outputs/content library
+billing/subscriptions
+subscription_usage_counters
+agency_clients
+agency_client_profiles
+client_integrations
+source_imports
+production_tasks
+agency_leads
+agency_funnel_events
+```
+
+### Required Checks
+
+Verify:
+
+* SaaS org users cannot read agency data.
+* Public users cannot read leads or analytics.
+* Public users can submit leads only through API.
+* Internal agency members can access allowed agency data.
+* Agency members cannot access other internal agency org data.
+* Demo users cannot mutate protected records.
+* Service role is only used through authorized server routes.
+* Lead conversion creates clients only in internal agency org.
+* Slack/Granola imports are client/org scoped.
+* Billing/subscription rows are org scoped.
+
+### Documentation
+
+Create:
+
+```text
+PHASE_8B_SUPABASE_RLS_VERIFICATION.md
+```
+
+Document:
+
+* migration validation steps
+* RLS verification queries
+* manual staging test accounts needed
+* expected pass/fail cases
+* known limitations
+* launch blockers
+
+### Optional Files
+
+Add:
+
+```text
+scripts/sql/verify-rls-launch-readiness.sql
+```
+
+This should be read-only or clearly marked if any statements mutate test data.
+
+### Validation
+
+Run:
+
+* `npx tsc --noEmit`
+* `npm run -s lint`
+* relevant RLS/schema tests if available
+* `git diff --check`
+
+### Review Checklist
+
+After implementation, review:
+
+* verification plan is usable
+* no dangerous production mutation script added
+* cross-org agency/SaaS isolation is covered
+* public lead/analytics privacy is covered
+* validation passes
+
+### Commit Message
+
+```bash
+git add .
+git commit -m "Add Supabase RLS launch verification"
+```
+
+---
+
+## [ ] Phase 8C: Durable Rate Limiting and Abuse Protection Verification
+
+Status: Ready after Phase 8B is committed.
+
+### Objective
+
+Verify that public and expensive routes have production-suitable rate limiting and abuse protections.
+
+This phase focuses on launch safety for:
+
+* public agency leads
+* public funnel events
+* auth-sensitive APIs
+* AI generation
+* upload/transcription
+* Slack imports
+* Granola/manual imports
+
+### Scope
+
+Do:
+
+* Audit rate limiting coverage.
+* Ensure public agency lead route uses durable Redis/Upstash when configured.
+* Ensure fallback behavior is documented.
+* Add missing lightweight abuse protection where clearly needed.
+* Add docs/tests.
+
+Do not:
+
+* Add CAPTCHA unless explicitly approved.
+* Add new paid anti-spam vendors.
+* Change billing logic.
+* Change generation behavior except rate-limit protection.
+* Add new product features.
+
+### Routes to Audit
+
+```text
+POST /api/agency-leads
+POST /api/agency-funnel-events
+AI generation routes
+upload/transcribe routes
+Slack import routes
+Granola import routes
+auth/contact/waitlist routes if present
+```
+
+### Documentation
+
+Create:
+
+```text
+PHASE_8C_RATE_LIMIT_ABUSE_PROTECTION.md
+```
+
+Document:
+
+* routes audited
+* protections in place
+* missing protections
+* production env requirements
+* fallback behavior
+* launch blockers
+
+### Tests
+
+Add focused tests for any helper changes.
+
+### Validation
+
+Run:
+
+* `npx tsc --noEmit`
+* `npm run -s lint`
+* focused rate-limit tests
+* `git diff --check`
+
+### Review Checklist
+
+After implementation, review:
+
+* public lead route is production safer
+* funnel event spam is bounded
+* expensive AI/upload routes are protected
+* Redis/Upstash requirements documented
+* no unrelated behavior changed
+* validation passes
+
+### Commit Message
+
+```bash
+git add .
+git commit -m "Verify launch rate limiting and abuse protection"
+```
+
+---
+
+## [ ] Phase 8D: Stripe and Subscription Launch Verification
+
+Status: Ready after Phase 8C is committed.
+
+### Objective
+
+Create a Stripe launch checklist and verify subscription billing readiness.
+
+This phase should confirm Stripe setup, plan price IDs, webhooks, customer portal, and enforcement mode safety.
+
+### Scope
+
+Do:
+
+* Audit Stripe env/config.
+* Audit plans and price ID setup.
+* Add checklist for test-mode and live-mode setup.
+* Verify webhook event expectations.
+* Verify customer portal configuration.
+* Verify subscription enforcement rollout plan.
+* Add docs/tests.
+
+Do not:
+
+* Change Stripe checkout/webhook behavior unless fixing a verified bug.
+* Enable enforcement by default.
+* Remove pay-as-you-go compatibility.
+* Change billing UI broadly.
+
+### Verify
+
+```text
+Stripe products/prices:
+- starter
+- growth
+- scale
+- enterprise/custom handling
+
+Webhook events:
+- checkout.session.completed
+- customer.subscription.created
+- customer.subscription.updated
+- customer.subscription.deleted
+- invoice.paid
+- invoice.payment_failed
+
+Portal:
+- portal enabled in Stripe dashboard
+- return URL configured safely
+
+Enforcement:
+- SUBSCRIPTION_ENFORCEMENT_MODE defaults to dry_run
+- enforce only used in staging after manual approval
+```
+
+### Documentation
+
+Create:
+
+```text
+PHASE_8D_STRIPE_SUBSCRIPTION_LAUNCH_VERIFICATION.md
+```
+
+Document:
+
+* Stripe dashboard setup
+* test checkout steps
+* test portal steps
+* test failed payment
+* test cancellation
+* webhook setup
+* dry_run/enforce rollout
+* rollback procedure
+
+### Validation
+
+Run:
+
+* `npx tsc --noEmit`
+* `npm run -s lint`
+* billing/subscription tests
+* `git diff --check`
+
+### Review Checklist
+
+After implementation, review:
+
+* Stripe checklist is complete
+* no real secrets included
+* no default enforcement enabled
+* existing credit behavior remains
+* validation passes
+
+### Commit Message
+
+```bash
+git add .
+git commit -m "Add Stripe subscription launch verification"
+```
+
+---
+
+## [ ] Phase 8E: Email Deliverability and Lead Notification QA
+
+Status: Ready after Phase 8D is committed.
+
+### Objective
+
+Verify that agency lead notification and confirmation emails are production-ready.
+
+### Scope
+
+Do:
+
+* Audit Resend/email env vars.
+* Verify sender/from/reply-to behavior.
+* Verify internal notification content.
+* Verify public confirmation email content.
+* Add deliverability checklist.
+* Add docs/tests.
+
+Do not:
+
+* Add drip campaigns.
+* Add newsletters.
+* Add external CRM sync.
+* Change lead routing behavior unless fixing bug.
+* Add marketing automation.
+
+### Verify
+
+```text
+Internal notification:
+- sent to configured agency recipient
+- includes safe lead summary
+- no secrets
+- no oversized raw payload
+
+Public confirmation:
+- safe user-facing copy
+- no internal notes
+- no account/dashboard implication
+- failure does not lose lead
+```
+
+### Documentation
+
+Create:
+
+```text
+PHASE_8E_EMAIL_DELIVERABILITY_QA.md
+```
+
+Document:
+
+* required env vars
+* sender/domain verification requirements
+* manual test steps
+* failure behavior
+* launch blockers
+
+### Validation
+
+Run:
+
+* `npx tsc --noEmit`
+* `npm run -s lint`
+* lead notification/confirmation tests
+* `git diff --check`
+
+### Review Checklist
+
+After implementation, review:
+
+* email copy is safe
+* failure behavior is safe
+* sender setup documented
+* no marketing automation added
+* validation passes
+
+### Commit Message
+
+```bash
+git add .
+git commit -m "Verify agency lead email deliverability"
+```
+
+---
+
+## [ ] Phase 8F: Monitoring, Logging, and Error Visibility
+
+Status: Ready after Phase 8E is committed.
+
+### Objective
+
+Improve launch-time visibility into important failures without adding a giant observability science project.
+
+The goal is to make errors visible enough to operate the app after launch. Revolutionary concept, apparently.
+
+### Scope
+
+Do:
+
+* Audit current logging.
+* Add structured logs for critical flows if missing.
+* Add health/check endpoints if already consistent with app.
+* Add admin-visible error/status docs.
+* Add docs/tests.
+
+Do not:
+
+* Add new paid observability vendors unless explicitly approved.
+* Log secrets/tokens.
+* Add noisy logs to every request.
+* Change business logic.
+* Add product features.
+
+### Critical Flows to Cover
+
+```text
+agency lead submission
+lead notification email
+lead confirmation email
+Stripe webhook
+subscription checkout/portal
+Slack OAuth/callback/import
+Granola import
+source-to-draft generation
+upload/transcription/generation errors
+```
+
+### Documentation
+
+Create:
+
+```text
+PHASE_8F_MONITORING_LOGGING_ERROR_VISIBILITY.md
+```
+
+Document:
+
+* critical flows
+* expected logs
+* what not to log
+* production monitoring recommendations
+* launch triage checklist
+
+### Validation
+
+Run:
+
+* `npx tsc --noEmit`
+* `npm run -s lint`
+* relevant tests
+* `git diff --check`
+
+### Review Checklist
+
+After implementation, review:
+
+* secrets are not logged
+* critical failures are visible
+* no noisy or privacy-invasive logging added
+* validation passes
+
+### Commit Message
+
+```bash
+git add .
+git commit -m "Improve launch monitoring and error visibility"
+```
+
+---
+
+## [ ] Phase 8G: Browser QA and Deployment Smoke Checklist
+
+Status: Ready after Phase 8F is committed.
+
+### Objective
+
+Create and run a browser/deployment QA checklist against the app’s launch surfaces.
+
+This phase should verify the real user paths in a browser-like environment.
+
+### Scope
+
+Do:
+
+* Add smoke checklist.
+* Add/adjust Playwright or route smoke tests if current repo supports it.
+* Verify public pages.
+* Verify auth redirects.
+* Verify dashboard routes.
+* Verify agency routes.
+* Verify intake form.
+* Add docs.
+
+Do not:
+
+* Redesign pages.
+* Add features.
+* Change backend behavior unless fixing a QA bug.
+
+### Routes to Smoke
+
+Public:
+
+```text
+/
+/agency
+/agency/services
+/agency/process
+/agency/packages
+/agency/contact
+/agency/thank-you
+```
+
+Auth:
+
+```text
+/auth/login
+/auth/signup
+```
+
+Dashboard:
+
+```text
+/dashboard
+/dashboard/billing
+/dashboard/brand-voice
+/dashboard/campaigns
+/dashboard/content
+/dashboard/agency
+/dashboard/agency/leads
+```
+
+APIs:
+
+```text
+POST /api/agency-leads with invalid email returns 400
+GET /api/agency/leads unauthenticated returns 401
+GET /api/agency-funnel-events read blocked/405
+```
+
+### Documentation
+
+Create:
+
+```text
+PHASE_8G_BROWSER_DEPLOYMENT_SMOKE_QA.md
+```
+
+Document:
+
+* routes tested
+* browser/mobile checks
+* issues found
+* deployment smoke checklist
+* remaining launch blockers
+
+### Validation
+
+Run:
+
+* `npx tsc --noEmit`
+* `npm run -s lint`
+* route/browser smoke tests
+* `git diff --check`
+
+### Review Checklist
+
+After implementation, review:
+
+* public pages render
+* intake works
+* internal routes protected
+* mobile layout acceptable
+* no internal links leak publicly
+* validation passes
+
+### Commit Message
+
+```bash
+git add .
+git commit -m "Add browser and deployment smoke QA"
+```
+
+---
+
+## [ ] Phase 8H: Final Launch Readiness Report
+
+Status: Ready after Phase 8G is committed.
+
+### Objective
+
+Produce a final launch readiness report that consolidates Phase 8 findings and gives a clear go/no-go checklist.
+
+This phase is mostly documentation and small final fixes.
+
+### Scope
+
+Do:
+
+* Summarize launch readiness.
+* List required manual production steps.
+* List remaining risks.
+* List rollback steps.
+* List go/no-go criteria.
+* Fix small launch-blocking bugs if found.
+
+Do not:
+
+* Add major product features.
+* Start client portal.
+* Start advanced automation.
+* Redesign anything.
+* Change billing enforcement defaults without explicit approval.
+
+### Documentation
+
+Create:
+
+```text
+PHASE_8H_FINAL_LAUNCH_READINESS_REPORT.md
+```
+
+Include:
+
+```text
+Environment readiness
+Supabase migration/RLS readiness
+Stripe readiness
+Email readiness
+Rate limiting readiness
+Slack readiness
+Granola readiness
+Public agency funnel readiness
+SaaS readiness
+Internal agency console readiness
+Monitoring/logging readiness
+Known risks
+Manual production checklist
+Rollback plan
+Go/no-go decision checklist
+Recommended Phase 9 options
+```
+
+### Validation
+
+Run:
+
+* `npx tsc --noEmit`
+* `npm run -s lint`
+* critical focused tests
+* `git diff --check`
+
+### Review Checklist
+
+After implementation, review:
+
+* report is accurate
+* no secrets included
+* launch blockers are explicit
+* rollback is clear
+* validation passes
+
+### Commit Message
+
+```bash
+git add .
+git commit -m "Add final launch readiness report"
+```
+
+---
+
+## Phase 8 Completion Summary Requirement
+
+After Phase 8H is committed, Codex should produce a summary for Lucas.
+
+Use this command:
+
+```text
+Read CODEX_PHASE_RUNBOOK.md and summarize all completed Phase 8 work.
+
+Include:
+- commits by phase
+- launch hardening areas completed
+- security checks added
+- env/deployment requirements
+- Stripe/email/rate-limit readiness
+- RLS verification status
+- browser QA results
+- remaining launch blockers
+- recommended Phase 9 direction
+```
+
+Lucas and ChatGPT will then decide whether Phase 9 should focus on:
+
+* client portal
+* advanced agency automation
+* public SaaS marketing site
+* deeper analytics/reporting
+* production launch bug fixes
+
+---
+
 ## How to Update This Runbook
 
 After a phase is safely committed:
