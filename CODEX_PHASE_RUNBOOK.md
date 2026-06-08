@@ -4214,6 +4214,1092 @@ Lucas and ChatGPT will then review the summary and decide whether Phase 7 should
 
 ---
 
+# Phase 7: Public Agency Funnel Enhancements
+
+Phase 7 improves the public agency website lead funnel.
+
+The goal is to make the agency website more useful for real lead capture, internal follow-up, lead qualification, analytics, and conversion tracking.
+
+This phase focuses on the public agency funnel only.
+
+It should not build a client portal, advanced Slack/Granola automation, SaaS marketing, or production infrastructure hardening unless explicitly scoped.
+
+## Universal Phase 7 Rules
+
+For every Phase 7 subphase:
+
+1. Implement only the current subphase.
+2. Review the implementation in the same Codex run.
+3. Fix issues found during review.
+4. Re-run validation.
+5. Produce a final report.
+6. Stop before the next phase.
+7. Do not commit unless Lucas explicitly asks.
+
+### Always Preserve
+
+- Existing public agency pages
+- Existing public lead intake form
+- Existing internal agency lead review
+- Existing lead-to-client conversion workflow
+- Existing internal agency console security
+- Existing SaaS dashboard behavior
+- Existing SaaS billing/subscription behavior
+- Existing Slack/Granola workflows
+- Existing content generation behavior
+
+### Do Not Do Unless Explicitly Stated
+
+- Do not build a client portal.
+- Do not give leads dashboard access.
+- Do not auto-create agency clients from public submissions.
+- Do not send lead data to third-party CRMs unless explicitly approved.
+- Do not change SaaS subscription billing.
+- Do not change subscription enforcement.
+- Do not change Stripe checkout/webhook behavior.
+- Do not redesign the entire public agency website.
+- Do not expose internal agency tools publicly.
+- Do not expose agency client data publicly.
+- Do not add advanced Slack/Granola automations.
+- Do not store secrets in the repo.
+- Do not start the next phase automatically.
+
+---
+
+## [ ] Phase 7A: Durable Lead Rate Limiting and Spam Protection
+
+Status: Ready after Phase 6G is committed.
+
+### Objective
+
+Replace or supplement the current in-memory public lead rate limiting with a more production-suitable anti-spam foundation.
+
+Phase 6 noted that lead rate limiting is in-memory. That is fine for light local traffic, not great for real traffic.
+
+### Scope
+
+Do:
+
+- Review current public lead intake protection.
+- Add durable rate limiting if an existing Redis/Upstash/edge rate-limit helper exists.
+- Add stronger validation and spam protections.
+- Preserve public lead submission behavior.
+- Add tests and docs.
+
+Do not:
+
+- Add CAPTCHA unless explicitly approved.
+- Add third-party anti-spam vendors unless already configured.
+- Change lead schema broadly unless needed.
+- Change internal lead review workflow.
+- Auto-create clients.
+- Send emails yet.
+- Add analytics yet.
+
+### Read First
+
+- `PHASE_6D_AGENCY_LEAD_INTAKE_SCHEMA_API.md`
+- `PHASE_6E_AGENCY_INTAKE_FORM_LEAD_REVIEW.md`
+- `PHASE_6G_AGENCY_WEBSITE_QA_LAUNCH.md`
+- `app/api/agency-leads/route.ts`
+- `lib/agency-leads.ts`
+- existing rate limit helpers
+- existing Upstash/Redis configuration if present
+
+### Implementation Requirements
+
+Review and improve protections for:
+
+- IP-based rate limiting
+- email-based rate limiting
+- honeypot validation
+- field length validation
+- suspicious repeated submissions
+- safe user-facing error messages
+
+If durable rate limiting support already exists:
+
+- use it for public agency lead intake
+- keep graceful fallback if Redis is unavailable
+- log failures without exposing internals
+
+If durable rate limiting support does not exist:
+
+- add a clean abstraction, but do not overbuild
+- document that production should configure durable backend
+- keep current in-memory fallback
+
+### Suggested Helper
+
+Create or update:
+
+```text
+lib/agency-lead-rate-limit.ts
+```
+
+Possible functions:
+
+- `checkAgencyLeadRateLimit(...)`
+- `buildLeadRateLimitKey(...)`
+- `isLikelySpamLead(...)`
+
+### Documentation
+
+Create:
+
+```text
+PHASE_7A_AGENCY_LEAD_RATE_LIMITING.md
+```
+
+Document:
+
+- previous in-memory risk
+- new rate limit behavior
+- durable backend used or fallback decision
+- validation/spam rules
+- remaining production recommendations
+
+### Tests
+
+Add focused tests for:
+
+- valid lead allowed
+- repeated email submissions rate-limited
+- repeated IP submissions rate-limited if practical
+- honeypot rejected
+- overly long fields rejected
+- rate limit failure fails safe or graceful according to design
+
+### Validation
+
+Run:
+
+- `npx tsc --noEmit`
+- `npm run -s lint`
+- focused lead/rate-limit tests
+- `git diff --check`
+
+### Review Checklist
+
+After implementation, review:
+
+- public lead intake still works
+- spam/rate limiting is stronger than Phase 6
+- user-facing errors are safe
+- no public lead data exposure
+- no client auto-creation
+- no email/analytics added yet
+- validation passes
+
+### Commit Message
+
+```bash
+git add .
+git commit -m "Add durable agency lead spam protection"
+```
+
+---
+
+## [ ] Phase 7B: Agency Lead Notification Emails
+
+Status: Ready after Phase 7A is committed.
+
+### Objective
+
+Send internal notification emails when a new agency lead is submitted.
+
+This helps Lucas respond quickly without living inside the dashboard.
+
+### Scope
+
+Do:
+
+- Add internal lead notification email.
+- Use existing email/mailer provider if present.
+- Keep failure non-blocking where appropriate.
+- Add env placeholders/docs.
+- Add tests.
+
+Do not:
+
+- Send public lead confirmation emails yet.
+- Add newsletters.
+- Add CRM sync.
+- Auto-create agency clients.
+- Change lead conversion workflow.
+- Change SaaS email behavior unless shared mailer types need safe updates.
+
+### Read First
+
+- `PHASE_6D_AGENCY_LEAD_INTAKE_SCHEMA_API.md`
+- `PHASE_7A_AGENCY_LEAD_RATE_LIMITING.md`
+- existing contact mailer files
+- existing Resend/email configuration
+- `app/api/agency-leads/route.ts`
+- `lib/agency-leads.ts`
+
+### Required Behavior
+
+When a valid public agency lead is stored:
+
+- send an internal notification email to configured recipient(s)
+- include safe lead summary:
+  - name
+  - email
+  - company
+  - website
+  - package interest
+  - timeline
+  - budget range
+  - message excerpt
+  - dashboard review link if safe
+- do not include secrets
+- do not include raw oversized content
+- do not block lead submission if email send fails, unless current app convention says otherwise
+- log email failure safely
+
+### Environment Variables
+
+Add placeholders only:
+
+```text
+AGENCY_LEAD_NOTIFICATION_EMAIL=
+AGENCY_LEAD_FROM_EMAIL=
+```
+
+If existing mailer uses shared sender envs, document reuse.
+
+### Suggested Helper
+
+Create or update:
+
+```text
+lib/agency-lead-notifications.ts
+```
+
+Possible functions:
+
+- `sendAgencyLeadNotification(...)`
+- `buildAgencyLeadNotificationEmail(...)`
+
+### Documentation
+
+Create:
+
+```text
+PHASE_7B_AGENCY_LEAD_NOTIFICATIONS.md
+```
+
+Document:
+
+- env vars
+- email provider used
+- email contents
+- failure behavior
+- privacy/security notes
+- what is intentionally not built
+
+### Tests
+
+Add focused tests for:
+
+- notification email payload formatting
+- send called after valid lead creation
+- email failure does not delete/lose lead
+- no notification sent for invalid lead
+- message excerpt truncation
+- env missing behavior
+
+### Validation
+
+Run:
+
+- `npx tsc --noEmit`
+- `npm run -s lint`
+- focused lead notification tests
+- existing lead intake tests
+- `git diff --check`
+
+### Review Checklist
+
+After implementation, review:
+
+- valid leads still store correctly
+- internal notification sends safely
+- email failure is handled
+- no public confirmation email added yet
+- no CRM/external sync added
+- no secrets in email/logs
+- validation passes
+
+### Commit Message
+
+```bash
+git add .
+git commit -m "Add agency lead notification emails"
+```
+
+---
+
+## [ ] Phase 7C: Public Lead Confirmation Email and Thank-You Flow
+
+Status: Ready after Phase 7B is committed.
+
+### Objective
+
+Send a safe confirmation email to the person who submitted the agency intake form and improve the thank-you flow.
+
+This is not a newsletter system. This is just confirmation that the form submission was received.
+
+### Scope
+
+Do:
+
+- Add public lead confirmation email.
+- Improve thank-you page if needed.
+- Keep email copy service-focused and safe.
+- Add tests and docs.
+
+Do not:
+
+- Add email marketing automation.
+- Add drip sequences.
+- Add calendar booking integration unless already present and explicitly scoped.
+- Add CRM sync.
+- Auto-create clients.
+- Give leads dashboard access.
+- Change internal notification behavior except shared helper cleanup.
+
+### Read First
+
+- `PHASE_6E_AGENCY_INTAKE_FORM_LEAD_REVIEW.md`
+- `PHASE_7B_AGENCY_LEAD_NOTIFICATIONS.md`
+- existing agency thank-you page
+- existing email/mailer helpers
+
+### Required Behavior
+
+After a valid lead submission:
+
+- optionally send confirmation email to submitter
+- email should include:
+  - thank-you message
+  - what happens next
+  - expected response window if desired
+  - safe link back to agency site
+- do not include internal notes
+- do not expose lead ID if not needed
+- failure should not break lead submission unless explicitly documented
+
+### Copy Requirements
+
+Keep copy professional and service-focused.
+
+Avoid:
+
+- implying guaranteed acceptance
+- exposing internal workflows
+- promising instant deliverables
+- saying they now have an account
+
+### Thank-You Page
+
+Update:
+
+```text
+/agency/thank-you
+```
+
+Requirements:
+
+- clear confirmation
+- next steps
+- optional CTA to review services/process
+- no dashboard/internal links
+
+### Documentation
+
+Create:
+
+```text
+PHASE_7C_AGENCY_LEAD_CONFIRMATION_EMAIL.md
+```
+
+Document:
+
+- email behavior
+- failure behavior
+- thank-you page changes
+- privacy notes
+- what was intentionally not built
+
+### Tests
+
+Add focused tests for:
+
+- confirmation email payload
+- no internal data exposed
+- failure behavior
+- thank-you page renders expected content
+- invalid lead does not trigger confirmation
+
+### Validation
+
+Run:
+
+- `npx tsc --noEmit`
+- `npm run -s lint`
+- focused confirmation email tests
+- relevant lead tests
+- `git diff --check`
+
+### Review Checklist
+
+After implementation, review:
+
+- lead confirmation email is safe
+- no internal data exposed
+- thank-you page is clear
+- no marketing automation added
+- validation passes
+
+### Commit Message
+
+```bash
+git add .
+git commit -m "Add agency lead confirmation email"
+```
+
+---
+
+## [ ] Phase 7D: Agency Funnel Analytics Events
+
+Status: Ready after Phase 7C is committed.
+
+### Objective
+
+Add lightweight first-party analytics events for the public agency funnel.
+
+The goal is to understand conversion behavior without immediately adding third-party trackers.
+
+### Scope
+
+Do:
+
+- Add first-party funnel event tracking.
+- Track important agency funnel events.
+- Add internal/admin-safe read access if useful.
+- Add tests and docs.
+
+Do not:
+
+- Add Google Analytics, Meta Pixel, LinkedIn Insight Tag, or third-party trackers unless explicitly approved.
+- Store excessive personal data in analytics events.
+- Track internal agency console activity unless explicitly scoped.
+- Change lead intake behavior.
+- Change SaaS analytics.
+
+### Events to Track
+
+Suggested events:
+
+```text
+agency_page_view
+agency_cta_click
+agency_intake_view
+agency_intake_started
+agency_intake_submitted
+agency_intake_validation_error
+agency_thank_you_view
+```
+
+### Schema
+
+Create forward migration if no existing suitable analytics table exists.
+
+Suggested table:
+
+```text
+agency_funnel_events
+```
+
+Fields:
+
+- `id uuid primary key default gen_random_uuid()`
+- `event_name text not null`
+- `anonymous_id text`
+- `lead_id uuid references agency_leads(id) on delete set null`
+- `path text`
+- `referrer text`
+- `utm_source text`
+- `utm_medium text`
+- `utm_campaign text`
+- `utm_content text`
+- `utm_term text`
+- `metadata_json jsonb not null default '{}'::jsonb`
+- `created_at timestamptz not null default now()`
+
+Security:
+
+- public insert only via API
+- no public read
+- service role manage
+- internal agency admin read if API added
+
+### Public Event API
+
+Create:
+
+```text
+POST /api/agency-funnel-events
+```
+
+Requirements:
+
+- public route
+- validates allowed event names
+- rate limits if practical
+- strips sensitive data
+- stores UTM/referrer/path metadata
+- returns safe success
+- does not expose event records
+
+### Client Tracking Helper
+
+Create if useful:
+
+```text
+lib/agency-funnel-client.ts
+```
+
+or component-level tracking.
+
+Requirements:
+
+- do not break page rendering if tracking fails
+- no excessive client-side complexity
+- avoid storing PII in analytics metadata
+- associate lead_id only after successful form submission if safe
+
+### Internal Read API
+
+Optional:
+
+```text
+GET /api/agency/funnel-events
+```
+
+Requirements:
+
+- internal agency admin only
+- basic filtering by date/event
+- no broad dashboard build unless simple
+
+### Documentation
+
+Create:
+
+```text
+PHASE_7D_AGENCY_FUNNEL_ANALYTICS.md
+```
+
+Document:
+
+- events tracked
+- schema/API
+- privacy decisions
+- what is intentionally not tracked
+- future third-party analytics options
+
+### Tests
+
+Add focused tests for:
+
+- allowed event stored
+- disallowed event rejected
+- public read impossible
+- PII stripping/sanitization
+- invalid payload rejected
+- lead submission links event if implemented
+
+### Validation
+
+Run:
+
+- `npx tsc --noEmit`
+- `npm run -s lint`
+- focused analytics tests
+- `git diff --check`
+
+### Review Checklist
+
+After implementation, review:
+
+- no third-party tracker added
+- no sensitive PII stored unnecessarily
+- public users cannot read analytics
+- tracking failure does not break funnel
+- validation passes
+
+### Commit Message
+
+```bash
+git add .
+git commit -m "Add agency funnel analytics events"
+```
+
+---
+
+## [ ] Phase 7E: Lead Qualification, Scoring, and Routing
+
+Status: Ready after Phase 7D is committed.
+
+### Objective
+
+Add internal lead qualification fields, scoring, and routing so agency leads are easier to prioritize.
+
+### Scope
+
+Do:
+
+- Add lead scoring/qualification fields.
+- Add deterministic scoring helper.
+- Add internal UI for qualification.
+- Add tests and docs.
+
+Do not:
+
+- Use AI scoring unless explicitly approved.
+- Auto-reject leads.
+- Auto-create clients.
+- Send to external CRM.
+- Change public form drastically unless needed.
+- Build full sales pipeline CRM.
+
+### Schema Update
+
+Add forward migration to `agency_leads` if fields do not exist:
+
+```text
+qualification_score integer
+qualification_tier text
+assigned_to uuid references auth.users(id) on delete set null
+review_notes text
+last_contacted_at timestamptz
+next_follow_up_at timestamptz
+```
+
+Suggested tier values:
+
+- `high`
+- `medium`
+- `low`
+- `unqualified`
+
+### Scoring Helper
+
+Create or update:
+
+```text
+lib/agency-lead-qualification.ts
+```
+
+Scoring should be deterministic and explainable.
+
+Possible factors:
+
+- package interest present
+- company/website present
+- realistic timeline
+- budget range present
+- message length/detail
+- role/title indicates decision-maker
+- spam/low-quality signals
+
+Do not overfit. This is a helper, not a predictive system.
+
+### API Updates
+
+Update internal lead APIs:
+
+- list leads with score/tier filters
+- update qualification fields
+- assign lead to user if safe
+- update follow-up dates/notes
+
+Public API may compute initial score after lead creation.
+
+### UI Updates
+
+Update:
+
+```text
+/dashboard/agency/leads
+```
+
+Requirements:
+
+- show score/tier
+- filter by status/tier
+- edit review notes
+- set next follow-up date
+- assign lead if practical
+- preserve existing conversion flow
+
+### Documentation
+
+Create:
+
+```text
+PHASE_7E_LEAD_QUALIFICATION_ROUTING.md
+```
+
+Document:
+
+- fields added
+- scoring factors
+- routing behavior
+- limitations
+- what is intentionally not built
+
+### Tests
+
+Add focused tests for:
+
+- score calculation
+- tier assignment
+- public lead gets initial score
+- internal admin can update qualification
+- agency member permission behavior
+- demo write blocked
+- conversion still works after scoring
+
+### Validation
+
+Run:
+
+- `npx tsc --noEmit`
+- `npm run -s lint`
+- focused qualification tests
+- existing lead conversion tests
+- `git diff --check`
+
+### Review Checklist
+
+After implementation, review:
+
+- scoring is deterministic
+- no AI/external service added
+- no auto-client creation
+- no auto-rejection
+- permissions preserved
+- validation passes
+
+### Commit Message
+
+```bash
+git add .
+git commit -m "Add agency lead qualification and routing"
+```
+
+---
+
+## [ ] Phase 7F: Lead Export and Lightweight CRM Handoff
+
+Status: Ready after Phase 7E is committed.
+
+### Objective
+
+Allow internal agency admins to export leads for lightweight CRM/manual follow-up workflows.
+
+This phase does not integrate with an external CRM by default.
+
+### Scope
+
+Do:
+
+- Add CSV export for agency leads.
+- Add JSON export if useful.
+- Add filtered export by status/tier/date.
+- Add tests and docs.
+
+Do not:
+
+- Send lead data to external CRM automatically.
+- Add HubSpot/Salesforce integration.
+- Add Zapier/webhooks unless explicitly approved.
+- Change lead submission behavior.
+- Auto-create clients.
+
+### API
+
+Create or update:
+
+```text
+GET /api/agency/leads/export
+```
+
+Query filters:
+
+- status
+- qualification_tier
+- date_from
+- date_to
+- package_interest
+
+Requirements:
+
+- internal agency admin only
+- demo users may read/export only if existing policy allows; otherwise block
+- no public access
+- export only allowed org's leads
+- sanitize CSV fields
+- prevent CSV injection by prefixing risky cells if needed
+
+### UI
+
+Update:
+
+```text
+/dashboard/agency/leads
+```
+
+Requirements:
+
+- add export button for admins
+- preserve filters
+- clear loading/error states
+- no broad CRM UI
+
+### Documentation
+
+Create:
+
+```text
+PHASE_7F_LEAD_EXPORT_CRM_HANDOFF.md
+```
+
+Document:
+
+- export formats
+- filters
+- CSV injection protection
+- permissions
+- what was intentionally not built
+
+### Tests
+
+Add focused tests for:
+
+- admin export allowed
+- SaaS user denied
+- public denied
+- export respects filters
+- CSV injection fields sanitized
+- cross-org leads not included
+
+### Validation
+
+Run:
+
+- `npx tsc --noEmit`
+- `npm run -s lint`
+- focused export tests
+- `git diff --check`
+
+### Review Checklist
+
+After implementation, review:
+
+- exports are internal-only
+- filters work
+- CSV injection protected
+- no external CRM sync added
+- validation passes
+
+### Commit Message
+
+```bash
+git add .
+git commit -m "Add agency lead export workflow"
+```
+
+---
+
+## [ ] Phase 7G: Public Agency Funnel QA and Conversion Review
+
+Status: Ready after Phase 7F is committed.
+
+### Objective
+
+Run a complete QA and conversion review of the public agency funnel enhancements from Phase 7.
+
+This phase should consolidate fixes before moving to any client portal, launch hardening, or advanced automation work.
+
+### Scope
+
+Do:
+
+- Review public funnel pages and intake.
+- Review spam/rate limiting.
+- Review notification/confirmation emails.
+- Review analytics events.
+- Review qualification/routing.
+- Review export workflow.
+- Fix bugs.
+- Add missing tests.
+- Create final Phase 7 summary.
+
+Do not:
+
+- Add major new funnel features.
+- Add client portal.
+- Add external CRM sync.
+- Add payment.
+- Change SaaS billing/generation.
+- Change Slack/Granola workflows.
+
+### Read First
+
+- all Phase 7 docs
+- `PHASE_6G_AGENCY_WEBSITE_QA_LAUNCH.md`
+- lead intake APIs
+- agency public pages
+- internal lead review UI
+
+### QA Checklist
+
+#### Public Funnel
+
+Verify:
+
+- agency pages render
+- CTAs work
+- intake form works
+- thank-you page works
+- invalid submissions fail safely
+- spam protections work
+- no internal links exposed
+
+#### Emails
+
+Verify:
+
+- internal notification sends on valid lead
+- confirmation email sends if enabled
+- email failures are safe
+- no secrets/internal notes exposed
+
+#### Analytics
+
+Verify:
+
+- allowed events store
+- invalid events reject
+- public users cannot read analytics
+- no excessive PII stored
+
+#### Lead Management
+
+Verify:
+
+- internal lead list works
+- qualification score/tier works
+- status updates work
+- follow-up fields work
+- conversion still works
+- export works
+- CSV injection protection works
+
+#### Isolation
+
+Verify:
+
+- SaaS dashboard unaffected
+- billing unaffected
+- internal agency clients unaffected
+- Slack/Granola workflows unaffected
+
+### Documentation
+
+Create:
+
+```text
+PHASE_7G_PUBLIC_AGENCY_FUNNEL_QA.md
+```
+
+Document:
+
+- QA results
+- bugs found/fixed
+- validation results
+- remaining risks
+- recommended Phase 8 options
+
+### Validation
+
+Run:
+
+- `npx tsc --noEmit`
+- `npm run -s lint`
+- focused Phase 7 tests
+- lead API tests
+- agency permission tests
+- route smoke tests
+- `git diff --check`
+
+### Review Checklist
+
+After implementation/review:
+
+- public funnel is safer and more useful
+- leads notify/confirm/track/qualify/export correctly
+- no public data exposure
+- no external CRM sync added
+- validation passes
+
+### Commit Message
+
+```bash
+git add .
+git commit -m "Review and harden public agency funnel"
+```
+
+---
+
+## Phase 7 Completion Summary Requirement
+
+After Phase 7G is committed, Codex should produce a summary for Lucas.
+
+Use this command:
+
+```text
+Read CODEX_PHASE_RUNBOOK.md and summarize all completed Phase 7 work.
+
+Include:
+- commits by phase
+- public funnel features added
+- email/notification behavior
+- analytics events added
+- lead qualification/routing behavior
+- export/CRM handoff behavior
+- security model
+- what was intentionally not built
+- validation results
+- remaining risks
+- recommended adjustments before Phase 8
+```
+
+Lucas and ChatGPT will then review the summary and decide whether Phase 8 should focus on:
+
+- production launch hardening
+- client portal
+- advanced agency automation
+- public SaaS marketing
+- deeper analytics/reporting
+
+---
+
 ## How to Update This Runbook
 
 After a phase is safely committed:
