@@ -6,10 +6,10 @@ try {
     if (process.env.UPSTASH_REDIS_REST_URL && process.env.UPSTASH_REDIS_REST_TOKEN) {
         redis = Redis.fromEnv();
     } else {
-        console.warn('Upstash Redis credentials missing. Rate limiting bypassed.');
+        console.warn('Upstash Redis credentials missing. Expensive-route rate limiting will fail closed.');
     }
 } catch (e) {
-    console.warn('Failed to initialize Upstash Redis. Rate limiting will be bypassed.', e);
+    console.warn('Failed to initialize Upstash Redis. Expensive-route rate limiting will fail closed.', e);
 }
 
 // Fail closed when Redis is not configured — do not allow requests through

@@ -20,6 +20,7 @@ import {
 } from '@/lib/authz/agency-permissions';
 import { OrganizationAccessError } from '@/lib/authz/types';
 import { isDemoUser } from '@/lib/demo-mode';
+import { uploadRatelimit } from '@/lib/rate-limit';
 import { supabaseAdmin } from '@/lib/supabase/server';
 
 export const dynamic = 'force-dynamic';
@@ -113,6 +114,14 @@ export async function POST(request: NextRequest) {
       return NextResponse.json(
         { error: 'Granola manual imports require internal agency operator access' },
         { status: 403 }
+      );
+    }
+
+    const { success } = await uploadRatelimit.limit(user.id);
+    if (!success) {
+      return NextResponse.json(
+        { error: 'Rate limit exceeded. Too many import requests.' },
+        { status: 429 }
       );
     }
 

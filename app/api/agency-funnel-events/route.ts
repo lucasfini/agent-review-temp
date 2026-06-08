@@ -33,7 +33,7 @@ export async function GET() {
 
 export async function POST(request: NextRequest) {
   try {
-    const ipLimit = checkAgencyFunnelEventRateLimit(clientIpFrom(request));
+    const ipLimit = await checkAgencyFunnelEventRateLimit(clientIpFrom(request));
     if (!ipLimit.allowed) {
       return NextResponse.json(
         {

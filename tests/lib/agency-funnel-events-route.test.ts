@@ -19,7 +19,7 @@ describe('agency funnel event route', () => {
     jest.resetModules();
     mockCreateAgencyFunnelEvent.mockReset();
     mockCheckAgencyFunnelEventRateLimit.mockReset();
-    mockCheckAgencyFunnelEventRateLimit.mockReturnValue({
+    mockCheckAgencyFunnelEventRateLimit.mockResolvedValue({
       allowed: true,
       remaining: 119,
       retryAfterSeconds: 0,
@@ -77,7 +77,7 @@ describe('agency funnel event route', () => {
 
   it('rate limits public event writes', async () => {
     const { POST } = await import('@/app/api/agency-funnel-events/route');
-    mockCheckAgencyFunnelEventRateLimit.mockReturnValue({
+    mockCheckAgencyFunnelEventRateLimit.mockResolvedValue({
       allowed: false,
       remaining: 0,
       retryAfterSeconds: 60,

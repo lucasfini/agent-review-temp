@@ -13,6 +13,7 @@ import {
   generateAgencyDraftFromSource,
   normalizeAgencySourceGenerationRequest,
 } from '@/lib/agency-source-generation';
+import { aiRatelimit } from '@/lib/rate-limit';
 import { supabaseAdmin } from '@/lib/supabase/server';
 
 export const dynamic = 'force-dynamic';
@@ -81,6 +82,14 @@ export async function POST(
       return NextResponse.json(
         { error: 'Agency source generation requires internal agency draft management access' },
         { status: 403 }
+      );
+    }
+
+    const { success } = await aiRatelimit.limit(user.id);
+    if (!success) {
+      return NextResponse.json(
+        { error: 'Rate limit exceeded for AI operations. Please wait a moment.' },
+        { status: 429 }
       );
     }
 

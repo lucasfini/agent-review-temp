@@ -16,6 +16,7 @@ import { NextRequest, NextResponse } from 'next/server';
 import { RouteAccessError, requireAuthenticatedUser, requireProjectOwner } from '@/lib/api/route-auth';
 import { supabaseAdmin } from '@/lib/supabase/server';
 import { resolveOrganizationIdForWrite } from '@/lib/authz/organization-context';
+import { aiRatelimit } from '@/lib/rate-limit';
 import {
   generateStrictJSONContent,
   generateShowNotes,
@@ -94,6 +95,14 @@ export async function POST(request: NextRequest) {
       return NextResponse.json(
         { error: 'cleaned_narrative_summary is required' },
         { status: 400 }
+      );
+    }
+
+    const { success } = await aiRatelimit.limit(authenticatedUserId);
+    if (!success) {
+      return NextResponse.json(
+        { error: 'Rate limit exceeded for AI operations. Please wait a moment.' },
+        { status: 429 }
       );
     }
 

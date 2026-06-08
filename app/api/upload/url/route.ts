@@ -17,6 +17,7 @@ import { estimateReservationAmount } from '@/lib/billing/reserve-amount';
 import { resolveOrganizationIdForWrite } from '@/lib/authz/organization-context';
 import { runEntitlementGuard } from '@/lib/billing/entitlement-guards';
 import { recordSubscriptionUsage } from '@/lib/billing/subscription-usage-counters';
+import { uploadRatelimit } from '@/lib/rate-limit';
 
 export const runtime = 'nodejs';
 export const dynamic = 'force-dynamic';
@@ -64,6 +65,11 @@ export async function POST(request: NextRequest) {
 
     if (authError || !user) {
       return NextResponse.json({ error: 'Authentication required' }, { status: 401 });
+    }
+
+    const { success } = await uploadRatelimit.limit(user.id);
+    if (!success) {
+      return NextResponse.json({ error: 'Rate limit exceeded. Too many upload or import requests.' }, { status: 429 });
     }
 
     const body = await request.json();

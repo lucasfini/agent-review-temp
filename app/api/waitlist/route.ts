@@ -1,5 +1,14 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { supabase } from '@/lib/supabase/client'
+import { checkPublicFormRateLimit } from '@/lib/public-form-rate-limit'
+
+function clientIpFrom(request: NextRequest): string {
+  const forwardedFor = request.headers.get('x-forwarded-for')
+  if (forwardedFor) {
+    return forwardedFor.split(',')[0]?.trim() || 'unknown'
+  }
+  return request.headers.get('cf-connecting-ip') || request.headers.get('x-real-ip') || 'unknown'
+}
 
 export async function POST(request: NextRequest) {
   try {
@@ -23,12 +32,33 @@ export async function POST(request: NextRequest) {
       )
     }
 
+    const normalizedEmail = email.toLowerCase().trim()
+    const ipLimit = await checkPublicFormRateLimit({
+      route: 'waitlist',
+      kind: 'ip',
+      value: clientIpFrom(request),
+    })
+    const emailLimit = await checkPublicFormRateLimit({
+      route: 'waitlist',
+      kind: 'email',
+      value: normalizedEmail,
+    })
+    if (!ipLimit.allowed || !emailLimit.allowed) {
+      return NextResponse.json(
+        {
+          error: 'Too many waitlist submissions. Please try again later.',
+          retryAfterSeconds: Math.max(ipLimit.retryAfterSeconds, emailLimit.retryAfterSeconds),
+        },
+        { status: 429 }
+      )
+    }
+
     // Insert into Supabase
     const { data, error } = await supabase
       .from('waitlist')
       .insert([
         {
-          email: email.toLowerCase().trim(),
+          email: normalizedEmail,
           name: name?.trim() || null,
         },
       ] as any)
@@ -42,7 +72,7 @@ export async function POST(request: NextRequest) {
           { status: 409 }
         )
       }
-      
+
       console.error('Supabase error:', error)
       return NextResponse.json(
         { error: 'Failed to join waitlist. Please try again.' },
@@ -51,7 +81,7 @@ export async function POST(request: NextRequest) {
     }
 
     return NextResponse.json(
-      { 
+      {
         message: 'Successfully joined the waitlist!',
         data: data?.[0]
       },

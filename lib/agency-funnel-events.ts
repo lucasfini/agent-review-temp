@@ -1,3 +1,7 @@
+import { createHash } from 'crypto';
+
+import { Ratelimit } from '@upstash/ratelimit';
+import { Redis } from '@upstash/redis';
 import type { SupabaseClient } from '@supabase/supabase-js';
 
 export const AGENCY_FUNNEL_EVENT_NAMES = [
@@ -42,6 +46,27 @@ export class AgencyFunnelEventValidationError extends Error {
   }
 }
 
+export type AgencyFunnelEventRateLimitResult = {
+  allowed: boolean;
+  limit: number;
+  remaining: number;
+  retryAfterSeconds: number;
+  backend: 'upstash' | 'memory';
+  degraded: boolean;
+};
+
+type DurableLimitResult = {
+  success: boolean;
+  limit: number;
+  remaining: number;
+  reset: number;
+  pending?: Promise<unknown>;
+};
+
+type DurableLimiter = {
+  limit: (identifier: string) => Promise<DurableLimitResult>;
+};
+
 const MAX_SHORT_TEXT_LENGTH = 240;
 const MAX_PATH_LENGTH = 800;
 const MAX_REFERRER_LENGTH = 1000;
@@ -63,6 +88,11 @@ const ALLOWED_METADATA_KEYS = new Set([
 const eventBuckets = new Map<string, number[]>();
 const EVENT_LIMIT = 120;
 const EVENT_WINDOW_MS = 10 * 60 * 1000;
+const EVENT_UPSTASH_WINDOW = '10 m';
+
+let redisClient: Redis | null | undefined;
+let durableLimiter: DurableLimiter | null | undefined;
+let testDurableLimiter: DurableLimiter | null | undefined;
 
 function coalesce(input: AgencyFunnelEventInput, ...keys: Array<keyof AgencyFunnelEventInput>): unknown {
   for (const key of keys) {
@@ -95,6 +125,52 @@ function validateEventName(value: unknown): AgencyFunnelEventName {
     throw new AgencyFunnelEventValidationError('Unsupported agency funnel event');
   }
   return value as AgencyFunnelEventName;
+}
+
+function normalizedValue(value: string): string {
+  return value.trim().toLowerCase() || 'unknown';
+}
+
+function hashValue(value: string): string {
+  return createHash('sha256').update(normalizedValue(value)).digest('hex').slice(0, 32);
+}
+
+function getRedisClient(): Redis | null {
+  if (redisClient !== undefined) return redisClient;
+
+  if (!process.env.UPSTASH_REDIS_REST_URL || !process.env.UPSTASH_REDIS_REST_TOKEN) {
+    redisClient = null;
+    return redisClient;
+  }
+
+  try {
+    redisClient = Redis.fromEnv();
+  } catch (error) {
+    console.warn('[AGENCY_FUNNEL_EVENTS] Failed to initialize Upstash Redis:', error);
+    redisClient = null;
+  }
+
+  return redisClient;
+}
+
+function durableEventLimiter(): DurableLimiter | null {
+  if (testDurableLimiter !== undefined) return testDurableLimiter;
+  if (durableLimiter !== undefined) return durableLimiter;
+
+  const redis = getRedisClient();
+  if (!redis) {
+    durableLimiter = null;
+    return null;
+  }
+
+  durableLimiter = new Ratelimit({
+    redis,
+    limiter: Ratelimit.slidingWindow(EVENT_LIMIT, EVENT_UPSTASH_WINDOW),
+    analytics: false,
+    prefix: 'audiorepurpose:agency-funnel-events',
+  });
+
+  return durableLimiter;
 }
 
 function metadataObject(value: unknown): Record<string, unknown> {
@@ -147,8 +223,15 @@ export function normalizeAgencyFunnelEvent(input: AgencyFunnelEventInput): Recor
   };
 }
 
-export function checkAgencyFunnelEventRateLimit(identifier: string, now = Date.now()) {
-  const key = identifier.trim() || 'unknown';
+export function buildAgencyFunnelEventRateLimitKey(identifier: string): string {
+  return `agency-funnel-event:${hashValue(identifier)}`;
+}
+
+function memoryRateLimit(
+  key: string,
+  now: number,
+  degraded: boolean
+): AgencyFunnelEventRateLimitResult {
   const cutoff = now - EVENT_WINDOW_MS;
   const recent = (eventBuckets.get(key) || []).filter((timestamp) => timestamp > cutoff);
 
@@ -160,6 +243,8 @@ export function checkAgencyFunnelEventRateLimit(identifier: string, now = Date.n
       limit: EVENT_LIMIT,
       remaining: 0,
       retryAfterSeconds: Math.ceil(retryAfterMs / 1000),
+      backend: 'memory',
+      degraded,
     };
   }
 
@@ -170,11 +255,48 @@ export function checkAgencyFunnelEventRateLimit(identifier: string, now = Date.n
     limit: EVENT_LIMIT,
     remaining: Math.max(0, EVENT_LIMIT - next.length),
     retryAfterSeconds: 0,
+    backend: 'memory',
+    degraded,
   };
+}
+
+export async function checkAgencyFunnelEventRateLimit(
+  identifier: string,
+  now = Date.now()
+): Promise<AgencyFunnelEventRateLimitResult> {
+  const key = buildAgencyFunnelEventRateLimitKey(identifier);
+  const limiter = durableEventLimiter();
+
+  if (!limiter) {
+    return memoryRateLimit(key, now, false);
+  }
+
+  try {
+    const result = await limiter.limit(key);
+    const retryAfterMs = Math.max(0, result.reset - now);
+    return {
+      allowed: result.success,
+      limit: result.limit,
+      remaining: result.remaining,
+      retryAfterSeconds: result.success ? 0 : Math.ceil(retryAfterMs / 1000),
+      backend: 'upstash',
+      degraded: false,
+    };
+  } catch (error) {
+    console.warn('[AGENCY_FUNNEL_EVENTS] Durable rate limit failed; using memory fallback:', error);
+    return memoryRateLimit(key, now, true);
+  }
 }
 
 export function resetAgencyFunnelEventRateLimitForTests() {
   eventBuckets.clear();
+  durableLimiter = undefined;
+  testDurableLimiter = undefined;
+  redisClient = undefined;
+}
+
+export function setAgencyFunnelEventDurableLimiterForTests(limiter: DurableLimiter | null) {
+  testDurableLimiter = limiter;
 }
 
 export async function createAgencyFunnelEvent(

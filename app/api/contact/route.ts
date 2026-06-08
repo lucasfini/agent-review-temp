@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { supabaseAdmin } from '@/lib/supabase/server';
 import { sendContactEmail } from '@/lib/contact-mailer';
+import { checkPublicFormRateLimit } from '@/lib/public-form-rate-limit';
 
 async function getAuthedUser(request: NextRequest) {
   const authHeader = request.headers.get('Authorization');
@@ -10,6 +11,14 @@ async function getAuthedUser(request: NextRequest) {
   const { data: { user }, error } = await supabaseAdmin.auth.getUser(token);
   if (error || !user) return null;
   return user;
+}
+
+function clientIpFrom(request: NextRequest): string {
+  const forwardedFor = request.headers.get('x-forwarded-for');
+  if (forwardedFor) {
+    return forwardedFor.split(',')[0]?.trim() || 'unknown';
+  }
+  return request.headers.get('cf-connecting-ip') || request.headers.get('x-real-ip') || 'unknown';
 }
 
 export async function POST(request: NextRequest) {
@@ -37,6 +46,26 @@ export async function POST(request: NextRequest) {
 
     if (!payload.subject || !payload.message) {
       return NextResponse.json({ error: 'Subject and message are required.' }, { status: 400 });
+    }
+
+    const ipLimit = await checkPublicFormRateLimit({
+      route: 'contact',
+      kind: 'ip',
+      value: clientIpFrom(request),
+    });
+    const emailLimit = await checkPublicFormRateLimit({
+      route: 'contact',
+      kind: 'email',
+      value: payload.email,
+    });
+    if (!ipLimit.allowed || !emailLimit.allowed) {
+      return NextResponse.json(
+        {
+          error: 'Too many support requests. Please try again later.',
+          retryAfterSeconds: Math.max(ipLimit.retryAfterSeconds, emailLimit.retryAfterSeconds),
+        },
+        { status: 429 }
+      );
     }
 
     const { error } = await supabaseAdmin
