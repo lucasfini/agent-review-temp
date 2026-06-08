@@ -9,7 +9,10 @@ import {
   checkAgencyLeadRateLimit,
   isLikelySpamLead,
 } from '@/lib/agency-lead-rate-limit';
-import { sendAgencyLeadNotification } from '@/lib/agency-lead-notifications';
+import {
+  sendAgencyLeadConfirmationEmail,
+  sendAgencyLeadNotification,
+} from '@/lib/agency-lead-notifications';
 import { supabaseAdmin } from '@/lib/supabase/server';
 
 export const dynamic = 'force-dynamic';
@@ -73,6 +76,15 @@ export async function POST(request: NextRequest) {
       }
     } catch (notificationError) {
       console.error('[AGENCY_LEADS_PUBLIC] Lead notification failed:', safeLogMessage(notificationError));
+    }
+
+    try {
+      const confirmation = await sendAgencyLeadConfirmationEmail(lead);
+      if (!confirmation.delivered) {
+        console.warn('[AGENCY_LEADS_PUBLIC] Lead confirmation skipped:', confirmation.reason);
+      }
+    } catch (confirmationError) {
+      console.error('[AGENCY_LEADS_PUBLIC] Lead confirmation failed:', safeLogMessage(confirmationError));
     }
 
     return NextResponse.json(

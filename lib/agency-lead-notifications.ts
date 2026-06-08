@@ -15,11 +15,12 @@ type AgencyLeadNotificationConfig = {
 export type AgencyLeadNotificationEmail = {
   from: string;
   to: string[];
-  replyTo: string;
+  replyTo?: string;
   subject: string;
   text: string;
   html: string;
-  reviewUrl: string | null;
+  reviewUrl?: string | null;
+  siteUrl?: string | null;
 };
 
 export type AgencyLeadNotificationResult =
@@ -93,6 +94,18 @@ function dashboardReviewUrl(appUrl: string | null | undefined): string | null {
   }
 }
 
+function publicAgencyUrl(appUrl: string | null | undefined): string | null {
+  if (!appUrl) return null;
+
+  try {
+    const url = new URL('/agency', appUrl);
+    if (url.protocol !== 'http:' && url.protocol !== 'https:') return null;
+    return url.toString();
+  } catch {
+    return null;
+  }
+}
+
 export function buildAgencyLeadNotificationEmail(
   lead: AgencyLead,
   options: {
@@ -147,37 +160,87 @@ export function buildAgencyLeadNotificationEmail(
   };
 }
 
-export async function sendAgencyLeadNotification(
-  lead: AgencyLead
-): Promise<AgencyLeadNotificationResult> {
-  const config = getResendConfig();
-  if (!config) {
-    return { delivered: false, reason: 'Resend agency lead notification is not configured' };
+export function buildAgencyLeadConfirmationEmail(
+  lead: AgencyLead,
+  options: {
+    from: string;
+    appUrl?: string | null;
   }
+): AgencyLeadNotificationEmail {
+  const siteUrl = publicAgencyUrl(options.appUrl);
+  const greeting = lead.name ? `Hi ${lead.name},` : 'Hi,';
+  const packageLine = lead.packageInterest
+    ? `We also received your package interest as: ${lead.packageInterest}.`
+    : 'We also received your package interest as: not sure yet.';
 
-  const email = buildAgencyLeadNotificationEmail(lead, {
-    from: config.from,
-    to: config.to,
-    appUrl: config.appUrl,
-  });
+  const textLines = [
+    greeting,
+    '',
+    'Thanks for reaching out about agency support from AudioRepurpose.',
+    'We received your inquiry and will review the communication need, source material, and service fit before recommending a practical next step.',
+    packageLine,
+    '',
+    'What happens next:',
+    '- We review the inquiry for fit and useful context.',
+    '- If there is a clear match, we follow up with a short next-step note.',
+    '- If a different path looks more appropriate, we will keep the recommendation practical.',
+    '',
+    siteUrl ? `You can review the agency services here: ${siteUrl}` : 'You can review the agency services on the AudioRepurpose agency site.',
+    '',
+    'This message confirms receipt only. It does not create an account or client portal login.',
+  ];
+
+  return {
+    from: options.from,
+    to: [lead.email],
+    subject: 'We received your AudioRepurpose agency inquiry',
+    text: textLines.join('\n'),
+    html: `
+      <div style="font-family:Arial,sans-serif;color:#0f172a;line-height:1.6;">
+        <p>${escapeHtml(greeting)}</p>
+        <p>Thanks for reaching out about agency support from AudioRepurpose.</p>
+        <p>We received your inquiry and will review the communication need, source material, and service fit before recommending a practical next step.</p>
+        <p>${escapeHtml(packageLine)}</p>
+        <h3 style="margin:20px 0 8px;">What happens next</h3>
+        <ul>
+          <li>We review the inquiry for fit and useful context.</li>
+          <li>If there is a clear match, we follow up with a short next-step note.</li>
+          <li>If a different path looks more appropriate, we will keep the recommendation practical.</li>
+        </ul>
+        <p>${siteUrl ? `You can review the agency services here: <a href="${escapeHtml(siteUrl)}">${escapeHtml(siteUrl)}</a>` : 'You can review the agency services on the AudioRepurpose agency site.'}</p>
+        <p style="color:#475569;font-size:13px;">This message confirms receipt only. It does not create an account or client portal login.</p>
+      </div>
+    `,
+    siteUrl,
+  };
+}
+
+async function sendResendEmail(
+  config: AgencyLeadNotificationConfig,
+  email: AgencyLeadNotificationEmail
+): Promise<AgencyLeadNotificationResult> {
   const abortController = new AbortController();
   const timeoutId = setTimeout(() => abortController.abort(), RESEND_TIMEOUT_MS);
 
   try {
+    const body: Record<string, unknown> = {
+      from: email.from,
+      to: email.to,
+      subject: email.subject,
+      text: email.text,
+      html: email.html,
+    };
+    if (email.replyTo) {
+      body.reply_to = email.replyTo;
+    }
+
     const response = await fetch('https://api.resend.com/emails', {
       method: 'POST',
       headers: {
         Authorization: `Bearer ${config.apiKey}`,
         'Content-Type': 'application/json',
       },
-      body: JSON.stringify({
-        from: email.from,
-        to: email.to,
-        reply_to: email.replyTo,
-        subject: email.subject,
-        text: email.text,
-        html: email.html,
-      }),
+      body: JSON.stringify(body),
       signal: abortController.signal,
       cache: 'no-store',
     });
@@ -195,4 +258,37 @@ export async function sendAgencyLeadNotification(
   }
 
   return { delivered: true };
+}
+
+export async function sendAgencyLeadNotification(
+  lead: AgencyLead
+): Promise<AgencyLeadNotificationResult> {
+  const config = getResendConfig();
+  if (!config) {
+    return { delivered: false, reason: 'Resend agency lead notification is not configured' };
+  }
+
+  const email = buildAgencyLeadNotificationEmail(lead, {
+    from: config.from,
+    to: config.to,
+    appUrl: config.appUrl,
+  });
+
+  return sendResendEmail(config, email);
+}
+
+export async function sendAgencyLeadConfirmationEmail(
+  lead: AgencyLead
+): Promise<AgencyLeadNotificationResult> {
+  const config = getResendConfig();
+  if (!config) {
+    return { delivered: false, reason: 'Resend agency lead confirmation is not configured' };
+  }
+
+  const email = buildAgencyLeadConfirmationEmail(lead, {
+    from: config.from,
+    appUrl: config.appUrl,
+  });
+
+  return sendResendEmail(config, email);
 }

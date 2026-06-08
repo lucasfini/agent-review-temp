@@ -9,6 +9,7 @@ const mockConvertAgencyLeadToClient = jest.fn();
 const mockCheckAgencyLeadRateLimit = jest.fn();
 const mockIsLikelySpamLead = jest.fn();
 const mockSendAgencyLeadNotification = jest.fn();
+const mockSendAgencyLeadConfirmationEmail = jest.fn();
 const mockIsDemoUser = jest.fn();
 
 jest.mock('@/lib/authz/agency-permissions', () => {
@@ -37,6 +38,7 @@ jest.mock('@/lib/agency-lead-rate-limit', () => ({
 }));
 
 jest.mock('@/lib/agency-lead-notifications', () => ({
+  sendAgencyLeadConfirmationEmail: (...args: any[]) => mockSendAgencyLeadConfirmationEmail(...args),
   sendAgencyLeadNotification: (...args: any[]) => mockSendAgencyLeadNotification(...args),
 }));
 
@@ -105,6 +107,7 @@ describe('agency lead routes', () => {
     mockCheckAgencyLeadRateLimit.mockReset();
     mockIsLikelySpamLead.mockReset();
     mockSendAgencyLeadNotification.mockReset();
+    mockSendAgencyLeadConfirmationEmail.mockReset();
     mockIsDemoUser.mockReset();
 
     mockRequireAgencyAccess.mockResolvedValue({ user, organization, membership });
@@ -115,6 +118,7 @@ describe('agency lead routes', () => {
     });
     mockIsLikelySpamLead.mockReturnValue({ isSpam: false, reason: null });
     mockSendAgencyLeadNotification.mockResolvedValue({ delivered: true });
+    mockSendAgencyLeadConfirmationEmail.mockResolvedValue({ delivered: true });
     mockCreateAgencyLead.mockResolvedValue(lead);
     mockListAgencyLeads.mockResolvedValue([lead]);
     mockGetAgencyLead.mockResolvedValue(lead);
@@ -150,6 +154,7 @@ describe('agency lead routes', () => {
       })
     );
     expect(mockSendAgencyLeadNotification).toHaveBeenCalledWith(lead);
+    expect(mockSendAgencyLeadConfirmationEmail).toHaveBeenCalledWith(lead);
     expect(mockConvertAgencyLeadToClient).not.toHaveBeenCalled();
   });
 
@@ -168,6 +173,7 @@ describe('agency lead routes', () => {
     expect(mockCheckAgencyLeadRateLimit).not.toHaveBeenCalled();
     expect(mockIsLikelySpamLead).not.toHaveBeenCalled();
     expect(mockSendAgencyLeadNotification).not.toHaveBeenCalled();
+    expect(mockSendAgencyLeadConfirmationEmail).not.toHaveBeenCalled();
   });
 
   it('rate limits public agency lead submissions', async () => {
@@ -186,6 +192,7 @@ describe('agency lead routes', () => {
     expect(payload.retryAfterSeconds).toBe(60);
     expect(mockCreateAgencyLead).not.toHaveBeenCalled();
     expect(mockSendAgencyLeadNotification).not.toHaveBeenCalled();
+    expect(mockSendAgencyLeadConfirmationEmail).not.toHaveBeenCalled();
   });
 
   it('rejects likely spam lead submissions before storage', async () => {
@@ -206,6 +213,7 @@ describe('agency lead routes', () => {
     expect(mockCheckAgencyLeadRateLimit).not.toHaveBeenCalled();
     expect(mockCreateAgencyLead).not.toHaveBeenCalled();
     expect(mockSendAgencyLeadNotification).not.toHaveBeenCalled();
+    expect(mockSendAgencyLeadConfirmationEmail).not.toHaveBeenCalled();
   });
 
   it('does not fail public lead creation when internal notification email fails', async () => {
@@ -226,6 +234,29 @@ describe('agency lead routes', () => {
     expect(payload.lead).toEqual({ id: 'lead-1', status: 'new' });
     expect(mockCreateAgencyLead).toHaveBeenCalled();
     expect(mockSendAgencyLeadNotification).toHaveBeenCalledWith(lead);
+    expect(mockSendAgencyLeadConfirmationEmail).toHaveBeenCalledWith(lead);
+    errorSpy.mockRestore();
+  });
+
+  it('does not fail public lead creation when confirmation email fails', async () => {
+    const errorSpy = jest.spyOn(console, 'error').mockImplementation(() => {});
+    const { POST } = await import('@/app/api/agency-leads/route');
+    mockSendAgencyLeadConfirmationEmail.mockRejectedValue(new Error('Resend unavailable'));
+
+    const response = await POST(new Request('http://localhost/api/agency-leads', {
+      method: 'POST',
+      body: JSON.stringify({
+        email: 'lucas@example.com',
+        company: 'Acme',
+      }),
+    }) as any);
+    const payload = await response.json();
+
+    expect(response.status).toBe(201);
+    expect(payload.lead).toEqual({ id: 'lead-1', status: 'new' });
+    expect(mockCreateAgencyLead).toHaveBeenCalled();
+    expect(mockSendAgencyLeadNotification).toHaveBeenCalledWith(lead);
+    expect(mockSendAgencyLeadConfirmationEmail).toHaveBeenCalledWith(lead);
     errorSpy.mockRestore();
   });
 
