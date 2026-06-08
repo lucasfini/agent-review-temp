@@ -4675,7 +4675,8 @@ git commit -m "Add agency lead confirmation email"
 
 ---
 
-## [ ] Phase 7D: Agency Funnel Analytics Events
+## [x] Phase 7D: Agency Funnel Analytics Events
+Completed commit: cfba8a7
 
 Status: Ready after Phase 7C is committed.
 
