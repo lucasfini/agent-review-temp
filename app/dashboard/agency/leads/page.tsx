@@ -19,6 +19,10 @@ import { useAuth } from '@/lib/auth/context';
 import { useCurrentOrganization } from '@/lib/hooks/useCurrentOrganization';
 import { withOrganizationId } from '@/lib/organizations/current-organization';
 import type { AgencyLead, AgencyLeadStatus } from '@/lib/agency-leads';
+import {
+  AGENCY_LEAD_QUALIFICATION_TIERS,
+  type AgencyLeadQualificationTier,
+} from '@/lib/agency-lead-qualification';
 
 const LEAD_STATUSES: AgencyLeadStatus[] = [
   'new',
@@ -28,6 +32,7 @@ const LEAD_STATUSES: AgencyLeadStatus[] = [
   'archived',
   'spam',
 ];
+const QUALIFICATION_TIERS: AgencyLeadQualificationTier[] = [...AGENCY_LEAD_QUALIFICATION_TIERS];
 
 function statusLabel(value: string): string {
   return value
@@ -58,6 +63,18 @@ function leadTitle(lead: AgencyLead): string {
 
 function externalWebsiteHref(value: string): string {
   return /^https?:\/\//i.test(value) ? value : `https://${value}`;
+}
+
+function dateInputValue(value: string | null | undefined): string {
+  if (!value) return '';
+  const date = new Date(value);
+  if (Number.isNaN(date.getTime())) return '';
+  return date.toISOString().slice(0, 10);
+}
+
+function isoFromDateInput(value: string): string | null {
+  if (!value) return null;
+  return new Date(`${value}T00:00:00.000Z`).toISOString();
 }
 
 function InfoItem({
@@ -94,10 +111,19 @@ export default function AgencyLeadsPage() {
   const [leads, setLeads] = useState<AgencyLead[]>([]);
   const [selectedLeadId, setSelectedLeadId] = useState<string | null>(null);
   const [statusFilter, setStatusFilter] = useState<'all' | AgencyLeadStatus>('all');
+  const [tierFilter, setTierFilter] = useState<'all' | AgencyLeadQualificationTier>('all');
   const [canManage, setCanManage] = useState(false);
   const [loading, setLoading] = useState(true);
   const [savingLeadId, setSavingLeadId] = useState<string | null>(null);
   const [convertingLeadId, setConvertingLeadId] = useState<string | null>(null);
+  const [qualificationDraft, setQualificationDraft] = useState({
+    qualificationScore: '',
+    qualificationTier: 'unqualified' as AgencyLeadQualificationTier,
+    assignedTo: '',
+    reviewNotes: '',
+    lastContactedAt: '',
+    nextFollowUpAt: '',
+  });
   const [error, setError] = useState<string | null>(null);
   const [message, setMessage] = useState<string | null>(null);
 
@@ -113,8 +139,12 @@ export default function AgencyLeadsPage() {
   const canWrite = canManage && !isDemoMode;
 
   const filteredLeads = useMemo(
-    () => leads.filter((lead) => statusFilter === 'all' || lead.status === statusFilter),
-    [leads, statusFilter]
+    () => leads.filter((lead) => {
+      const statusMatches = statusFilter === 'all' || lead.status === statusFilter;
+      const tierMatches = tierFilter === 'all' || lead.qualificationTier === tierFilter;
+      return statusMatches && tierMatches;
+    }),
+    [leads, statusFilter, tierFilter]
   );
   const selectedLead = useMemo(
     () => filteredLeads.find((lead) => lead.id === selectedLeadId) || filteredLeads[0] || null,
@@ -130,6 +160,10 @@ export default function AgencyLeadsPage() {
   );
   const convertedLeadCount = useMemo(
     () => leads.filter((lead) => lead.status === 'converted').length,
+    [leads]
+  );
+  const highFitLeadCount = useMemo(
+    () => leads.filter((lead) => lead.qualificationTier === 'high').length,
     [leads]
   );
 
@@ -171,6 +205,20 @@ export default function AgencyLeadsPage() {
     if (loadingOrganization) return;
     void loadLeads();
   }, [loadLeads, loadingOrganization]);
+
+  useEffect(() => {
+    if (!selectedLead) return;
+    setQualificationDraft({
+      qualificationScore: selectedLead.qualificationScore === null || selectedLead.qualificationScore === undefined
+        ? ''
+        : String(selectedLead.qualificationScore),
+      qualificationTier: selectedLead.qualificationTier || 'unqualified',
+      assignedTo: selectedLead.assignedTo || '',
+      reviewNotes: selectedLead.reviewNotes || '',
+      lastContactedAt: dateInputValue(selectedLead.lastContactedAt),
+      nextFollowUpAt: dateInputValue(selectedLead.nextFollowUpAt),
+    });
+  }, [selectedLead?.id, selectedLead]);
 
   const updateLeadStatus = async (lead: AgencyLead, status: AgencyLeadStatus) => {
     if (!organizationId || !canWrite) return;
@@ -240,6 +288,47 @@ export default function AgencyLeadsPage() {
     }
   };
 
+  const updateLeadQualification = async (lead: AgencyLead) => {
+    if (!organizationId || !canWrite) return;
+    setSavingLeadId(lead.id);
+    setError(null);
+    setMessage(null);
+
+    try {
+      const score = qualificationDraft.qualificationScore.trim()
+        ? Number(qualificationDraft.qualificationScore)
+        : null;
+      const response = await fetch(withOrganizationId(`/api/agency/leads/${lead.id}`, organizationId), {
+        method: 'PATCH',
+        headers: {
+          ...authHeaders,
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify({
+          organization_id: organizationId,
+          qualificationScore: score,
+          qualificationTier: qualificationDraft.qualificationTier,
+          assignedTo: qualificationDraft.assignedTo.trim() || null,
+          reviewNotes: qualificationDraft.reviewNotes,
+          lastContactedAt: isoFromDateInput(qualificationDraft.lastContactedAt),
+          nextFollowUpAt: isoFromDateInput(qualificationDraft.nextFollowUpAt),
+        }),
+      });
+      const payload = await response.json().catch(() => ({}));
+
+      if (!response.ok) {
+        throw new Error(payload.error || 'Failed to update lead qualification');
+      }
+
+      setLeads((current) => current.map((item) => item.id === lead.id ? payload.lead as AgencyLead : item));
+      setMessage('Lead qualification updated.');
+    } catch (updateError) {
+      setError(updateError instanceof Error ? updateError.message : 'Failed to update lead qualification');
+    } finally {
+      setSavingLeadId(null);
+    }
+  };
+
   if (loadingOrganization || loading) {
     return (
       <div className="flex min-h-[60vh] items-center justify-center">
@@ -290,7 +379,7 @@ export default function AgencyLeadsPage() {
         </button>
       </div>
 
-      <div className="grid gap-4 md:grid-cols-3">
+      <div className="grid gap-4 md:grid-cols-4">
         <InfoItem
           icon={<Mail className="h-4 w-4" />}
           label="New"
@@ -305,6 +394,11 @@ export default function AgencyLeadsPage() {
           icon={<Building2 className="h-4 w-4" />}
           label="Converted"
           value={`${convertedLeadCount} clients`}
+        />
+        <InfoItem
+          icon={<CheckCircle2 className="h-4 w-4" />}
+          label="High fit"
+          value={`${highFitLeadCount} leads`}
         />
       </div>
 
@@ -337,7 +431,8 @@ export default function AgencyLeadsPage() {
             <CardDescription>Public agency inquiries from the website intake form.</CardDescription>
           </CardHeader>
           <CardContent className="space-y-4">
-            <div>
+            <div className="grid gap-3 sm:grid-cols-2">
+              <div>
               <label htmlFor="lead-status-filter" className="text-sm font-medium text-slate-700 dark:text-slate-200">
                 Status
               </label>
@@ -352,6 +447,23 @@ export default function AgencyLeadsPage() {
                   <option key={status} value={status}>{statusLabel(status)}</option>
                 ))}
               </select>
+              </div>
+              <div>
+                <label htmlFor="lead-tier-filter" className="text-sm font-medium text-slate-700 dark:text-slate-200">
+                  Fit
+                </label>
+                <select
+                  id="lead-tier-filter"
+                  value={tierFilter}
+                  onChange={(event) => setTierFilter(event.target.value as 'all' | AgencyLeadQualificationTier)}
+                  className="mt-1 w-full rounded-lg border border-slate-300 bg-white px-3 py-2 text-sm text-slate-900 shadow-sm outline-none transition focus:border-blue-500 focus:ring-2 focus:ring-blue-500/20 dark:border-slate-700 dark:bg-slate-950 dark:text-slate-100"
+                >
+                  <option value="all">All fit tiers</option>
+                  {QUALIFICATION_TIERS.map((tier) => (
+                    <option key={tier} value={tier}>{statusLabel(tier)}</option>
+                  ))}
+                </select>
+              </div>
             </div>
 
             <div className="space-y-2">
@@ -377,7 +489,15 @@ export default function AgencyLeadsPage() {
                       <p className="truncate text-sm font-semibold text-slate-900 dark:text-white">{leadTitle(lead)}</p>
                       <p className="mt-1 truncate text-xs text-slate-500 dark:text-slate-400">{lead.email}</p>
                     </div>
-                    <Badge variant={statusVariant(lead.status)}>{statusLabel(lead.status)}</Badge>
+                    <div className="flex flex-col items-end gap-2">
+                      <Badge variant={statusVariant(lead.status)}>{statusLabel(lead.status)}</Badge>
+                      {lead.qualificationTier ? (
+                        <Badge variant="secondary">
+                          {statusLabel(lead.qualificationTier)}
+                          {typeof lead.qualificationScore === 'number' ? ` ${lead.qualificationScore}` : ''}
+                        </Badge>
+                      ) : null}
+                    </div>
                   </div>
                   <p className="mt-3 text-xs text-slate-500 dark:text-slate-400">
                     Submitted {formatDate(lead.createdAt)}
@@ -432,6 +552,16 @@ export default function AgencyLeadsPage() {
                     label="Timeline"
                     value={selectedLead.timeline || 'Not provided'}
                   />
+                  <InfoItem
+                    icon={<CheckCircle2 className="h-4 w-4" />}
+                    label="Qualification"
+                    value={`${selectedLead.qualificationTier ? statusLabel(selectedLead.qualificationTier) : 'Not scored'}${typeof selectedLead.qualificationScore === 'number' ? ` (${selectedLead.qualificationScore})` : ''}`}
+                  />
+                  <InfoItem
+                    icon={<UserRound className="h-4 w-4" />}
+                    label="Assigned"
+                    value={selectedLead.assignedTo || 'Unassigned'}
+                  />
                 </div>
 
                 {selectedLead.message ? (
@@ -460,6 +590,110 @@ export default function AgencyLeadsPage() {
                     Converted to client on {formatDate(selectedLead.convertedAt)}.
                   </div>
                 ) : null}
+
+                <div className="space-y-4 rounded-lg border border-slate-200 bg-slate-50 p-4 dark:border-slate-800 dark:bg-slate-900">
+                  <div>
+                    <p className="text-sm font-semibold text-slate-900 dark:text-white">Qualification and follow-up</p>
+                    <p className="mt-1 text-xs leading-5 text-slate-500 dark:text-slate-400">
+                      Deterministic score is only a prioritization aid. It does not auto-approve, reject, or convert leads.
+                    </p>
+                  </div>
+                  <div className="grid gap-3 sm:grid-cols-2">
+                    <label className="text-sm font-medium text-slate-700 dark:text-slate-200">
+                      Score
+                      <input
+                        type="number"
+                        min={0}
+                        max={100}
+                        value={qualificationDraft.qualificationScore}
+                        onChange={(event) => setQualificationDraft((current) => ({
+                          ...current,
+                          qualificationScore: event.target.value,
+                        }))}
+                        disabled={!canWrite}
+                        className="mt-1 w-full rounded-lg border border-slate-300 bg-white px-3 py-2 text-sm text-slate-900 shadow-sm outline-none transition focus:border-blue-500 focus:ring-2 focus:ring-blue-500/20 disabled:cursor-not-allowed disabled:bg-slate-100 disabled:text-slate-500 dark:border-slate-700 dark:bg-slate-950 dark:text-slate-100 dark:disabled:bg-slate-900"
+                      />
+                    </label>
+                    <label className="text-sm font-medium text-slate-700 dark:text-slate-200">
+                      Fit tier
+                      <select
+                        value={qualificationDraft.qualificationTier}
+                        onChange={(event) => setQualificationDraft((current) => ({
+                          ...current,
+                          qualificationTier: event.target.value as AgencyLeadQualificationTier,
+                        }))}
+                        disabled={!canWrite}
+                        className="mt-1 w-full rounded-lg border border-slate-300 bg-white px-3 py-2 text-sm text-slate-900 shadow-sm outline-none transition focus:border-blue-500 focus:ring-2 focus:ring-blue-500/20 disabled:cursor-not-allowed disabled:bg-slate-100 disabled:text-slate-500 dark:border-slate-700 dark:bg-slate-950 dark:text-slate-100 dark:disabled:bg-slate-900"
+                      >
+                        {QUALIFICATION_TIERS.map((tier) => (
+                          <option key={tier} value={tier}>{statusLabel(tier)}</option>
+                        ))}
+                      </select>
+                    </label>
+                    <label className="text-sm font-medium text-slate-700 dark:text-slate-200">
+                      Assigned user ID
+                      <input
+                        type="text"
+                        value={qualificationDraft.assignedTo}
+                        onChange={(event) => setQualificationDraft((current) => ({
+                          ...current,
+                          assignedTo: event.target.value,
+                        }))}
+                        placeholder="UUID or leave blank"
+                        disabled={!canWrite}
+                        className="mt-1 w-full rounded-lg border border-slate-300 bg-white px-3 py-2 text-sm text-slate-900 shadow-sm outline-none transition focus:border-blue-500 focus:ring-2 focus:ring-blue-500/20 disabled:cursor-not-allowed disabled:bg-slate-100 disabled:text-slate-500 dark:border-slate-700 dark:bg-slate-950 dark:text-slate-100 dark:disabled:bg-slate-900"
+                      />
+                    </label>
+                    <label className="text-sm font-medium text-slate-700 dark:text-slate-200">
+                      Last contacted
+                      <input
+                        type="date"
+                        value={qualificationDraft.lastContactedAt}
+                        onChange={(event) => setQualificationDraft((current) => ({
+                          ...current,
+                          lastContactedAt: event.target.value,
+                        }))}
+                        disabled={!canWrite}
+                        className="mt-1 w-full rounded-lg border border-slate-300 bg-white px-3 py-2 text-sm text-slate-900 shadow-sm outline-none transition focus:border-blue-500 focus:ring-2 focus:ring-blue-500/20 disabled:cursor-not-allowed disabled:bg-slate-100 disabled:text-slate-500 dark:border-slate-700 dark:bg-slate-950 dark:text-slate-100 dark:disabled:bg-slate-900"
+                      />
+                    </label>
+                    <label className="text-sm font-medium text-slate-700 dark:text-slate-200 sm:col-span-2">
+                      Next follow-up
+                      <input
+                        type="date"
+                        value={qualificationDraft.nextFollowUpAt}
+                        onChange={(event) => setQualificationDraft((current) => ({
+                          ...current,
+                          nextFollowUpAt: event.target.value,
+                        }))}
+                        disabled={!canWrite}
+                        className="mt-1 w-full rounded-lg border border-slate-300 bg-white px-3 py-2 text-sm text-slate-900 shadow-sm outline-none transition focus:border-blue-500 focus:ring-2 focus:ring-blue-500/20 disabled:cursor-not-allowed disabled:bg-slate-100 disabled:text-slate-500 dark:border-slate-700 dark:bg-slate-950 dark:text-slate-100 dark:disabled:bg-slate-900"
+                      />
+                    </label>
+                  </div>
+                  <label className="block text-sm font-medium text-slate-700 dark:text-slate-200">
+                    Review notes
+                    <textarea
+                      value={qualificationDraft.reviewNotes}
+                      onChange={(event) => setQualificationDraft((current) => ({
+                        ...current,
+                        reviewNotes: event.target.value,
+                      }))}
+                      rows={4}
+                      disabled={!canWrite}
+                      className="mt-1 w-full resize-y rounded-lg border border-slate-300 bg-white px-3 py-2 text-sm leading-6 text-slate-900 shadow-sm outline-none transition focus:border-blue-500 focus:ring-2 focus:ring-blue-500/20 disabled:cursor-not-allowed disabled:bg-slate-100 disabled:text-slate-500 dark:border-slate-700 dark:bg-slate-950 dark:text-slate-100 dark:disabled:bg-slate-900"
+                    />
+                  </label>
+                  <button
+                    type="button"
+                    onClick={() => void updateLeadQualification(selectedLead)}
+                    disabled={!canWrite || savingLeadId === selectedLead.id}
+                    className="inline-flex items-center justify-center gap-2 rounded-lg border border-slate-300 bg-white px-4 py-2 text-sm font-semibold text-slate-800 transition hover:bg-slate-50 disabled:cursor-not-allowed disabled:bg-slate-100 disabled:text-slate-500 dark:border-slate-700 dark:bg-slate-950 dark:text-slate-100 dark:hover:bg-slate-900 dark:disabled:bg-slate-900"
+                  >
+                    {savingLeadId === selectedLead.id ? <Loader2 className="h-4 w-4 animate-spin" /> : null}
+                    Save qualification
+                  </button>
+                </div>
 
                 <div className="flex flex-col gap-3 border-t border-slate-200 pt-5 dark:border-slate-800 sm:flex-row sm:flex-wrap">
                   <select

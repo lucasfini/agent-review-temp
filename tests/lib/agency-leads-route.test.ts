@@ -78,6 +78,12 @@ const lead = {
   message: 'Need help turning calls into content.',
   source: 'agency_website',
   status: 'new',
+  qualificationScore: 72,
+  qualificationTier: 'high',
+  assignedTo: null,
+  reviewNotes: null,
+  lastContactedAt: null,
+  nextFollowUpAt: null,
   metadata: {},
   convertedClientId: null,
   convertedAt: null,
@@ -129,7 +135,13 @@ describe('agency lead routes', () => {
     mockCreateAgencyLead.mockResolvedValue(lead);
     mockListAgencyLeads.mockResolvedValue([lead]);
     mockGetAgencyLead.mockResolvedValue(lead);
-    mockUpdateAgencyLead.mockResolvedValue({ ...lead, status: 'qualified' });
+    mockUpdateAgencyLead.mockResolvedValue({
+      ...lead,
+      status: 'qualified',
+      qualificationScore: 86,
+      qualificationTier: 'high',
+      reviewNotes: 'Strong fit.',
+    });
     mockConvertAgencyLeadToClient.mockResolvedValue({
       lead: { ...lead, status: 'converted', convertedClientId: 'client-1' },
       client,
@@ -321,7 +333,23 @@ describe('agency lead routes', () => {
     );
     expect(mockListAgencyLeads).toHaveBeenCalledWith(expect.anything(), {
       status: null,
+      qualificationTier: null,
       limit: 50,
+    });
+  });
+
+  it('lists leads with status and qualification tier filters', async () => {
+    const { GET } = await import('@/app/api/agency/leads/route');
+
+    const response = await GET(
+      new Request('http://localhost/api/agency/leads?organization_id=agency-org&status=new&qualification_tier=high&limit=25') as any
+    );
+
+    expect(response.status).toBe(200);
+    expect(mockListAgencyLeads).toHaveBeenCalledWith(expect.anything(), {
+      status: 'new',
+      qualificationTier: 'high',
+      limit: 25,
     });
   });
 
@@ -354,6 +382,39 @@ describe('agency lead routes', () => {
     expect(response.status).toBe(403);
     expect(payload.error).toBe('Demo account is read-only');
     expect(mockUpdateAgencyLead).not.toHaveBeenCalled();
+  });
+
+  it('allows agency admins to update qualification and routing fields', async () => {
+    const { PATCH } = await import('@/app/api/agency/leads/[id]/route');
+
+    const response = await PATCH(new Request('http://localhost/api/agency/leads/lead-1', {
+      method: 'PATCH',
+      body: JSON.stringify({
+        organization_id: 'agency-org',
+        qualificationScore: 86,
+        qualificationTier: 'high',
+        assignedTo: '11111111-1111-4111-8111-111111111111',
+        reviewNotes: 'Strong fit.',
+        lastContactedAt: '2026-06-08T00:00:00.000Z',
+        nextFollowUpAt: '2026-06-15T00:00:00.000Z',
+      }),
+    }) as any, { params: Promise.resolve({ id: 'lead-1' }) });
+    const payload = await response.json();
+
+    expect(response.status).toBe(200);
+    expect(payload.lead).toEqual(expect.objectContaining({
+      qualificationScore: 86,
+      qualificationTier: 'high',
+      reviewNotes: 'Strong fit.',
+    }));
+    expect(mockUpdateAgencyLead).toHaveBeenCalledWith(expect.anything(), 'lead-1', expect.objectContaining({
+      qualificationScore: 86,
+      qualificationTier: 'high',
+      assignedTo: '11111111-1111-4111-8111-111111111111',
+      reviewNotes: 'Strong fit.',
+      lastContactedAt: '2026-06-08T00:00:00.000Z',
+      nextFollowUpAt: '2026-06-15T00:00:00.000Z',
+    }));
   });
 
   it('converts leads into clients only after agency admin authorization', async () => {

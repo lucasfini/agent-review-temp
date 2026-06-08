@@ -6,6 +6,10 @@ import {
   listAgencyLeads,
   type AgencyLeadStatus,
 } from '@/lib/agency-leads';
+import {
+  AGENCY_LEAD_QUALIFICATION_TIERS,
+  type AgencyLeadQualificationTier,
+} from '@/lib/agency-lead-qualification';
 import { RouteAccessError } from '@/lib/api/route-auth';
 import {
   canManageAgencyClient,
@@ -37,6 +41,14 @@ function normalizeStatusParam(value: string | null): AgencyLeadStatus | null {
   return value as AgencyLeadStatus;
 }
 
+function normalizeTierParam(value: string | null): AgencyLeadQualificationTier | null {
+  if (!value) return null;
+  if (!AGENCY_LEAD_QUALIFICATION_TIERS.includes(value as AgencyLeadQualificationTier)) {
+    throw new AgencyLeadValidationError(`qualification_tier must be one of: ${AGENCY_LEAD_QUALIFICATION_TIERS.join(', ')}`);
+  }
+  return value as AgencyLeadQualificationTier;
+}
+
 function errorResponse(error: unknown, fallback: string) {
   if (error instanceof AgencyLeadValidationError) {
     return NextResponse.json({ error: error.message }, { status: 400 });
@@ -59,8 +71,10 @@ export async function GET(request: NextRequest) {
     });
     const limitParam = Number(searchParams.get('limit') || 50);
     const status = normalizeStatusParam(searchParams.get('status'));
+    const qualificationTier = normalizeTierParam(searchParams.get('qualification_tier'));
     const leads = await listAgencyLeads(supabaseAdmin, {
       status,
+      qualificationTier,
       limit: Number.isFinite(limitParam) ? limitParam : 50,
     });
 

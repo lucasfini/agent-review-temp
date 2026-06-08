@@ -18,6 +18,12 @@ const baseLead: AgencyLead = {
   message: 'We need to turn customer calls into founder content.',
   source: 'agency_website',
   status: 'qualified',
+  qualificationScore: 82,
+  qualificationTier: 'high',
+  assignedTo: null,
+  reviewNotes: null,
+  lastContactedAt: null,
+  nextFollowUpAt: null,
   metadata: {},
   convertedClientId: null,
   convertedAt: null,
@@ -45,6 +51,8 @@ describe('agency lead helpers', () => {
       message: 'Need help',
       source: 'agency_website',
       status: 'new',
+      qualification_score: expect.any(Number),
+      qualification_tier: expect.any(String),
       metadata_json: { page: '/agency/contact' },
     }));
   });

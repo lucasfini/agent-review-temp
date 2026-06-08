@@ -5,6 +5,11 @@ import {
   type AgencyClient,
   type AgencyClientInput,
 } from '@/lib/agency-clients';
+import {
+  AGENCY_LEAD_QUALIFICATION_TIERS,
+  scoreAgencyLead,
+  type AgencyLeadQualificationTier,
+} from '@/lib/agency-lead-qualification';
 
 export const AGENCY_LEAD_STATUSES = [
   'new',
@@ -30,6 +35,12 @@ export interface AgencyLead {
   message: string | null;
   source: string;
   status: AgencyLeadStatus;
+  qualificationScore: number | null;
+  qualificationTier: AgencyLeadQualificationTier | null;
+  assignedTo: string | null;
+  reviewNotes: string | null;
+  lastContactedAt: string | null;
+  nextFollowUpAt: string | null;
   metadata: Record<string, unknown>;
   convertedClientId: string | null;
   convertedAt: string | null;
@@ -51,6 +62,12 @@ export interface AgencyLeadRow {
   message: string | null;
   source: string;
   status: string;
+  qualification_score?: number | null;
+  qualification_tier?: string | null;
+  assigned_to?: string | null;
+  review_notes?: string | null;
+  last_contacted_at?: string | null;
+  next_follow_up_at?: string | null;
   metadata_json: Record<string, unknown> | null;
   converted_client_id?: string | null;
   converted_at?: string | null;
@@ -78,6 +95,18 @@ export type AgencyLeadInput = {
 
 export type AgencyLeadUpdateInput = {
   status?: unknown;
+  qualificationScore?: unknown;
+  qualification_score?: unknown;
+  qualificationTier?: unknown;
+  qualification_tier?: unknown;
+  assignedTo?: unknown;
+  assigned_to?: unknown;
+  reviewNotes?: unknown;
+  review_notes?: unknown;
+  lastContactedAt?: unknown;
+  last_contacted_at?: unknown;
+  nextFollowUpAt?: unknown;
+  next_follow_up_at?: unknown;
   metadata?: unknown;
 };
 
@@ -95,10 +124,12 @@ const MAX_SHORT_TEXT_LENGTH = 240;
 const MAX_URL_LENGTH = 500;
 const MAX_MESSAGE_LENGTH = 5000;
 const MAX_SOURCE_LENGTH = 120;
+const MAX_REVIEW_NOTES_LENGTH = 5000;
 
-function coalesceField(input: AgencyLeadInput, ...keys: Array<keyof AgencyLeadInput>): unknown {
+function coalesceField(input: object, ...keys: string[]): unknown {
+  const record = input as Record<string, unknown>;
   for (const key of keys) {
-    if (input[key] !== undefined) return input[key];
+    if (record[key] !== undefined) return record[key];
   }
   return undefined;
 }
@@ -142,6 +173,44 @@ function optionalStatus(value: unknown): AgencyLeadStatus | undefined {
   return status as AgencyLeadStatus;
 }
 
+function optionalQualificationTier(value: unknown): AgencyLeadQualificationTier | null | undefined {
+  const tier = optionalString(value, MAX_SHORT_TEXT_LENGTH, 'qualificationTier');
+  if (tier === undefined) return undefined;
+  if (tier === null) return null;
+  if (!AGENCY_LEAD_QUALIFICATION_TIERS.includes(tier as AgencyLeadQualificationTier)) {
+    throw new AgencyLeadValidationError(`qualificationTier must be one of: ${AGENCY_LEAD_QUALIFICATION_TIERS.join(', ')}`);
+  }
+  return tier as AgencyLeadQualificationTier;
+}
+
+function optionalScore(value: unknown): number | null | undefined {
+  if (value === undefined) return undefined;
+  if (value === null || value === '') return null;
+  if (typeof value !== 'number' || !Number.isInteger(value) || value < 0 || value > 100) {
+    throw new AgencyLeadValidationError('qualificationScore must be an integer from 0 to 100');
+  }
+  return value;
+}
+
+function optionalUuid(value: unknown, field: string): string | null | undefined {
+  const uuid = optionalString(value, 36, field);
+  if (uuid === undefined || uuid === null) return uuid;
+  if (!/^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(uuid)) {
+    throw new AgencyLeadValidationError(`${field} must be a valid UUID`);
+  }
+  return uuid;
+}
+
+function optionalTimestamp(value: unknown, field: string): string | null | undefined {
+  const timestamp = optionalString(value, MAX_SHORT_TEXT_LENGTH, field);
+  if (timestamp === undefined || timestamp === null) return timestamp;
+  const date = new Date(timestamp);
+  if (Number.isNaN(date.getTime())) {
+    throw new AgencyLeadValidationError(`${field} must be a valid date`);
+  }
+  return date.toISOString();
+}
+
 function metadataObject(value: unknown, field: string): Record<string, unknown> {
   if (value === undefined || value === null) return {};
   if (typeof value !== 'object' || Array.isArray(value)) {
@@ -154,6 +223,12 @@ function normalizeLeadStatus(value: string): AgencyLeadStatus {
   return AGENCY_LEAD_STATUSES.includes(value as AgencyLeadStatus)
     ? value as AgencyLeadStatus
     : 'new';
+}
+
+function normalizeQualificationTier(value: string | null | undefined): AgencyLeadQualificationTier | null {
+  return value && AGENCY_LEAD_QUALIFICATION_TIERS.includes(value as AgencyLeadQualificationTier)
+    ? value as AgencyLeadQualificationTier
+    : null;
 }
 
 export function mapAgencyLeadRow(row: AgencyLeadRow): AgencyLead {
@@ -170,6 +245,12 @@ export function mapAgencyLeadRow(row: AgencyLeadRow): AgencyLead {
     message: row.message,
     source: row.source,
     status: normalizeLeadStatus(row.status),
+    qualificationScore: row.qualification_score ?? null,
+    qualificationTier: normalizeQualificationTier(row.qualification_tier),
+    assignedTo: row.assigned_to || null,
+    reviewNotes: row.review_notes || null,
+    lastContactedAt: row.last_contacted_at || null,
+    nextFollowUpAt: row.next_follow_up_at || null,
     metadata: row.metadata_json || {},
     convertedClientId: row.converted_client_id || null,
     convertedAt: row.converted_at || null,
@@ -187,6 +268,7 @@ export function normalizeAgencyLeadSubmission(input: AgencyLeadInput): Record<st
 
   const source = optionalString(input.source, MAX_SOURCE_LENGTH, 'source') || 'agency_website';
   const metadata = metadataObject(input.metadata, 'metadata');
+  const qualification = scoreAgencyLead(input);
 
   return {
     name: optionalString(input.name, MAX_NAME_LENGTH, 'name') ?? null,
@@ -208,6 +290,8 @@ export function normalizeAgencyLeadSubmission(input: AgencyLeadInput): Record<st
     message: optionalString(input.message, MAX_MESSAGE_LENGTH, 'message') ?? null,
     source,
     status: 'new',
+    qualification_score: qualification.score,
+    qualification_tier: qualification.tier,
     metadata_json: metadata,
   };
 }
@@ -233,7 +317,11 @@ export async function createAgencyLead(
 
 export async function listAgencyLeads(
   supabase: SupabaseClient<any>,
-  options: { status?: AgencyLeadStatus | null; limit?: number } = {}
+  options: {
+    status?: AgencyLeadStatus | null;
+    qualificationTier?: AgencyLeadQualificationTier | null;
+    limit?: number;
+  } = {}
 ): Promise<AgencyLead[]> {
   const limit = Math.min(Math.max(options.limit || 50, 1), 200);
   let query = supabase
@@ -244,6 +332,9 @@ export async function listAgencyLeads(
 
   if (options.status) {
     query = query.eq('status', options.status);
+  }
+  if (options.qualificationTier) {
+    query = query.eq('qualification_tier', options.qualificationTier);
   }
 
   const { data, error } = await query as { data: AgencyLeadRow[] | null; error: any };
@@ -278,9 +369,34 @@ export async function updateAgencyLead(
   input: AgencyLeadUpdateInput
 ): Promise<AgencyLead | null> {
   const status = optionalStatus(input.status);
+  const qualificationScore = optionalScore(coalesceField(input as any, 'qualificationScore', 'qualification_score'));
+  const qualificationTier = optionalQualificationTier(coalesceField(input as any, 'qualificationTier', 'qualification_tier'));
+  const assignedTo = optionalUuid(coalesceField(input as any, 'assignedTo', 'assigned_to'), 'assignedTo');
+  const reviewNotes = optionalString(
+    coalesceField(input as any, 'reviewNotes', 'review_notes'),
+    MAX_REVIEW_NOTES_LENGTH,
+    'reviewNotes'
+  );
+  const lastContactedAt = optionalTimestamp(
+    coalesceField(input as any, 'lastContactedAt', 'last_contacted_at'),
+    'lastContactedAt'
+  );
+  const nextFollowUpAt = optionalTimestamp(
+    coalesceField(input as any, 'nextFollowUpAt', 'next_follow_up_at'),
+    'nextFollowUpAt'
+  );
   const metadata = metadataObject(input.metadata, 'metadata');
 
-  if (!status && Object.keys(metadata).length === 0) {
+  if (
+    !status
+    && qualificationScore === undefined
+    && qualificationTier === undefined
+    && assignedTo === undefined
+    && reviewNotes === undefined
+    && lastContactedAt === undefined
+    && nextFollowUpAt === undefined
+    && Object.keys(metadata).length === 0
+  ) {
     throw new AgencyLeadValidationError('No agency lead fields provided');
   }
 
@@ -289,6 +405,12 @@ export async function updateAgencyLead(
 
   const payload: Record<string, unknown> = {};
   if (status) payload.status = status;
+  if (qualificationScore !== undefined) payload.qualification_score = qualificationScore;
+  if (qualificationTier !== undefined) payload.qualification_tier = qualificationTier;
+  if (assignedTo !== undefined) payload.assigned_to = assignedTo;
+  if (reviewNotes !== undefined) payload.review_notes = reviewNotes;
+  if (lastContactedAt !== undefined) payload.last_contacted_at = lastContactedAt;
+  if (nextFollowUpAt !== undefined) payload.next_follow_up_at = nextFollowUpAt;
   if (Object.keys(metadata).length > 0) {
     payload.metadata_json = {
       ...current.metadata,

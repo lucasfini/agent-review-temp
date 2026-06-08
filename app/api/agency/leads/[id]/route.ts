@@ -93,6 +93,12 @@ export async function PATCH(
 
     const lead = await updateAgencyLead(supabaseAdmin, id, {
       status: body.status,
+      qualificationScore: body.qualificationScore ?? body.qualification_score,
+      qualificationTier: body.qualificationTier ?? body.qualification_tier,
+      assignedTo: body.assignedTo ?? body.assigned_to,
+      reviewNotes: body.reviewNotes ?? body.review_notes,
+      lastContactedAt: body.lastContactedAt ?? body.last_contacted_at,
+      nextFollowUpAt: body.nextFollowUpAt ?? body.next_follow_up_at,
       metadata: Object.keys(metadata).length > 0 ? metadata : body.metadata,
     });
 

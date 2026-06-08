@@ -36,6 +36,11 @@ const funnelEventsMigrationPath = path.join(
   'supabase/migrations/20260608160000_phase_7d_agency_funnel_events.sql'
 );
 const funnelEventsSql = readFileSync(funnelEventsMigrationPath, 'utf8');
+const leadQualificationMigrationPath = path.join(
+  process.cwd(),
+  'supabase/migrations/20260608170000_phase_7e_agency_lead_qualification.sql'
+);
+const leadQualificationSql = readFileSync(leadQualificationMigrationPath, 'utf8');
 
 describe('phase 4A agency schema migration', () => {
   it('creates the required agency foundation tables', () => {
@@ -147,5 +152,17 @@ describe('phase 4A agency schema migration', () => {
     expect(funnelEventsSql).toContain('Service role can manage agency_funnel_events');
     expect(funnelEventsSql).toContain('REVOKE ALL ON public.agency_funnel_events FROM anon;');
     expect(funnelEventsSql).toContain('REVOKE ALL ON public.agency_funnel_events FROM authenticated;');
+  });
+
+  it('adds Phase 7E lead qualification and routing fields without changing lead privacy', () => {
+    expect(leadQualificationSql).toContain('ADD COLUMN IF NOT EXISTS qualification_score INTEGER');
+    expect(leadQualificationSql).toContain('ADD COLUMN IF NOT EXISTS qualification_tier TEXT');
+    expect(leadQualificationSql).toContain('ADD COLUMN IF NOT EXISTS assigned_to UUID REFERENCES auth.users(id) ON DELETE SET NULL');
+    expect(leadQualificationSql).toContain('ADD COLUMN IF NOT EXISTS review_notes TEXT');
+    expect(leadQualificationSql).toContain('ADD COLUMN IF NOT EXISTS last_contacted_at TIMESTAMPTZ');
+    expect(leadQualificationSql).toContain('ADD COLUMN IF NOT EXISTS next_follow_up_at TIMESTAMPTZ');
+    expect(leadQualificationSql).toContain('agency_leads_qualification_score_check');
+    expect(leadQualificationSql).toContain("qualification_tier IS NULL OR qualification_tier IN ('high', 'medium', 'low', 'unqualified')");
+    expect(leadQualificationSql).not.toContain('CREATE POLICY');
   });
 });
