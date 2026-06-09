@@ -177,7 +177,7 @@ function SignalFlowPreview() {
                 <ArrowRight className="hidden h-4 w-4 text-white/40 md:block" />
               ) : null}
             </div>
-            <h2 className="mt-4 text-base font-semibold text-white">{stage.title}</h2>
+            <h3 className="mt-4 text-base font-semibold text-white">{stage.title}</h3>
             <p className="mt-2 text-sm leading-6 text-neutral-300">{stage.description}</p>
           </div>
         );

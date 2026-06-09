@@ -25,12 +25,12 @@ export default function AgencyProcessPage() {
         title="A simple rhythm for turning internal knowledge into external clarity."
         description="The service is designed to be low-friction for busy teams: share the source material, define context, review the drafts, and keep improving the communication system."
       />
-      <section className="border-b border-zinc-200 bg-white py-16 dark:border-zinc-800 dark:bg-zinc-950">
+      <section className="border-b border-neutral-200 bg-neutral-50 py-16 sm:py-20">
         <div className="mx-auto max-w-7xl px-4 sm:px-6 lg:px-8">
           <ProcessSteps />
         </div>
       </section>
-      <section className="border-b border-zinc-200 bg-zinc-50 py-16 dark:border-zinc-800 dark:bg-zinc-900">
+      <section className="border-b border-neutral-200 bg-white py-16 sm:py-20">
         <div className="mx-auto max-w-7xl px-4 sm:px-6 lg:px-8">
           <SectionHeader
             eyebrow="Review"
@@ -43,4 +43,3 @@ export default function AgencyProcessPage() {
     </AgencyPageShell>
   );
 }
-

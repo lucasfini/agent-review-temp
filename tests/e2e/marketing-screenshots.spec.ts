@@ -12,6 +12,19 @@ const viewports = [
   { name: 'wide', width: 1920, height: 1400 },
 ] as const;
 
+const marketingPages = [
+  { route: '/', label: 'home', routeFile: ['app', 'page.tsx'] },
+  { route: '/agency', label: 'agency', routeFile: ['app', 'agency', 'page.tsx'] },
+  { route: '/agency/contact', label: 'agency-contact', routeFile: ['app', 'agency', 'contact', 'page.tsx'] },
+  { route: '/agency/services', label: 'agency-services', routeFile: ['app', 'agency', 'services', 'page.tsx'] },
+  { route: '/agency/packages', label: 'agency-packages', routeFile: ['app', 'agency', 'packages', 'page.tsx'] },
+  { route: '/agency/process', label: 'agency-process', routeFile: ['app', 'agency', 'process', 'page.tsx'] },
+] as const;
+
+function routeFileExists(routeFile: readonly string[]) {
+  return existsSync(path.join(process.cwd(), ...routeFile));
+}
+
 async function captureMarketingPage(page: Page, route: string, label: string) {
   await mkdir(screenshotDir, { recursive: true });
 
@@ -40,16 +53,14 @@ test.describe('marketing page screenshots', () => {
     });
   });
 
-  test('captures responsive homepage screenshots', async ({ page }) => {
-    await captureMarketingPage(page, '/', 'home');
-  });
+  for (const marketingPage of marketingPages) {
+    test(`captures responsive ${marketingPage.label} screenshots when the route exists`, async ({ page }) => {
+      test.skip(
+        !routeFileExists(marketingPage.routeFile),
+        `No ${marketingPage.routeFile.join('/')} route exists in this worktree.`
+      );
 
-  const agencyRouteExists = existsSync(path.join(process.cwd(), 'app', 'agency', 'page.tsx'));
-
-  test('captures responsive agency screenshots when the branch has /agency', async ({ page }) => {
-    // The public agency route is branch-specific and is absent from origin/main.
-    test.skip(!agencyRouteExists, 'No app/agency/page.tsx route exists in this worktree.');
-
-    await captureMarketingPage(page, '/agency', 'agency');
-  });
+      await captureMarketingPage(page, marketingPage.route, marketingPage.label);
+    });
+  }
 });
