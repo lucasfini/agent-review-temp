@@ -2,10 +2,11 @@
 
 ## Scope
 - This repo is a Next.js App Router application with React, TypeScript, Tailwind, and Framer Motion.
-- Public marketing pages live under `app/`.
+- AudioRepurpose is B2B SaaS/product only.
+- Public product marketing pages live under `app/`.
 - The main B2B SaaS launch page is `app/page.tsx`.
-- Agency page routes may exist only on feature branches. Verify the active branch and actual route/path before editing agency pages.
-- If `/agency` exists, keep it positioned as the managed-service page, not a SaaS signup flow.
+- The founder LinkedIn agency belongs in a separate standalone project, not this repo.
+- Do not add or restore public agency marketing routes, agency landing pages, agency intake pages, or agency marketing screenshot coverage here.
 
 ## Brand Direction
 - The public site should feel premium, modern, sharp, and B2B-focused.
@@ -39,5 +40,5 @@
 - The page explains what AudioRepurpose does within 5 seconds.
 - Text is scannable and does not crowd the layout.
 - Mobile, tablet, desktop, and large desktop layouts are coherent.
-- No internal dashboard/API links appear on public agency pages.
+- No public page links to agency marketing routes.
 - No placeholder content remains.

@@ -14,11 +14,7 @@ const viewports = [
 
 const marketingPages = [
   { route: '/', label: 'home', routeFile: ['app', 'page.tsx'] },
-  { route: '/agency', label: 'agency', routeFile: ['app', 'agency', 'page.tsx'] },
-  { route: '/agency/contact', label: 'agency-contact', routeFile: ['app', 'agency', 'contact', 'page.tsx'] },
-  { route: '/agency/services', label: 'agency-services', routeFile: ['app', 'agency', 'services', 'page.tsx'] },
-  { route: '/agency/packages', label: 'agency-packages', routeFile: ['app', 'agency', 'packages', 'page.tsx'] },
-  { route: '/agency/process', label: 'agency-process', routeFile: ['app', 'agency', 'process', 'page.tsx'] },
+  { route: '/contact', label: 'contact', routeFile: ['app', 'contact', 'page.tsx'] },
 ] as const;
 
 function routeFileExists(routeFile: readonly string[]) {
@@ -48,9 +44,6 @@ test.describe('marketing page screenshots', () => {
 
   test.beforeEach(async ({ page }) => {
     await page.emulateMedia({ reducedMotion: 'reduce' });
-    await page.route('**/api/agency-funnel-events', async (route) => {
-      await route.fulfill({ status: 204, body: '' });
-    });
   });
 
   for (const marketingPage of marketingPages) {
