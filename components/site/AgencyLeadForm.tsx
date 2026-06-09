@@ -50,7 +50,7 @@ const budgetOptions = [
 
 function FieldLabel({ htmlFor, children }: { htmlFor: string; children: React.ReactNode }) {
   return (
-    <label htmlFor={htmlFor} className="text-sm font-medium text-zinc-800 dark:text-zinc-100">
+    <label htmlFor={htmlFor} className="text-sm font-medium text-neutral-800">
       {children}
     </label>
   );
@@ -79,7 +79,7 @@ function TextInput({
       onChange={(event) => onChange(event.target.value)}
       placeholder={placeholder}
       required={required}
-      className="mt-1 w-full rounded-lg border border-zinc-300 bg-white px-3 py-2 text-sm text-zinc-950 outline-none transition focus:border-emerald-600 focus:ring-2 focus:ring-emerald-600/15 dark:border-zinc-700 dark:bg-zinc-950 dark:text-white"
+      className="mt-1 w-full rounded-md border border-neutral-300 bg-white px-3 py-2 text-sm text-neutral-950 outline-none transition focus:border-cyan-600 focus:ring-2 focus:ring-cyan-600/15"
     />
   );
 }
@@ -100,7 +100,7 @@ function SelectInput({
       id={id}
       value={value}
       onChange={(event) => onChange(event.target.value)}
-      className="mt-1 w-full rounded-lg border border-zinc-300 bg-white px-3 py-2 text-sm text-zinc-950 outline-none transition focus:border-emerald-600 focus:ring-2 focus:ring-emerald-600/15 dark:border-zinc-700 dark:bg-zinc-950 dark:text-white"
+      className="mt-1 w-full rounded-md border border-neutral-300 bg-white px-3 py-2 text-sm text-neutral-950 outline-none transition focus:border-cyan-600 focus:ring-2 focus:ring-cyan-600/15"
     >
       {children}
     </select>
@@ -186,7 +186,7 @@ export default function AgencyLeadForm() {
   };
 
   return (
-    <form onSubmit={handleSubmit} className="rounded-lg border border-zinc-200 bg-zinc-50 p-6 dark:border-zinc-800 dark:bg-zinc-900">
+    <form onSubmit={handleSubmit} className="rounded-lg border border-neutral-200 bg-white p-6 shadow-sm">
       <div className="grid gap-4 sm:grid-cols-2">
         <div>
           <FieldLabel htmlFor="agency-lead-name">Name</FieldLabel>
@@ -290,7 +290,7 @@ export default function AgencyLeadForm() {
           onChange={(event) => updateField('message', event.target.value)}
           rows={6}
           placeholder="Calls, meetings, customer updates, support themes, product launches, founder notes, or another communication bottleneck."
-          className="mt-1 w-full resize-y rounded-lg border border-zinc-300 bg-white px-3 py-2 text-sm leading-6 text-zinc-950 outline-none transition focus:border-emerald-600 focus:ring-2 focus:ring-emerald-600/15 dark:border-zinc-700 dark:bg-zinc-950 dark:text-white"
+          className="mt-1 w-full resize-y rounded-md border border-neutral-300 bg-white px-3 py-2 text-sm leading-6 text-neutral-950 outline-none transition focus:border-cyan-600 focus:ring-2 focus:ring-cyan-600/15"
         />
       </div>
 
@@ -307,7 +307,7 @@ export default function AgencyLeadForm() {
       </div>
 
       {error ? (
-        <p className="mt-4 rounded-lg border border-rose-200 bg-rose-50 px-3 py-2 text-sm text-rose-700 dark:border-rose-900/60 dark:bg-rose-950/40 dark:text-rose-200">
+        <p className="mt-4 rounded-md border border-rose-200 bg-rose-50 px-3 py-2 text-sm text-rose-700">
           {error}
         </p>
       ) : null}
@@ -315,7 +315,7 @@ export default function AgencyLeadForm() {
       <button
         type="submit"
         disabled={submitting}
-        className="mt-5 inline-flex w-full items-center justify-center gap-2 rounded-lg bg-emerald-600 px-5 py-3 text-sm font-semibold text-white transition-colors hover:bg-emerald-700 disabled:cursor-not-allowed disabled:bg-emerald-600/60 sm:w-auto"
+        className="mt-5 inline-flex w-full items-center justify-center gap-2 rounded-md bg-neutral-950 px-5 py-3 text-sm font-semibold text-white transition-colors hover:bg-neutral-800 disabled:cursor-not-allowed disabled:bg-neutral-500 sm:w-auto"
       >
         {submitting ? <Loader2 className="h-4 w-4 animate-spin" /> : <ArrowRight className="h-4 w-4" />}
         {submitting ? 'Submitting' : 'Submit agency inquiry'}
