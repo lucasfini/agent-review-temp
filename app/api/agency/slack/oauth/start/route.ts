@@ -27,6 +27,7 @@ function clientIdFrom(request: NextRequest): string | null {
 
 function errorResponse(error: unknown) {
   if (error instanceof SlackOAuthConfigError) {
+    console.warn('[AGENCY_SLACK_OAUTH_START] Configuration error:', error.message);
     return NextResponse.json({ error: error.message }, { status: 500 });
   }
 

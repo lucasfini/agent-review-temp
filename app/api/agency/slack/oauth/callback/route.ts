@@ -53,6 +53,17 @@ function redirectForError(request: NextRequest, reason: string, payload?: SlackO
   return slackPageRedirect(request, 'error', reason, payload);
 }
 
+function logSlackOAuthCallbackIssue(
+  reason: string,
+  payload?: Pick<SlackOAuthStatePayload, 'organizationId' | 'clientId'> | null
+) {
+  console.warn('[AGENCY_SLACK_OAUTH_CALLBACK] OAuth callback issue:', {
+    reason: safeSlackOAuthReason(reason),
+    organizationId: payload?.organizationId || null,
+    clientId: payload?.clientId || null,
+  });
+}
+
 function scopeList(value: unknown): string[] {
   if (typeof value !== 'string') return [];
   return value.split(/[,\s]+/).map((scope) => scope.trim()).filter(Boolean);
@@ -89,6 +100,7 @@ export async function GET(request: NextRequest) {
     config = getSlackOAuthConfig();
   } catch (error) {
     if (error instanceof SlackOAuthConfigError) {
+      console.warn('[AGENCY_SLACK_OAUTH_CALLBACK] Configuration error:', error.message);
       return redirectForError(request, 'slack_oauth_not_configured');
     }
     throw error;
@@ -97,14 +109,17 @@ export async function GET(request: NextRequest) {
   const parsedState = tryParseState(state, config.stateSecret);
 
   if (slackError) {
+    logSlackOAuthCallbackIssue(slackError, parsedState);
     return redirectForError(request, slackError, parsedState);
   }
 
   if (!code) {
+    logSlackOAuthCallbackIssue('missing_code', parsedState);
     return redirectForError(request, 'missing_code', parsedState);
   }
 
   if (!parsedState) {
+    logSlackOAuthCallbackIssue('invalid_state');
     return redirectForError(request, 'invalid_state');
   }
 
@@ -148,14 +163,17 @@ export async function GET(request: NextRequest) {
     return slackPageRedirect(request, 'success', 'connected', parsedState);
   } catch (error) {
     if (error instanceof SlackOAuthStateError) {
+      logSlackOAuthCallbackIssue(error.message, parsedState);
       return redirectForError(request, error.message, parsedState);
     }
 
     if (error instanceof SlackOAuthConfigError) {
+      logSlackOAuthCallbackIssue('slack_oauth_not_configured', parsedState);
       return redirectForError(request, 'slack_oauth_not_configured', parsedState);
     }
 
     if (error instanceof SlackOAuthExchangeError) {
+      logSlackOAuthCallbackIssue(error.message, parsedState);
       return redirectForError(request, error.message, parsedState);
     }
 

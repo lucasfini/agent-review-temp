@@ -42,6 +42,14 @@ import {
 /**
  * Parse JSON response from AI, stripping markdown code fences and conversational filler
  */
+function logAIResponseShape(label: string, content: string): void {
+  console.error(label, {
+    contentLength: content.length,
+    startsWithJsonObject: content.trimStart().startsWith('{'),
+    startsWithJsonArray: content.trimStart().startsWith('['),
+  });
+}
+
 function parseAIResponse(content: string): any {
   let cleaned = content.trim();
 
@@ -76,7 +84,7 @@ function parseAIResponse(content: string): any {
     return JSON.parse(cleaned);
   } catch (error) {
     console.error('[PARSE] Failed to parse JSON:', error);
-    console.error('[PARSE] Raw content preview:', content.substring(0, 500));
+    logAIResponseShape('[PARSE] Raw AI response was not valid JSON', content);
     throw error;
   }
 }
@@ -1229,7 +1237,7 @@ async function generateTwitterThread(
   }).filter(t => t.tweet.trim().length > 0);
 
   if (tweets.length === 0) {
-    console.error('[TWITTER THREAD] ❌ No valid tweets found in AI response:', content);
+    logAIResponseShape('[TWITTER THREAD] No valid tweets found in AI response', content);
     throw new Error('AI failed to generate any valid tweets for the thread.');
   }
 
@@ -1373,7 +1381,7 @@ async function generateLinkedInPost(
   const hashtags = formatHashtags(resilientGet(parsed, 'hashtags', ['tags', 'labels']) || [], rawPost);
 
   if (!rawPost || rawPost.trim().length === 0) {
-    console.error('[LINKEDIN POST] ❌ No valid post content found in AI response:', content);
+    logAIResponseShape('[LINKEDIN POST] No valid post content found in AI response', content);
     throw new Error('AI failed to generate any valid content for the LinkedIn post.');
   }
 
@@ -1529,7 +1537,7 @@ async function generateInstagramCarousel(
   const hashtags = formatHashtags(resilientGet(parsed, 'hashtags', ['tags', 'labels']) || [], rawCaption);
 
   if (!Array.isArray(rawSlides) || rawSlides.length === 0) {
-    console.error('[INSTAGRAM] ❌ No valid slides found in AI response:', content);
+    logAIResponseShape('[INSTAGRAM] No valid slides found in AI response', content);
     throw new Error('AI failed to generate any valid slides for the Instagram carousel.');
   }
 
@@ -1708,7 +1716,7 @@ async function generateBlogPost(
   const metaDescription = resilientGet(parsed, 'metaDescription', ['description', 'summary', 'meta']) || '';
 
   if (!blogBody || blogBody.trim().length === 0) {
-    console.error('[BLOG POST] ❌ No valid content found in AI response:', content);
+    logAIResponseShape('[BLOG POST] No valid content found in AI response', content);
     throw new Error('AI failed to generate any valid content for the blog post.');
   }
 
@@ -1867,7 +1875,7 @@ async function generateNewsletter(
   const ps = resilientGet(parsed, 'ps', ['post_script', 'p_s']) || '';
 
   if (!body || body.trim().length === 0) {
-    console.error('[NEWSLETTER] ❌ No valid content found in AI response:', content);
+    logAIResponseShape('[NEWSLETTER] No valid content found in AI response', content);
     throw new Error('AI failed to generate any valid content for the newsletter.');
   }
 
@@ -2025,7 +2033,7 @@ FORBIDDEN: Darktrace, recruitment agencies, sponsor websites, promo codes.
   const resources = resilientGet(parsed, 'resources', ['links', 'tools', 'references']) || [];
 
   if (!summary || summary.trim().length === 0) {
-    console.error('[SHOW NOTES] ❌ No valid summary found in AI response:', content);
+    logAIResponseShape('[SHOW NOTES] No valid summary found in AI response', content);
     throw new Error('AI failed to generate any valid summary for the show notes.');
   }
 
