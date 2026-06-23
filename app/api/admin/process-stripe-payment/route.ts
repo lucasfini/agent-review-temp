@@ -89,10 +89,7 @@ export async function POST(request: NextRequest) {
 
     // Process the payment
     const packageId = session.metadata?.packageId;
-    const pkg = resolveCreditPackage(
-      packageId || '',
-      session.metadata?.customAmount ? Number(session.metadata.customAmount) : undefined
-    );
+    const pkg = resolveCreditPackage(packageId || '');
 
     if (!pkg) {
       return NextResponse.json(
@@ -131,8 +128,8 @@ export async function POST(request: NextRequest) {
       metadata: {
         sessionId: session.id,
         packageId,
-        baseAmount: pkg.amount,
-        bonusAmount: pkg.bonus,
+        credits: pkg.credits,
+        expiresAfterMonths: pkg.expiresAfterMonths,
         amountPaid: (session.amount_total || 0) / 100,
         customerEmail: session.customer_email,
         adminProcessed: true,

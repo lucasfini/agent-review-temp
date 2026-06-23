@@ -22,7 +22,15 @@ export interface EntitlementPlanSummary {
   name: string;
   slug: PlanSlug;
   monthlyPriceCents: number | null;
+  annualPriceCents: number | null;
   currency: string;
+  monthlyCreditGrant: number | null;
+  creditRolloverMonths: number;
+  topUpEnabled: boolean;
+  topUpCreditExpiryMonths: number;
+  maxUploadMinutes: number | null;
+  extraSeatPriceCents: number | null;
+  isPopular: boolean;
 }
 
 export interface EntitlementSubscriptionSummary {
@@ -96,7 +104,15 @@ export function getEntitlementsForSubscription(
       name: plan.name,
       slug: plan.slug,
       monthlyPriceCents: plan.monthlyPriceCents,
+      annualPriceCents: plan.annualPriceCents,
       currency: plan.currency,
+      monthlyCreditGrant: plan.monthlyCreditGrant,
+      creditRolloverMonths: plan.creditRolloverMonths,
+      topUpEnabled: plan.topUpEnabled,
+      topUpCreditExpiryMonths: plan.topUpCreditExpiryMonths,
+      maxUploadMinutes: plan.maxUploadMinutes,
+      extraSeatPriceCents: plan.extraSeatPriceCents,
+      isPopular: plan.isPopular,
     },
     subscription: summarizeSubscription(subscription),
     isSubscriptionUsable: true,
@@ -104,6 +120,11 @@ export function getEntitlementsForSubscription(
     limits: getPlanLimits(plan),
     features: {
       ...plan.features,
+      monthlyCreditGrant: plan.monthlyCreditGrant,
+      creditRolloverMonths: plan.creditRolloverMonths,
+      topUpEnabled: plan.topUpEnabled,
+      topUpCreditExpiryMonths: plan.topUpCreditExpiryMonths,
+      maxUploadMinutes: plan.maxUploadMinutes,
       creditPaygEnabled: true,
       subscriptionEnforcementEnabled: false,
     },

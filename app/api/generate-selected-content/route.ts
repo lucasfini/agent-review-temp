@@ -10,6 +10,8 @@ import { calculateBlocksCost, getContentTypeById } from '@/lib/content-types';
 import { requireSufficientCredit } from '@/lib/billing/track-usage';
 import { InsufficientCreditError } from '@/lib/billing/credit';
 import { RouteAccessError, requireProjectOwner } from '@/lib/api/route-auth';
+import { can } from '@/lib/authz/permissions';
+import { getActiveOrganizationForUser } from '@/lib/authz/organization-context';
 import {
   runEntitlementGuard,
   shouldEnforceSubscriptionEntitlements,
@@ -17,6 +19,7 @@ import {
 import { resolveOrganizationIdForWrite } from '@/lib/authz/organization-context';
 import {
   GenerationContextValidationError,
+  type GenerationContextIds,
   hasGenerationContextIds,
   readGenerationContextIds,
   resolveGenerationContext,
@@ -26,7 +29,8 @@ export async function POST(request: NextRequest) {
   try {
     const payload = await request.json();
     const { projectId, blocks, estimatedCost, selectedModelId } = payload;
-    const generationContextIds = readGenerationContextIds(payload);
+    const payloadContextIds = readGenerationContextIds(payload);
+    const payloadHasGenerationContext = hasGenerationContextIds(payloadContextIds);
 
     if (!projectId || !blocks || !Array.isArray(blocks) || blocks.length === 0) {
       return NextResponse.json(
@@ -74,6 +78,25 @@ export async function POST(request: NextRequest) {
         { status: 400 }
       );
     }
+    if (project.organization_id) {
+      const { membership, organization } = await getActiveOrganizationForUser(
+        supabaseAdmin,
+        user.id,
+        project.organization_id
+      );
+      if (!can(
+        {
+          userId: user.id,
+          organizationId: organization.id,
+          organizationType: organization.type,
+          role: membership.role,
+        },
+        'generation.run',
+        { organizationId: organization.id }
+      )) {
+        return NextResponse.json({ error: 'You do not have permission to generate content in this workspace' }, { status: 403 });
+      }
+    }
 
     // Validate all blocks reference known content types
     for (const block of blocks as ContentBlock[]) {
@@ -83,10 +106,30 @@ export async function POST(request: NextRequest) {
       }
     }
 
-    if (hasGenerationContextIds(generationContextIds)) {
+    const contextKeyFor = (ids: GenerationContextIds) => JSON.stringify([
+      ids.creatorProfileId || null,
+      ids.brandVoiceId || null,
+      ids.campaignId || null,
+      ids.libraryId || null,
+    ]);
+    const contextIdsByKey = new Map<string, GenerationContextIds>();
+    for (const block of blocks as ContentBlock[]) {
+      const blockContextIds = payloadHasGenerationContext
+        ? payloadContextIds
+        : readGenerationContextIds(block);
+      if (hasGenerationContextIds(blockContextIds)) {
+        contextIdsByKey.set(contextKeyFor(blockContextIds), blockContextIds);
+      }
+    }
+
+    if (contextIdsByKey.size > 0) {
       const generationOrganizationId = project.organization_id || await resolveOrganizationIdForWrite(project.user_id);
       try {
-        await resolveGenerationContext(supabaseAdmin, generationOrganizationId, generationContextIds);
+        for (const contextIds of contextIdsByKey.values()) {
+          await resolveGenerationContext(supabaseAdmin, generationOrganizationId, contextIds, {
+            userId: project.user_id,
+          });
+        }
       } catch (error) {
         if (error instanceof GenerationContextValidationError) {
           return NextResponse.json({ error: error.message }, { status: error.status });
@@ -185,8 +228,12 @@ export async function POST(request: NextRequest) {
           blocks, // Send blocks instead of selectedContentTypes
           segments: [],
           modelId: selectedModelId,
-          brand_voice_id: generationContextIds.brandVoiceId || undefined,
-          campaign_id: generationContextIds.campaignId || undefined,
+          ...(payloadHasGenerationContext ? {
+            creator_profile_id: payloadContextIds.creatorProfileId || undefined,
+            brand_voice_id: payloadContextIds.brandVoiceId || undefined,
+            campaign_id: payloadContextIds.campaignId || undefined,
+            library_id: payloadContextIds.libraryId || undefined,
+          } : {}),
         })
       }).catch(error => {
         const timeoutCode = (error as any)?.cause?.code;

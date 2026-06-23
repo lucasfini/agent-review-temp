@@ -32,12 +32,13 @@ describe('subscription launch readiness helpers', () => {
 
   it('summarizes active plans and missing Stripe prices', () => {
     expect(summarizePlanRows([
-      { id: 'plan-1', slug: 'starter', is_active: true, stripe_price_id: 'price_123' },
-      { id: 'plan-2', slug: 'growth', is_active: true, stripe_price_id: null },
+      { id: 'plan-1', slug: 'free', is_active: true, stripe_price_id: null },
+      { id: 'plan-2', slug: 'standard', is_active: true, stripe_monthly_price_id: 'price_month', stripe_annual_price_id: 'price_year' },
+      { id: 'plan-3', slug: 'pro', is_active: true, stripe_monthly_price_id: 'price_month_pro', stripe_annual_price_id: null },
       { id: 'plan-3', slug: 'old', is_active: false, stripe_price_id: null },
     ])).toEqual({
-      activePlanCount: 2,
-      activePlansMissingStripePrice: ['growth'],
+      activePlanCount: 3,
+      activePlansMissingStripePrice: ['pro'],
     });
   });
 

@@ -1,6 +1,7 @@
 import {
   getStripeSubscriptionPeriod,
   mapStripeSubscriptionStatus,
+  storeOrganizationStripeCustomerId,
   upsertOrganizationSubscriptionFromStripe,
 } from '@/lib/billing/subscriptions';
 
@@ -105,6 +106,70 @@ describe('Stripe subscription sync helpers', () => {
       currentPeriodStart: '2027-01-01T00:00:00.000Z',
       currentPeriodEnd: '2027-02-01T00:00:00.000Z',
     });
+  });
+
+  it('stores checkout customer ids without activating the pending paid plan before payment', async () => {
+    const existingFree = subscriptionRow({
+      id: 'free-subscription',
+      plan_id: 'plan-free',
+      status: 'active',
+      stripe_customer_id: null,
+    });
+    let updatePayload: Record<string, any> | null = null;
+    const updatedFree = {
+      ...existingFree,
+      stripe_customer_id: 'cus_new',
+      metadata_json: {
+        stripeCustomerId: 'cus_new',
+        pendingCheckoutPlanId: 'plan-standard',
+      },
+    };
+    const queries: any[] = [];
+    const supabase = {
+      from: jest.fn(() => {
+        const query: any = {
+          data: [existingFree],
+          error: null,
+          select: jest.fn(() => query),
+          eq: jest.fn(() => query),
+          order: jest.fn(() => query),
+          limit: jest.fn(() => query),
+          update: jest.fn((payload) => {
+            updatePayload = payload;
+            return query;
+          }),
+          maybeSingle: jest.fn(async () => ({ data: updatedFree, error: null })),
+        };
+        queries.push(query);
+        return query;
+      }),
+    };
+
+    const result = await storeOrganizationStripeCustomerId(
+      supabase as any,
+      'org-1',
+      'cus_new',
+      {
+        planId: 'plan-standard',
+        metadata: {
+          source: 'subscription_checkout',
+        },
+      }
+    );
+
+    expect(result?.planId).toBe('plan-free');
+    expect(updatePayload).toEqual(expect.objectContaining({
+      organization_id: 'org-1',
+      plan_id: 'plan-free',
+      stripe_customer_id: 'cus_new',
+      status: 'active',
+    }));
+    expect(updatePayload?.metadata_json).toEqual(expect.objectContaining({
+      pendingCheckoutPlanId: 'plan-standard',
+      source: 'subscription_checkout',
+      stripeCustomerId: 'cus_new',
+    }));
+    expect(updatePayload?.stripe_subscription_id).toBeUndefined();
   });
 
   it('updates an existing organization/customer placeholder instead of inserting a duplicate', async () => {

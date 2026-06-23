@@ -1,6 +1,6 @@
 "use client";
 
-import { Fragment, useState, useEffect, useMemo, type ChangeEvent } from 'react';
+import { Fragment, useState, useEffect, useMemo, useCallback, type ChangeEvent } from 'react';
 import Image from 'next/image';
 import { useRouter, useSearchParams } from 'next/navigation';
 import {
@@ -22,6 +22,14 @@ import {
   Users,
   MessageSquare,
   Youtube,
+  CreditCard,
+  Cloud,
+  FolderOpen,
+  Bot,
+  Building2,
+  UserPlus,
+  RotateCw,
+  XCircle,
   type LucideIcon,
 } from 'lucide-react';
 import {
@@ -44,6 +52,7 @@ import SubscriptionPlans from '@/components/billing/subscription-plans';
 import { supabase } from '@/lib/supabase/client';
 import { toast } from 'sonner';
 import { formatSiteCreditDeltaFromUsd, formatSiteCreditsFromUsd } from '@/lib/billing/display';
+import { formatProductCredits } from '@/lib/billing/product-credits';
 import { isIntegrationEnabled } from '@/lib/integrations/availability';
 import { isValidEmail } from '@/lib/auth/validation';
 import { withOrganizationId } from '@/lib/organizations/current-organization';
@@ -71,13 +80,14 @@ interface GroupedTransaction {
   projectTitle?: string;
   balanceAfter: number;
   invoiceNumber?: string | null;
+  creditUnit?: string;
   workflowType?: string;
   holdAmount?: number;
   finalCharge?: number;
   releasedAmount?: number;
   reservationStatus?: string;
   childCount?: number;
-  children?: { reason: string; amount: number; createdAt: string; kind?: 'hold' | 'charge' | 'release' | 'usage'; detail?: string }[];
+  children?: { reason: string; amount: number; createdAt: string; kind?: 'hold' | 'charge' | 'release' | 'usage'; detail?: string; creditUnit?: string }[];
 }
 
 interface UsageEvent {
@@ -93,16 +103,68 @@ interface UsageEvent {
 
 interface UnifiedSettingsProps {
   userEmail: string;
-  forcedSection?: 'preferences' | 'billing' | 'usage';
+  forcedSection?: 'preferences' | 'workspace' | 'integrations' | 'billing' | 'usage';
 }
 
-type IntegrationProvider = 'zoom' | 'microsoft' | 'youtube';
+type IntegrationProvider =
+  | 'zoom'
+  | 'microsoft'
+  | 'youtube'
+  | 'stripe'
+  | 'onedrive'
+  | 'google_drive'
+  | 'granola'
+  | 'slack';
 
 interface IntegrationStatus {
   provider: IntegrationProvider;
   connected: boolean;
   metadata?: { email?: string; name?: string; channelTitle?: string } | null;
   updatedAt?: string | null;
+}
+
+type WorkspaceRole = 'owner' | 'admin' | 'editor' | 'reader';
+
+interface WorkspaceMember {
+  id: string;
+  organizationId: string;
+  userId: string;
+  email: string | null;
+  name: string | null;
+  role: WorkspaceRole;
+  status: 'active' | 'removed' | 'invited';
+  joinedAt: string | null;
+  createdAt: string;
+}
+
+interface WorkspaceInvitation {
+  id: string;
+  organizationId: string;
+  email: string;
+  role: Exclude<WorkspaceRole, 'owner'>;
+  status: 'pending' | 'accepted' | 'canceled' | 'expired';
+  expiresAt: string;
+  createdAt: string;
+}
+
+interface WorkspaceSeats {
+  active: number;
+  pending: number;
+  limit: number;
+  available: number;
+  isFull: boolean;
+}
+
+interface WorkspaceAuditLog {
+  id: string;
+  action: string;
+  resourceType: string;
+  resourceId: string | null;
+  actorUserId: string | null;
+  actorEmail: string | null;
+  actorName: string | null;
+  createdAt: string;
+  metadata: Record<string, unknown>;
 }
 
 const SETTINGS_INTEGRATIONS: Array<{
@@ -142,6 +204,43 @@ const SETTINGS_INTEGRATIONS: Array<{
     border: 'border-red-100 dark:border-red-400/20',
   },
   {
+    provider: 'stripe',
+    name: 'Stripe',
+    detail: 'Customer and payment events',
+    Icon: CreditCard,
+    accent: 'text-violet-600 dark:text-violet-300',
+    bg: 'bg-violet-50 dark:bg-violet-500/10',
+    border: 'border-violet-100 dark:border-violet-400/20',
+  },
+  {
+    provider: 'onedrive',
+    name: 'OneDrive',
+    detail: 'Cloud recording imports',
+    Icon: FolderOpen,
+    accent: 'text-sky-600 dark:text-sky-300',
+    bg: 'bg-sky-50 dark:bg-sky-500/10',
+    border: 'border-sky-100 dark:border-sky-400/20',
+  },
+  {
+    provider: 'google_drive',
+    name: 'Google Drive',
+    detail: 'Drive files and folders',
+    Icon: Cloud,
+    accent: 'text-emerald-600 dark:text-emerald-300',
+    bg: 'bg-emerald-50 dark:bg-emerald-500/10',
+    border: 'border-emerald-100 dark:border-emerald-400/20',
+  },
+  {
+    provider: 'granola',
+    name: 'Granola AI',
+    detail: 'Meeting notes and transcripts',
+    Icon: Bot,
+    accent: 'text-amber-600 dark:text-amber-300',
+    bg: 'bg-amber-50 dark:bg-amber-500/10',
+    border: 'border-amber-100 dark:border-amber-400/20',
+  },
+  {
+    provider: 'slack',
     name: 'Slack',
     detail: 'Huddles and clips',
     Icon: MessageSquare,
@@ -154,6 +253,11 @@ const SETTINGS_INTEGRATIONS: Array<{
 const integrationLabel = (provider: IntegrationProvider) => {
   if (provider === 'zoom') return 'Zoom';
   if (provider === 'microsoft') return 'Microsoft Teams';
+  if (provider === 'stripe') return 'Stripe';
+  if (provider === 'onedrive') return 'OneDrive';
+  if (provider === 'google_drive') return 'Google Drive';
+  if (provider === 'granola') return 'Granola AI';
+  if (provider === 'slack') return 'Slack';
   return 'YouTube';
 };
 
@@ -161,8 +265,85 @@ const integrationLabel = (provider: IntegrationProvider) => {
 // HELPERS
 // ============================================================================
 
-function formatAmount(amount: number): string {
+function formatAmount(amount: number, creditUnit?: string | null): string {
+  if (creditUnit === 'plan_credit') {
+    const prefix = amount > 0 ? '+' : amount < 0 ? '-' : '';
+    return `${prefix}${formatProductCredits(Math.abs(amount))} credits`;
+  }
+
   return formatSiteCreditDeltaFromUsd(amount);
+}
+
+function formatLabel(value: string): string {
+  return value
+    .split(/[_.-]/)
+    .map((part) => part.charAt(0).toUpperCase() + part.slice(1))
+    .join(' ');
+}
+
+function formatRole(role: WorkspaceRole): string {
+  if (role === 'owner') return 'Owner';
+  if (role === 'admin') return 'Admin';
+  if (role === 'editor') return 'Editor';
+  return 'Reader';
+}
+
+function roleDescription(role: WorkspaceRole): string {
+  if (role === 'owner') return 'Full control, billing, ownership, and admin management.';
+  if (role === 'admin') return 'Workspace management, shared assets, and team operations.';
+  if (role === 'editor') return 'Create, generate, edit, and organize content.';
+  return 'View shared Studio and Library content only.';
+}
+
+function inviteRoleOptions(currentRole: WorkspaceRole | null): Array<Exclude<WorkspaceRole, 'owner'>> {
+  if (currentRole === 'owner') return ['admin', 'editor', 'reader'];
+  if (currentRole === 'admin') return ['editor', 'reader'];
+  return [];
+}
+
+function memberRoleOptions(
+  currentRole: WorkspaceRole | null,
+  targetRole: WorkspaceRole
+): Array<Exclude<WorkspaceRole, 'owner'>> {
+  if (targetRole === 'owner') return [];
+  if (currentRole === 'owner') return ['admin', 'editor', 'reader'];
+  if (currentRole === 'admin') {
+    if (targetRole === 'admin') return [];
+    return ['editor', 'reader'];
+  }
+  return [];
+}
+
+function formatShortDate(value?: string | null): string {
+  if (!value) return 'Not joined';
+  const date = new Date(value);
+  if (Number.isNaN(date.getTime())) return 'Unknown';
+  return date.toLocaleDateString('en-US', {
+    month: 'short',
+    day: 'numeric',
+    year: 'numeric',
+  });
+}
+
+function settingsSectionLabel(section: string): string {
+  if (section === 'workspace') return 'Workspace';
+  if (section === 'integrations') return 'Integrations';
+  if (section === 'billing') return 'Billing';
+  if (section === 'usage') return 'Usage';
+  return 'Preferences';
+}
+
+function normalizeSettingsSection(section: string | null): 'preferences' | 'workspace' | 'integrations' | 'billing' | 'usage' {
+  if (section === 'workspace') return 'workspace';
+  if (section === 'integrations') return 'integrations';
+  if (section === 'billing') return 'billing';
+  if (section === 'usage') return 'usage';
+  return 'preferences';
+}
+
+function friendlyError(fallback: string, error: unknown) {
+  if (error instanceof Error && error.message) return error.message;
+  return fallback;
 }
 
 // ============================================================================
@@ -306,11 +487,11 @@ function UsageAreaChart({ data }: { data: Array<{ date: string; cost: number; ev
 
 export default function UnifiedSettings({ userEmail, forcedSection }: UnifiedSettingsProps) {
   const { session, isDemoMode } = useAuth();
-  const { organizationId } = useCurrentOrganization();
+  const { organization, organizationId, refresh: refreshOrganization } = useCurrentOrganization();
   const router = useRouter();
   const searchParams = useSearchParams();
-  const rawSection = forcedSection || searchParams.get('section') || 'preferences';
-  const section = rawSection === 'general' ? 'preferences' : rawSection;
+  const rawSection = searchParams.get('section');
+  const section = forcedSection || normalizeSettingsSection(rawSection === 'general' ? 'preferences' : rawSection);
 
   // Provider detection
   const isGoogleAuth = ((session?.user?.app_metadata?.providers as string[] | undefined) ?? []).includes('google');
@@ -335,6 +516,26 @@ export default function UnifiedSettings({ userEmail, forcedSection }: UnifiedSet
   const [profileMessage, setProfileMessage] = useState<{ type: 'success' | 'error'; text: string } | null>(null);
   const [emailChangeMessage, setEmailChangeMessage] = useState<{ type: 'success' | 'error'; text: string } | null>(null);
   const [deletingAccount, setDeletingAccount] = useState(false);
+
+  // Workspace tab state
+  const [workspaceName, setWorkspaceName] = useState('');
+  const [workspaceWebsite, setWorkspaceWebsite] = useState('');
+  const [workspaceDescription, setWorkspaceDescription] = useState('');
+  const [workspaceMembers, setWorkspaceMembers] = useState<WorkspaceMember[]>([]);
+  const [workspaceInvitations, setWorkspaceInvitations] = useState<WorkspaceInvitation[]>([]);
+  const [workspaceSeats, setWorkspaceSeats] = useState<WorkspaceSeats | null>(null);
+  const [canManageWorkspace, setCanManageWorkspace] = useState(false);
+  const [workspaceMembershipRole, setWorkspaceMembershipRole] = useState<WorkspaceRole | null>(null);
+  const [loadingWorkspace, setLoadingWorkspace] = useState(true);
+  const [savingWorkspace, setSavingWorkspace] = useState(false);
+  const [workspaceActionId, setWorkspaceActionId] = useState<string | null>(null);
+  const [workspaceMessage, setWorkspaceMessage] = useState<{ type: 'success' | 'error'; text: string } | null>(null);
+  const [inviteEmail, setInviteEmail] = useState('');
+  const [inviteRole, setInviteRole] = useState<Exclude<WorkspaceRole, 'owner'>>('editor');
+  const [sendingInvite, setSendingInvite] = useState(false);
+  const [latestInviteLink, setLatestInviteLink] = useState<string | null>(null);
+  const [workspaceAuditLogs, setWorkspaceAuditLogs] = useState<WorkspaceAuditLog[]>([]);
+  const [loadingWorkspaceAuditLogs, setLoadingWorkspaceAuditLogs] = useState(false);
 
   // Billing tab state
   const [balance, setBalance] = useState<Balance | null>(null);
@@ -362,10 +563,87 @@ export default function UnifiedSettings({ userEmail, forcedSection }: UnifiedSet
     ? deleteConfirmation.trim() === username.trim()
     : deleteConfirmation.trim().toLowerCase() === email.trim().toLowerCase();
 
-  function friendlyError(fallback: string, error: unknown) {
-    if (error instanceof Error && error.message) return error.message;
-    return fallback;
-  }
+  const copyInviteLink = useCallback(async (inviteLink: string) => {
+    try {
+      if (typeof navigator === 'undefined' || !navigator.clipboard?.writeText) {
+        throw new Error('Clipboard access is unavailable in this browser.');
+      }
+
+      await navigator.clipboard.writeText(inviteLink);
+      toast.success('Invite link copied.');
+    } catch (error) {
+      toast.error(friendlyError('Failed to copy the invite link.', error));
+    }
+  }, []);
+
+  const fetchWorkspaceTeam = useCallback(async () => {
+    if (!session?.access_token) {
+      setLoadingWorkspace(false);
+      return;
+    }
+
+    setLoadingWorkspace(true);
+    try {
+      const response = await fetch(
+        withOrganizationId('/api/organizations/members', organizationId),
+        {
+          headers: { Authorization: `Bearer ${session.access_token}` },
+          cache: 'no-store',
+        }
+      );
+
+      const payload = await response.json().catch(() => ({}));
+      if (!response.ok) {
+        throw new Error(payload.error || 'Failed to load workspace');
+      }
+
+      setWorkspaceName(payload.organization?.name || organization?.name || '');
+      setWorkspaceWebsite(payload.organization?.profile?.website || '');
+      setWorkspaceDescription(payload.organization?.profile?.description || '');
+      setWorkspaceMembers(Array.isArray(payload.members) ? payload.members : []);
+      setWorkspaceInvitations(Array.isArray(payload.invitations) ? payload.invitations : []);
+      setWorkspaceSeats(payload.seats || null);
+      setCanManageWorkspace(Boolean(payload.membership?.canManageWorkspace));
+      const payloadRole = payload.membership?.role;
+      const nextRole = payloadRole === 'owner' || payloadRole === 'admin' || payloadRole === 'editor' || payloadRole === 'reader'
+        ? payloadRole
+        : null;
+      setWorkspaceMembershipRole(nextRole);
+
+      if (nextRole === 'owner' || nextRole === 'admin') {
+        setLoadingWorkspaceAuditLogs(true);
+        try {
+          const auditResponse = await fetch(
+            withOrganizationId('/api/organizations/audit-logs?limit=20', organizationId),
+            {
+              headers: { Authorization: `Bearer ${session.access_token}` },
+              cache: 'no-store',
+            }
+          );
+          const auditPayload = await auditResponse.json().catch(() => ({}));
+          if (!auditResponse.ok) {
+            throw new Error(auditPayload.error || 'Failed to load audit logs');
+          }
+          setWorkspaceAuditLogs(Array.isArray(auditPayload.auditLogs) ? auditPayload.auditLogs : []);
+        } catch (auditError) {
+          console.error('Error fetching workspace audit logs:', auditError);
+          setWorkspaceAuditLogs([]);
+        } finally {
+          setLoadingWorkspaceAuditLogs(false);
+        }
+      } else {
+        setWorkspaceAuditLogs([]);
+        setLoadingWorkspaceAuditLogs(false);
+      }
+    } catch (error) {
+      console.error('Error fetching workspace team:', error);
+      setWorkspaceMessage({ type: 'error', text: friendlyError('Failed to load workspace.', error) });
+      setWorkspaceAuditLogs([]);
+      setLoadingWorkspaceAuditLogs(false);
+    } finally {
+      setLoadingWorkspace(false);
+    }
+  }, [organization?.name, organizationId, session?.access_token]);
 
   useEffect(() => {
     const fetchDashboardSettings = async () => {
@@ -424,6 +702,10 @@ export default function UnifiedSettings({ userEmail, forcedSection }: UnifiedSet
 
     fetchDashboardSettings();
   }, [organizationId, session?.access_token]);
+
+  useEffect(() => {
+    fetchWorkspaceTeam();
+  }, [fetchWorkspaceTeam]);
 
   useEffect(() => {
     const fetchTransactions = async () => {
@@ -894,8 +1176,318 @@ export default function UnifiedSettings({ userEmail, forcedSection }: UnifiedSet
     }
   };
 
+  const handleSaveWorkspaceIdentity = async () => {
+    if (isDemoMode) {
+      toast.error('Demo account settings are read-only.');
+      return;
+    }
+    if (!canManageWorkspace) {
+      setWorkspaceMessage({ type: 'error', text: 'Workspace settings require owner or admin access.' });
+      return;
+    }
+    if (!workspaceName.trim()) {
+      setWorkspaceMessage({ type: 'error', text: 'Workspace name is required.' });
+      return;
+    }
+    if (!session?.access_token) {
+      setWorkspaceMessage({ type: 'error', text: 'You need to be signed in to update the workspace.' });
+      return;
+    }
+
+    setSavingWorkspace(true);
+    setWorkspaceMessage(null);
+    try {
+      const response = await fetch(withOrganizationId('/api/organizations/current', organizationId), {
+        method: 'PATCH',
+        headers: {
+          'Content-Type': 'application/json',
+          Authorization: `Bearer ${session.access_token}`,
+        },
+        body: JSON.stringify({
+          organization_id: organizationId || undefined,
+          name: workspaceName.trim(),
+          profile: {
+            website: workspaceWebsite.trim() || null,
+            description: workspaceDescription.trim() || null,
+          },
+        }),
+        cache: 'no-store',
+      });
+
+      const payload = await response.json().catch(() => ({}));
+      if (!response.ok) {
+        throw new Error(payload.error || 'Failed to update workspace');
+      }
+
+      setWorkspaceName(payload.organization?.name || workspaceName.trim());
+      setWorkspaceMessage({ type: 'success', text: 'Workspace updated.' });
+      await refreshOrganization();
+      await fetchWorkspaceTeam();
+    } catch (error) {
+      setWorkspaceMessage({ type: 'error', text: friendlyError('Failed to update workspace.', error) });
+    } finally {
+      setSavingWorkspace(false);
+    }
+  };
+
+  const handleSendInvite = async () => {
+    if (isDemoMode) {
+      toast.error('Demo account settings are read-only.');
+      return;
+    }
+    if (!canManageWorkspace) {
+      setWorkspaceMessage({ type: 'error', text: 'Workspace team management requires owner or admin access.' });
+      return;
+    }
+    const email = inviteEmail.trim().toLowerCase();
+    if (!isValidEmail(email)) {
+      setWorkspaceMessage({ type: 'error', text: 'Enter a valid invite email address.' });
+      return;
+    }
+    if (workspaceSeats?.isFull) {
+      setWorkspaceMessage({ type: 'error', text: 'Workspace seat limit reached.' });
+      return;
+    }
+    if (!session?.access_token) {
+      setWorkspaceMessage({ type: 'error', text: 'You need to be signed in to invite teammates.' });
+      return;
+    }
+
+    setSendingInvite(true);
+    setWorkspaceMessage(null);
+    try {
+      const response = await fetch('/api/organizations/invitations', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          Authorization: `Bearer ${session.access_token}`,
+        },
+        body: JSON.stringify({
+          organization_id: organizationId || undefined,
+          email,
+          role: inviteRole,
+        }),
+        cache: 'no-store',
+      });
+
+      const payload = await response.json().catch(() => ({}));
+      if (!response.ok) {
+        throw new Error(payload.error || 'Failed to send invite');
+      }
+
+      setInviteEmail('');
+      setInviteRole(workspaceMembershipRole === 'owner' ? 'admin' : 'editor');
+      const inviteLink = typeof payload.inviteLink === 'string' && payload.inviteLink.trim()
+        ? payload.inviteLink.trim()
+        : null;
+      setLatestInviteLink(inviteLink);
+      const deliveryNote = inviteLink
+        ? ' Invite link generated for local testing.'
+        : payload.emailDelivery?.delivered === false
+          ? ` Invite created, but email delivery was not confirmed: ${payload.emailDelivery.reason}`
+          : ' Invite email sent.';
+      setWorkspaceMessage({ type: 'success', text: `Invite ready for ${email}.${deliveryNote}` });
+      await fetchWorkspaceTeam();
+    } catch (error) {
+      setWorkspaceMessage({ type: 'error', text: friendlyError('Failed to send invite.', error) });
+    } finally {
+      setSendingInvite(false);
+    }
+  };
+
+  const resendInvite = async (invitation: WorkspaceInvitation) => {
+    if (!session?.access_token || !canManageWorkspace) return;
+    setWorkspaceActionId(invitation.id);
+    setWorkspaceMessage(null);
+    try {
+      const response = await fetch(
+        withOrganizationId(`/api/organizations/invitations/${invitation.id}/resend`, organizationId),
+        {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json',
+            Authorization: `Bearer ${session.access_token}`,
+          },
+          body: JSON.stringify({ organization_id: organizationId || undefined }),
+          cache: 'no-store',
+        }
+      );
+      const payload = await response.json().catch(() => ({}));
+      if (!response.ok) {
+        throw new Error(payload.error || 'Failed to resend invite');
+      }
+      const inviteLink = typeof payload.inviteLink === 'string' && payload.inviteLink.trim()
+        ? payload.inviteLink.trim()
+        : null;
+      if (inviteLink) {
+        setLatestInviteLink(inviteLink);
+      }
+      setWorkspaceMessage({ type: 'success', text: `Invite resent to ${invitation.email}.` });
+      await fetchWorkspaceTeam();
+    } catch (error) {
+      setWorkspaceMessage({ type: 'error', text: friendlyError('Failed to resend invite.', error) });
+    } finally {
+      setWorkspaceActionId(null);
+    }
+  };
+
+  const cancelInvite = async (invitation: WorkspaceInvitation) => {
+    if (!session?.access_token || !canManageWorkspace) return;
+    setWorkspaceActionId(invitation.id);
+    setWorkspaceMessage(null);
+    try {
+      const response = await fetch(
+        withOrganizationId(`/api/organizations/invitations/${invitation.id}`, organizationId),
+        {
+          method: 'DELETE',
+          headers: { Authorization: `Bearer ${session.access_token}` },
+          cache: 'no-store',
+        }
+      );
+      const payload = await response.json().catch(() => ({}));
+      if (!response.ok) {
+        throw new Error(payload.error || 'Failed to cancel invite');
+      }
+      setWorkspaceMessage({ type: 'success', text: `Invite canceled for ${invitation.email}.` });
+      await fetchWorkspaceTeam();
+    } catch (error) {
+      setWorkspaceMessage({ type: 'error', text: friendlyError('Failed to cancel invite.', error) });
+    } finally {
+      setWorkspaceActionId(null);
+    }
+  };
+
+  const updateMemberRole = async (member: WorkspaceMember, role: WorkspaceRole) => {
+    if (!session?.access_token || !canManageWorkspace || member.role === role) return;
+    setWorkspaceActionId(member.id);
+    setWorkspaceMessage(null);
+    try {
+      const response = await fetch(`/api/organizations/members/${member.id}`, {
+        method: 'PATCH',
+        headers: {
+          'Content-Type': 'application/json',
+          Authorization: `Bearer ${session.access_token}`,
+        },
+      body: JSON.stringify({
+          organization_id: organizationId || undefined,
+          role,
+        }),
+        cache: 'no-store',
+      });
+      const payload = await response.json().catch(() => ({}));
+      if (!response.ok) {
+        throw new Error(payload.error || 'Failed to update member role');
+      }
+      setWorkspaceMessage({ type: 'success', text: 'Member role updated.' });
+      await fetchWorkspaceTeam();
+    } catch (error) {
+      setWorkspaceMessage({ type: 'error', text: friendlyError('Failed to update member role.', error) });
+    } finally {
+      setWorkspaceActionId(null);
+    }
+  };
+
+  const removeMember = async (member: WorkspaceMember) => {
+    if (!session?.access_token || !canManageWorkspace) return;
+    const label = member.email || member.name || 'this member';
+    if (!window.confirm(`Remove ${label} from this workspace?`)) return;
+
+    setWorkspaceActionId(member.id);
+    setWorkspaceMessage(null);
+    try {
+      const response = await fetch(`/api/organizations/members/${member.id}`, {
+        method: 'PATCH',
+        headers: {
+          'Content-Type': 'application/json',
+          Authorization: `Bearer ${session.access_token}`,
+        },
+        body: JSON.stringify({
+          organization_id: organizationId || undefined,
+          action: 'remove',
+        }),
+        cache: 'no-store',
+      });
+      const payload = await response.json().catch(() => ({}));
+      if (!response.ok) {
+        throw new Error(payload.error || 'Failed to remove member');
+      }
+      setWorkspaceMessage({ type: 'success', text: 'Member removed.' });
+      await fetchWorkspaceTeam();
+    } catch (error) {
+      setWorkspaceMessage({ type: 'error', text: friendlyError('Failed to remove member.', error) });
+    } finally {
+      setWorkspaceActionId(null);
+    }
+  };
+
+  const transferOwnership = async (member: WorkspaceMember) => {
+    if (!session?.access_token || !canTransferOwnership || member.role === 'owner' || isDemoMode) return;
+    const label = member.email || member.name || 'this member';
+    if (!window.confirm(`Transfer workspace ownership to ${label}?`)) return;
+
+    setWorkspaceActionId(member.id);
+    setWorkspaceMessage(null);
+    try {
+      const response = await fetch(`/api/organizations/members/${member.id}`, {
+        method: 'PATCH',
+        headers: {
+          'Content-Type': 'application/json',
+          Authorization: `Bearer ${session.access_token}`,
+        },
+        body: JSON.stringify({
+          organization_id: organizationId || undefined,
+          role: 'owner',
+        }),
+        cache: 'no-store',
+      });
+      const payload = await response.json().catch(() => ({}));
+      if (!response.ok) {
+        throw new Error(payload.error || 'Failed to transfer workspace ownership');
+      }
+      await fetchWorkspaceTeam();
+      setWorkspaceMessage({ type: 'success', text: `Workspace ownership transferred to ${label}.` });
+    } catch (error) {
+      setWorkspaceMessage({ type: 'error', text: friendlyError('Failed to transfer ownership.', error) });
+    } finally {
+      setWorkspaceActionId(null);
+    }
+  };
+
+  const activeSeatCount = workspaceSeats?.active ?? workspaceMembers.length;
+  const pendingSeatCount = workspaceSeats?.pending ?? workspaceInvitations.filter((invite) => invite.status === 'pending').length;
+  const workspaceSeatLimit = workspaceSeats?.limit ?? 1;
+  const availableSeatCount = workspaceSeats?.available ?? Math.max(0, workspaceSeatLimit - activeSeatCount - pendingSeatCount);
+  const workspaceAtLimit = Boolean(workspaceSeats?.isFull || availableSeatCount <= 0);
+  const canTransferOwnership = canManageWorkspace && workspaceMembershipRole === 'owner';
+  const availableInviteRoles = inviteRoleOptions(workspaceMembershipRole);
+
   return (
     <div className="py-6">
+      {!forcedSection && (
+        <div className="mb-6 overflow-x-auto">
+          <div className="inline-flex min-w-full gap-1 rounded-lg border border-slate-200 bg-slate-50 p-1 dark:border-slate-800 dark:bg-slate-900 sm:min-w-0">
+            {(['preferences', 'workspace', 'integrations'] as const).map((tab) => {
+              const active = section === tab;
+              return (
+                <button
+                  key={tab}
+                  type="button"
+                  onClick={() => router.push(`/dashboard/settings?section=${tab}`)}
+                  className={cn(
+                    "inline-flex min-h-9 items-center justify-center rounded-md px-3 py-1.5 text-sm font-medium transition-colors",
+                    active
+                      ? "bg-white text-slate-950 shadow-sm dark:bg-slate-800 dark:text-slate-50"
+                      : "text-slate-500 hover:text-slate-900 dark:text-slate-400 dark:hover:text-slate-100"
+                  )}
+                  aria-pressed={active}
+                >
+                  {settingsSectionLabel(tab)}
+                </button>
+              );
+            })}
+          </div>
+        </div>
+      )}
 
       {/* ================================================================ */}
       {/* PREFERENCES */}
@@ -904,7 +1496,7 @@ export default function UnifiedSettings({ userEmail, forcedSection }: UnifiedSet
         <div className="space-y-6">
           {isDemoMode && (
             <div className="rounded-xl border border-amber-200 bg-amber-50 px-4 py-3 text-sm text-amber-700 dark:border-amber-800/30 dark:bg-amber-900/20 dark:text-amber-300">
-              Demo account settings are read-only. Sign up to edit your profile, password, integrations, and account controls.
+              Demo account settings are read-only. Sign up to edit your profile, password, and account controls.
             </div>
           )}
 
@@ -1216,12 +1808,119 @@ export default function UnifiedSettings({ userEmail, forcedSection }: UnifiedSet
             </Card>
           )}
 
-          {/* Integrations Section */}
+          {/* Danger Zone */}
+          <Card className="border-red-900/50">
+            <CardHeader>
+              <CardTitle className="text-red-600 dark:text-red-500">Danger Zone</CardTitle>
+              <CardDescription className="text-red-600/80 dark:text-red-400/80">
+                Irreversible actions for your account
+              </CardDescription>
+            </CardHeader>
+            <CardContent>
+              <div className="flex flex-col gap-4 sm:flex-row sm:items-center sm:justify-between">
+                <div>
+                  <h3 className="text-sm font-medium text-slate-800 dark:text-slate-200">Delete Account</h3>
+                  <p className="text-sm text-slate-500 dark:text-slate-400 mt-1 max-w-lg">
+                    Permanently delete your account, projects, and all associated media from our servers. This action cannot be undone.
+                  </p>
+                </div>
+                {!isDemoMode && (
+                  <button
+                    type="button"
+                    onClick={() => {
+                      setDeleteConfirmation('');
+                      setDeleteModalOpen(true);
+                    }}
+                    disabled={deletingAccount}
+                    className="inline-flex w-fit whitespace-nowrap rounded-lg border border-red-200 bg-red-50 px-4 py-2 font-medium text-red-700 transition-colors hover:bg-red-100 hover:text-red-800 disabled:opacity-50 sm:self-start dark:border-red-800 dark:bg-red-900/50 dark:text-red-500 dark:hover:bg-red-800 dark:hover:text-red-100"
+                  >
+                    Delete Account
+                  </button>
+                )}
+              </div>
+            </CardContent>
+          </Card>
+          <Dialog open={deleteModalOpen} onOpenChange={setDeleteModalOpen}>
+            <DialogContent className="sm:max-w-md">
+              <DialogHeader>
+                <DialogTitle className="text-red-600 dark:text-red-500">Delete Account</DialogTitle>
+                <DialogDescription>
+                  This permanently deletes your account, projects, and media. Type your {deleteTargetLabel} to continue.
+                </DialogDescription>
+              </DialogHeader>
+              <div className="space-y-4">
+                <div className="rounded-lg border border-red-200/80 bg-red-50/70 p-4 dark:border-red-900/60 dark:bg-red-950/30">
+                  <p className="text-sm font-medium text-red-700 dark:text-red-400">
+                    Are you sure you want to delete your account?
+                  </p>
+                  <p className="mt-1 text-sm text-red-700/80 dark:text-red-400/80">
+                    Type <span className="font-semibold">{deleteTarget}</span> to confirm.
+                  </p>
+                </div>
+                <div>
+                  <label className="mb-1 block text-sm font-medium text-slate-700 dark:text-slate-300">
+                    {deleteTargetLabel === 'username' ? 'Username' : 'Email'}
+                  </label>
+                  <input
+                    type="text"
+                    value={deleteConfirmation}
+                    onChange={(e) => setDeleteConfirmation(e.target.value)}
+                    disabled={deletingAccount}
+                    placeholder={`Type your ${deleteTargetLabel}`}
+                    className="w-full rounded-lg border border-slate-300 bg-white px-3 py-2 text-sm text-slate-900 focus:border-transparent focus:outline-none focus:ring-2 focus:ring-red-500 disabled:opacity-50 dark:border-slate-700 dark:bg-slate-900 dark:text-slate-100"
+                  />
+                  <p className="mt-2 text-xs text-slate-500 dark:text-slate-400">
+                    The delete button stays disabled until the value matches exactly.
+                  </p>
+                </div>
+                <div className="flex justify-end gap-2">
+                  <button
+                    type="button"
+                    onClick={() => {
+                      setDeleteModalOpen(false);
+                      setDeleteConfirmation('');
+                    }}
+                    disabled={deletingAccount}
+                    className="rounded-lg border border-slate-300 bg-white px-4 py-2 text-sm font-medium text-slate-700 transition-colors hover:bg-slate-50 disabled:opacity-50 dark:border-slate-700 dark:bg-slate-900 dark:text-slate-200 dark:hover:bg-slate-800"
+                  >
+                    Cancel
+                  </button>
+                  <button
+                    type="button"
+                    onClick={handleDeleteAccount}
+                    disabled={deletingAccount || !isDeleteConfirmationValid}
+                    className="rounded-lg border border-red-200 bg-red-50 px-4 py-2 text-sm font-medium text-red-700 transition-colors hover:bg-red-100 hover:text-red-800 disabled:opacity-50 dark:border-red-800 dark:bg-red-900/50 dark:text-red-500 dark:hover:bg-red-800 dark:hover:text-red-100"
+                  >
+                    {deletingAccount ? 'Deleting...' : 'Delete Account'}
+                  </button>
+                </div>
+              </div>
+            </DialogContent>
+          </Dialog>
+        </div>
+      )}
+
+      {/* ================================================================ */}
+      {/* INTEGRATIONS */}
+      {/* ================================================================ */}
+      {section === 'integrations' && (
+        <div className="space-y-6">
+          {isDemoMode && (
+            <div className="rounded-xl border border-amber-200 bg-amber-50 px-4 py-3 text-sm text-amber-700 dark:border-amber-800/30 dark:bg-amber-900/20 dark:text-amber-300">
+              Demo account integrations are read-only.
+            </div>
+          )}
+
           <Card className="overflow-hidden">
             <CardContent className="p-4 sm:p-6">
               <div className="relative overflow-hidden rounded-lg border border-slate-200 bg-slate-50 p-4 dark:border-slate-700 dark:bg-slate-950">
                 <div className="pointer-events-none absolute inset-x-0 top-0 h-px bg-gradient-to-r from-transparent via-cyan-400/70 to-transparent" />
-                <h2 className="text-base font-semibold text-slate-900 dark:text-slate-50">Connected platforms</h2>
+                <div>
+                  <h2 className="text-base font-semibold text-slate-900 dark:text-slate-50">Connected platforms</h2>
+                  <p className="mt-1 text-sm text-slate-500 dark:text-slate-400">
+                    Connect recording sources, storage, and revenue systems for workspace imports and context.
+                  </p>
+                </div>
 
                 {integrationsLoading && (
                   <div className="mt-4 text-sm text-slate-400">Loading integrations...</div>
@@ -1328,97 +2027,457 @@ export default function UnifiedSettings({ userEmail, forcedSection }: UnifiedSet
               </div>
             </CardContent>
           </Card>
-
-          {/* Danger Zone */}
-          <Card className="border-red-900/50">
-            <CardHeader>
-              <CardTitle className="text-red-600 dark:text-red-500">Danger Zone</CardTitle>
-              <CardDescription className="text-red-600/80 dark:text-red-400/80">
-                Irreversible actions for your account
-              </CardDescription>
-            </CardHeader>
-            <CardContent>
-              <div className="flex flex-col gap-4 sm:flex-row sm:items-center sm:justify-between">
-                <div>
-                  <h3 className="text-sm font-medium text-slate-800 dark:text-slate-200">Delete Account</h3>
-                  <p className="text-sm text-slate-500 dark:text-slate-400 mt-1 max-w-lg">
-                    Permanently delete your account, projects, and all associated media from our servers. This action cannot be undone.
-                  </p>
-                </div>
-                {!isDemoMode && (
-                  <button
-                    type="button"
-                    onClick={() => {
-                      setDeleteConfirmation('');
-                      setDeleteModalOpen(true);
-                    }}
-                    disabled={deletingAccount}
-                    className="inline-flex w-fit whitespace-nowrap rounded-lg border border-red-200 bg-red-50 px-4 py-2 font-medium text-red-700 transition-colors hover:bg-red-100 hover:text-red-800 disabled:opacity-50 sm:self-start dark:border-red-800 dark:bg-red-900/50 dark:text-red-500 dark:hover:bg-red-800 dark:hover:text-red-100"
-                  >
-                    Delete Account
-                  </button>
-                )}
-              </div>
-            </CardContent>
-          </Card>
-          <Dialog open={deleteModalOpen} onOpenChange={setDeleteModalOpen}>
-            <DialogContent className="sm:max-w-md">
-              <DialogHeader>
-                <DialogTitle className="text-red-600 dark:text-red-500">Delete Account</DialogTitle>
-                <DialogDescription>
-                  This permanently deletes your account, projects, and media. Type your {deleteTargetLabel} to continue.
-                </DialogDescription>
-              </DialogHeader>
-              <div className="space-y-4">
-                <div className="rounded-lg border border-red-200/80 bg-red-50/70 p-4 dark:border-red-900/60 dark:bg-red-950/30">
-                  <p className="text-sm font-medium text-red-700 dark:text-red-400">
-                    Are you sure you want to delete your account?
-                  </p>
-                  <p className="mt-1 text-sm text-red-700/80 dark:text-red-400/80">
-                    Type <span className="font-semibold">{deleteTarget}</span> to confirm.
-                  </p>
-                </div>
-                <div>
-                  <label className="mb-1 block text-sm font-medium text-slate-700 dark:text-slate-300">
-                    {deleteTargetLabel === 'username' ? 'Username' : 'Email'}
-                  </label>
-                  <input
-                    type="text"
-                    value={deleteConfirmation}
-                    onChange={(e) => setDeleteConfirmation(e.target.value)}
-                    disabled={deletingAccount}
-                    placeholder={`Type your ${deleteTargetLabel}`}
-                    className="w-full rounded-lg border border-slate-300 bg-white px-3 py-2 text-sm text-slate-900 focus:border-transparent focus:outline-none focus:ring-2 focus:ring-red-500 disabled:opacity-50 dark:border-slate-700 dark:bg-slate-900 dark:text-slate-100"
-                  />
-                  <p className="mt-2 text-xs text-slate-500 dark:text-slate-400">
-                    The delete button stays disabled until the value matches exactly.
-                  </p>
-                </div>
-                <div className="flex justify-end gap-2">
-                  <button
-                    type="button"
-                    onClick={() => {
-                      setDeleteModalOpen(false);
-                      setDeleteConfirmation('');
-                    }}
-                    disabled={deletingAccount}
-                    className="rounded-lg border border-slate-300 bg-white px-4 py-2 text-sm font-medium text-slate-700 transition-colors hover:bg-slate-50 disabled:opacity-50 dark:border-slate-700 dark:bg-slate-900 dark:text-slate-200 dark:hover:bg-slate-800"
-                  >
-                    Cancel
-                  </button>
-                  <button
-                    type="button"
-                    onClick={handleDeleteAccount}
-                    disabled={deletingAccount || !isDeleteConfirmationValid}
-                    className="rounded-lg border border-red-200 bg-red-50 px-4 py-2 text-sm font-medium text-red-700 transition-colors hover:bg-red-100 hover:text-red-800 disabled:opacity-50 dark:border-red-800 dark:bg-red-900/50 dark:text-red-500 dark:hover:bg-red-800 dark:hover:text-red-100"
-                  >
-                    {deletingAccount ? 'Deleting...' : 'Delete Account'}
-                  </button>
-                </div>
-              </div>
-            </DialogContent>
-          </Dialog>
         </div>
+      )}
+
+      {/* ================================================================ */}
+      {/* WORKSPACE */}
+      {/* ================================================================ */}
+      {section === 'workspace' && (
+        loadingWorkspace ? (
+          <div className="animate-pulse space-y-6">
+            <div className="grid gap-4 md:grid-cols-3">
+              {[1, 2, 3].map((item) => (
+                <div key={item} className="h-28 rounded-lg bg-slate-200 dark:bg-slate-800" />
+              ))}
+            </div>
+            <div className="h-64 rounded-lg bg-slate-200 dark:bg-slate-800" />
+            <div className="h-80 rounded-lg bg-slate-200 dark:bg-slate-800" />
+          </div>
+        ) : (
+          <div className="space-y-6">
+            {isDemoMode && (
+              <div className="rounded-xl border border-amber-200 bg-amber-50 px-4 py-3 text-sm text-amber-700 dark:border-amber-800/30 dark:bg-amber-900/20 dark:text-amber-300">
+                Demo account workspace settings are read-only.
+              </div>
+            )}
+
+            {!canManageWorkspace && (
+              <div className="rounded-xl border border-slate-200 bg-slate-50 px-4 py-3 text-sm text-slate-600 dark:border-slate-800 dark:bg-slate-900/70 dark:text-slate-300">
+                You can view workspace details, but only owners and admins can manage identity, invites, and team seats.
+              </div>
+            )}
+
+            {workspaceMessage && (
+              <div className={cn(
+                "rounded-lg px-4 py-3 text-sm",
+                workspaceMessage.type === 'success'
+                  ? "border border-green-200 bg-green-50 text-green-700 dark:border-green-900/40 dark:bg-green-900/20 dark:text-green-300"
+                  : "border border-red-200 bg-red-50 text-red-700 dark:border-red-900/40 dark:bg-red-900/20 dark:text-red-300"
+              )}>
+                {workspaceMessage.text}
+              </div>
+            )}
+
+            <div className="grid gap-4 md:grid-cols-3">
+              <Card>
+                <CardContent className="pt-6">
+                  <p className="text-sm font-medium text-slate-500 dark:text-slate-400">Active Seats</p>
+                  <p className="mt-1 text-3xl font-bold text-slate-900 dark:text-slate-50">{activeSeatCount}</p>
+                  <p className="mt-1 text-xs text-slate-400 dark:text-slate-500">Joined workspace members</p>
+                </CardContent>
+              </Card>
+              <Card>
+                <CardContent className="pt-6">
+                  <p className="text-sm font-medium text-slate-500 dark:text-slate-400">Pending Invites</p>
+                  <p className="mt-1 text-3xl font-bold text-slate-900 dark:text-slate-50">{pendingSeatCount}</p>
+                  <p className="mt-1 text-xs text-slate-400 dark:text-slate-500">Counts toward the seat limit</p>
+                </CardContent>
+              </Card>
+              <Card>
+                <CardContent className="pt-6">
+                  <p className="text-sm font-medium text-slate-500 dark:text-slate-400">Plan Seat Limit</p>
+                  <p className="mt-1 text-3xl font-bold text-slate-900 dark:text-slate-50">{workspaceSeatLimit}</p>
+                  <p className={cn(
+                    "mt-1 text-xs",
+                    workspaceAtLimit ? "text-amber-600 dark:text-amber-300" : "text-slate-400 dark:text-slate-500"
+                  )}>
+                    {workspaceAtLimit ? 'No seats available' : `${availableSeatCount} seats available`}
+                  </p>
+                </CardContent>
+              </Card>
+            </div>
+
+            <Card>
+              <CardHeader>
+                <div className="flex items-start gap-3">
+                  <span className="inline-flex h-10 w-10 items-center justify-center rounded-lg bg-blue-50 text-blue-600 dark:bg-blue-500/10 dark:text-blue-300">
+                    <Building2 className="h-5 w-5" />
+                  </span>
+                  <div>
+                    <CardTitle>Workspace Identity</CardTitle>
+                    <CardDescription>Account-level details for the team container</CardDescription>
+                  </div>
+                </div>
+              </CardHeader>
+              <CardContent className="space-y-4">
+                <div className="grid gap-4 md:grid-cols-2">
+                  <div>
+                    <label htmlFor="workspace-name" className="mb-1 block text-sm font-medium text-slate-700 dark:text-slate-300">
+                      Workspace name
+                    </label>
+                    <input
+                      id="workspace-name"
+                      type="text"
+                      value={workspaceName}
+                      onChange={(event) => setWorkspaceName(event.target.value)}
+                      disabled={isDemoMode || !canManageWorkspace || savingWorkspace}
+                      className="w-full rounded-lg border border-slate-300 bg-white px-3 py-2 text-sm text-slate-900 focus:border-transparent focus:outline-none focus:ring-2 focus:ring-blue-500 disabled:cursor-not-allowed disabled:opacity-50 dark:border-slate-700 dark:bg-slate-800 dark:text-slate-200"
+                    />
+                  </div>
+                  <div>
+                    <label htmlFor="workspace-website" className="mb-1 block text-sm font-medium text-slate-700 dark:text-slate-300">
+                      Website
+                    </label>
+                    <input
+                      id="workspace-website"
+                      type="url"
+                      value={workspaceWebsite}
+                      onChange={(event) => setWorkspaceWebsite(event.target.value)}
+                      disabled={isDemoMode || !canManageWorkspace || savingWorkspace}
+                      placeholder="https://example.com"
+                      className="w-full rounded-lg border border-slate-300 bg-white px-3 py-2 text-sm text-slate-900 focus:border-transparent focus:outline-none focus:ring-2 focus:ring-blue-500 disabled:cursor-not-allowed disabled:opacity-50 dark:border-slate-700 dark:bg-slate-800 dark:text-slate-200"
+                    />
+                  </div>
+                </div>
+                <div>
+                  <label htmlFor="workspace-description" className="mb-1 block text-sm font-medium text-slate-700 dark:text-slate-300">
+                    Short description
+                  </label>
+                  <textarea
+                    id="workspace-description"
+                    value={workspaceDescription}
+                    onChange={(event) => setWorkspaceDescription(event.target.value)}
+                    disabled={isDemoMode || !canManageWorkspace || savingWorkspace}
+                    rows={4}
+                    className="w-full resize-y rounded-lg border border-slate-300 bg-white px-3 py-2 text-sm text-slate-900 focus:border-transparent focus:outline-none focus:ring-2 focus:ring-blue-500 disabled:cursor-not-allowed disabled:opacity-50 dark:border-slate-700 dark:bg-slate-800 dark:text-slate-200"
+                  />
+                </div>
+                {canManageWorkspace && (
+                  <div className="flex justify-end">
+                    <button
+                      type="button"
+                      onClick={handleSaveWorkspaceIdentity}
+                      disabled={isDemoMode || savingWorkspace || !workspaceName.trim()}
+                      className="inline-flex min-h-10 items-center justify-center gap-2 rounded-lg bg-blue-600 px-4 py-2 text-sm font-semibold text-white transition-colors hover:bg-blue-700 disabled:cursor-not-allowed disabled:opacity-50"
+                    >
+                      {savingWorkspace ? <Loader2 className="h-4 w-4 animate-spin" /> : <Save className="h-4 w-4" />}
+                      Save workspace
+                    </button>
+                  </div>
+                )}
+              </CardContent>
+            </Card>
+
+            <Card>
+              <CardHeader>
+                <div className="flex items-start gap-3">
+                  <span className="inline-flex h-10 w-10 items-center justify-center rounded-lg bg-emerald-50 text-emerald-600 dark:bg-emerald-500/10 dark:text-emerald-300">
+                    <UserPlus className="h-5 w-5" />
+                  </span>
+                  <div>
+                    <CardTitle>Invite Teammate</CardTitle>
+                    <CardDescription>Invite admins, editors, or readers within the current plan seat limit</CardDescription>
+                  </div>
+                </div>
+              </CardHeader>
+              <CardContent>
+                <div className="grid gap-3 md:grid-cols-[minmax(0,1fr)_11rem_auto]">
+                  <div>
+                    <label htmlFor="invite-email" className="sr-only">Invite email</label>
+                    <input
+                      id="invite-email"
+                      type="email"
+                      value={inviteEmail}
+                      onChange={(event) => setInviteEmail(event.target.value)}
+                      disabled={isDemoMode || !canManageWorkspace || sendingInvite || workspaceAtLimit}
+                      placeholder="teammate@example.com"
+                      className="w-full rounded-lg border border-slate-300 bg-white px-3 py-2 text-sm text-slate-900 focus:border-transparent focus:outline-none focus:ring-2 focus:ring-blue-500 disabled:cursor-not-allowed disabled:opacity-50 dark:border-slate-700 dark:bg-slate-800 dark:text-slate-200"
+                    />
+                  </div>
+                  <select
+                    value={inviteRole}
+                    onChange={(event) => setInviteRole(event.target.value as Exclude<WorkspaceRole, 'owner'>)}
+                    disabled={isDemoMode || !canManageWorkspace || sendingInvite || workspaceAtLimit || availableInviteRoles.length === 0}
+                    className="rounded-lg border border-slate-300 bg-white px-3 py-2 text-sm text-slate-900 focus:border-transparent focus:outline-none focus:ring-2 focus:ring-blue-500 disabled:cursor-not-allowed disabled:opacity-50 dark:border-slate-700 dark:bg-slate-800 dark:text-slate-200"
+                    aria-label="Invite role"
+                  >
+                    {availableInviteRoles.map((role) => (
+                      <option key={role} value={role}>{formatRole(role)}</option>
+                    ))}
+                  </select>
+                  <button
+                    type="button"
+                    onClick={handleSendInvite}
+                    disabled={isDemoMode || !canManageWorkspace || sendingInvite || workspaceAtLimit || !inviteEmail.trim()}
+                    className="inline-flex min-h-10 items-center justify-center gap-2 rounded-lg bg-slate-900 px-4 py-2 text-sm font-semibold text-white transition-colors hover:bg-slate-800 disabled:cursor-not-allowed disabled:opacity-50 dark:bg-white dark:text-slate-950 dark:hover:bg-slate-200"
+                  >
+                    {sendingInvite ? <Loader2 className="h-4 w-4 animate-spin" /> : <UserPlus className="h-4 w-4" />}
+                    Invite
+                  </button>
+                </div>
+                {workspaceAtLimit && (
+                  <p className="mt-3 text-sm text-amber-600 dark:text-amber-300">
+                    Active members and pending invites have reached the current plan seat limit.
+                  </p>
+                )}
+                <div className="mt-4 grid gap-2 text-xs text-slate-500 dark:text-slate-400 md:grid-cols-2">
+                  {(['owner', 'admin', 'editor', 'reader'] as WorkspaceRole[]).map((role) => (
+                    <div key={role} className="rounded-lg border border-slate-200 bg-slate-50 px-3 py-2 dark:border-slate-800 dark:bg-slate-900/50">
+                      <span className="font-semibold text-slate-700 dark:text-slate-200">{formatRole(role)}:</span>{' '}
+                      {roleDescription(role)}
+                    </div>
+                  ))}
+                </div>
+                {latestInviteLink && (
+                  <div className="mt-4 rounded-lg border border-slate-200 bg-slate-50 p-4 dark:border-slate-700 dark:bg-slate-900/50">
+                    <p className="text-sm font-medium text-slate-900 dark:text-slate-50">
+                      Invite link ready for testing
+                    </p>
+                    <p className="mt-1 text-sm text-slate-500 dark:text-slate-400">
+                      Use this link in a browser session signed in with the invited email address.
+                    </p>
+                    <div className="mt-3 flex flex-col gap-2 sm:flex-row">
+                      <input
+                        type="text"
+                        readOnly
+                        value={latestInviteLink}
+                        className="min-w-0 flex-1 rounded-lg border border-slate-300 bg-white px-3 py-2 text-sm text-slate-700 dark:border-slate-700 dark:bg-slate-950 dark:text-slate-200"
+                      />
+                      <button
+                        type="button"
+                        onClick={() => copyInviteLink(latestInviteLink)}
+                        className="inline-flex min-h-10 items-center justify-center gap-2 rounded-lg bg-slate-900 px-4 py-2 text-sm font-semibold text-white transition-colors hover:bg-slate-800 dark:bg-white dark:text-slate-950 dark:hover:bg-slate-200"
+                      >
+                        Copy link
+                      </button>
+                    </div>
+                  </div>
+                )}
+              </CardContent>
+            </Card>
+
+            <Card>
+              <CardHeader>
+                <CardTitle>Members</CardTitle>
+                <CardDescription>People with active access to this workspace</CardDescription>
+              </CardHeader>
+              <CardContent className="p-0">
+                {workspaceMembers.length === 0 ? (
+                  <div className="px-6 py-10 text-center text-sm text-slate-400">
+                    No active members found
+                  </div>
+                ) : (
+                  <div className="overflow-x-auto">
+                    <table className="w-full text-sm">
+                      <thead>
+                        <tr className="border-b border-slate-200 bg-slate-50 dark:border-slate-800 dark:bg-slate-800/30">
+                          <th className="px-4 py-3 text-left font-medium text-slate-500 dark:text-slate-400">Member</th>
+                          <th className="px-4 py-3 text-left font-medium text-slate-500 dark:text-slate-400">Role</th>
+                          <th className="hidden px-4 py-3 text-left font-medium text-slate-500 dark:text-slate-400 md:table-cell">Joined</th>
+                          <th className="px-4 py-3 text-right font-medium text-slate-500 dark:text-slate-400">Actions</th>
+                        </tr>
+                      </thead>
+                      <tbody className="divide-y divide-slate-200 dark:divide-slate-800">
+                        {workspaceMembers.map((member) => {
+                          const isOwner = member.role === 'owner';
+                          const isBusy = workspaceActionId === member.id;
+                          return (
+                            <tr key={member.id} className="align-middle">
+                              <td className="px-4 py-3">
+                                <div className="min-w-0">
+                                  <p className="truncate font-medium text-slate-900 dark:text-slate-50">
+                                    {member.name || member.email || 'Workspace member'}
+                                  </p>
+                                  {member.email && (
+                                    <p className="truncate text-xs text-slate-500 dark:text-slate-400">{member.email}</p>
+                                  )}
+                                </div>
+                              </td>
+                              <td className="px-4 py-3">
+                                {isOwner || !canManageWorkspace ? (
+                                  <Badge variant={isOwner ? 'info' : 'secondary'}>{formatRole(member.role)}</Badge>
+                                ) : (
+                                  (() => {
+                                    const options = memberRoleOptions(workspaceMembershipRole, member.role);
+                                    if (options.length === 0) {
+                                      return <Badge variant="secondary">{formatRole(member.role)}</Badge>;
+                                    }
+
+                                    return (
+                                      <select
+                                        value={member.role}
+                                        onChange={(event) => updateMemberRole(member, event.target.value as Exclude<WorkspaceRole, 'owner'>)}
+                                        disabled={isDemoMode || isBusy}
+                                        className="rounded-lg border border-slate-300 bg-white px-2 py-1.5 text-sm text-slate-900 disabled:cursor-not-allowed disabled:opacity-50 dark:border-slate-700 dark:bg-slate-900 dark:text-slate-200"
+                                        aria-label={`Role for ${member.email || member.name || 'member'}`}
+                                      >
+                                        {options.map((role) => (
+                                          <option key={role} value={role}>{formatRole(role)}</option>
+                                        ))}
+                                      </select>
+                                    );
+                                  })()
+                                )}
+                              </td>
+                              <td className="hidden px-4 py-3 text-slate-500 dark:text-slate-400 md:table-cell">
+                                {formatShortDate(member.joinedAt || member.createdAt)}
+                              </td>
+                              <td className="px-4 py-3 text-right">
+                                <div className="flex justify-end gap-2">
+                                  {canManageWorkspace && !isOwner ? (
+                                    <button
+                                      type="button"
+                                      onClick={() => removeMember(member)}
+                                      disabled={isDemoMode || isBusy}
+                                      className="inline-flex min-h-9 items-center justify-center gap-2 rounded-lg border border-red-200 bg-white px-3 py-1.5 text-xs font-semibold text-red-600 transition-colors hover:bg-red-50 disabled:cursor-not-allowed disabled:opacity-50 dark:border-red-900/60 dark:bg-slate-950 dark:text-red-300 dark:hover:bg-red-950/30"
+                                    >
+                                      {isBusy ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <Trash2 className="h-3.5 w-3.5" />}
+                                      Remove
+                                    </button>
+                                  ) : isOwner ? (
+                                    <span className="text-xs text-slate-400">-</span>
+                                  ) : !canManageWorkspace ? (
+                                    <span className="text-xs text-slate-400">-</span>
+                                  ) : null}
+                                  {canTransferOwnership && !isOwner ? (
+                                    <button
+                                      type="button"
+                                      onClick={() => transferOwnership(member)}
+                                      disabled={isBusy}
+                                      className="inline-flex min-h-9 items-center justify-center gap-2 rounded-lg border border-blue-200 bg-white px-3 py-1.5 text-xs font-semibold text-blue-600 transition-colors hover:bg-blue-50 disabled:cursor-not-allowed disabled:opacity-50 dark:border-blue-900/60 dark:bg-slate-950 dark:text-blue-300 dark:hover:bg-blue-950/30"
+                                    >
+                                      {isBusy ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <Users className="h-3.5 w-3.5" />}
+                                      Make owner
+                                    </button>
+                                  ) : null}
+                                </div>
+                              </td>
+                            </tr>
+                          );
+                        })}
+                      </tbody>
+                    </table>
+                  </div>
+                )}
+              </CardContent>
+            </Card>
+
+            <Card>
+              <CardHeader>
+                <CardTitle>Pending Invites</CardTitle>
+                <CardDescription>Invites that have not been accepted yet</CardDescription>
+              </CardHeader>
+              <CardContent className="p-0">
+                {workspaceInvitations.length === 0 ? (
+                  <div className="px-6 py-10 text-center text-sm text-slate-400">
+                    No pending invites
+                  </div>
+                ) : (
+                  <div className="overflow-x-auto">
+                    <table className="w-full text-sm">
+                      <thead>
+                        <tr className="border-b border-slate-200 bg-slate-50 dark:border-slate-800 dark:bg-slate-800/30">
+                          <th className="px-4 py-3 text-left font-medium text-slate-500 dark:text-slate-400">Email</th>
+                          <th className="px-4 py-3 text-left font-medium text-slate-500 dark:text-slate-400">Role</th>
+                          <th className="hidden px-4 py-3 text-left font-medium text-slate-500 dark:text-slate-400 md:table-cell">Invited</th>
+                          <th className="hidden px-4 py-3 text-left font-medium text-slate-500 dark:text-slate-400 md:table-cell">Expires</th>
+                          <th className="px-4 py-3 text-right font-medium text-slate-500 dark:text-slate-400">Actions</th>
+                        </tr>
+                      </thead>
+                      <tbody className="divide-y divide-slate-200 dark:divide-slate-800">
+                        {workspaceInvitations.map((invitation) => {
+                          const isBusy = workspaceActionId === invitation.id;
+                          return (
+                            <tr key={invitation.id} className="align-middle">
+                              <td className="px-4 py-3 font-medium text-slate-900 dark:text-slate-50">{invitation.email}</td>
+                              <td className="px-4 py-3">
+                                <Badge variant="secondary">{formatRole(invitation.role)}</Badge>
+                              </td>
+                              <td className="hidden px-4 py-3 text-slate-500 dark:text-slate-400 md:table-cell">
+                                {formatShortDate(invitation.createdAt)}
+                              </td>
+                              <td className="hidden px-4 py-3 text-slate-500 dark:text-slate-400 md:table-cell">
+                                {formatShortDate(invitation.expiresAt)}
+                              </td>
+                              <td className="px-4 py-3">
+                                <div className="flex justify-end gap-2">
+                                  <button
+                                    type="button"
+                                    onClick={() => resendInvite(invitation)}
+                                    disabled={isDemoMode || !canManageWorkspace || isBusy}
+                                    className="inline-flex min-h-9 items-center justify-center gap-2 rounded-lg border border-slate-300 bg-white px-3 py-1.5 text-xs font-semibold text-slate-600 transition-colors hover:bg-slate-50 disabled:cursor-not-allowed disabled:opacity-50 dark:border-slate-700 dark:bg-slate-950 dark:text-slate-300 dark:hover:bg-slate-900"
+                                  >
+                                    {isBusy ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <RotateCw className="h-3.5 w-3.5" />}
+                                    Resend
+                                  </button>
+                                  <button
+                                    type="button"
+                                    onClick={() => cancelInvite(invitation)}
+                                    disabled={isDemoMode || !canManageWorkspace || isBusy}
+                                    className="inline-flex min-h-9 items-center justify-center gap-2 rounded-lg border border-red-200 bg-white px-3 py-1.5 text-xs font-semibold text-red-600 transition-colors hover:bg-red-50 disabled:cursor-not-allowed disabled:opacity-50 dark:border-red-900/60 dark:bg-slate-950 dark:text-red-300 dark:hover:bg-red-950/30"
+                                  >
+                                    <XCircle className="h-3.5 w-3.5" />
+                                    Cancel
+                                  </button>
+                                </div>
+                              </td>
+                            </tr>
+                          );
+                        })}
+                      </tbody>
+                    </table>
+                  </div>
+                )}
+              </CardContent>
+            </Card>
+
+            {(workspaceMembershipRole === 'owner' || workspaceMembershipRole === 'admin') && (
+              <Card>
+                <CardHeader>
+                  <CardTitle>Audit Log</CardTitle>
+                  <CardDescription>Recent workspace permission, invite, and content events</CardDescription>
+                </CardHeader>
+                <CardContent className="p-0">
+                  {loadingWorkspaceAuditLogs ? (
+                    <div className="px-6 py-10 text-center text-sm text-slate-400">
+                      Loading audit events...
+                    </div>
+                  ) : workspaceAuditLogs.length === 0 ? (
+                    <div className="px-6 py-10 text-center text-sm text-slate-400">
+                      No audit events yet
+                    </div>
+                  ) : (
+                    <div className="divide-y divide-slate-200 dark:divide-slate-800">
+                      {workspaceAuditLogs.map((entry) => (
+                        <div key={entry.id} className="px-6 py-4">
+                          <div className="flex flex-col gap-2 sm:flex-row sm:items-start sm:justify-between">
+                            <div className="min-w-0">
+                              <p className="text-sm font-semibold text-slate-900 dark:text-slate-50">
+                                {formatLabel(entry.action.replace('.', '_'))}
+                              </p>
+                              <p className="mt-1 text-xs text-slate-500 dark:text-slate-400">
+                                {(entry.actorName || entry.actorEmail || 'System')} · {formatLabel(entry.resourceType)}
+                              </p>
+                              {typeof entry.metadata?.email === 'string' && (
+                                <p className="mt-1 text-xs text-slate-500 dark:text-slate-400">
+                                  {entry.metadata.email as string}
+                                </p>
+                              )}
+                            </div>
+                            <p className="text-xs text-slate-400 dark:text-slate-500">
+                              {formatShortDate(entry.createdAt)}
+                            </p>
+                          </div>
+                        </div>
+                      ))}
+                    </div>
+                  )}
+                </CardContent>
+              </Card>
+            )}
+          </div>
+        )
       )}
 
       {/* ================================================================ */}
@@ -1445,7 +2504,7 @@ export default function UnifiedSettings({ userEmail, forcedSection }: UnifiedSet
                 <CardDescription>Pay-as-you-go credits remain available during the subscription transition</CardDescription>
               </CardHeader>
               <CardContent>
-                <CreditPackages />
+                <CreditPackages organizationId={organizationId} />
               </CardContent>
             </Card>
 
@@ -1533,7 +2592,7 @@ export default function UnifiedSettings({ userEmail, forcedSection }: UnifiedSet
                                     "text-sm font-semibold whitespace-nowrap",
                                     transaction.amount > 0 ? "text-green-600" : "text-slate-900 dark:text-slate-50"
                                   )}>
-                                    {formatAmount(transaction.amount)}
+                                    {formatAmount(transaction.amount, transaction.creditUnit)}
                                   </span>
                                   {hasChildren && (
                                     isExpanded
@@ -1561,7 +2620,7 @@ export default function UnifiedSettings({ userEmail, forcedSection }: UnifiedSet
                                       "whitespace-nowrap font-medium",
                                       child.amount > 0 ? "text-green-600" : "text-slate-500 dark:text-slate-400"
                                     )}>
-                                      {formatAmount(child.amount)}
+                                      {formatAmount(child.amount, child.creditUnit || transaction.creditUnit)}
                                     </span>
                                   </div>
                                 ))}
@@ -1631,7 +2690,7 @@ export default function UnifiedSettings({ userEmail, forcedSection }: UnifiedSet
                                     "px-3 sm:px-6 py-3 text-right font-semibold whitespace-nowrap",
                                     transaction.amount > 0 ? "text-green-600" : "text-slate-900 dark:text-slate-50"
                                   )}>
-                                    {formatAmount(transaction.amount)}
+                                    {formatAmount(transaction.amount, transaction.creditUnit)}
                                   </td>
                                 </tr>
                                 {/* Expanded children */}
@@ -1656,7 +2715,7 @@ export default function UnifiedSettings({ userEmail, forcedSection }: UnifiedSet
                                       "px-3 sm:px-6 py-2 text-right text-xs",
                                       child.amount > 0 ? "text-green-600" : "text-slate-500 dark:text-slate-400"
                                     )}>
-                                      {formatAmount(child.amount)}
+                                      {formatAmount(child.amount, child.creditUnit || transaction.creditUnit)}
                                     </td>
                                   </tr>
                                 ))}

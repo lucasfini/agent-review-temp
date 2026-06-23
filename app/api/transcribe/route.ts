@@ -19,8 +19,9 @@ import { updateProcessingProgress, markProcessingFailed } from '@/lib/progress-t
 import { ProcessingStage } from '@/lib/tier-progress-config';
 import type { SpeakerSegment, TranscriptionSegment } from '@/lib/types';
 import { estimateTranscriptionCostAsync } from '@/lib/billing/cost-map';
-import { trackAssemblyAIUsage, requireSufficientCredit } from '@/lib/billing/track-usage';
+import { trackAssemblyAIUsage } from '@/lib/billing/track-usage';
 import { InsufficientCreditError, failReservation, settleReservation } from '@/lib/billing/credit';
+import { billingErrorResponse } from '@/lib/billing/middleware';
 import { aiRatelimit } from '@/lib/rate-limit';
 import { autoCorrectSpeakers, applySpeakerCorrections } from '@/lib/utils/autoCorrectSpeakers';
 import { classifyProjectTypeWithAI, type ProjectType } from '@/lib/utils/classifyProjectType';
@@ -53,6 +54,8 @@ import {
 } from '@/lib/billing/entitlement-guards';
 import { recordSubscriptionUsage } from '@/lib/billing/subscription-usage-counters';
 import { resolveOrganizationIdForWrite } from '@/lib/authz/organization-context';
+import { assertPlanUploadDuration, createPlanCreditReservation } from '@/lib/billing/plan-credits';
+import { estimateAudioProductCredits } from '@/lib/billing/product-credits';
 
 const sleep = (ms: number) => new Promise<void>(resolve => setTimeout(resolve, ms));
 const TRANSCRIPTION_PREPARING_MESSAGE = 'Preparing your audio for processing...';
@@ -490,7 +493,7 @@ export async function POST(request: NextRequest) {
           namedSpeakers: true,
         }
       : normalizedProjectAnalysisOptions;
-    const uploadReservationId: string | undefined = existingProject?.metadata?.billing?.uploadReservationId;
+    let uploadReservationId: string | undefined = existingProject?.metadata?.billing?.uploadReservationId;
     const tier: TierLevel = getProcessingTierForAnalysis(analysisOptions);
     const features = getFeaturesFromAnalysisOptions(analysisOptions);
 
@@ -686,9 +689,52 @@ export async function POST(request: NextRequest) {
 
           console.log(`[BILLING] 💰 Estimated cost: $${estimatedCost.total.toFixed(4)} for ~${(estimatedDurationSeconds / 60).toFixed(1)} minutes`);
 
-          // Check if user has sufficient credits
-          await requireSufficientCredit(userId, estimatedCost.total);
-          console.log(`[BILLING] ✅ User has sufficient credits`);
+          const organizationId = existingProject.organization_id || await resolveOrganizationIdForWrite(userId);
+          const subscription = await assertPlanUploadDuration({
+            organizationId,
+            userId,
+            durationSeconds: estimatedDurationSeconds,
+          });
+          const estimatedProductCredits = estimateAudioProductCredits({
+            durationSeconds: estimatedDurationSeconds,
+            tier,
+          });
+          const reservation = await createPlanCreditReservation({
+            userId,
+            organizationId,
+            projectId,
+            workflowType: 'upload_processing',
+            amount: estimatedProductCredits,
+            subscription,
+            metadata: {
+              source: 'transcription_fallback',
+              estimatedCost: estimatedCost.total,
+              estimatedProviderCost: estimatedCost.total,
+              productCreditAmount: estimatedProductCredits,
+              productCreditWorkflow: tier,
+              analysisOptions,
+              estimatedDurationSeconds,
+            },
+            expiresAt: new Date(Date.now() + (2 * 60 * 60 * 1000)).toISOString(),
+          });
+          uploadReservationId = reservation.id;
+          await (supabaseAdmin as any)
+            .from('projects')
+            .update({
+              metadata: {
+                ...(existingProject.metadata || {}),
+                billing: {
+                  ...(existingProject.metadata?.billing || {}),
+                  uploadReservationId,
+                  uploadEstimatedHold: estimatedProductCredits,
+                  uploadEstimatedHoldUnit: 'plan_credit',
+                  uploadEstimatedCost: estimatedCost.total,
+                  uploadEstimatedProviderCost: estimatedCost.total,
+                },
+              },
+            })
+            .eq('id', projectId);
+          console.log(`[BILLING] ✅ Reserved ${estimatedProductCredits} plan credits`);
         } catch (error) {
           if (error instanceof InsufficientCreditError) {
             console.error(`[BILLING] ❌ Insufficient credits: need $${error.required.toFixed(4)}, have $${error.available.toFixed(4)}`);
@@ -710,7 +756,15 @@ export async function POST(request: NextRequest) {
               { status: 402 } // Payment Required
             );
           }
-          console.error('[BILLING] ⚠️ Credit check failed, continuing anyway:', error);
+          if (transcriptionHeartbeat) {
+            clearInterval(transcriptionHeartbeat);
+            transcriptionHeartbeat = null;
+          }
+          if (transcriptionLockHeld && transcriptionLockId) {
+            await releaseGlobalJobLock(transcriptionLockId);
+            transcriptionLockHeld = false;
+          }
+          return billingErrorResponse(error);
         }
       }
 

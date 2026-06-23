@@ -8,15 +8,18 @@ import type { User as SupabaseUser } from '@supabase/supabase-js';
 import { useAuth } from '@/lib/auth/context';
 import { useCurrentOrganization } from '@/lib/hooks/useCurrentOrganization';
 import { isAdminEmail } from '@/lib/admin-access';
-import { usdToSiteCredits } from '@/lib/billing/display';
+import { formatNavCreditBalance, isNavCreditBalanceLow } from '@/lib/billing/nav-credit-display';
 import { isDemoUser } from '@/lib/demo-mode';
 import { PROJECT_MUTATION_EVENT, type ProjectMutationDetail } from '@/lib/project-events';
 import { supabase } from '@/lib/supabase/client';
 import BrandLogo from '@/components/site/BrandLogo';
 import { createPortal } from 'react-dom';
 import { withOrganizationId } from '@/lib/organizations/current-organization';
+import type { ContentLibrary } from '@/lib/content-libraries';
 import { useTheme } from 'next-themes';
 import {
+  Building2,
+  ChevronDown,
   LayoutGrid,
   Upload,
   BarChart3,
@@ -27,7 +30,6 @@ import {
   ClipboardList,
   FileText,
   Inbox,
-  ListChecks,
   Mail,
   Menu,
   PackageCheck,
@@ -39,6 +41,7 @@ import {
   PanelLeftOpen,
   Palette,
   FolderKanban,
+  Sparkles,
 } from 'lucide-react';
 
 type NavItemDef = {
@@ -47,18 +50,31 @@ type NavItemDef = {
   icon: React.ElementType;
   settingsSection?: string;
   tourAttr?: string;
+  children?: NavItemDef[];
 };
 
 type RecentProject = { id: string; title: string; status?: string | null };
 
 const TOOLTIP_OFFSET_PX = 8;
+const LATEST_LIBRARY_NAV_LIMIT = 3;
+
+function getLibraryCreatedTime(library: ContentLibrary): number {
+  const createdTime = Date.parse(library.createdAt);
+  if (Number.isFinite(createdTime)) return createdTime;
+
+  const updatedTime = Date.parse(library.updatedAt);
+  return Number.isFinite(updatedTime) ? updatedTime : 0;
+}
 
 function getMobilePageTitle(pathname: string, activeSettingsSection: string | null): string {
   if (pathname === '/dashboard' || pathname === '/dashboard/hub') return 'All Projects';
   if (pathname === '/dashboard/projects') return 'Project Workspace';
   if (pathname === '/dashboard/upload') return 'Upload Audio';
-  if (pathname === '/dashboard/brand-voice') return 'Brand Voice';
-  if (pathname === '/dashboard/campaigns') return 'Campaigns';
+  if (pathname === '/dashboard/studio/profile' || pathname === '/dashboard/onboarding') return 'Profile';
+  if (pathname === '/dashboard/studio/voice' || pathname === '/dashboard/brand-voice') return 'Voice';
+  if (pathname === '/dashboard/studio/plans' || pathname === '/dashboard/campaigns') return 'Plans';
+  if (pathname.startsWith('/dashboard/studio')) return 'Studio';
+  if (pathname.startsWith('/dashboard/library')) return 'Library';
   if (pathname.startsWith('/dashboard/agency/delivery')) return 'Client Delivery';
   if (pathname.startsWith('/dashboard/agency/drafts')) return 'Draft Review';
   if (pathname.startsWith('/dashboard/agency/granola')) return 'Granola Imports';
@@ -67,14 +83,13 @@ function getMobilePageTitle(pathname: string, activeSettingsSection: string | nu
   if (pathname.startsWith('/dashboard/agency/production')) return 'Production Queue';
   if (pathname.startsWith('/dashboard/agency/sources')) return 'Source Imports';
   if (pathname.startsWith('/dashboard/agency')) return 'Agency';
-  if (pathname === '/dashboard/onboarding') return 'Setup';
   if (pathname === '/dashboard/analytics') return 'Analytics';
   if (pathname === '/dashboard/billing') return 'Billing';
   if (pathname === '/dashboard/usage') return 'Usage';
   if (pathname === '/dashboard/contact') return 'Contact';
   if (pathname === '/dashboard/settings') {
-    if (activeSettingsSection === 'billing') return 'Billing';
-    if (activeSettingsSection === 'usage') return 'Usage';
+    if (activeSettingsSection === 'workspace') return 'Workspace';
+    if (activeSettingsSection === 'integrations') return 'Integrations';
     return 'Preferences';
   }
   if (pathname.startsWith('/dashboard/admin')) return 'Admin';
@@ -172,9 +187,24 @@ const sections: Array<{ label: string; items: NavItemDef[] }> = [
     items: [
       { name: 'Upload', href: '/dashboard/upload', icon: Upload },
       { name: 'All Projects', href: '/dashboard/hub', icon: LayoutGrid },
-      { name: 'Setup', href: '/dashboard/onboarding', icon: ListChecks },
-      { name: 'Brand Voice', href: '/dashboard/brand-voice', icon: Palette },
-      { name: 'Campaigns', href: '/dashboard/campaigns', icon: FolderKanban },
+      {
+        name: 'Studio',
+        href: '/dashboard/studio/profile',
+        icon: Sparkles,
+        children: [
+          { name: 'Profile', href: '/dashboard/studio/profile', icon: Building2 },
+          { name: 'Voice', href: '/dashboard/studio/voice', icon: Palette },
+          { name: 'Plans', href: '/dashboard/studio/plans', icon: FolderKanban },
+        ],
+      },
+      {
+        name: 'Library',
+        href: '/dashboard/library',
+        icon: BookOpenText,
+        children: [
+          { name: 'All saved', href: '/dashboard/library', icon: BookOpenText },
+        ],
+      },
     ],
   },
   {
@@ -241,13 +271,13 @@ function NavItem({
       {...(item.tourAttr ? { 'data-tour': item.tourAttr } : {})}
       aria-label={item.name}
       className={`group flex items-center ${isCollapsed ? 'justify-center' : 'gap-3'} px-3 ${mobile ? 'py-3 text-base' : 'py-2.5 text-sm'} font-medium rounded-xl transition-colors ${isActive
-        ? 'bg-blue-600/10 text-blue-600 dark:text-blue-400'
+        ? 'bg-blue-600 text-white shadow-sm shadow-blue-600/20 dark:bg-blue-500 dark:text-white'
         : 'text-slate-600 dark:text-slate-200 hover:bg-slate-100 dark:hover:bg-slate-800 hover:text-slate-900 dark:hover:text-white'
         }`}
     >
       <Icon
         className={`flex-shrink-0 ${mobile ? 'h-5 w-5' : isCollapsed ? 'h-5 w-5' : 'h-4 w-4'} ${isActive
-          ? 'text-blue-600 dark:text-blue-400'
+          ? 'text-white'
           : 'text-slate-400 dark:text-slate-300 group-hover:text-slate-700 dark:group-hover:text-slate-100'
           }`}
       />
@@ -260,6 +290,80 @@ function NavItem({
       )}
       {!isCollapsed && item.name}
     </Link>
+  );
+}
+
+function NavGroup({
+  item,
+  isActive,
+  isChildActive,
+  onClick,
+  isCollapsed = false,
+}: {
+  item: NavItemDef;
+  isActive: boolean;
+  isChildActive: (item: NavItemDef) => boolean;
+  onClick?: () => void;
+  isCollapsed?: boolean;
+}) {
+  const [isOpen, setIsOpen] = useState(isActive);
+  const Icon = item.icon;
+
+  useEffect(() => {
+    if (isActive) {
+      setIsOpen(true);
+    }
+  }, [isActive]);
+
+  if (isCollapsed) {
+    return (
+      <NavItem
+        item={{ name: item.name, href: item.href, icon: item.icon }}
+        isActive={isActive}
+        onClick={onClick}
+        isCollapsed
+      />
+    );
+  }
+
+  return (
+    <div>
+      <button
+        type="button"
+        onClick={() => setIsOpen((current) => !current)}
+        aria-expanded={isOpen}
+        className={`group flex w-full items-center gap-3 rounded-xl px-3 py-2.5 text-sm font-medium transition-colors ${
+          isActive
+            ? 'bg-slate-100 text-slate-900 dark:bg-slate-800 dark:text-white'
+            : 'text-slate-600 hover:bg-slate-100 hover:text-slate-900 dark:text-slate-200 dark:hover:bg-slate-800 dark:hover:text-white'
+        }`}
+      >
+        <Icon
+          className={`h-4 w-4 flex-shrink-0 ${
+            isActive
+              ? 'text-slate-700 dark:text-slate-100'
+              : 'text-slate-400 group-hover:text-slate-700 dark:text-slate-300 dark:group-hover:text-slate-100'
+          }`}
+        />
+        <span className="min-w-0 flex-1 text-left">{item.name}</span>
+        <ChevronDown
+          className={`h-4 w-4 flex-shrink-0 text-slate-400 transition-transform ${isOpen ? 'rotate-180' : ''}`}
+        />
+      </button>
+
+      {isOpen && item.children && (
+        <div className="mt-1 space-y-0.5 pl-4">
+          {item.children.map((child) => (
+            <NavItem
+              key={child.name}
+              item={child}
+              isActive={isChildActive(child)}
+              onClick={onClick}
+            />
+          ))}
+        </div>
+      )}
+    </div>
   );
 }
 
@@ -351,9 +455,11 @@ function TooltipIconButton({
 function SidebarContent({
   pathname,
   activeSettingsSection,
+  currentLibraryId,
   activeProjectId,
   user,
   balance,
+  balanceCreditUnit,
   isLoadingBalance,
   isLowBalance,
   recentProjects,
@@ -367,9 +473,11 @@ function SidebarContent({
 }: {
   pathname: string;
   activeSettingsSection: string | null;
+  currentLibraryId: string | null;
   activeProjectId: string | null;
   user: SupabaseUser | null;
   balance: number | null;
+  balanceCreditUnit: string | null;
   isLoadingBalance: boolean;
   isLowBalance: boolean;
   recentProjects: RecentProject[];
@@ -388,6 +496,20 @@ function SidebarContent({
   const emailLabel = user?.email ?? '';
 
   const isActive = (item: NavItemDef): boolean => {
+    if (item.children?.length) {
+      return pathname === item.href
+        || pathname.startsWith(item.href + '/')
+        || item.children.some((child) => isActive(child));
+    }
+    const [hrefPath, hrefQuery = ''] = item.href.split('?');
+    const hrefParams = new URLSearchParams(hrefQuery);
+    const hrefLibraryId = hrefParams.get('library');
+    if (hrefPath === '/dashboard/library') {
+      if (hrefLibraryId) {
+        return pathname === hrefPath && currentLibraryId === hrefLibraryId;
+      }
+      return pathname === hrefPath && !currentLibraryId;
+    }
     if (item.settingsSection) {
       return pathname === '/dashboard/settings' && activeSettingsSection === item.settingsSection;
     }
@@ -403,12 +525,15 @@ function SidebarContent({
       <div className={`flex-shrink-0 p-3 ${isCollapsed ? 'flex flex-col items-center gap-2 pt-4' : 'flex items-center justify-between'}`}>
         <Link
           href={user ? '/dashboard/hub' : '/'}
-          className="flex h-10 w-10 items-center justify-center rounded-lg hover:bg-slate-100 dark:hover:bg-slate-800 transition-colors"
+          className={`flex h-10 items-center rounded-lg hover:bg-slate-100 dark:hover:bg-slate-800 transition-colors ${
+            isCollapsed ? 'w-10 justify-center' : 'w-full max-w-[12.25rem] justify-start px-1'
+          }`}
           title={isCollapsed ? 'AudioRepurpose' : undefined}
         >
           <BrandLogo
-            showText={false}
+            showText={!isCollapsed}
             showSubtitle={false}
+            mode={isCollapsed ? 'icon' : 'lockup'}
             size="sm"
             theme={logoTheme}
           />
@@ -434,13 +559,24 @@ function SidebarContent({
             )}
             <div className="space-y-0.5">
               {section.items.map((item) => (
-                <NavItem
-                  key={item.name}
-                  item={item}
-                  isActive={isActive(item)}
-                  onClick={onNavClick}
-                  isCollapsed={isCollapsed}
-                />
+                item.children?.length ? (
+                  <NavGroup
+                    key={item.name}
+                    item={item}
+                    isActive={isActive(item)}
+                    isChildActive={isActive}
+                    onClick={onNavClick}
+                    isCollapsed={isCollapsed}
+                  />
+                ) : (
+                  <NavItem
+                    key={item.name}
+                    item={item}
+                    isActive={isActive(item)}
+                    onClick={onNavClick}
+                    isCollapsed={isCollapsed}
+                  />
+                )
               ))}
             </div>
             {/* Recent Projects — injected below the WORKSPACE section */}
@@ -571,20 +707,26 @@ function SidebarContent({
 
                 <div
                   data-tour="credit-balance"
-                  className="rounded-xl border border-slate-200 bg-slate-50 px-3.5 py-2.5 dark:border-slate-800 dark:bg-slate-900/80"
+                  className={`rounded-xl border px-3.5 py-2.5 ${
+                    isLowBalance
+                      ? 'border-amber-200 bg-amber-50 dark:border-amber-500/30 dark:bg-amber-500/10'
+                      : 'border-slate-200 bg-slate-50 dark:border-slate-800 dark:bg-slate-900/80'
+                  }`}
                 >
                   <div className="min-w-0">
                     <p className="text-[11px] font-semibold uppercase tracking-[0.16em] text-slate-500 dark:text-slate-400">
                       Credits
                     </p>
-                    <p className={`mt-1 text-sm font-semibold tabular-nums ${balance === null && !isLoadingBalance
+                    <p className={`mt-1 text-sm font-semibold tabular-nums ${isLowBalance
+                      ? 'text-amber-800 dark:text-amber-200'
+                      : balance === null && !isLoadingBalance
                       ? 'text-slate-500 dark:text-slate-400'
                       : 'text-slate-900 dark:text-slate-100'
                       }`}>
                       {isLoadingBalance
                         ? <span className="text-slate-400 dark:text-slate-500">—</span>
                         : balance !== null
-                          ? `${usdToSiteCredits(balance).toLocaleString('en-US')}`
+                          ? formatNavCreditBalance(balance, balanceCreditUnit)
                           : 'No credits'}
                     </p>
                   </div>
@@ -631,8 +773,10 @@ export default function DashboardNav({
   const [isMobileMenuOpen, setIsMobileMenuOpen] = useState(false);
   const [localCollapsed, setLocalCollapsed] = useState(false);
   const [balance, setBalance] = useState<number | null>(null);
+  const [balanceCreditUnit, setBalanceCreditUnit] = useState<string | null>(null);
   const [isLoadingBalance, setIsLoadingBalance] = useState(true);
   const [recentProjects, setRecentProjects] = useState<RecentProject[]>([]);
+  const [contentLibraries, setContentLibraries] = useState<ContentLibrary[]>([]);
   const pathname = usePathname();
   const searchParams = useSearchParams();
   const router = useRouter();
@@ -643,9 +787,10 @@ export default function DashboardNav({
   const isDemo = isDemoUser(user as { email?: string } | null);
   const hideChromeForCapture = searchParams.get('capture') === '1';
 
-  const rawSettingsSection = searchParams.get('section') || 'preferences';
+  const rawSettingsSection = searchParams.get('section');
+  const currentLibraryId = searchParams.get('library');
   const activeSettingsSection = pathname.startsWith('/dashboard/settings')
-    ? (rawSettingsSection === 'general' ? 'preferences' : rawSettingsSection)
+    ? (rawSettingsSection === 'workspace' || rawSettingsSection === 'integrations' ? rawSettingsSection : 'preferences')
     : null;
   const mobilePageTitle = useMemo(
     () => getMobilePageTitle(pathname, activeSettingsSection),
@@ -671,7 +816,8 @@ export default function DashboardNav({
       });
       if (response.ok) {
         const data = await response.json();
-        setBalance(data.balance);
+        setBalance(Number(data.balance || 0));
+        setBalanceCreditUnit(typeof data.creditUnit === 'string' ? data.creditUnit : null);
       }
     } catch (error) {
       console.error('Error fetching balance:', error);
@@ -684,6 +830,44 @@ export default function DashboardNav({
     setIsLoadingBalance(true);
     fetchBalance();
   }, [fetchBalance]);
+
+  useEffect(() => {
+    if (!user) {
+      setContentLibraries([]);
+      return;
+    }
+
+    let isActive = true;
+
+    const fetchContentLibraries = async () => {
+      try {
+        const response = await fetch(withOrganizationId('/api/content-libraries', organizationId), {
+          headers: session?.access_token ? { Authorization: `Bearer ${session.access_token}` } : {},
+          cache: 'no-store',
+        });
+
+        if (!response.ok) return;
+
+        const payload = await response.json() as { contentLibraries?: ContentLibrary[] };
+        if (isActive && Array.isArray(payload.contentLibraries)) {
+          setContentLibraries(
+            payload.contentLibraries
+              .slice()
+              .sort((first, second) => getLibraryCreatedTime(second) - getLibraryCreatedTime(first))
+              .slice(0, LATEST_LIBRARY_NAV_LIMIT)
+          );
+        }
+      } catch (error) {
+        console.error('Error fetching content libraries:', error);
+      }
+    };
+
+    void fetchContentLibraries();
+
+    return () => {
+      isActive = false;
+    };
+  }, [organizationId, session?.access_token, user]);
 
   useEffect(() => {
     setIsMobileMenuOpen(false);
@@ -826,6 +1010,19 @@ export default function DashboardNav({
     items: [...section.items],
   }));
 
+  const workspaceSection = navSections.find((section) => section.label === 'WORKSPACE');
+  const libraryItem = workspaceSection?.items.find((item) => item.name === 'Library');
+  if (libraryItem) {
+    libraryItem.children = [
+      { name: 'All saved', href: '/dashboard/library', icon: BookOpenText },
+      ...contentLibraries.map((library) => ({
+        name: library.name,
+        href: `/dashboard/library?library=${encodeURIComponent(library.id)}`,
+        icon: BookOpenText,
+      })),
+    ];
+  }
+
   if (organization?.type === 'internal_agency' || agencyOrganization?.type === 'internal_agency') {
     navSections.push({
       label: 'AGENCY',
@@ -851,14 +1048,16 @@ export default function DashboardNav({
     });
   }
 
-  const isLowBalance = balance !== null && balance < 5;
+  const isLowBalance = isNavCreditBalanceLow(balance, balanceCreditUnit);
   const logoTheme = resolvedTheme === 'light' ? 'light' : 'dark';
   const sharedProps = {
     pathname,
     activeSettingsSection,
+    currentLibraryId,
     activeProjectId,
     user,
     balance,
+    balanceCreditUnit,
     isLoadingBalance,
     isLowBalance,
     recentProjects,
@@ -874,14 +1073,14 @@ export default function DashboardNav({
     <>
       {/* Desktop Sidebar */}
       <div className={`hidden md:flex md:flex-col md:fixed md:inset-y-0 transition-all duration-200 ${collapsed ? 'md:w-20' : 'md:w-64'}`}>
-        <div className="flex flex-col flex-grow bg-white dark:bg-slate-950 border-r border-slate-200 dark:border-slate-800 shadow-[1px_0_0_0_#f1f5f9] dark:shadow-none overflow-visible">
+        <div className="flex flex-col flex-grow border-r border-slate-200 bg-white/95 shadow-[1px_0_0_0_#f1f5f9] backdrop-blur dark:border-slate-800 dark:bg-slate-950/95 dark:shadow-none overflow-visible">
           <SidebarContent {...sharedProps} />
         </div>
       </div>
 
       {/* Mobile top bar */}
       <div className="md:hidden">
-        <div className="sticky top-0 z-30 border-b border-slate-200/90 bg-white/95 px-4 py-3 backdrop-blur dark:border-slate-800/90 dark:bg-slate-950/95">
+        <div className="sticky top-0 z-30 border-b border-slate-200/90 bg-white/95 px-4 py-3 shadow-sm backdrop-blur dark:border-slate-800/90 dark:bg-slate-950/95">
           <div className="grid grid-cols-[auto_minmax(0,1fr)_auto] items-center gap-3">
             <div className="flex items-center gap-1">
               <button
@@ -896,7 +1095,7 @@ export default function DashboardNav({
                 className="hidden rounded-lg p-1 text-slate-500 transition-colors hover:bg-slate-100 min-[375px]:inline-flex dark:text-slate-300 dark:hover:bg-slate-800"
                 aria-label="Go to project hub"
               >
-                <BrandLogo showSubtitle={false} theme={logoTheme} size="sm" />
+                <BrandLogo showText={false} showSubtitle={false} mode="icon" theme={logoTheme} size="sm" />
               </Link>
             </div>
 

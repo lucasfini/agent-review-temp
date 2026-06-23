@@ -9,15 +9,16 @@ import {
   downloadDirectMedia,
   extractAudioFromVideoBuffer
 } from '@/lib/url-importer';
-import { billingErrorResponse, requireCredits } from '@/lib/billing/middleware';
+import { billingErrorResponse } from '@/lib/billing/middleware';
 import { estimateTranscriptionCostAsync } from '@/lib/billing/cost-map';
 import { getProcessingTierForAnalysis, normalizeAnalysisOptions } from '@/lib/analysis-options';
-import { createReservation, releaseReservation } from '@/lib/billing/credit';
-import { estimateReservationAmount } from '@/lib/billing/reserve-amount';
+import { releaseReservation } from '@/lib/billing/credit';
 import { resolveOrganizationIdForWrite } from '@/lib/authz/organization-context';
 import { runEntitlementGuard } from '@/lib/billing/entitlement-guards';
 import { recordSubscriptionUsage } from '@/lib/billing/subscription-usage-counters';
 import { uploadRatelimit } from '@/lib/rate-limit';
+import { assertPlanUploadDuration, createPlanCreditReservation } from '@/lib/billing/plan-credits';
+import { estimateAudioProductCredits } from '@/lib/billing/product-credits';
 
 export const runtime = 'nodejs';
 export const dynamic = 'force-dynamic';
@@ -99,8 +100,12 @@ export async function POST(request: NextRequest) {
       analysisOptions,
     });
 
-    const estimatedHold = estimateReservationAmount(estimatedCost.total, 'upload_processing');
     const organizationId = await resolveOrganizationIdForWrite(user.id, requestedOrganizationId);
+    const subscription = await assertPlanUploadDuration({
+      organizationId,
+      userId: user.id,
+      durationSeconds: estimatedDurationSeconds,
+    });
     const entitlementGuard = await runEntitlementGuard({
       organizationId,
       legacyUserId: user.id,
@@ -119,8 +124,6 @@ export async function POST(request: NextRequest) {
     if (entitlementGuard.response) {
       return entitlementGuard.response;
     }
-
-    await requireCredits(user.id, estimatedHold);
 
     await validatePublicUrl(url);
 
@@ -150,15 +153,23 @@ export async function POST(request: NextRequest) {
     }
 
     const finalTitle = sanitizeTitle(title || getTitleFromFileName(fileName));
-    const reservation = await createReservation({
+    const estimatedProductCredits = estimateAudioProductCredits({
+      durationSeconds: estimatedDurationSeconds,
+      tier: processingTier,
+    });
+    const reservation = await createPlanCreditReservation({
       userId: user.id,
       organizationId,
       workflowType: 'upload_processing',
-      amount: estimatedHold,
+      amount: estimatedProductCredits,
+      subscription,
       metadata: {
         source: 'url_import',
         url,
         estimatedCost: estimatedCost.total,
+        estimatedProviderCost: estimatedCost.total,
+        productCreditAmount: estimatedProductCredits,
+        productCreditWorkflow: processingTier,
         analysisOptions,
         estimatedDurationSeconds,
       },
@@ -177,7 +188,7 @@ export async function POST(request: NextRequest) {
         analysisOptions,
         organizationId,
         reservationId: reservation.id,
-        reservationHoldAmount: estimatedHold,
+        reservationHoldAmount: estimatedProductCredits,
         reservationEstimatedCost: estimatedCost.total,
         speakerCount,
         externalSource: {

@@ -1,5 +1,6 @@
 "use client";
 
+import { useState } from 'react';
 import { Check, CreditCard, ExternalLink, Loader2 } from 'lucide-react';
 
 import { Badge } from '@/components/ui/badge';
@@ -8,11 +9,12 @@ import {
   formatPlanPrice,
   formatSubscriptionStatus,
   getPlanActionLabel,
-  getPlanLimitItems,
+  getPlanCreditItems,
   isCurrentSubscriptionPlan,
   isPlanActionDisabled,
   subscriptionHasUsableStatus,
 } from '@/lib/billing/subscription-ui';
+import type { PlanBillingInterval } from '@/lib/billing/plans';
 import { canManageOrganizationBilling } from '@/lib/authz/billing-permission-rules';
 import { useCurrentSubscription } from '@/lib/hooks/useCurrentSubscription';
 import { usePlans } from '@/lib/hooks/usePlans';
@@ -51,6 +53,7 @@ function PlanSkeleton() {
 }
 
 export default function SubscriptionPlans({ organizationId }: SubscriptionPlansProps) {
+  const [billingInterval, setBillingInterval] = useState<PlanBillingInterval>('month');
   const { plans, loading: loadingPlans, error: plansError } = usePlans();
   const {
     organization,
@@ -119,8 +122,26 @@ export default function SubscriptionPlans({ organizationId }: SubscriptionPlansP
             </div>
           </div>
           <p className="mt-3 text-xs text-slate-500 dark:text-slate-400">
-            Subscription status is informational in this phase. Credit top-ups and pay-as-you-go billing remain available below.
+            Credits are monthly processing capacity, not cash value. Paid plan credits roll over for one extra billing cycle.
           </p>
+        </div>
+
+        <div className="inline-flex w-fit rounded-lg border border-slate-200 bg-white p-1 dark:border-slate-800 dark:bg-slate-950">
+          {(['month', 'year'] as const).map((interval) => (
+            <button
+              key={interval}
+              type="button"
+              onClick={() => setBillingInterval(interval)}
+              className={cn(
+                'rounded-md px-3 py-1.5 text-xs font-semibold transition-colors',
+                billingInterval === interval
+                  ? 'bg-slate-900 text-white dark:bg-slate-100 dark:text-slate-950'
+                  : 'text-slate-500 hover:text-slate-800 dark:text-slate-400 dark:hover:text-slate-100'
+              )}
+            >
+              {interval === 'month' ? 'Monthly' : 'Annual'}
+            </button>
+          ))}
         </div>
 
         {(plansError || subscriptionError || actionError) && (
@@ -140,9 +161,9 @@ export default function SubscriptionPlans({ organizationId }: SubscriptionPlansP
             {plans.map((plan) => {
               const isCurrent = isCurrentSubscriptionPlan(plan, subscription);
               const hasUsableCurrentStatus = isCurrent && subscriptionHasUsableStatus(subscription?.status);
-              const actionLabel = getPlanActionLabel(plan, subscription);
+              const actionLabel = getPlanActionLabel(plan, subscription, billingInterval);
               const disabled = !canManageBilling
-                || isPlanActionDisabled(plan, subscription)
+                || isPlanActionDisabled(plan, subscription, billingInterval)
                 || Boolean(checkoutPlanId)
                 || openingPortal;
               const isSubmitting = checkoutPlanId === plan.slug || checkoutPlanId === plan.id;
@@ -159,10 +180,22 @@ export default function SubscriptionPlans({ organizationId }: SubscriptionPlansP
                 >
                   <div className="mb-3 flex items-start justify-between gap-2">
                     <div>
-                      <h3 className="text-base font-semibold text-slate-900 dark:text-slate-100">{plan.name}</h3>
+                      <div className="flex items-center gap-2">
+                        <h3 className="text-base font-semibold text-slate-900 dark:text-slate-100">{plan.name}</h3>
+                        {plan.isPopular && (
+                          <Badge className="border-blue-200 bg-blue-50 text-[10px] uppercase tracking-[0.12em] text-blue-700 dark:border-blue-900/60 dark:bg-blue-950/40 dark:text-blue-300">
+                            Most Popular
+                          </Badge>
+                        )}
+                      </div>
                       <p className="mt-1 text-2xl font-bold text-slate-950 dark:text-white">
-                        {formatPlanPrice(plan)}
+                        {formatPlanPrice(plan, billingInterval)}
                       </p>
+                      {billingInterval === 'year' && plan.slug !== 'free' && typeof plan.annualPriceCents === 'number' && (
+                        <p className="mt-1 text-xs text-slate-500 dark:text-slate-400">
+                          Billed annually
+                        </p>
+                      )}
                     </div>
                     {hasUsableCurrentStatus && (
                       <span className="inline-flex h-7 w-7 items-center justify-center rounded-full bg-blue-600 text-white">
@@ -176,7 +209,7 @@ export default function SubscriptionPlans({ organizationId }: SubscriptionPlansP
                   </p>
 
                   <ul className="mb-4 space-y-2 text-xs text-slate-600 dark:text-slate-300">
-                    {getPlanLimitItems(plan).slice(0, 5).map((item) => (
+                    {getPlanCreditItems(plan).slice(0, 6).map((item) => (
                       <li key={item} className="flex items-start gap-2">
                         <Check className="mt-0.5 h-3.5 w-3.5 flex-shrink-0 text-emerald-500" />
                         <span>{item}</span>
@@ -186,14 +219,14 @@ export default function SubscriptionPlans({ organizationId }: SubscriptionPlansP
 
                   <button
                     type="button"
-                    onClick={() => startCheckout({ planSlug: plan.slug })}
+                    onClick={() => startCheckout({ planSlug: plan.slug, billingInterval })}
                     disabled={disabled}
                     title={!canManageBilling ? 'Only organization owners and admins can manage subscription billing.' : undefined}
                     className={cn(
                       'mt-auto inline-flex w-full items-center justify-center gap-2 rounded-lg px-3 py-2 text-sm font-semibold transition-colors disabled:cursor-not-allowed disabled:opacity-55',
                       hasUsableCurrentStatus
                         ? 'bg-slate-200 text-slate-700 dark:bg-slate-800 dark:text-slate-300'
-                        : plan.stripePriceId
+                        : !isPlanActionDisabled(plan, null, billingInterval)
                           ? 'bg-blue-600 text-white hover:bg-blue-700'
                           : 'border border-slate-300 bg-slate-50 text-slate-500 dark:border-slate-700 dark:bg-slate-900 dark:text-slate-400'
                     )}

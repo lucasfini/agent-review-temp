@@ -9,6 +9,7 @@ import type {
   OrganizationType,
 } from '@/lib/authz/types';
 import { OrganizationAccessError } from '@/lib/authz/types';
+import { normalizeOrganizationMemberRole } from '@/lib/authz/types';
 
 function deterministicPersonalSlug(userId: string): string {
   return `personal-${createHash('md5').update(userId).digest('hex').slice(0, 20)}`;
@@ -35,7 +36,114 @@ async function getActiveMembership(
     throw new OrganizationAccessError(500, error.message || 'Failed to resolve organization membership');
   }
 
+  return data ? { ...data, role: normalizeOrganizationMemberRole(data.role) } : null;
+}
+
+async function getOrganizationById(
+  supabase: SupabaseClient<any>,
+  organizationId: string
+): Promise<OrganizationRecord | null> {
+  const { data, error } = await supabase
+    .from('organizations')
+    .select('*')
+    .eq('id', organizationId)
+    .maybeSingle() as { data: OrganizationRecord | null; error: any };
+
+  if (error) {
+    throw new OrganizationAccessError(500, error.message || 'Failed to resolve organization');
+  }
+
   return data;
+}
+
+async function getActiveOrganizationContextById(
+  supabase: SupabaseClient<any>,
+  userId: string,
+  organizationId: string
+): Promise<ActiveOrganizationContext | null> {
+  const membership = await getActiveMembership(supabase, userId, organizationId);
+  if (!membership) return null;
+
+  const organization = await getOrganizationById(supabase, organizationId);
+  if (!organization) {
+    throw new OrganizationAccessError(404, 'Organization not found');
+  }
+
+  return { organization, membership };
+}
+
+async function getPreferredActiveOrganizationId(
+  supabase: SupabaseClient<any>,
+  userId: string
+): Promise<string | null> {
+  const { data, error } = await supabase
+    .from('user_workspace_preferences')
+    .select('active_organization_id')
+    .eq('user_id', userId)
+    .maybeSingle() as {
+      data: { active_organization_id: string | null } | null;
+      error: any;
+    };
+
+  if (error) {
+    throw new OrganizationAccessError(500, error.message || 'Failed to resolve active workspace preference');
+  }
+
+  return data?.active_organization_id || null;
+}
+
+async function getFirstActiveOrganizationContextByTypeOrNull(
+  supabase: SupabaseClient<any>,
+  userId: string,
+  organizationType: OrganizationType
+): Promise<ActiveOrganizationContext | null> {
+  const { data: memberships, error: membershipsError } = await supabase
+    .from('organization_members')
+    .select('*')
+    .eq('user_id', userId)
+    .eq('status', 'active')
+    .order('created_at', { ascending: true }) as {
+      data: OrganizationMemberRecord[] | null;
+      error: any;
+    };
+
+  if (membershipsError) {
+    throw new OrganizationAccessError(500, membershipsError.message || 'Failed to resolve organization memberships');
+  }
+
+  const organizationIds = (memberships || [])
+    .map((membership) => membership.organization_id)
+    .filter(Boolean);
+
+  if (organizationIds.length === 0) return null;
+
+  const { data: organization, error: organizationError } = await supabase
+    .from('organizations')
+    .select('*')
+    .in('id', organizationIds)
+    .eq('type', organizationType)
+    .order('created_at', { ascending: true })
+    .limit(1)
+    .maybeSingle() as { data: OrganizationRecord | null; error: any };
+
+  if (organizationError) {
+    throw new OrganizationAccessError(500, organizationError.message || 'Failed to resolve organization');
+  }
+
+  if (!organization) return null;
+
+  const membership = (memberships || []).find((record) => record.organization_id === organization.id);
+  if (!membership) {
+    throw new OrganizationAccessError(500, 'Organization membership is missing or inactive');
+  }
+
+  return {
+    organization,
+    membership: {
+      ...membership,
+      role: normalizeOrganizationMemberRole(membership.role),
+    },
+  };
 }
 
 export async function getDefaultOrganizationForUser(
@@ -122,26 +230,29 @@ export async function getActiveOrganizationForUser(
   requestedOrganizationId?: string | null
 ): Promise<ActiveOrganizationContext> {
   if (requestedOrganizationId) {
-    const membership = await getActiveMembership(supabase, userId, requestedOrganizationId);
-    if (!membership) {
+    const context = await getActiveOrganizationContextById(supabase, userId, requestedOrganizationId);
+    if (!context) {
       throw new OrganizationAccessError(403, 'Forbidden');
     }
 
-    const { data: organization, error } = await supabase
-      .from('organizations')
-      .select('*')
-      .eq('id', requestedOrganizationId)
-      .maybeSingle() as { data: OrganizationRecord | null; error: any };
+    return context;
+  }
 
-    if (error) {
-      throw new OrganizationAccessError(500, error.message || 'Failed to resolve organization');
+  const preferredOrganizationId = await getPreferredActiveOrganizationId(supabase, userId);
+  if (preferredOrganizationId) {
+    const preferredContext = await getActiveOrganizationContextById(supabase, userId, preferredOrganizationId);
+    if (preferredContext) {
+      return preferredContext;
     }
+  }
 
-    if (!organization) {
-      throw new OrganizationAccessError(404, 'Organization not found');
-    }
-
-    return { organization, membership };
+  const firstSaasContext = await getFirstActiveOrganizationContextByTypeOrNull(
+    supabase,
+    userId,
+    'saas_customer'
+  );
+  if (firstSaasContext) {
+    return firstSaasContext;
   }
 
   const organization = await ensureDefaultOrganizationForUser(supabase, userId);
@@ -154,56 +265,41 @@ export async function getActiveOrganizationForUser(
   return { organization, membership };
 }
 
+export async function setActiveOrganizationForUser(
+  supabase: SupabaseClient<any>,
+  userId: string,
+  organizationId: string
+): Promise<ActiveOrganizationContext> {
+  const context = await getActiveOrganizationContextById(supabase, userId, organizationId);
+  if (!context) {
+    throw new OrganizationAccessError(403, 'Forbidden');
+  }
+
+  const { error } = await supabase
+    .from('user_workspace_preferences')
+    .upsert({
+      user_id: userId,
+      active_organization_id: organizationId,
+      updated_at: new Date().toISOString(),
+    } as any, { onConflict: 'user_id' });
+
+  if (error) {
+    throw new OrganizationAccessError(500, error.message || 'Failed to save active workspace preference');
+  }
+
+  return context;
+}
+
 export async function getFirstActiveOrganizationForUserByType(
   supabase: SupabaseClient<any>,
   userId: string,
   organizationType: OrganizationType
 ): Promise<ActiveOrganizationContext> {
-  const { data: memberships, error: membershipsError } = await supabase
-    .from('organization_members')
-    .select('*')
-    .eq('user_id', userId)
-    .eq('status', 'active')
-    .order('created_at', { ascending: true }) as {
-      data: OrganizationMemberRecord[] | null;
-      error: any;
-    };
-
-  if (membershipsError) {
-    throw new OrganizationAccessError(500, membershipsError.message || 'Failed to resolve organization memberships');
-  }
-
-  const organizationIds = (memberships || [])
-    .map((membership) => membership.organization_id)
-    .filter(Boolean);
-
-  if (organizationIds.length === 0) {
+  const context = await getFirstActiveOrganizationContextByTypeOrNull(supabase, userId, organizationType);
+  if (!context) {
     throw new OrganizationAccessError(403, 'Forbidden');
   }
-
-  const { data: organization, error: organizationError } = await supabase
-    .from('organizations')
-    .select('*')
-    .in('id', organizationIds)
-    .eq('type', organizationType)
-    .order('created_at', { ascending: true })
-    .limit(1)
-    .maybeSingle() as { data: OrganizationRecord | null; error: any };
-
-  if (organizationError) {
-    throw new OrganizationAccessError(500, organizationError.message || 'Failed to resolve organization');
-  }
-
-  if (!organization) {
-    throw new OrganizationAccessError(403, 'Forbidden');
-  }
-
-  const membership = (memberships || []).find((record) => record.organization_id === organization.id);
-  if (!membership) {
-    throw new OrganizationAccessError(500, 'Organization membership is missing or inactive');
-  }
-
-  return { organization, membership };
+  return context;
 }
 
 export async function resolveOrganizationIdForWrite(

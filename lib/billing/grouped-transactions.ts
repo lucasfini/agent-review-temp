@@ -8,6 +8,7 @@ export interface GroupedTransactionChild {
   createdAt: string;
   kind?: 'hold' | 'charge' | 'release' | 'usage';
   detail?: string;
+  creditUnit?: string;
 }
 
 export interface GroupedTransaction {
@@ -20,6 +21,7 @@ export interface GroupedTransaction {
   projectTitle?: string;
   balanceAfter: number;
   invoiceNumber?: string | null;
+  creditUnit?: string;
   childCount?: number;
   children?: GroupedTransactionChild[];
   workflowType?: string;
@@ -35,6 +37,7 @@ interface ProjectBucket {
   amount: number;
   createdAt: string;
   balanceAfter: number;
+  creditUnit: string;
   children: GroupedTransactionChild[];
 }
 
@@ -90,7 +93,7 @@ export async function getGroupedTransactions(
   if (rawReservationIds.length > 0) {
     let reservationQuery = supabaseAdmin
       .from('billing_reservations')
-      .select('id, project_id, workflow_type, status, reserved_amount, settled_amount, released_amount, metadata, created_at, updated_at, completed_at')
+      .select('id, project_id, workflow_type, status, reserved_amount, settled_amount, released_amount, credit_unit, metadata, created_at, updated_at, completed_at')
       .in('id', rawReservationIds);
 
     if (scopeFilter) {
@@ -199,17 +202,21 @@ export async function getGroupedTransactions(
     reason: string;
     detail?: string;
     kind?: GroupedTransactionChild['kind'];
+    creditUnit?: string;
   }) => {
     const projectInfo = getProjectInfo(params.projectId, params.projectTitle);
     const amount = Number(params.amount || 0);
     if (!projectInfo || amount >= 0) return false;
+    const creditUnit = params.creditUnit || 'legacy_usd';
+    const projectKey = `${projectInfo.key}:${creditUnit}`;
 
-    const existing = projectGroups.get(projectInfo.key) || {
-      id: projectInfo.key,
+    const existing = projectGroups.get(projectKey) || {
+      id: projectKey,
       title: projectInfo.title,
       amount: 0,
       createdAt: params.createdAt,
       balanceAfter: params.balanceAfter,
+      creditUnit,
       children: [],
     };
 
@@ -224,8 +231,9 @@ export async function getGroupedTransactions(
       createdAt: params.createdAt,
       detail: params.detail,
       kind: params.kind || 'usage',
+      creditUnit,
     });
-    projectGroups.set(projectInfo.key, existing);
+    projectGroups.set(projectKey, existing);
     return true;
   };
 
@@ -248,9 +256,55 @@ export async function getGroupedTransactions(
 
     const projectId = reservation?.project_id || latestTx.metadata?.projectId || usageEventProjectMap[latestTx.usage_event_id];
     const projectTitle = projectId ? projectTitles[projectId] : usageEventProjectTitleMap[latestTx.usage_event_id];
+    const creditUnit = reservation?.credit_unit || latestTx.metadata?.creditUnit || 'legacy_usd';
     const holdAmount = Math.abs(Number(reserveTx?.amount || 0));
     const finalCharge = Number(reservation?.settled_amount || 0);
     const releasedAmount = Number(releaseTxs.reduce((sum, tx) => sum + Math.max(0, Number(tx.amount || 0)), 0).toFixed(4));
+
+    if (creditUnit === 'plan_credit') {
+      const addedProjectChild = addProjectChild({
+        projectId,
+        projectTitle,
+        amount: -finalCharge,
+        createdAt: latestTx.created_at,
+        balanceAfter: Number(latestTx.balance_after),
+        reason: formatWorkflowReason({
+          workflowType: reservation?.workflow_type,
+          metadata: reservation?.metadata || latestTx.metadata || {},
+        }),
+        detail: reservation?.workflow_type,
+        kind: 'charge',
+        creditUnit,
+      });
+
+      if (addedProjectChild) {
+        continue;
+      }
+
+      grouped.push({
+        id: reservationId,
+        type: 'workflow',
+        createdAt: latestTx.created_at,
+        transactionType: 'workflow',
+        amount: -finalCharge,
+        reason: formatWorkflowReason({
+          workflowType: reservation?.workflow_type,
+          metadata: reservation?.metadata || latestTx.metadata || {},
+        }),
+        projectTitle,
+        balanceAfter: Number(latestTx.balance_after),
+        creditUnit,
+        childCount: 0,
+        children: [],
+        workflowType: reservation?.workflow_type,
+        holdAmount,
+        finalCharge,
+        releasedAmount,
+        reservationStatus: reservation?.status,
+      });
+      continue;
+    }
+
     const usageEvents = [...(usageEventsByReservation.get(reservationId) || [])]
       .filter((event) => event.status !== 'failed')
       .sort((a, b) => new Date(b.created_at).getTime() - new Date(a.created_at).getTime());
@@ -288,6 +342,7 @@ export async function getGroupedTransactions(
         }),
         detail: reservation?.workflow_type,
         kind: 'charge',
+        creditUnit,
       });
 
       if (addedFallbackProjectChild) {
@@ -309,6 +364,7 @@ export async function getGroupedTransactions(
       }),
       projectTitle,
       balanceAfter: Number(latestTx.balance_after),
+      creditUnit,
       childCount: 0,
       children: [],
       workflowType: reservation?.workflow_type,
@@ -323,6 +379,7 @@ export async function getGroupedTransactions(
     const usageEvent = tx.usage_event_id ? usageEventsById.get(tx.usage_event_id) : null;
     const projectId = tx.metadata?.projectId || usageEvent?.project_id;
     const projectTitle = projectId ? projectTitles[projectId] : usageEvent?.project_title;
+    const creditUnit = tx.metadata?.creditUnit || 'legacy_usd';
     const groupedIntoProject = addProjectChild({
       projectId,
       projectTitle,
@@ -337,6 +394,7 @@ export async function getGroupedTransactions(
           })
         : tx.reason || getDefaultReason(tx.transaction_type),
       kind: tx.transaction_type === 'debit' ? 'usage' : 'charge',
+      creditUnit,
     });
 
     if (groupedIntoProject) {
@@ -353,6 +411,7 @@ export async function getGroupedTransactions(
       projectTitle: projectTitle || undefined,
       balanceAfter: Number(tx.balance_after),
       invoiceNumber: tx.invoice_number ?? null,
+      creditUnit,
     });
   }
 
@@ -367,6 +426,7 @@ export async function getGroupedTransactions(
       reason: project.title,
       projectTitle: project.title,
       balanceAfter: project.balanceAfter,
+      creditUnit: project.creditUnit,
       childCount: children.length,
       children,
     });

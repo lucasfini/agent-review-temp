@@ -4,6 +4,7 @@ const mockRequireAgencyClientAccess = jest.fn();
 const mockCanManageAgencyDraft = jest.fn();
 const mockGenerateAgencyDraftFromSource = jest.fn();
 const mockIsDemoUser = jest.fn();
+const mockAiRateLimit = jest.fn();
 
 jest.mock('@/lib/authz/agency-permissions', () => {
   const actual = jest.requireActual('@/lib/authz/agency-permissions');
@@ -24,6 +25,12 @@ jest.mock('@/lib/agency-source-generation', () => {
 
 jest.mock('@/lib/demo-mode', () => ({
   isDemoUser: (...args: any[]) => mockIsDemoUser(...args),
+}));
+
+jest.mock('@/lib/rate-limit', () => ({
+  aiRatelimit: {
+    limit: (...args: any[]) => mockAiRateLimit(...args),
+  },
 }));
 
 jest.mock('@/lib/supabase/server', () => ({
@@ -64,6 +71,7 @@ describe('agency source-to-draft generation route', () => {
     mockCanManageAgencyDraft.mockReset();
     mockGenerateAgencyDraftFromSource.mockReset();
     mockIsDemoUser.mockReset();
+    mockAiRateLimit.mockReset();
 
     mockRequireAgencyClientAccess.mockResolvedValue({
       user,
@@ -79,6 +87,7 @@ describe('agency source-to-draft generation route', () => {
     mockCanManageAgencyDraft.mockReturnValue(true);
     mockGenerateAgencyDraftFromSource.mockResolvedValue(draft);
     mockIsDemoUser.mockReturnValue(false);
+    mockAiRateLimit.mockResolvedValue({ success: true, limit: 10, remaining: 9, reset: Date.now() + 60000 });
   });
 
   it('generates an internal agency draft from a scoped source import', async () => {

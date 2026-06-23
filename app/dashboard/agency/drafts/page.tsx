@@ -201,7 +201,7 @@ function TextArea({
 function statusVariant(status: ContentLibraryStatus) {
   if (status === 'published') return 'success';
   if (status === 'approved') return 'warning';
-  if (status === 'review') return 'secondary';
+  if (status === 'in_review') return 'secondary';
   if (status === 'archived') return 'outline';
   return 'secondary';
 }
@@ -244,7 +244,7 @@ export default function AgencyDraftReviewPage() {
   const isInternalAgency = organization?.type === 'internal_agency';
   const canEdit = canManage && !isDemoMode;
   const reviewCount = useMemo(
-    () => drafts.filter((draft) => draft.status === 'review').length,
+    () => drafts.filter((draft) => draft.status === 'in_review').length,
     [drafts]
   );
   const readyCount = useMemo(

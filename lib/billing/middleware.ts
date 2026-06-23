@@ -10,6 +10,8 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { getBalance, checkSufficientCredit, InsufficientCreditError } from './credit';
 import { formatSiteCreditsFromUsd } from './display';
+import { InsufficientPlanCreditsError, PlanUploadLimitError } from './plan-credits';
+import { formatProductCredits } from './product-credits';
 
 // ============================================================================
 // Error Response Formatting
@@ -19,6 +21,41 @@ import { formatSiteCreditsFromUsd } from './display';
  * Standardized error response for billing failures
  */
 export function billingErrorResponse(error: unknown): NextResponse {
+  if (error instanceof PlanUploadLimitError) {
+    return NextResponse.json(
+      {
+        error: 'Upload exceeds plan limit',
+        code: 'PLAN_UPLOAD_LIMIT_EXCEEDED',
+        requestedMinutes: error.requestedMinutes,
+        maxUploadMinutes: error.maxUploadMinutes,
+        planSlug: error.planSlug,
+        upgradeRequired: true,
+        message: `Your ${error.planSlug || 'current'} plan allows uploads up to ${error.maxUploadMinutes} minutes.`,
+      },
+      { status: 402 }
+    );
+  }
+
+  if (error instanceof InsufficientPlanCreditsError) {
+    const shortfall = Math.max(0, error.required - error.available);
+    return NextResponse.json(
+      {
+        error: 'Insufficient credits',
+        code: 'INSUFFICIENT_PLAN_CREDITS',
+        required: error.required,
+        available: error.available,
+        shortfall,
+        planSlug: error.planSlug,
+        topUpsEnabled: error.topUpsEnabled,
+        upgradeRequired: error.upgradeRequired,
+        message: error.topUpsEnabled
+          ? `You need ${formatProductCredits(error.required)} credits but only have ${formatProductCredits(error.available)}. Buy a top-up or upgrade to continue.`
+          : `You need ${formatProductCredits(error.required)} credits but only have ${formatProductCredits(error.available)}. Upgrade to continue.`,
+      },
+      { status: 402 }
+    );
+  }
+
   // Insufficient credits - 402 Payment Required
   if (error instanceof InsufficientCreditError) {
     return NextResponse.json(

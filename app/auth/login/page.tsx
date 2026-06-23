@@ -1,7 +1,7 @@
 "use client";
 
 import { useEffect, useState } from 'react';
-import { useRouter } from 'next/navigation';
+import { useRouter, useSearchParams } from 'next/navigation';
 import Link from 'next/link';
 import { useTheme } from 'next-themes';
 import { useAuth } from '@/lib/auth/context';
@@ -135,6 +135,9 @@ export default function LoginPage() {
 
   const { signIn, signInWithGoogle } = useAuth();
   const router = useRouter();
+  const searchParams = useSearchParams();
+  const inviteToken = searchParams.get('invite_token') || searchParams.get('token') || '';
+  const inviteNextPath = inviteToken ? `/invite?token=${encodeURIComponent(inviteToken)}` : null;
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -147,14 +150,14 @@ export default function LoginPage() {
       setError(error.message);
       setIsLoading(false);
     } else {
-      router.push('/dashboard');
+      router.push(inviteNextPath || '/dashboard');
     }
   };
 
   const handleGoogle = async () => {
     setIsGoogleLoading(true);
     setError('');
-    const { error } = await signInWithGoogle();
+    const { error } = await signInWithGoogle(inviteNextPath);
     if (error) {
       setError(error.message);
       setIsGoogleLoading(false);
@@ -276,7 +279,7 @@ export default function LoginPage() {
 
           <p className="text-center text-sm text-slate-500 dark:text-slate-400 mt-6 motion-safe:animate-fade-in-400">
             Don&apos;t have an account?{' '}
-            <Link href="/auth/signup" className="text-blue-600 dark:text-blue-400 hover:text-blue-600 dark:hover:text-blue-300 font-medium">
+            <Link href={inviteToken ? `/auth/signup?invite_token=${encodeURIComponent(inviteToken)}` : '/auth/signup'} className="text-blue-600 dark:text-blue-400 hover:text-blue-600 dark:hover:text-blue-300 font-medium">
               Sign up free
             </Link>
           </p>

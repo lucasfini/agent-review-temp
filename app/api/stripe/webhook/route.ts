@@ -8,7 +8,8 @@ import Stripe from 'stripe';
 import { addCredit, debitCredit } from '@/lib/billing/credit';
 import { supabaseAdmin } from '@/lib/supabase/server';
 import { getTotalCredits, resolveCreditPackage } from '@/lib/billing/credit-packages';
-import { upsertOrganizationSubscriptionFromStripe } from '@/lib/billing/subscriptions';
+import { isSubscriptionUsable, upsertOrganizationSubscriptionFromStripe } from '@/lib/billing/subscriptions';
+import { ensureCurrentPlanCreditGrant, grantTopUpCredits } from '@/lib/billing/plan-credits';
 
 const stripe = new Stripe(process.env.STRIPE_SECRET_KEY!, {
   apiVersion: '2025-10-29.clover',
@@ -110,11 +111,18 @@ async function syncSubscriptionFromStripe(
     source?: string | null;
   } = {}
 ) {
-  await upsertOrganizationSubscriptionFromStripe(supabaseAdmin, subscription, {
+  const synced = await upsertOrganizationSubscriptionFromStripe(supabaseAdmin, subscription, {
     ...options,
     eventType,
     source: options.source || 'stripe_webhook',
   });
+
+  if (synced && isSubscriptionUsable(synced.status) && synced.plan?.monthlyCreditGrant) {
+    await ensureCurrentPlanCreditGrant({
+      organizationId: synced.organizationId,
+      subscription: synced,
+    });
+  }
 }
 
 async function handleSubscriptionCheckoutComplete(session: Stripe.Checkout.Session) {
@@ -135,7 +143,8 @@ async function handleSubscriptionCheckoutComplete(session: Stripe.Checkout.Sessi
 }
 
 function getInvoiceSubscriptionId(invoice: Stripe.Invoice): string | null {
-  const subscription = invoice.parent?.subscription_details?.subscription;
+  const subscription = invoice.parent?.subscription_details?.subscription
+    || (invoice as any).subscription;
   return getStripeId(subscription);
 }
 
@@ -158,11 +167,9 @@ async function syncSubscriptionFromInvoice(invoice: Stripe.Invoice, eventType: s
 async function handleCheckoutComplete(session: Stripe.Checkout.Session) {
   try {
     const userId = session.metadata?.userId;
+    const organizationId = session.metadata?.organizationId;
     const packageId = session.metadata?.packageId;
-    const pkg = resolveCreditPackage(
-      packageId || '',
-      session.metadata?.customAmount ? Number(session.metadata.customAmount) : undefined
-    );
+    const pkg = resolveCreditPackage(packageId || '');
 
     if (!userId || !pkg) {
       console.error('Missing metadata in checkout session:', session.id);
@@ -194,7 +201,7 @@ async function handleCheckoutComplete(session: Stripe.Checkout.Session) {
       }
     }
 
-    console.log(`Processing payment for user ${userId}: $${creditsAmount} credits`);
+    console.log(`Processing payment for user ${userId}: ${creditsAmount} product credits`);
 
     // Resolve invoice number from Stripe if available
     let invoiceNumber: string | undefined;
@@ -208,22 +215,39 @@ async function handleCheckoutComplete(session: Stripe.Checkout.Session) {
       }
     }
 
-    // Add credits to user account
-    const result = await addCredit(userId, creditsAmount, 'purchase', {
-      paymentId: session.payment_intent as string,
+    if (!organizationId) {
+      const result = await addCredit(userId, creditsAmount, 'purchase', {
+        paymentId: session.payment_intent as string,
+        invoiceNumber,
+        reason: `Legacy Stripe purchase: ${packageId} package`,
+        metadata: {
+          sessionId: session.id,
+          packageId,
+          amountPaid: (session.amount_total || 0) / 100,
+          customerEmail: session.customer_email,
+          legacyCreditUnit: 'account_credit',
+        },
+      });
+      console.log(`Successfully added ${creditsAmount} legacy credits to user ${userId}. New balance: $${result.newBalance}`);
+      return;
+    }
+
+    const grant = await grantTopUpCredits({
+      organizationId,
+      userId,
+      credits: creditsAmount,
+      paymentId: paymentIntentId,
       invoiceNumber,
-      reason: `Stripe purchase: ${packageId} package`,
+      idempotencyKey: `top_up:${paymentIntentId || session.id}`,
       metadata: {
         sessionId: session.id,
         packageId,
-        baseAmount: pkg.amount,
-        bonusAmount: pkg.bonus,
-        amountPaid: (session.amount_total || 0) / 100, // Convert cents to dollars
+        amountPaid: (session.amount_total || 0) / 100,
         customerEmail: session.customer_email,
       },
     });
 
-    console.log(`Successfully added ${creditsAmount} credits to user ${userId}. New balance: $${result.newBalance}`);
+    console.log(`Successfully granted ${creditsAmount} top-up credits to organization ${organizationId}. Grant: ${grant.id}`);
   } catch (error) {
     console.error('Error in handleCheckoutComplete:', error);
     throw error;
@@ -247,7 +271,7 @@ async function handleRefund(charge: Stripe.Charge) {
 
     const { data: originalTx } = await supabaseAdmin
       .from('credit_transactions')
-      .select('id, user_id, amount, invoice_number, payment_id')
+      .select('id, user_id, amount, invoice_number, payment_id, metadata')
       .eq('payment_id', paymentIntent)
       .eq('transaction_type', 'purchase')
       .maybeSingle();
@@ -286,6 +310,67 @@ async function handleRefund(charge: Stripe.Charge) {
 
     if (refundCredits <= 0) {
       console.warn('[STRIPE] Computed refund credits is zero, skipping');
+      return;
+    }
+
+    const metadata = originalTx.metadata && typeof originalTx.metadata === 'object' ? originalTx.metadata : {};
+    if (metadata.creditUnit === 'plan_credit' && typeof metadata.grantId === 'string') {
+      const { data: grantRow, error: grantError } = await supabaseAdmin
+        .from('billing_credit_grants')
+        .select('credits_remaining')
+        .eq('id', metadata.grantId)
+        .maybeSingle() as { data: { credits_remaining: string | number } | null; error: any };
+
+      if (grantError || !grantRow) {
+        console.warn(`[STRIPE] Could not locate credit grant ${metadata.grantId} for refund ${refundId}`);
+        return;
+      }
+
+      const currentRemaining = Number(grantRow.credits_remaining || 0);
+      const revokedCredits = Number(Math.min(currentRemaining, refundCredits).toFixed(4));
+      const unrecoveredCredits = Number(Math.max(0, refundCredits - revokedCredits).toFixed(4));
+      const nextRemaining = Number(Math.max(0, currentRemaining - revokedCredits).toFixed(4));
+      const { error: updateError } = await supabaseAdmin
+        .from('billing_credit_grants')
+        .update({
+          credits_remaining: nextRemaining,
+          metadata_json: {
+            ...metadata,
+            refundedCredits: refundCredits,
+            revokedCredits,
+            unrecoveredRefundCredits: unrecoveredCredits,
+            refundId,
+            refundedAt: new Date().toISOString(),
+          },
+        } as any)
+        .eq('id', metadata.grantId);
+
+      if (updateError) {
+        throw new Error(updateError.message || 'Failed to refund top-up credit grant');
+      }
+
+      await supabaseAdmin.from('credit_transactions').insert({
+        user_id: originalTx.user_id,
+        amount: -revokedCredits,
+        balance_before: currentRemaining,
+        balance_after: nextRemaining,
+        transaction_type: 'refund',
+        payment_id: paymentIntent,
+        invoice_number: originalTx.invoice_number || undefined,
+        reason: 'Stripe top-up refund',
+        metadata: {
+          ...metadata,
+          refundId,
+          paymentIntent,
+          chargeId: charge.id,
+          creditUnit: 'plan_credit',
+          refundedCredits: refundCredits,
+          revokedCredits,
+          unrecoveredRefundCredits: unrecoveredCredits,
+        },
+      } as any);
+
+      console.log(`[STRIPE] Refunded ${refundCredits} top-up credits for ${paymentIntent}`);
       return;
     }
 

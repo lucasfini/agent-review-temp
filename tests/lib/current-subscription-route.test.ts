@@ -2,7 +2,9 @@ import { OrganizationAccessError } from '@/lib/authz/types';
 
 const mockRequireAuthenticatedUser = jest.fn();
 const mockGetActiveOrganizationForUser = jest.fn();
-const mockGetOrganizationSubscription = jest.fn();
+const mockGetOrCreateCreditSubscription = jest.fn();
+const mockEnsureCurrentPlanCreditGrant = jest.fn();
+const mockGetEntitlementsForSubscription = jest.fn();
 
 jest.mock('@/lib/api/route-auth', () => {
   class RouteAccessError extends Error {
@@ -25,19 +27,22 @@ jest.mock('@/lib/authz/organization-context', () => ({
   getActiveOrganizationForUser: (...args: any[]) => mockGetActiveOrganizationForUser(...args),
 }));
 
-jest.mock('@/lib/billing/subscriptions', () => {
-  const actual = jest.requireActual('@/lib/billing/subscriptions');
-  return {
-    ...actual,
-    getOrganizationSubscription: (...args: any[]) => mockGetOrganizationSubscription(...args),
-  };
-});
+jest.mock('@/lib/billing/plan-credits', () => ({
+  getOrCreateCreditSubscription: (...args: any[]) => mockGetOrCreateCreditSubscription(...args),
+  ensureCurrentPlanCreditGrant: (...args: any[]) => mockEnsureCurrentPlanCreditGrant(...args),
+}));
+
+jest.mock('@/lib/billing/entitlements', () => ({
+  getEntitlementsForSubscription: (...args: any[]) => mockGetEntitlementsForSubscription(...args),
+}));
 
 describe('GET /api/subscriptions/current', () => {
   beforeEach(() => {
     mockRequireAuthenticatedUser.mockReset();
     mockGetActiveOrganizationForUser.mockReset();
-    mockGetOrganizationSubscription.mockReset();
+    mockGetOrCreateCreditSubscription.mockReset();
+    mockEnsureCurrentPlanCreditGrant.mockReset();
+    mockGetEntitlementsForSubscription.mockReset();
   });
 
   it('returns fallback entitlements when the organization has no subscription', async () => {
@@ -54,7 +59,14 @@ describe('GET /api/subscriptions/current', () => {
         status: 'active',
       },
     });
-    mockGetOrganizationSubscription.mockResolvedValue(null);
+    mockGetOrCreateCreditSubscription.mockResolvedValue(null);
+    mockEnsureCurrentPlanCreditGrant.mockResolvedValue({ subscription: null });
+    mockGetEntitlementsForSubscription.mockReturnValue({
+      source: 'legacy_fallback',
+      enforcementMode: 'none',
+      legacyCreditsEnabled: true,
+      isSubscriptionUsable: false,
+    });
 
     const response = await GET(new Request('http://localhost/api/subscriptions/current') as any);
     const payload = await response.json();
@@ -72,10 +84,13 @@ describe('GET /api/subscriptions/current', () => {
       'user-1',
       null
     );
-    expect(mockGetOrganizationSubscription).toHaveBeenCalledWith(
-      expect.anything(),
-      'org-1'
-    );
+    expect(mockGetOrCreateCreditSubscription).toHaveBeenCalledWith({ organizationId: 'org-1' });
+    expect(mockEnsureCurrentPlanCreditGrant).toHaveBeenCalledWith({
+      organizationId: 'org-1',
+      userId: 'user-1',
+      subscription: null,
+    });
+    expect(mockGetEntitlementsForSubscription).toHaveBeenCalledWith(null);
   });
 
   it('passes requested organization_id through active membership validation', async () => {
@@ -92,7 +107,14 @@ describe('GET /api/subscriptions/current', () => {
         status: 'active',
       },
     });
-    mockGetOrganizationSubscription.mockResolvedValue(null);
+    mockGetOrCreateCreditSubscription.mockResolvedValue(null);
+    mockEnsureCurrentPlanCreditGrant.mockResolvedValue({ subscription: null });
+    mockGetEntitlementsForSubscription.mockReturnValue({
+      source: 'legacy_fallback',
+      enforcementMode: 'none',
+      legacyCreditsEnabled: true,
+      isSubscriptionUsable: false,
+    });
 
     const response = await GET(
       new Request('http://localhost/api/subscriptions/current?organization_id=org-requested') as any
@@ -116,24 +138,28 @@ describe('GET /api/subscriptions/current', () => {
         type: 'saas_customer',
       },
       membership: {
-        role: 'member',
+        role: 'editor',
         status: 'active',
       },
     });
-    mockGetOrganizationSubscription.mockResolvedValue(null);
+    mockGetOrCreateCreditSubscription.mockResolvedValue(null);
+    mockEnsureCurrentPlanCreditGrant.mockResolvedValue({ subscription: null });
+    mockGetEntitlementsForSubscription.mockReturnValue({
+      source: 'legacy_fallback',
+      enforcementMode: 'none',
+      legacyCreditsEnabled: true,
+      isSubscriptionUsable: false,
+    });
 
     const response = await GET(new Request('http://localhost/api/subscriptions/current') as any);
     const payload = await response.json();
 
     expect(response.status).toBe(200);
     expect(payload.membership).toEqual({
-      role: 'member',
+      role: 'editor',
       status: 'active',
     });
-    expect(mockGetOrganizationSubscription).toHaveBeenCalledWith(
-      expect.anything(),
-      'org-1'
-    );
+    expect(mockGetOrCreateCreditSubscription).toHaveBeenCalledWith({ organizationId: 'org-1' });
   });
 
   it('does not query subscriptions when organization access is denied', async () => {
@@ -150,6 +176,7 @@ describe('GET /api/subscriptions/current', () => {
 
     expect(response.status).toBe(403);
     expect(payload).toEqual({ error: 'Forbidden' });
-    expect(mockGetOrganizationSubscription).not.toHaveBeenCalled();
+    expect(mockGetOrCreateCreditSubscription).not.toHaveBeenCalled();
+    expect(mockEnsureCurrentPlanCreditGrant).not.toHaveBeenCalled();
   });
 });

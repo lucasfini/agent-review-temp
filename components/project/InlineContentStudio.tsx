@@ -18,6 +18,21 @@ type Output = {
 
 type ThemeMap = Record<string, string>;
 
+export type StudioContentContext = {
+  creatorProfileId?: string | null;
+  brandVoiceId?: string | null;
+  campaignId?: string | null;
+  libraryId?: string | null;
+};
+
+export type StudioContextOption = {
+  id: string;
+  name: string;
+  isDefault?: boolean;
+  status?: string | null;
+  scope?: 'private' | 'organization' | string | null;
+};
+
 const OUTPUT_TYPE_TO_CONTENT_TYPE: Record<string, string> = {
   twitter_thread: 'twitter_threads',
   linkedin_post: 'linkedin_posts',
@@ -204,6 +219,66 @@ function formatUseCaseGuidance(contentType: (typeof CONTENT_TYPES)[number]): str
   }
 }
 
+export function normalizeContextSelection(value?: StudioContentContext | null): StudioContentContext {
+  return {
+    creatorProfileId: value?.creatorProfileId || null,
+    brandVoiceId: value?.brandVoiceId || null,
+    campaignId: value?.campaignId || null,
+    libraryId: value?.libraryId || null,
+  };
+}
+
+export function mergeContextSelection(defaultValue?: StudioContentContext | null, explicitValue?: StudioContentContext | null): StudioContentContext {
+  return {
+    creatorProfileId: explicitValue?.creatorProfileId === undefined
+      ? defaultValue?.creatorProfileId || null
+      : explicitValue.creatorProfileId || null,
+    brandVoiceId: explicitValue?.brandVoiceId === undefined
+      ? defaultValue?.brandVoiceId || null
+      : explicitValue.brandVoiceId || null,
+    campaignId: explicitValue?.campaignId === undefined
+      ? defaultValue?.campaignId || null
+      : explicitValue.campaignId || null,
+    libraryId: explicitValue?.libraryId === undefined
+      ? defaultValue?.libraryId || null
+      : explicitValue.libraryId || null,
+  };
+}
+
+export function updateExplicitContextSelection(
+  currentValue: StudioContentContext | undefined,
+  defaultValue: StudioContentContext | undefined,
+  field: keyof StudioContentContext,
+  rawValue: string
+): StudioContentContext {
+  const nextValue: StudioContentContext = { ...(currentValue || {}) };
+  const selectedValue = rawValue || null;
+  const defaultFieldValue = defaultValue?.[field] || null;
+
+  if (selectedValue === defaultFieldValue) {
+    delete nextValue[field];
+  } else {
+    nextValue[field] = selectedValue;
+  }
+
+  return nextValue;
+}
+
+function getOptionName(options: StudioContextOption[], id?: string | null): string | null {
+  if (!id) return null;
+  return options.find((option) => option.id === id)?.name || null;
+}
+
+function getOptionLabel(option: StudioContextOption): string {
+  const scope = option.scope === 'organization' ? 'Workspace' : option.scope === 'private' ? 'Private' : null;
+  const suffixes = [
+    option.isDefault ? 'default' : null,
+    scope,
+  ].filter(Boolean);
+
+  return suffixes.length ? `${option.name} (${suffixes.join(', ')})` : option.name;
+}
+
 type Props = {
   outputs: Output[];
   generatingIds: Set<string>;
@@ -220,6 +295,13 @@ type Props = {
   contentTypeFilter?: string | null;
   guidanceByType?: Record<string, string>;
   onGuidanceChange?: (contentTypeId: string, value: string) => void;
+  contextByType?: Record<string, StudioContentContext>;
+  defaultContext?: StudioContentContext;
+  onContextChange?: (contentTypeId: string, value: StudioContentContext) => void;
+  creatorProfiles?: StudioContextOption[];
+  brandVoices?: StudioContextOption[];
+  campaigns?: StudioContextOption[];
+  libraries?: StudioContextOption[];
   readOnly?: boolean;
 };
 
@@ -239,6 +321,13 @@ export default function InlineContentStudio({
   contentTypeFilter = null,
   guidanceByType = {},
   onGuidanceChange,
+  contextByType = {},
+  defaultContext = {},
+  onContextChange,
+  creatorProfiles = [],
+  brandVoices = [],
+  campaigns = [],
+  libraries = [],
   readOnly = false,
 }: Props) {
   const themes = useMemo(() => getCuratedThemes(), []);
@@ -303,6 +392,41 @@ export default function InlineContentStudio({
     return map;
   }, [contentTypeFilter, outputs]);
 
+  const getEffectiveContext = (contentTypeId: string): StudioContentContext => normalizeContextSelection(
+    mergeContextSelection(defaultContext, contextByType[contentTypeId])
+  );
+
+  const updateContextField = (
+    contentTypeId: string,
+    field: keyof StudioContentContext,
+    value: string
+  ) => {
+    onContextChange?.(contentTypeId, {
+      ...updateExplicitContextSelection(contextByType[contentTypeId], defaultContext, field, value),
+    });
+  };
+
+  const buildGenerateBlock = (
+    contentType: (typeof CONTENT_TYPES)[number],
+    selectedThemeId: string,
+    guidanceValue: string
+  ): ContentBlock => {
+    const context = getEffectiveContext(contentType.id);
+    return {
+      id: `${contentType.id}_1`,
+      contentTypeId: contentType.id,
+      blockNumber: 1,
+      name: contentType.name,
+      enabled: true,
+      theme: selectedThemeId,
+      customGuidance: normalizeCustomGuidance(guidanceValue),
+      creatorProfileId: context.creatorProfileId,
+      brandVoiceId: context.brandVoiceId,
+      campaignId: context.campaignId,
+      libraryId: context.libraryId,
+    };
+  };
+
   return (
     <section className={compact ? '' : 'border-t border-slate-200 dark:border-slate-800 bg-slate-50/40 dark:bg-slate-950/40'}>
       <div className={compact ? '' : 'px-4 py-4'}>
@@ -330,6 +454,13 @@ export default function InlineContentStudio({
             const selectedThemeId = themeByType[contentType.id] || DEFAULT_THEME_ID;
             const themeName = themes.find((theme) => theme.id === selectedThemeId)?.name || 'Professional';
             const guidanceValue = guidanceByType[contentType.id] || '';
+            const context = getEffectiveContext(contentType.id);
+            const contextSummary = [
+              getOptionName(creatorProfiles, context.creatorProfileId),
+              getOptionName(brandVoices, context.brandVoiceId),
+              getOptionName(campaigns, context.campaignId),
+              getOptionName(libraries, context.libraryId),
+            ].filter(Boolean).join(' · ');
             const isGenerating = generatingIds.has(contentType.id);
             const cardTheme = getCardTheme(contentType.platformType || contentType.platform);
             const LaunchLogo = CONTENT_LOGOS[getLaunchPageLogoKey(contentType.id)];
@@ -338,15 +469,7 @@ export default function InlineContentStudio({
                 <div
                 key={contentType.id}
                 onClick={() =>
-                  onGenerate({
-                    id: `${contentType.id}_1`,
-                    contentTypeId: contentType.id,
-                    blockNumber: 1,
-                    name: contentType.name,
-                    enabled: true,
-                    theme: selectedThemeId,
-                    customGuidance: normalizeCustomGuidance(guidanceValue),
-                  })
+                  onGenerate(buildGenerateBlock(contentType, selectedThemeId, guidanceValue))
                 }
                 role="button"
                 tabIndex={isGenerating ? -1 : 0}
@@ -358,15 +481,7 @@ export default function InlineContentStudio({
                   }
                   if (event.key === 'Enter' || event.key === ' ') {
                     event.preventDefault();
-                    onGenerate({
-                      id: `${contentType.id}_1`,
-                      contentTypeId: contentType.id,
-                      blockNumber: 1,
-                      name: contentType.name,
-                      enabled: true,
-                      theme: selectedThemeId,
-                      customGuidance: normalizeCustomGuidance(guidanceValue),
-                    });
+                    onGenerate(buildGenerateBlock(contentType, selectedThemeId, guidanceValue));
                   }
                 }}
                 className={`rounded-2xl border p-3 text-left transition-all hover:-translate-y-0.5 hover:shadow-sm ${isGenerating ? 'cursor-not-allowed opacity-60' : 'cursor-pointer'} ${compact ? 'min-h-[88px]' : 'bg-white dark:bg-slate-900'} ${cardTheme.cardClass}`}
@@ -392,6 +507,9 @@ export default function InlineContentStudio({
                 </div>
 
                 <p className="mt-2 text-[10px] uppercase tracking-wide text-slate-500 dark:text-slate-400">{themeName}</p>
+                {contextSummary ? (
+                  <p className="mt-1 line-clamp-1 text-[10px] text-slate-500 dark:text-slate-400">{contextSummary}</p>
+                ) : null}
               </div>
               );
             })}
@@ -401,7 +519,7 @@ export default function InlineContentStudio({
         {activeThemeContentType ? (
           <div className="fixed inset-0 z-50 flex items-center justify-center bg-slate-950/45 px-4" onClick={() => setEditingThemeId(null)}>
             <div
-              className="w-full max-w-sm rounded-2xl border border-slate-200 bg-white p-5 shadow-2xl dark:border-slate-800 dark:bg-slate-900"
+              className="max-h-[90svh] w-full max-w-lg overflow-y-auto rounded-2xl border border-slate-200 bg-white p-5 shadow-2xl dark:border-slate-800 dark:bg-slate-900"
               onClick={(event) => event.stopPropagation()}
             >
               <div className="flex items-start justify-between gap-4">
@@ -450,6 +568,74 @@ export default function InlineContentStudio({
                     </option>
                   ))}
                 </select>
+              </div>
+              <div className="mt-4 grid gap-3 sm:grid-cols-2">
+                <div>
+                  <label className="mb-2 block text-xs font-medium uppercase tracking-wide text-slate-500 dark:text-slate-400">
+                    Profile
+                  </label>
+                  <select
+                    value={getEffectiveContext(activeThemeContentType.id).creatorProfileId || ''}
+                    onChange={(event) => updateContextField(activeThemeContentType.id, 'creatorProfileId', event.target.value)}
+                    disabled={readOnly}
+                    className="w-full rounded-xl border border-slate-200 bg-white px-3 py-2 text-sm text-slate-900 disabled:cursor-not-allowed disabled:opacity-60 dark:border-slate-700 dark:bg-slate-950 dark:text-slate-100"
+                  >
+                    <option value="">None</option>
+                    {creatorProfiles.map((profile) => (
+                      <option key={profile.id} value={profile.id}>
+                        {getOptionLabel(profile)}
+                      </option>
+                    ))}
+                  </select>
+                </div>
+                <div>
+                  <label className="mb-2 block text-xs font-medium uppercase tracking-wide text-slate-500 dark:text-slate-400">
+                    Voice
+                  </label>
+                  <select
+                    value={getEffectiveContext(activeThemeContentType.id).brandVoiceId || ''}
+                    onChange={(event) => updateContextField(activeThemeContentType.id, 'brandVoiceId', event.target.value)}
+                    disabled={readOnly}
+                    className="w-full rounded-xl border border-slate-200 bg-white px-3 py-2 text-sm text-slate-900 disabled:cursor-not-allowed disabled:opacity-60 dark:border-slate-700 dark:bg-slate-950 dark:text-slate-100"
+                  >
+                    <option value="">None</option>
+                    {brandVoices.map((voice) => (
+                      <option key={voice.id} value={voice.id}>{getOptionLabel(voice)}</option>
+                    ))}
+                  </select>
+                </div>
+                <div>
+                  <label className="mb-2 block text-xs font-medium uppercase tracking-wide text-slate-500 dark:text-slate-400">
+                    Plan
+                  </label>
+                  <select
+                    value={getEffectiveContext(activeThemeContentType.id).campaignId || ''}
+                    onChange={(event) => updateContextField(activeThemeContentType.id, 'campaignId', event.target.value)}
+                    disabled={readOnly}
+                    className="w-full rounded-xl border border-slate-200 bg-white px-3 py-2 text-sm text-slate-900 disabled:cursor-not-allowed disabled:opacity-60 dark:border-slate-700 dark:bg-slate-950 dark:text-slate-100"
+                  >
+                    <option value="">None</option>
+                    {campaigns.map((campaign) => (
+                      <option key={campaign.id} value={campaign.id}>{getOptionLabel(campaign)}</option>
+                    ))}
+                  </select>
+                </div>
+                <div>
+                  <label className="mb-2 block text-xs font-medium uppercase tracking-wide text-slate-500 dark:text-slate-400">
+                    Save to Library
+                  </label>
+                  <select
+                    value={getEffectiveContext(activeThemeContentType.id).libraryId || ''}
+                    onChange={(event) => updateContextField(activeThemeContentType.id, 'libraryId', event.target.value)}
+                    disabled={readOnly}
+                    className="w-full rounded-xl border border-slate-200 bg-white px-3 py-2 text-sm text-slate-900 disabled:cursor-not-allowed disabled:opacity-60 dark:border-slate-700 dark:bg-slate-950 dark:text-slate-100"
+                  >
+                    <option value="">None</option>
+                    {libraries.map((library) => (
+                      <option key={library.id} value={library.id}>{library.name}</option>
+                    ))}
+                  </select>
+                </div>
               </div>
               <div className="mt-4">
                 <label

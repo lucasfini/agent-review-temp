@@ -66,6 +66,17 @@ CREATE INDEX IF NOT EXISTS idx_agency_delivery_packages_client
 CREATE INDEX IF NOT EXISTS idx_agency_delivery_package_items_content
   ON public.agency_delivery_package_items(content_item_id);
 
+CREATE OR REPLACE FUNCTION public.set_updated_at()
+RETURNS trigger
+LANGUAGE plpgsql
+SET search_path = public
+AS $$
+BEGIN
+  NEW.updated_at = now();
+  RETURN NEW;
+END;
+$$;
+
 DO $$
 BEGIN
   IF NOT EXISTS (

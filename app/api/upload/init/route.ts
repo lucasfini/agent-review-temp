@@ -11,13 +11,14 @@ import {
     MAX_FILE_SIZE_BYTES,
 } from '@/lib/upload-constants';
 import { createUploadToken } from '@/lib/upload-token';
-import { billingErrorResponse, requireCredits } from '@/lib/billing/middleware';
+import { billingErrorResponse } from '@/lib/billing/middleware';
 import { estimateTranscriptionCostAsync } from '@/lib/billing/cost-map';
 import { getProcessingTierForAnalysis, normalizeAnalysisOptions } from '@/lib/analysis-options';
-import { createReservation, releaseReservation } from '@/lib/billing/credit';
-import { estimateReservationAmount } from '@/lib/billing/reserve-amount';
+import { releaseReservation } from '@/lib/billing/credit';
 import { resolveOrganizationIdForWrite } from '@/lib/authz/organization-context';
 import { runEntitlementGuard } from '@/lib/billing/entitlement-guards';
+import { assertPlanUploadDuration, createPlanCreditReservation } from '@/lib/billing/plan-credits';
+import { estimateAudioProductCredits } from '@/lib/billing/product-credits';
 
 export const runtime = 'nodejs';
 
@@ -103,8 +104,12 @@ export async function POST(request: NextRequest) {
             analysisOptions,
         });
 
-        const estimatedHold = estimateReservationAmount(estimatedCost.total, 'upload_processing');
         const organizationId = await resolveOrganizationIdForWrite(user.id, requestedOrganizationId);
+        const subscription = await assertPlanUploadDuration({
+            organizationId,
+            userId: user.id,
+            durationSeconds: estimatedDuration,
+        });
         const entitlementGuard = await runEntitlementGuard({
             organizationId,
             legacyUserId: user.id,
@@ -124,15 +129,22 @@ export async function POST(request: NextRequest) {
             return entitlementGuard.response;
         }
 
-        await requireCredits(user.id, estimatedHold);
+        const estimatedProductCredits = estimateAudioProductCredits({
+            durationSeconds: estimatedDuration,
+            tier: processingTier,
+        });
 
-        const reservation = await createReservation({
+        const reservation = await createPlanCreditReservation({
             userId: user.id,
             organizationId,
             workflowType: 'upload_processing',
-            amount: estimatedHold,
+            amount: estimatedProductCredits,
+            subscription,
             metadata: {
                 estimatedCost: estimatedCost.total,
+                estimatedProviderCost: estimatedCost.total,
+                productCreditAmount: estimatedProductCredits,
+                productCreditWorkflow: processingTier,
                 analysisOptions,
                 estimatedDuration,
                 durationSource: providedEstimatedDuration ? 'client_metadata' : 'file_size_estimate',
@@ -164,8 +176,10 @@ export async function POST(request: NextRequest) {
                 analysis_options: analysisOptions,
                 billing: {
                     uploadReservationId: reservation.id,
-                    uploadEstimatedHold: estimatedHold,
+                    uploadEstimatedHold: estimatedProductCredits,
+                    uploadEstimatedHoldUnit: 'plan_credit',
                     uploadEstimatedCost: estimatedCost.total,
+                    uploadEstimatedProviderCost: estimatedCost.total,
                 },
             }
         };
@@ -195,8 +209,10 @@ export async function POST(request: NextRequest) {
                     analysis_options: analysisOptions,
                     billing: {
                         uploadReservationId: reservation.id,
-                        uploadEstimatedHold: estimatedHold,
+                        uploadEstimatedHold: estimatedProductCredits,
+                        uploadEstimatedHoldUnit: 'plan_credit',
                         uploadEstimatedCost: estimatedCost.total,
+                        uploadEstimatedProviderCost: estimatedCost.total,
                     },
                 }
             };

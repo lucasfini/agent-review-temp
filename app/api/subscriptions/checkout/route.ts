@@ -1,21 +1,23 @@
 import { NextRequest, NextResponse } from 'next/server';
-import Stripe from 'stripe';
 
 import { RouteAccessError, requireAuthenticatedUser } from '@/lib/api/route-auth';
 import { requireOrganizationBillingManager } from '@/lib/authz/billing-permissions';
 import { OrganizationAccessError } from '@/lib/authz/types';
 import { getAppBaseUrl } from '@/lib/app-url';
-import { getPlanBySlugOrId } from '@/lib/billing/plans';
+import {
+  getPlanBySlugOrId,
+  getPlanStripePriceId,
+  type PlanBillingInterval,
+} from '@/lib/billing/plans';
 import {
   getOrganizationStripeCustomerId,
+  upsertOrganizationSubscriptionFromStripe,
   storeOrganizationStripeCustomerId,
 } from '@/lib/billing/subscriptions';
+import { ensureCurrentPlanCreditGrant } from '@/lib/billing/plan-credits';
 import { isDemoUser } from '@/lib/demo-mode';
+import { getStripeClient, isBillingTestMode } from '@/lib/billing/stripe-runtime';
 import { supabaseAdmin } from '@/lib/supabase/server';
-
-const stripe = new Stripe(process.env.STRIPE_SECRET_KEY!, {
-  apiVersion: '2025-10-29.clover',
-});
 
 export const dynamic = 'force-dynamic';
 export const revalidate = 0;
@@ -45,6 +47,11 @@ function planIdentifierFromBody(body: any): string | null {
   return typeof value === 'string' && value.trim() ? value.trim() : null;
 }
 
+function billingIntervalFromBody(body: any): PlanBillingInterval {
+  const value = body?.billingInterval || body?.billing_interval || body?.interval;
+  return value === 'year' || value === 'annual' || value === 'annually' ? 'year' : 'month';
+}
+
 function isProductionUnsafeStripePriceId(priceId: string): boolean {
   if (process.env.NODE_ENV !== 'production') {
     return false;
@@ -65,6 +72,8 @@ function isProductionUnsafeStripePriceId(priceId: string): boolean {
     'growth',
     'scale',
     'enterprise',
+    'standard',
+    'teams',
   ];
 
   return normalized.length < 14 || placeholderTokens.some((token) => normalized.includes(token));
@@ -86,6 +95,7 @@ export async function POST(request: NextRequest) {
       requestedOrganizationId: typeof requestedOrganizationId === 'string' ? requestedOrganizationId : null,
     });
     const planIdentifier = planIdentifierFromBody(body);
+    const billingInterval = billingIntervalFromBody(body);
 
     if (!planIdentifier) {
       return NextResponse.json({ error: 'Missing plan slug or id' }, { status: 400 });
@@ -96,21 +106,31 @@ export async function POST(request: NextRequest) {
       return NextResponse.json({ error: 'Plan not found' }, { status: 404 });
     }
 
-    if (!plan.stripePriceId) {
+    if (plan.slug === 'free') {
+      return NextResponse.json(
+        { error: 'The Free plan does not require Stripe checkout' },
+        { status: 400 }
+      );
+    }
+
+    const stripePriceId = getPlanStripePriceId(plan, billingInterval);
+    if (!stripePriceId) {
       return NextResponse.json(
         { error: 'Plan is not configured for Stripe subscription checkout' },
         { status: 400 }
       );
     }
 
-    if (isProductionUnsafeStripePriceId(plan.stripePriceId)) {
+    if (isProductionUnsafeStripePriceId(stripePriceId)) {
       return NextResponse.json(
         { error: 'Plan has an unsafe Stripe price configuration' },
         { status: 400 }
       );
     }
 
+    const stripe = getStripeClient('subscription checkout');
     let stripeCustomerId = await getOrganizationStripeCustomerId(supabaseAdmin, organization.id);
+    let createdNewCustomer = false;
     if (!stripeCustomerId) {
       const customer = await stripe.customers.create({
         email: user.email || undefined,
@@ -121,7 +141,18 @@ export async function POST(request: NextRequest) {
         },
       });
       stripeCustomerId = customer.id;
-      await storeOrganizationStripeCustomerId(supabaseAdmin, organization.id, stripeCustomerId, {
+      createdNewCustomer = true;
+    }
+    if (!stripeCustomerId) {
+      return NextResponse.json(
+        { error: 'Unable to create or load a Stripe customer for this organization' },
+        { status: 500 }
+      );
+    }
+
+    const organizationStripeCustomerId = stripeCustomerId;
+    if (createdNewCustomer) {
+      await storeOrganizationStripeCustomerId(supabaseAdmin, organization.id, organizationStripeCustomerId, {
         planId: plan.id,
         metadata: {
           source: 'subscription_checkout',
@@ -143,14 +174,15 @@ export async function POST(request: NextRequest) {
       user_id: user.id,
       plan_id: plan.id,
       plan_slug: plan.slug,
+      billing_interval: billingInterval,
     };
     const session = await stripe.checkout.sessions.create({
       mode: 'subscription',
-      customer: stripeCustomerId,
+      customer: organizationStripeCustomerId,
       client_reference_id: organization.id,
       line_items: [
         {
-          price: plan.stripePriceId,
+          price: stripePriceId,
           quantity: 1,
         },
       ],
@@ -162,6 +194,58 @@ export async function POST(request: NextRequest) {
         metadata,
       },
     });
+
+    if (isBillingTestMode()) {
+      const startAt = new Date();
+      const endAt = new Date(startAt);
+      if (billingInterval === 'year') {
+        endAt.setUTCFullYear(endAt.getUTCFullYear() + 1);
+      } else {
+        endAt.setUTCMonth(endAt.getUTCMonth() + 1);
+      }
+      const subscriptionSyncPayload = {
+        id: `sub_test_${String(session.id).replace(/[^a-zA-Z0-9]/g, '')}`,
+        customer: organizationStripeCustomerId,
+        status: 'active',
+        cancel_at_period_end: false,
+        current_period_start: null,
+        current_period_end: null,
+        items: {
+          data: [
+            {
+              current_period_start: Math.floor(startAt.getTime() / 1000),
+              current_period_end: Math.floor(endAt.getTime() / 1000),
+              price: { id: stripePriceId },
+            },
+          ],
+        },
+        metadata: {
+          organization_id: organization.id,
+          user_id: user.id,
+          plan_id: plan.id,
+          plan_slug: plan.slug,
+          billing_interval: billingInterval,
+        },
+      };
+      const testModeSyncedSubscription = await upsertOrganizationSubscriptionFromStripe(
+        supabaseAdmin,
+        subscriptionSyncPayload as never,
+        {
+          organizationId: organization.id,
+          planId: plan.id,
+          planSlug: plan.slug,
+          checkoutSessionId: session.id,
+          source: 'billing_test_mode',
+        }
+      );
+      if (testModeSyncedSubscription) {
+        await ensureCurrentPlanCreditGrant({
+          organizationId: organization.id,
+          userId: user.id,
+          subscription: testModeSyncedSubscription,
+        });
+      }
+    }
 
     return NextResponse.json({
       success: true,
@@ -176,6 +260,7 @@ export async function POST(request: NextRequest) {
         id: plan.id,
         slug: plan.slug,
         name: plan.name,
+        billingInterval,
       },
     });
   } catch (error) {

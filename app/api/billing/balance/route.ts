@@ -8,24 +8,44 @@ import { getBillingOrganizationContext } from '@/lib/api/billing-org-context';
 import { requireAuthenticatedUser, RouteAccessError } from '@/lib/api/route-auth';
 import { getDisplayBalance } from '@/lib/billing/credit';
 import { formatSiteCreditsFromUsd } from '@/lib/billing/display';
+import { getOrganizationPlanCreditBalance } from '@/lib/billing/plan-credits';
+import { formatProductCredits } from '@/lib/billing/product-credits';
 
 export async function GET(request: NextRequest) {
   try {
     const user = await requireAuthenticatedUser(request);
-    await getBillingOrganizationContext(request, user.id);
+    const { organizationId } = await getBillingOrganizationContext(request, user.id);
 
-    // Credit balance is still user-account scoped until account_credits has organization_id.
-    const balance = await getDisplayBalance(user.id);
+    const [legacyBalance, planCredits] = await Promise.all([
+      getDisplayBalance(user.id),
+      getOrganizationPlanCreditBalance({
+        organizationId,
+        userId: user.id,
+        ensureGrant: true,
+      }),
+    ]);
 
     return NextResponse.json({
       success: true,
-      balance: balance.visibleBalance,
-      availableBalance: balance.availableBalance,
-      reservedPending: balance.reservedPending,
-      formatted: formatSiteCreditsFromUsd(balance.visibleBalance),
-      lifetimeCreditsAdded: balance.lifetimeCreditsAdded,
-      lifetimeCreditsSpent: balance.lifetimeCreditsSpent,
-      lastUpdated: balance.updatedAt,
+      balance: planCredits.available,
+      availableBalance: planCredits.available,
+      reservedPending: 0,
+      formatted: `${formatProductCredits(planCredits.available)} credits`,
+      creditUnit: 'plan_credit',
+      planSlug: planCredits.subscription?.plan?.slug || null,
+      monthlyCreditGrant: planCredits.subscription?.plan?.monthlyCreditGrant || 0,
+      creditRolloverMonths: planCredits.subscription?.plan?.creditRolloverMonths || 0,
+      topUpEnabled: Boolean(planCredits.subscription?.plan?.topUpEnabled),
+      rolloverCredits: planCredits.rollover,
+      currentPlanCredits: planCredits.current,
+      topUpCredits: planCredits.topUp,
+      legacyBalance: legacyBalance.visibleBalance,
+      legacyAvailableBalance: legacyBalance.availableBalance,
+      legacyReservedPending: legacyBalance.reservedPending,
+      legacyFormatted: formatSiteCreditsFromUsd(legacyBalance.visibleBalance),
+      lifetimeCreditsAdded: legacyBalance.lifetimeCreditsAdded,
+      lifetimeCreditsSpent: legacyBalance.lifetimeCreditsSpent,
+      lastUpdated: legacyBalance.updatedAt,
     });
   } catch (error) {
     if (error instanceof RouteAccessError) {

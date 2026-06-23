@@ -4,7 +4,7 @@ import { RouteAccessError, requireAuthenticatedUser } from '@/lib/api/route-auth
 import { getActiveOrganizationForUser } from '@/lib/authz/organization-context';
 import { OrganizationAccessError } from '@/lib/authz/types';
 import { getEntitlementsForSubscription } from '@/lib/billing/entitlements';
-import { getOrganizationSubscription } from '@/lib/billing/subscriptions';
+import { getOrCreateCreditSubscription, ensureCurrentPlanCreditGrant } from '@/lib/billing/plan-credits';
 import { supabaseAdmin } from '@/lib/supabase/server';
 
 export const dynamic = 'force-dynamic';
@@ -20,7 +20,14 @@ export async function GET(request: NextRequest) {
       user.id,
       requestedOrganizationId
     );
-    const subscription = await getOrganizationSubscription(supabaseAdmin, organization.id);
+    const subscription = await getOrCreateCreditSubscription({
+      organizationId: organization.id,
+    });
+    await ensureCurrentPlanCreditGrant({
+      organizationId: organization.id,
+      userId: user.id,
+      subscription,
+    });
     const entitlements = getEntitlementsForSubscription(subscription);
 
     return NextResponse.json(

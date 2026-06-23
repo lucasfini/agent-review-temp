@@ -1,19 +1,35 @@
 import type { Plan } from '@/lib/billing/plans';
+import { getPlanStripePriceId, type PlanBillingInterval } from '@/lib/billing/plans';
 import type { OrganizationSubscription, SubscriptionStatus } from '@/lib/billing/subscriptions';
+import { formatProductCredits } from '@/lib/billing/product-credits';
 
-export function formatPlanPrice(plan: Pick<Plan, 'monthlyPriceCents' | 'currency'>): string {
+function formatCurrency(amountCents: number, currency: string): string {
+  const amount = amountCents / 100;
+  return new Intl.NumberFormat('en-US', {
+    style: 'currency',
+    currency: currency || 'usd',
+    maximumFractionDigits: amount % 1 === 0 ? 0 : 2,
+  }).format(amount);
+}
+
+export function formatPlanPrice(
+  plan: Pick<Plan, 'monthlyPriceCents' | 'annualPriceCents' | 'currency' | 'slug'>,
+  interval: PlanBillingInterval = 'month'
+): string {
+  if (plan.slug === 'free' || plan.monthlyPriceCents === 0) {
+    return '$0 forever';
+  }
+
+  if (interval === 'year' && typeof plan.annualPriceCents === 'number') {
+    const monthlyEquivalent = Math.round(plan.annualPriceCents / 12);
+    return `${formatCurrency(monthlyEquivalent, plan.currency)}/mo`;
+  }
+
   if (plan.monthlyPriceCents === null || plan.monthlyPriceCents === undefined) {
     return 'Custom';
   }
 
-  const amount = plan.monthlyPriceCents / 100;
-  const formatted = new Intl.NumberFormat('en-US', {
-    style: 'currency',
-    currency: plan.currency || 'usd',
-    maximumFractionDigits: amount % 1 === 0 ? 0 : 2,
-  }).format(amount);
-
-  return `${formatted}/mo`;
+  return `${formatCurrency(plan.monthlyPriceCents, plan.currency)}/mo`;
 }
 
 function formatCompactNumber(value: number): string {
@@ -49,6 +65,47 @@ export function getPlanLimitItems(plan: Pick<Plan, 'limits'>): string[] {
   if (typeof limits.integrationLimit === 'number') items.push(`${formatCompactNumber(limits.integrationLimit)} integrations`);
 
   return items.length ? items : ['Custom limits'];
+}
+
+export function getPlanCreditItems(
+  plan: Pick<
+    Plan,
+    | 'features'
+    | 'monthlyCreditGrant'
+    | 'maxUploadMinutes'
+    | 'creditRolloverMonths'
+    | 'topUpEnabled'
+    | 'topUpCreditExpiryMonths'
+    | 'extraSeatPriceCents'
+    | 'limits'
+  >
+): string[] {
+  const items: string[] = [];
+  const creditLabel = typeof plan.features.credit_label === 'string'
+    ? plan.features.credit_label
+    : null;
+
+  if (creditLabel) {
+    items.push(creditLabel);
+  } else if (typeof plan.monthlyCreditGrant === 'number') {
+    items.push(`${formatProductCredits(plan.monthlyCreditGrant)} credits/month`);
+  }
+
+  if (typeof plan.maxUploadMinutes === 'number') {
+    items.push(`${plan.maxUploadMinutes}-minute max upload`);
+  }
+  if (typeof plan.limits.seatLimit === 'number') {
+    items.push(`${formatCompactNumber(plan.limits.seatLimit)} ${plan.limits.seatLimit === 1 ? 'seat' : 'seats'}`);
+  }
+  items.push(plan.creditRolloverMonths > 0 ? 'Credits roll over for 1 billing cycle' : 'Credits reset monthly');
+  items.push(plan.topUpEnabled
+    ? `Top-ups enabled; expire after ${plan.topUpCreditExpiryMonths} months`
+    : 'Top-ups disabled');
+  if (typeof plan.extraSeatPriceCents === 'number') {
+    items.push(`Extra seats ${formatCurrency(plan.extraSeatPriceCents, 'usd')}/user/mo annually`);
+  }
+
+  return items;
 }
 
 export function formatSubscriptionStatus(status?: SubscriptionStatus | null): string {
@@ -88,14 +145,19 @@ export function isCurrentSubscriptionPlan(
 }
 
 export function getPlanActionLabel(
-  plan: Pick<Plan, 'id' | 'stripePriceId'>,
-  subscription?: Pick<OrganizationSubscription, 'planId' | 'status'> | null
+  plan: Pick<Plan, 'id' | 'slug' | 'stripePriceId' | 'stripeMonthlyPriceId' | 'stripeAnnualPriceId'>,
+  subscription?: Pick<OrganizationSubscription, 'planId' | 'status'> | null,
+  interval: PlanBillingInterval = 'month'
 ): string {
   if (isCurrentSubscriptionPlan(plan, subscription) && subscriptionHasUsableStatus(subscription?.status)) {
     return 'Current plan';
   }
 
-  if (!plan.stripePriceId) {
+  if (plan.slug === 'free') {
+    return 'Free plan';
+  }
+
+  if (!getPlanStripePriceId(plan, interval)) {
     return 'Not configured';
   }
 
@@ -103,9 +165,11 @@ export function getPlanActionLabel(
 }
 
 export function isPlanActionDisabled(
-  plan: Pick<Plan, 'id' | 'stripePriceId'>,
-  subscription?: Pick<OrganizationSubscription, 'planId' | 'status'> | null
+  plan: Pick<Plan, 'id' | 'slug' | 'stripePriceId' | 'stripeMonthlyPriceId' | 'stripeAnnualPriceId'>,
+  subscription?: Pick<OrganizationSubscription, 'planId' | 'status'> | null,
+  interval: PlanBillingInterval = 'month'
 ): boolean {
-  return !plan.stripePriceId
+  return plan.slug === 'free'
+    || !getPlanStripePriceId(plan, interval)
     || (isCurrentSubscriptionPlan(plan, subscription) && subscriptionHasUsableStatus(subscription?.status));
 }

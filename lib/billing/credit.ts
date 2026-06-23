@@ -16,6 +16,11 @@ import { supabaseAdmin as supabase } from '@/lib/supabase/server';
 import { formatUsageEventReason } from '@/lib/billing/presentation';
 import { resolveOrganizationIdForWrite, resolveOrganizationIdFromProjectForWrite } from '@/lib/authz/organization-context';
 import { buildBillingOrgScopedLegacyFallbackFilter } from '@/lib/billing/organization-scope';
+import {
+  isPlanCreditReservation,
+  releasePlanCreditReservation,
+  settlePlanCreditReservationAmount,
+} from '@/lib/billing/plan-credits';
 
 // ============================================================================
 // Types and Interfaces
@@ -65,6 +70,7 @@ export interface BillingReservation {
   settledAmount: number;
   releasedAmount: number;
   currency: string;
+  creditUnit: 'legacy_usd' | 'plan_credit' | string;
   metadata: Record<string, unknown>;
   expiresAt?: string | null;
   createdAt: string;
@@ -762,6 +768,7 @@ function mapReservationRow(row: any): BillingReservation {
     settledAmount: Number(row.settled_amount || 0),
     releasedAmount: Number(row.released_amount || 0),
     currency: row.currency || 'USD',
+    creditUnit: row.credit_unit || row.metadata?.creditUnit || 'legacy_usd',
     metadata: row.metadata || {},
     expiresAt: row.expires_at,
     createdAt: row.created_at,
@@ -862,6 +869,7 @@ export async function createReservation(params: {
         reserved_amount: amount,
         settled_amount: 0,
         released_amount: 0,
+        credit_unit: 'legacy_usd',
         metadata: params.metadata || {},
         expires_at: params.expiresAt || null,
       } as any)
@@ -901,6 +909,16 @@ async function releaseHeldAmount(
   nextStatus: BillingReservation['status']
 ): Promise<BillingReservation> {
   const releaseAmount = Number(Math.max(0, amount).toFixed(4));
+  if (isPlanCreditReservation(reservation)) {
+    await releasePlanCreditReservation({
+      reservation,
+      amount: releaseAmount,
+      reason,
+      nextStatus,
+    });
+    return getReservation(reservation.id);
+  }
+
   if (releaseAmount <= 0) {
     const { data } = await supabase
       .from('billing_reservations')
@@ -1010,6 +1028,28 @@ async function ensureReservationCoverage(
   reservation: BillingReservation,
   actualCost: number
 ): Promise<BillingReservation> {
+  if (isPlanCreditReservation(reservation)) {
+    if (actualCost <= reservation.reservedAmount + 0.0001) {
+      return reservation;
+    }
+
+    await supabase
+      .from('billing_reservations')
+      .update({
+        status: 'failed',
+        updated_at: new Date().toISOString(),
+        metadata: {
+          ...(reservation.metadata || {}),
+          actualCost,
+          overrun: Number((actualCost - reservation.reservedAmount).toFixed(4)),
+          overrunReason: 'plan_credit_reservation_overrun',
+        },
+      } as any)
+      .eq('id', reservation.id);
+
+    throw new ReservationOverrunError(reservation.id, reservation.reservedAmount, actualCost);
+  }
+
   if (actualCost <= reservation.reservedAmount + 0.0001) {
     return reservation;
   }
@@ -1136,6 +1176,28 @@ export async function settleReservation(reservationId: string): Promise<BillingR
     } as any)
     .eq('id', reservationId);
 
+  if (isPlanCreditReservation(reservation)) {
+    const metadataCredits = Number(reservation.metadata?.productCreditAmount ?? reservation.reservedAmount);
+    const actualCredits = Number(
+      (Number.isFinite(metadataCredits) ? metadataCredits : reservation.reservedAmount).toFixed(4)
+    );
+    await settlePlanCreditReservationAmount({
+      reservation,
+      actualCredits,
+    });
+
+    await supabase
+      .from('usage_events')
+      .update({
+        status: 'completed',
+        processed_at: new Date().toISOString(),
+      } as any)
+      .eq('reservation_id', reservationId)
+      .neq('status', 'failed');
+
+    return getReservation(reservationId);
+  }
+
   const { data: usageRows, error: usageError } = await supabase
     .from('usage_events')
     .select('id, billed_cost, status')
@@ -1217,6 +1279,30 @@ export async function settleReservationAmount(
   }
 
   const normalizedCost = Number(Math.max(0, actualCost).toFixed(4));
+
+  if (isPlanCreditReservation(reservation)) {
+    await settlePlanCreditReservationAmount({
+      reservation,
+      actualCredits: normalizedCost,
+      usageEventIds,
+    });
+
+    if (usageEventIds.length > 0) {
+      await attachUsageEventsToReservation(reservationId, usageEventIds);
+    }
+
+    await supabase
+      .from('usage_events')
+      .update({
+        status: 'completed',
+        processed_at: new Date().toISOString(),
+      } as any)
+      .eq('reservation_id', reservationId)
+      .neq('status', 'failed');
+
+    return getReservation(reservationId);
+  }
+
   reservation = await ensureReservationCoverage(reservation, normalizedCost);
 
   if (usageEventIds.length > 0) {

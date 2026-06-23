@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server';
 
 import { RouteAccessError, requireAuthenticatedUser } from '@/lib/api/route-auth';
+import { assertCan } from '@/lib/authz/permissions';
 import {
   getActiveOrganizationForUser,
   getFirstActiveOrganizationForUserByType,
@@ -8,6 +9,7 @@ import {
 import { OrganizationAccessError } from '@/lib/authz/types';
 import type { OrganizationType } from '@/lib/authz/types';
 import { isDemoUser } from '@/lib/demo-mode';
+import { recordOrganizationAuditLog } from '@/lib/organizations/audit';
 import { supabaseAdmin } from '@/lib/supabase/server';
 
 export const dynamic = 'force-dynamic';
@@ -64,11 +66,6 @@ function requiredOrganizationName(value: unknown): string {
     throw new RouteAccessError(400, 'Organization name is required');
   }
   return normalized;
-}
-
-function canManageOrganizationSetup(role?: string | null, organizationType?: string | null): boolean {
-  if (role === 'owner' || role === 'admin') return true;
-  return role === 'agency_admin' && organizationType === 'internal_agency';
 }
 
 function requestedOrganizationIdFrom(request: NextRequest, body?: any): string | null {
@@ -168,12 +165,18 @@ export async function PATCH(request: NextRequest) {
       return NextResponse.json({ error: 'Demo account is read-only' }, { status: 403 });
     }
 
-    if (!canManageOrganizationSetup(membership.role, organization.type)) {
-      return NextResponse.json(
-        { error: 'Organization setup requires owner or admin access' },
-        { status: 403 }
-      );
-    }
+    assertCan(
+      {
+        userId: user.id,
+        organizationId: organization.id,
+        organizationType: organization.type,
+        role: membership.role,
+        isDemo: isDemoUser(user),
+      },
+      'workspace.update',
+      { organizationId: organization.id },
+      'Organization setup requires owner or admin access'
+    );
 
     const updatePayload: Record<string, unknown> = {};
     if (body.name !== undefined) {
@@ -216,6 +219,18 @@ export async function PATCH(request: NextRequest) {
     if (error || !updatedOrganization) {
       throw new Error(error?.message || 'Failed to update organization');
     }
+
+    await recordOrganizationAuditLog({
+      supabase: supabaseAdmin,
+      organizationId: organization.id,
+      actorUserId: user.id,
+      action: 'workspace.updated',
+      resourceType: 'workspace',
+      resourceId: organization.id,
+      metadata: {
+        changedFields: Object.keys(updatePayload),
+      },
+    });
 
     return NextResponse.json(organizationPayload(updatedOrganization, membership));
   } catch (error) {

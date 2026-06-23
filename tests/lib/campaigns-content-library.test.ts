@@ -1,6 +1,7 @@
 import {
   CampaignLibraryValidationError,
   canManageCampaignLibrary,
+  createCampaign,
   mapCampaignRow,
   mapContentLibraryItemRow,
   normalizeCampaignInput,
@@ -16,6 +17,7 @@ describe('campaign and content library helpers', () => {
       id: 'campaign-1',
       organization_id: 'org-1',
       client_id: null,
+      shared_from_campaign_id: null,
       brand_voice_id: 'voice-1',
       name: 'Launch campaign',
       status: 'active',
@@ -34,6 +36,7 @@ describe('campaign and content library helpers', () => {
       id: 'campaign-1',
       organizationId: 'org-1',
       clientId: null,
+      sharedFromCampaignId: null,
       brandVoiceId: 'voice-1',
       name: 'Launch campaign',
       status: 'active',
@@ -42,6 +45,8 @@ describe('campaign and content library helpers', () => {
       channels: ['LinkedIn', 'Newsletter'],
       startDate: '2026-06-05',
       endDate: '2026-07-05',
+      approvalRequired: false,
+      locked: false,
       ownerUserId: 'user-1',
       createdBy: 'user-1',
       createdAt: '2026-06-05T00:00:00.000Z',
@@ -54,6 +59,8 @@ describe('campaign and content library helpers', () => {
       id: 'item-1',
       organization_id: 'org-1',
       client_id: null,
+      creator_profile_id: 'profile-1',
+      library_id: 'library-1',
       campaign_id: 'campaign-1',
       brand_voice_id: 'voice-1',
       project_id: 'project-1',
@@ -77,6 +84,8 @@ describe('campaign and content library helpers', () => {
       id: 'item-1',
       organizationId: 'org-1',
       clientId: null,
+      creatorProfileId: 'profile-1',
+      libraryId: 'library-1',
       campaignId: 'campaign-1',
       brandVoiceId: 'voice-1',
       projectId: 'project-1',
@@ -91,6 +100,12 @@ describe('campaign and content library helpers', () => {
       tags: ['Founder POV', 'launch'],
       metadata: { imported: false },
       publishedAt: null,
+      scheduledFor: null,
+      approvedByUserId: null,
+      approvedAt: null,
+      generationContextSnapshot: {},
+      ownerUserId: null,
+      locked: false,
       createdBy: 'user-1',
       createdAt: '2026-06-05T00:00:00.000Z',
       updatedAt: '2026-06-05T00:00:00.000Z',
@@ -101,32 +116,121 @@ describe('campaign and content library helpers', () => {
     expect(normalizeCampaignInput({
       name: '  Launch campaign  ',
       status: 'active',
+      brandVoiceId: 'voice-1',
       channels: ['LinkedIn', 'linkedin', 'Newsletter', ''],
       startDate: '2026-06-05',
       end_date: '2026-07-05',
     })).toEqual({
       name: 'Launch campaign',
       status: 'active',
+      brand_voice_id: 'voice-1',
       channels_json: ['LinkedIn', 'Newsletter'],
       start_date: '2026-06-05',
       end_date: '2026-07-05',
     });
   });
 
+  it('validates and persists campaign brand voice references on create', async () => {
+    const insertedPayloads: any[] = [];
+    const supabase = {
+      from: jest.fn((table: string) => {
+        if (table === 'brand_voices') {
+          const builder = {
+            select: jest.fn(() => builder),
+            eq: jest.fn(() => builder),
+            is: jest.fn(() => builder),
+            maybeSingle: jest.fn().mockResolvedValue({ data: { id: 'voice-1' }, error: null }),
+          };
+          return builder;
+        }
+
+        if (table === 'campaigns') {
+          return {
+            insert: jest.fn((payload: any) => {
+              insertedPayloads.push(payload);
+              return {
+                select: jest.fn(() => ({
+                  single: jest.fn().mockResolvedValue({
+                    data: {
+                      id: 'campaign-1',
+                      organization_id: 'org-1',
+                      client_id: null,
+                      brand_voice_id: payload.brand_voice_id,
+                      name: payload.name,
+                      status: payload.status || 'draft',
+                      objective: payload.objective || null,
+                      audience: payload.audience || null,
+                      channels_json: payload.channels_json || [],
+                      start_date: payload.start_date || null,
+                      end_date: payload.end_date || null,
+                      owner_user_id: payload.owner_user_id,
+                      created_by: payload.created_by,
+                      created_at: '2026-06-05T00:00:00.000Z',
+                      updated_at: '2026-06-05T00:00:00.000Z',
+                    },
+                    error: null,
+                  }),
+                })),
+              };
+            }),
+          };
+        }
+
+        throw new Error(`Unexpected table ${table}`);
+      }),
+    };
+
+    const created = await createCampaign(supabase as any, 'org-1', 'user-1', {
+      name: 'Launch campaign',
+      brandVoiceId: 'voice-1',
+    });
+
+    expect(supabase.from).toHaveBeenCalledWith('brand_voices');
+    expect(insertedPayloads[0]).toMatchObject({
+      organization_id: 'org-1',
+      name: 'Launch campaign',
+      brand_voice_id: 'voice-1',
+    });
+    expect(created.brandVoiceId).toBe('voice-1');
+  });
+
+  it('rejects campaign brand voices outside the organization', async () => {
+    const supabase = {
+      from: jest.fn(() => {
+        const builder = {
+          select: jest.fn(() => builder),
+          eq: jest.fn(() => builder),
+          is: jest.fn(() => builder),
+          maybeSingle: jest.fn().mockResolvedValue({ data: null, error: null }),
+        };
+        return builder;
+      }),
+    };
+
+    await expect(createCampaign(supabase as any, 'org-1', 'user-1', {
+      name: 'Launch campaign',
+      brandVoiceId: 'other-org-voice',
+    })).rejects.toThrow('brandVoiceId must reference a record in this organization');
+  });
+
   it('normalizes content library payloads', () => {
     expect(normalizeContentLibraryItemInput({
       title: '  Founder post  ',
       content_type: 'linkedin_post',
-      status: 'review',
+      status: 'in_review',
       tags: ['Launch', 'launch', 'Founder POV'],
       campaign_id: '',
+      creatorProfileId: 'profile-1',
+      library_id: 'library-1',
       metadata: { source: 'manual' },
     })).toEqual({
       title: 'Founder post',
       content_type: 'linkedin_post',
-      status: 'review',
+      status: 'in_review',
       tags_json: ['Launch', 'Founder POV'],
       campaign_id: null,
+      creator_profile_id: 'profile-1',
+      library_id: 'library-1',
       metadata_json: { source: 'manual' },
     });
   });
@@ -178,7 +282,8 @@ describe('campaign and content library helpers', () => {
   it('limits management to organization managers', () => {
     expect(canManageCampaignLibrary('owner', 'saas_customer')).toBe(true);
     expect(canManageCampaignLibrary('admin', 'saas_customer')).toBe(true);
-    expect(canManageCampaignLibrary('member', 'saas_customer')).toBe(false);
+    expect(canManageCampaignLibrary('editor', 'saas_customer')).toBe(true);
+    expect(canManageCampaignLibrary('reader', 'saas_customer')).toBe(false);
     expect(canManageCampaignLibrary('agency_admin', 'internal_agency')).toBe(true);
     expect(canManageCampaignLibrary('agency_admin', 'saas_customer')).toBe(false);
   });

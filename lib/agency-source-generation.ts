@@ -215,7 +215,7 @@ export function buildAgencyGeneratedDraftInput(input: {
     brandVoiceId: input.request.brandVoiceId || input.context?.brandVoice?.id || null,
     contentType: input.request.contentTypeId,
     platform: channel,
-    status: 'review',
+    status: 'in_review',
     body: input.generated.content,
     excerpt: input.generated.content.slice(0, 500),
     sourceLabel: input.source.sourceTitle || input.source.provider,
@@ -288,7 +288,7 @@ async function resolveAgencyContext(
   const campaign = await getAgencyCampaign(supabase, organizationId, request.campaignId);
   const brandVoiceId = request.brandVoiceId || campaign?.brandVoiceId || null;
   const brandVoice = await getAgencyBrandVoice(supabase, organizationId, brandVoiceId);
-  return { campaign, brandVoice };
+  return { creatorProfile: null, campaign, brandVoice, library: null };
 }
 
 export async function generateAgencyDraftFromSource(

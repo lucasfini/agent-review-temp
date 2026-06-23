@@ -9,6 +9,7 @@ const mockCreateAgencySourceImport = jest.fn();
 const mockGetAgencyClientIntegration = jest.fn();
 const mockSetAgencyClientIntegration = jest.fn();
 const mockIsDemoUser = jest.fn();
+const mockUploadRateLimit = jest.fn();
 
 jest.mock('@/lib/authz/agency-permissions', () => {
   const actual = jest.requireActual('@/lib/authz/agency-permissions');
@@ -41,6 +42,12 @@ jest.mock('@/lib/agency-client-integrations', () => {
 
 jest.mock('@/lib/demo-mode', () => ({
   isDemoUser: (...args: any[]) => mockIsDemoUser(...args),
+}));
+
+jest.mock('@/lib/rate-limit', () => ({
+  uploadRatelimit: {
+    limit: (...args: any[]) => mockUploadRateLimit(...args),
+  },
 }));
 
 jest.mock('@/lib/supabase/server', () => ({
@@ -98,6 +105,7 @@ describe('agency Granola manual import routes', () => {
     mockGetAgencyClientIntegration.mockReset();
     mockSetAgencyClientIntegration.mockReset();
     mockIsDemoUser.mockReset();
+    mockUploadRateLimit.mockReset();
 
     mockRequireAgencyAccess.mockResolvedValue({
       user,
@@ -120,6 +128,7 @@ describe('agency Granola manual import routes', () => {
     mockGetAgencyClientIntegration.mockResolvedValue(integration);
     mockSetAgencyClientIntegration.mockResolvedValue(integration);
     mockIsDemoUser.mockReturnValue(false);
+    mockUploadRateLimit.mockResolvedValue({ success: true, limit: 30, remaining: 29, reset: Date.now() + 60000 });
   });
 
   it('lists Granola imports for an internal agency organization', async () => {

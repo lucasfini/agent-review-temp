@@ -2,10 +2,12 @@ import type { SupabaseClient } from '@supabase/supabase-js';
 
 import { supabaseAdmin } from '@/lib/supabase/server';
 
-export const PLAN_SLUGS = ['starter', 'growth', 'scale', 'enterprise'] as const;
+export const PLAN_SLUGS = ['free', 'standard', 'pro', 'teams'] as const;
+export const LEGACY_PLAN_SLUGS = ['starter', 'growth', 'scale', 'enterprise'] as const;
 
 export type KnownPlanSlug = typeof PLAN_SLUGS[number];
 export type PlanSlug = KnownPlanSlug | (string & {});
+export type PlanBillingInterval = 'month' | 'year';
 
 export interface PlanLimits {
   seatLimit: number | null;
@@ -22,9 +24,19 @@ export interface Plan {
   slug: PlanSlug;
   description: string | null;
   stripePriceId: string | null;
+  stripeMonthlyPriceId: string | null;
+  stripeAnnualPriceId: string | null;
   monthlyPriceCents: number | null;
+  annualPriceCents: number | null;
   currency: string;
   limits: PlanLimits;
+  monthlyCreditGrant: number | null;
+  creditRolloverMonths: number;
+  topUpEnabled: boolean;
+  topUpCreditExpiryMonths: number;
+  maxUploadMinutes: number | null;
+  extraSeatPriceCents: number | null;
+  isPopular: boolean;
   features: Record<string, unknown>;
   isActive: boolean;
   displayOrder: number;
@@ -38,7 +50,10 @@ export interface PlanRow {
   slug: string;
   description: string | null;
   stripe_price_id: string | null;
+  stripe_monthly_price_id?: string | null;
+  stripe_annual_price_id?: string | null;
   monthly_price_cents: number | null;
+  annual_price_cents?: number | null;
   currency: string;
   seat_limit: number | null;
   monthly_generation_limit: number | null;
@@ -46,6 +61,13 @@ export interface PlanRow {
   monthly_import_limit: number | null;
   monthly_storage_mb_limit: number | null;
   integration_limit: number | null;
+  monthly_credit_grant?: number | null;
+  credit_rollover_months?: number | null;
+  top_up_enabled?: boolean | null;
+  top_up_credit_expiry_months?: number | null;
+  max_upload_minutes?: number | null;
+  extra_seat_price_cents?: number | null;
+  is_popular?: boolean | null;
   features_json: unknown;
   is_active: boolean;
   display_order: number;
@@ -105,13 +127,18 @@ async function getPlanByColumn(
 }
 
 export function mapPlanRow(row: PlanRow): Plan {
+  const stripeMonthlyPriceId = row.stripe_monthly_price_id ?? row.stripe_price_id ?? null;
+
   return {
     id: row.id,
     name: row.name,
     slug: row.slug as PlanSlug,
     description: row.description,
-    stripePriceId: row.stripe_price_id,
+    stripePriceId: row.stripe_price_id ?? stripeMonthlyPriceId,
+    stripeMonthlyPriceId,
+    stripeAnnualPriceId: row.stripe_annual_price_id ?? null,
     monthlyPriceCents: row.monthly_price_cents,
+    annualPriceCents: row.annual_price_cents ?? null,
     currency: row.currency,
     limits: {
       seatLimit: row.seat_limit,
@@ -121,12 +148,30 @@ export function mapPlanRow(row: PlanRow): Plan {
       monthlyStorageMbLimit: row.monthly_storage_mb_limit,
       integrationLimit: row.integration_limit,
     },
+    monthlyCreditGrant: row.monthly_credit_grant ?? null,
+    creditRolloverMonths: row.credit_rollover_months ?? 0,
+    topUpEnabled: Boolean(row.top_up_enabled),
+    topUpCreditExpiryMonths: row.top_up_credit_expiry_months ?? 12,
+    maxUploadMinutes: row.max_upload_minutes ?? null,
+    extraSeatPriceCents: row.extra_seat_price_cents ?? null,
+    isPopular: Boolean(row.is_popular),
     features: normalizeFeatures(row.features_json),
     isActive: row.is_active,
     displayOrder: row.display_order,
     createdAt: row.created_at,
     updatedAt: row.updated_at,
   };
+}
+
+export function getPlanStripePriceId(
+  plan: Pick<Plan, 'stripePriceId' | 'stripeMonthlyPriceId' | 'stripeAnnualPriceId'>,
+  interval: PlanBillingInterval = 'month'
+): string | null {
+  if (interval === 'year') {
+    return plan.stripeAnnualPriceId || null;
+  }
+
+  return plan.stripeMonthlyPriceId || plan.stripePriceId || null;
 }
 
 export function getPlanLimits(plan?: Plan | null): PlanLimits {
@@ -185,24 +230,32 @@ export async function getPlanByStripePriceId(
   options: { activeOnly?: boolean } = {}
 ): Promise<Plan | null> {
   const activeOnly = options.activeOnly ?? false;
-  let query = supabase
-    .from('plans')
-    .select('*')
-    .eq('stripe_price_id', stripePriceId)
-    .limit(1);
+  const columns = ['stripe_price_id', 'stripe_monthly_price_id', 'stripe_annual_price_id'] as const;
 
-  if (activeOnly) {
-    query = query.eq('is_active', true);
+  for (const column of columns) {
+    let query = supabase
+      .from('plans')
+      .select('*')
+      .eq(column, stripePriceId)
+      .limit(1);
+
+    if (activeOnly) {
+      query = query.eq('is_active', true);
+    }
+
+    const { data, error } = await query.maybeSingle() as {
+      data: PlanRow | null;
+      error: any;
+    };
+
+    if (error) {
+      throw new Error(error.message || 'Failed to load plan by Stripe price');
+    }
+
+    if (data) {
+      return mapPlanRow(data);
+    }
   }
 
-  const { data, error } = await query.maybeSingle() as {
-    data: PlanRow | null;
-    error: any;
-  };
-
-  if (error) {
-    throw new Error(error.message || 'Failed to load plan by Stripe price');
-  }
-
-  return data ? mapPlanRow(data) : null;
+  return null;
 }

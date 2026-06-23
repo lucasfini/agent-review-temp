@@ -12,6 +12,7 @@ describe('brand voice helpers', () => {
       id: 'voice-1',
       organization_id: 'org-1',
       client_id: null,
+      shared_from_voice_id: null,
       name: 'Default voice',
       description: 'Clear B2B positioning',
       tone: 'Direct and useful',
@@ -29,6 +30,7 @@ describe('brand voice helpers', () => {
       id: 'voice-1',
       organizationId: 'org-1',
       clientId: null,
+      sharedFromVoiceId: null,
       name: 'Default voice',
       description: 'Clear B2B positioning',
       tone: 'Direct and useful',
@@ -37,6 +39,8 @@ describe('brand voice helpers', () => {
       writingExamples: ['Example post'],
       bannedPhrases: ['game-changing'],
       ctaPreferences: 'Ask for a reply',
+      ownerUserId: null,
+      locked: false,
       createdBy: 'user-1',
       createdAt: '2026-06-05T00:00:00.000Z',
       updatedAt: '2026-06-05T00:00:00.000Z',
@@ -94,7 +98,8 @@ describe('brand voice helpers', () => {
   it('limits brand voice management to organization managers', () => {
     expect(canManageBrandVoice('owner', 'saas_customer')).toBe(true);
     expect(canManageBrandVoice('admin', 'saas_customer')).toBe(true);
-    expect(canManageBrandVoice('member', 'saas_customer')).toBe(false);
+    expect(canManageBrandVoice('editor', 'saas_customer')).toBe(true);
+    expect(canManageBrandVoice('reader', 'saas_customer')).toBe(false);
     expect(canManageBrandVoice('agency_admin', 'internal_agency')).toBe(true);
     expect(canManageBrandVoice('agency_admin', 'saas_customer')).toBe(false);
   });

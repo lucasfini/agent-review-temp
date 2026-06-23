@@ -10,9 +10,9 @@ interface AuthContextType {
   session: Session | null;
   loading: boolean;
   isDemoMode: boolean;
-  signUp: (email: string, password: string, name?: string) => Promise<{ data: any; error: any }>;
+  signUp: (email: string, password: string, name?: string, nextPath?: string | null) => Promise<{ data: any; error: any }>;
   signIn: (email: string, password: string) => Promise<{ error: any }>;
-  signInWithGoogle: () => Promise<{ error: any }>;
+  signInWithGoogle: (nextPath?: string | null) => Promise<{ error: any }>;
   signOut: () => Promise<{ error: any }>;
 }
 
@@ -121,13 +121,21 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
     return () => subscription.unsubscribe();
   }, []);
 
-  const signUp = async (email: string, password: string, name?: string) => {
+  const authCallbackUrl = (nextPath?: string | null) => {
+    const callback = new URL('/auth/callback', window.location.origin);
+    if (nextPath && nextPath.startsWith('/')) {
+      callback.searchParams.set('next', nextPath);
+    }
+    return callback.toString();
+  };
+
+  const signUp = async (email: string, password: string, name?: string, nextPath?: string | null) => {
     const now = new Date().toISOString();
     const { data, error } = await supabase.auth.signUp({
       email,
       password,
       options: {
-        emailRedirectTo: `${window.location.origin}/auth/callback`,
+        emailRedirectTo: authCallbackUrl(nextPath),
         data: {
           ...(name ? { full_name: name } : {}),
           terms_accepted_at: now,
@@ -146,11 +154,11 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
     return { error };
   };
 
-  const signInWithGoogle = async () => {
+  const signInWithGoogle = async (nextPath?: string | null) => {
     const { error } = await supabase.auth.signInWithOAuth({
       provider: 'google',
       options: {
-        redirectTo: `${window.location.origin}/auth/callback`,
+        redirectTo: authCallbackUrl(nextPath),
       },
     });
     return { error };

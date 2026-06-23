@@ -1,15 +1,17 @@
 import { NextRequest, NextResponse } from 'next/server';
 
 import { RouteAccessError } from '@/lib/api/route-auth';
-import { requireActiveOrganizationForUser } from '@/lib/authz/permissions';
+import { can } from '@/lib/authz/permissions';
 import { OrganizationAccessError } from '@/lib/authz/types';
 import {
   BrandVoiceValidationError,
   canManageBrandVoice,
   createBrandVoice,
-  listBrandVoices,
+  decorateBrandVoiceScope,
+  listBrandVoicesForOrganizations,
 } from '@/lib/brand-voices';
 import { isDemoUser } from '@/lib/demo-mode';
+import { requireStudioAssetContext } from '@/lib/studio-assets';
 import { supabaseAdmin } from '@/lib/supabase/server';
 
 export const dynamic = 'force-dynamic';
@@ -32,22 +34,32 @@ export async function GET(request: NextRequest) {
   try {
     const { searchParams } = new URL(request.url);
     const requestedOrganizationId = searchParams.get('organization_id');
-    const { organization, membership } = await requireActiveOrganizationForUser(request, {
+    const context = await requireStudioAssetContext(request, {
       requestedOrganizationId,
     });
-    const brandVoices = await listBrandVoices(supabaseAdmin, organization.id);
+    const brandVoices = (await listBrandVoicesForOrganizations(supabaseAdmin, context.organizationIds))
+      .map((voice) => decorateBrandVoiceScope(voice, {
+        activeOrganizationId: context.activeOrganizationId,
+        privateOrganizationId: context.privateOrganizationId,
+        userId: context.user.id,
+        role: context.membership.role,
+        organizationType: context.organization.type,
+      }));
 
     return NextResponse.json({
       success: true,
       organization: {
-        id: organization.id,
-        name: organization.name,
-        type: organization.type,
+        id: context.organization.id,
+        name: context.organization.name,
+        type: context.organization.type,
+      },
+      privateOrganization: {
+        id: context.privateOrganization.id,
       },
       membership: {
-        role: membership.role,
-        status: membership.status,
-        canManageBrandVoice: canManageBrandVoice(membership.role, organization.type),
+        role: context.membership.role,
+        status: context.membership.status,
+        canManageBrandVoice: canManageBrandVoice(context.membership.role, context.organization.type),
       },
       brandVoices,
     });
@@ -64,22 +76,32 @@ export async function POST(request: NextRequest) {
       : typeof body?.organization_id === 'string'
         ? body.organization_id
         : new URL(request.url).searchParams.get('organization_id');
-    const { user, organization, membership } = await requireActiveOrganizationForUser(request, {
+    const context = await requireStudioAssetContext(request, {
       requestedOrganizationId,
     });
 
-    if (isDemoUser(user)) {
+    if (isDemoUser(context.user)) {
       return NextResponse.json({ error: 'Demo account is read-only' }, { status: 403 });
     }
-
-    if (!canManageBrandVoice(membership.role, organization.type)) {
-      return NextResponse.json(
-        { error: 'Brand voice management requires organization owner or admin access' },
-        { status: 403 }
-      );
+    if (!can({
+      userId: context.user.id,
+      organizationId: context.activeOrganizationId,
+      organizationType: context.organization.type,
+      role: context.membership.role,
+    }, 'voice.create', { organizationId: context.activeOrganizationId })) {
+      return NextResponse.json({ error: 'You do not have permission to create voices' }, { status: 403 });
     }
 
-    const brandVoice = await createBrandVoice(supabaseAdmin, organization.id, user.id, body);
+    const brandVoice = decorateBrandVoiceScope(
+      await createBrandVoice(supabaseAdmin, context.privateOrganizationId, context.user.id, body),
+      {
+        activeOrganizationId: context.activeOrganizationId,
+        privateOrganizationId: context.privateOrganizationId,
+        userId: context.user.id,
+        role: context.membership.role,
+        organizationType: context.organization.type,
+      }
+    );
 
     return NextResponse.json({
       success: true,

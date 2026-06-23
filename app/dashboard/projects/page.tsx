@@ -20,6 +20,11 @@ import TeamsStyleTranscript from '@/components/TeamsStyleTranscript';
 import ContextSidebar from '@/components/ContextSidebar';
 import { CONTENT_TYPES, MAX_CUSTOM_GUIDANCE_LENGTH, normalizeCustomGuidance, type ContentBlock } from '@/lib/content-types';
 import { DEFAULT_THEME_ID } from '@/lib/content-themes';
+import type { StudioContentContext } from '@/components/project/InlineContentStudio';
+import type { BrandVoice } from '@/lib/brand-voices';
+import type { Campaign } from '@/lib/campaigns-content-library';
+import type { ContentLibrary } from '@/lib/content-libraries';
+import type { CreatorProfile } from '@/lib/creator-profiles';
 import type { AudioPlayerRef } from '@/lib/hooks/useSpeakerSample';
 import { useProjectRefresh, useSpeakerDataRefresh } from '@/lib/hooks/useProjectRefresh';
 import { emitProjectMutation } from '@/lib/project-events';
@@ -154,6 +159,60 @@ const isProjectAudioExpired = (project: Project | null): boolean => {
 };
 
 type ContentGuidanceMap = Record<string, string>;
+type ContentContextMap = Record<string, StudioContentContext>;
+
+function pickContextValue(
+  blockValue: string | null | undefined,
+  savedValue: string | null | undefined,
+  defaultValue: string | null | undefined
+): string | null {
+  if (blockValue !== undefined) return blockValue || null;
+  if (savedValue !== undefined) return savedValue || null;
+  return defaultValue || null;
+}
+
+function normalizeContextId(value: unknown): string | null {
+  if (typeof value !== 'string') return null;
+  const trimmed = value.trim();
+  return trimmed.length > 0 ? trimmed : null;
+}
+
+function hasOwnField(value: object, field: string): boolean {
+  return Object.prototype.hasOwnProperty.call(value, field);
+}
+
+function readStoredContextId(
+  context: Record<string, unknown>,
+  camelKey: keyof StudioContentContext,
+  snakeKey: string
+): string | null | undefined {
+  if (hasOwnField(context, camelKey)) {
+    return normalizeContextId(context[camelKey]);
+  }
+  if (hasOwnField(context, snakeKey)) {
+    return normalizeContextId(context[snakeKey]);
+  }
+  return undefined;
+}
+
+function cleanContentContextSelection(value: StudioContentContext): StudioContentContext {
+  const cleaned: StudioContentContext = {};
+
+  if (hasOwnField(value, 'creatorProfileId')) {
+    cleaned.creatorProfileId = normalizeContextId(value.creatorProfileId);
+  }
+  if (hasOwnField(value, 'brandVoiceId')) {
+    cleaned.brandVoiceId = normalizeContextId(value.brandVoiceId);
+  }
+  if (hasOwnField(value, 'campaignId')) {
+    cleaned.campaignId = normalizeContextId(value.campaignId);
+  }
+  if (hasOwnField(value, 'libraryId')) {
+    cleaned.libraryId = normalizeContextId(value.libraryId);
+  }
+
+  return cleaned;
+}
 
 function getProjectContentGuidance(project?: { metadata?: any } | null): ContentGuidanceMap {
   const raw = project?.metadata?.content_generation_preferences?.guidance_by_type;
@@ -169,7 +228,55 @@ function getProjectContentGuidance(project?: { metadata?: any } | null): Content
   return next;
 }
 
-function mergeProjectContentGuidance(metadata: any, guidanceByType: ContentGuidanceMap) {
+function getProjectContentContext(project?: { metadata?: any } | null): ContentContextMap {
+  const raw = project?.metadata?.content_generation_preferences?.context_by_type;
+  if (!raw || typeof raw !== 'object') return {};
+
+  const next: ContentContextMap = {};
+  for (const contentType of CONTENT_TYPES) {
+    const value = (raw as Record<string, unknown>)[contentType.id];
+    if (!value || typeof value !== 'object' || Array.isArray(value)) continue;
+    const context = value as Record<string, unknown>;
+    const creatorProfileId = readStoredContextId(context, 'creatorProfileId', 'creator_profile_id');
+    const brandVoiceId = readStoredContextId(context, 'brandVoiceId', 'brand_voice_id');
+    const campaignId = readStoredContextId(context, 'campaignId', 'campaign_id');
+    const libraryId = readStoredContextId(context, 'libraryId', 'library_id');
+    const nextContext: StudioContentContext = {};
+
+    if (creatorProfileId !== undefined) nextContext.creatorProfileId = creatorProfileId;
+    if (brandVoiceId !== undefined) nextContext.brandVoiceId = brandVoiceId;
+    if (campaignId !== undefined) nextContext.campaignId = campaignId;
+    if (libraryId !== undefined) nextContext.libraryId = libraryId;
+
+    if (Object.keys(nextContext).length > 0) {
+      next[contentType.id] = nextContext;
+    }
+  }
+  return next;
+}
+
+function cleanContentContextByType(contextByType: ContentContextMap): ContentContextMap {
+  const cleanedEntries = Object.entries(contextByType)
+    .filter(([contentTypeId]) => CONTENT_TYPES.some((contentType) => contentType.id === contentTypeId))
+    .map(([contentTypeId, value]) => [contentTypeId, cleanContentContextSelection(value)] as const)
+    .filter(([, value]) => Object.keys(value).length > 0);
+
+  return Object.fromEntries(cleanedEntries);
+}
+
+function serializeContentPreferences(guidanceByType: ContentGuidanceMap, contextByType: ContentContextMap): string {
+  const guidance = Object.fromEntries(
+    Object.entries(guidanceByType)
+      .map(([contentTypeId, value]) => [contentTypeId, normalizeCustomGuidance(value)])
+      .filter(([, value]) => value.length > 0)
+  );
+  return JSON.stringify({
+    guidance,
+    context: cleanContentContextByType(contextByType),
+  });
+}
+
+function mergeProjectContentPreferences(metadata: any, guidanceByType: ContentGuidanceMap, contextByType: ContentContextMap) {
   const cleanedEntries = Object.entries(guidanceByType)
     .map(([contentTypeId, value]) => [contentTypeId, normalizeCustomGuidance(value)] as const)
     .filter(([, value]) => value.length > 0);
@@ -185,6 +292,7 @@ function mergeProjectContentGuidance(metadata: any, guidanceByType: ContentGuida
     content_generation_preferences: {
       ...currentPreferences,
       guidance_by_type: Object.fromEntries(cleanedEntries),
+      context_by_type: cleanContentContextByType(contextByType),
     },
   };
 }
@@ -290,13 +398,18 @@ export default function ProjectsPage() {
   // Per-output delete tracking
   const [deletingOutput, setDeletingOutput] = useState<string | null>(null);
   const [contentGuidanceByType, setContentGuidanceByType] = useState<ContentGuidanceMap>({});
+  const [contentContextByType, setContentContextByType] = useState<ContentContextMap>({});
+  const [creatorProfiles, setCreatorProfiles] = useState<CreatorProfile[]>([]);
+  const [brandVoices, setBrandVoices] = useState<BrandVoice[]>([]);
+  const [campaigns, setCampaigns] = useState<Campaign[]>([]);
+  const [contentLibraries, setContentLibraries] = useState<ContentLibrary[]>([]);
   const previousActiveJobCountRef = useRef(0);
   const previousGenerationJobStatusesRef = useRef<Map<string, string>>(new Map());
   const selectedProjectGenerationActiveRef = useRef(false);
   const selectedProjectArtifactsRefreshRef = useRef<Promise<void> | null>(null);
   const selectedProjectArtifactsRefreshQueuedRef = useRef(false);
   const contentGuidancePersistTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
-  const lastPersistedContentGuidanceRef = useRef<string>('');
+  const lastPersistedContentPreferencesRef = useRef<string>('');
   const { user, session, isDemoMode } = useAuth();
   const { organizationId } = useCurrentOrganization();
   const searchParams = useSearchParams();
@@ -309,6 +422,23 @@ export default function ProjectsPage() {
   const showMobileConversation = isMobileViewport && mobileStudioTab === 'conversation' && mobileHasProjectStage;
   const showMobileContent = isMobileViewport && mobileStudioTab === 'content' && mobileHasProjectStage;
   const showMainStage = !isMobileViewport || showMobileConversation;
+  const authHeaders = useMemo<Record<string, string>>(() => {
+    const headers: Record<string, string> = {};
+    if (session?.access_token) {
+      headers.Authorization = `Bearer ${session.access_token}`;
+    }
+    return headers;
+  }, [session?.access_token]);
+  const defaultStudioContext = useMemo<StudioContentContext>(() => {
+    const defaultProfile = creatorProfiles.find((profile) => profile.isDefault) || creatorProfiles[0] || null;
+    const defaultVoice = brandVoices.length === 1 ? brandVoices[0] : null;
+    return {
+      creatorProfileId: defaultProfile?.id || null,
+      brandVoiceId: defaultVoice?.id || null,
+      campaignId: null,
+      libraryId: null,
+    };
+  }, [brandVoices, creatorProfiles]);
 
   useEffect(() => {
     if (typeof window === 'undefined') return;
@@ -329,6 +459,76 @@ export default function ProjectsPage() {
       desktopQuery.removeEventListener('change', updateViewport);
     };
   }, []);
+
+  useEffect(() => {
+    if (!organizationId) {
+      setCreatorProfiles([]);
+      setBrandVoices([]);
+      setCampaigns([]);
+      setContentLibraries([]);
+      return;
+    }
+
+    let isActive = true;
+
+    const loadStudioContext = async () => {
+      try {
+        const [profilesResponse, voicesResponse, campaignsResponse, librariesResponse] = await Promise.all([
+          fetch(withOrganizationId('/api/creator-profiles', organizationId), {
+            headers: authHeaders,
+            cache: 'no-store',
+          }),
+          fetch(withOrganizationId('/api/brand-voices', organizationId), {
+            headers: authHeaders,
+            cache: 'no-store',
+          }),
+          fetch(withOrganizationId('/api/campaigns', organizationId), {
+            headers: authHeaders,
+            cache: 'no-store',
+          }),
+          fetch(withOrganizationId('/api/content-libraries', organizationId), {
+            headers: authHeaders,
+            cache: 'no-store',
+          }),
+        ]);
+
+        const [profilesPayload, voicesPayload, campaignsPayload, librariesPayload] = await Promise.all([
+          profilesResponse.json().catch(() => ({})),
+          voicesResponse.json().catch(() => ({})),
+          campaignsResponse.json().catch(() => ({})),
+          librariesResponse.json().catch(() => ({})),
+        ]);
+
+        if (!isActive) return;
+
+        setCreatorProfiles(profilesResponse.ok && Array.isArray(profilesPayload.creatorProfiles)
+          ? profilesPayload.creatorProfiles as CreatorProfile[]
+          : []);
+        setBrandVoices(voicesResponse.ok && Array.isArray(voicesPayload.brandVoices)
+          ? voicesPayload.brandVoices as BrandVoice[]
+          : []);
+        setCampaigns(campaignsResponse.ok && Array.isArray(campaignsPayload.campaigns)
+          ? campaignsPayload.campaigns as Campaign[]
+          : []);
+        setContentLibraries(librariesResponse.ok && Array.isArray(librariesPayload.contentLibraries)
+          ? librariesPayload.contentLibraries as ContentLibrary[]
+          : []);
+      } catch (error) {
+        console.error('Error loading Studio context options:', error);
+        if (!isActive) return;
+        setCreatorProfiles([]);
+        setBrandVoices([]);
+        setCampaigns([]);
+        setContentLibraries([]);
+      }
+    };
+
+    void loadStudioContext();
+
+    return () => {
+      isActive = false;
+    };
+  }, [authHeaders, organizationId]);
 
   const activeGenerationJobs = useMemo(
     () => generationJobs.filter((job) => job.status === 'queued' || job.status === 'running'),
@@ -458,8 +658,10 @@ export default function ProjectsPage() {
 
   useEffect(() => {
     const nextGuidance = getProjectContentGuidance(selectedProject);
+    const nextContext = getProjectContentContext(selectedProject);
     setContentGuidanceByType(nextGuidance);
-    lastPersistedContentGuidanceRef.current = JSON.stringify(nextGuidance);
+    setContentContextByType(nextContext);
+    lastPersistedContentPreferencesRef.current = serializeContentPreferences(nextGuidance, nextContext);
   }, [selectedProject, selectedProject?.id, selectedProject?.metadata]);
 
   useEffect(() => {
@@ -469,17 +671,11 @@ export default function ProjectsPage() {
 
     if (!selectedProject?.id || isDemoMode) return;
 
-    const serialized = JSON.stringify(
-      Object.fromEntries(
-        Object.entries(contentGuidanceByType)
-          .map(([contentTypeId, value]) => [contentTypeId, normalizeCustomGuidance(value)])
-          .filter(([, value]) => value.length > 0)
-      )
-    );
+    const serialized = serializeContentPreferences(contentGuidanceByType, contentContextByType);
 
-    if (serialized === lastPersistedContentGuidanceRef.current) return;
+    if (serialized === lastPersistedContentPreferencesRef.current) return;
 
-    const nextMetadata = mergeProjectContentGuidance(selectedProject.metadata, contentGuidanceByType);
+    const nextMetadata = mergeProjectContentPreferences(selectedProject.metadata, contentGuidanceByType, contentContextByType);
     contentGuidancePersistTimeoutRef.current = setTimeout(async () => {
       const { error } = await supabase
         .from('projects')
@@ -492,7 +688,7 @@ export default function ProjectsPage() {
         return;
       }
 
-      lastPersistedContentGuidanceRef.current = serialized;
+      lastPersistedContentPreferencesRef.current = serialized;
       setSelectedProject((prev) => (prev ? { ...prev, metadata: nextMetadata } : prev));
       setProjects((prev) => prev.map((project) => (
         project.id === selectedProject.id ? { ...project, metadata: nextMetadata } : project
@@ -504,7 +700,7 @@ export default function ProjectsPage() {
         clearTimeout(contentGuidancePersistTimeoutRef.current);
       }
     };
-  }, [contentGuidanceByType, isDemoMode, selectedProject?.id, selectedProject?.metadata]);
+  }, [contentContextByType, contentGuidanceByType, isDemoMode, selectedProject?.id, selectedProject?.metadata]);
 
   useEffect(() => {
     if (isDemoMode) return;
@@ -1264,7 +1460,16 @@ export default function ProjectsPage() {
   }, []);
 
   const enqueueGenerationItems = async (
-    items: Array<{ kind: 'analysis' | 'content'; targetKey: string; themeId?: string; customGuidance?: string }>
+    items: Array<{
+      kind: 'analysis' | 'content';
+      targetKey: string;
+      themeId?: string;
+      customGuidance?: string;
+      creatorProfileId?: string | null;
+      brandVoiceId?: string | null;
+      campaignId?: string | null;
+      libraryId?: string | null;
+    }>
   ) => {
     if (!selectedProject?.id) {
       throw new Error('No project selected');
@@ -1298,12 +1503,20 @@ export default function ProjectsPage() {
       const customGuidance = normalizeCustomGuidance(
         block.customGuidance || contentGuidanceByType[block.contentTypeId] || ''
       );
+      const savedContext = contentContextByType[block.contentTypeId] || {};
+      const context = {
+        creatorProfileId: pickContextValue(block.creatorProfileId, savedContext.creatorProfileId, defaultStudioContext.creatorProfileId),
+        brandVoiceId: pickContextValue(block.brandVoiceId, savedContext.brandVoiceId, defaultStudioContext.brandVoiceId),
+        campaignId: pickContextValue(block.campaignId, savedContext.campaignId, defaultStudioContext.campaignId),
+        libraryId: pickContextValue(block.libraryId, savedContext.libraryId, defaultStudioContext.libraryId),
+      };
       await enqueueGenerationItems([
         {
           kind: 'content',
           targetKey: block.contentTypeId,
           themeId: block.theme || DEFAULT_THEME_ID,
           customGuidance,
+          ...context,
         },
       ]);
       showToast(`${block.name} generation started`, 'success');
@@ -1326,6 +1539,21 @@ export default function ProjectsPage() {
       ...prev,
       [contentTypeId]: nextValue,
     }));
+  }, [selectedProject?.id]);
+
+  const handleContentContextChange = useCallback((contentTypeId: string, value: StudioContentContext) => {
+    if (!selectedProject?.id) return;
+
+    const nextValue = cleanContentContextSelection(value);
+    setContentContextByType((prev) => {
+      const next = { ...prev };
+      if (Object.keys(nextValue).length === 0) {
+        delete next[contentTypeId];
+      } else {
+        next[contentTypeId] = nextValue;
+      }
+      return next;
+    });
   }, [selectedProject?.id]);
 
   function isAnalysisOptionAvailable(project: Project | null, key: AnalysisOptionKey) {
@@ -2897,7 +3125,7 @@ export default function ProjectsPage() {
   );
 
   return (
-    <div className="dashboard-page flex flex-col h-full w-full overflow-hidden bg-white dark:bg-slate-950">
+    <div className="dashboard-page flex h-full w-full flex-col overflow-hidden bg-slate-50 dark:bg-slate-950">
       <ConfirmModal
         isOpen={!!pendingDeleteProjectId}
         onClose={() => setPendingDeleteProjectId(null)}
@@ -2934,7 +3162,7 @@ export default function ProjectsPage() {
           )}
           <aside
             data-tour="project-sidebar"
-            className={`flex-shrink-0 border-r border-slate-200 bg-slate-50 transition-all duration-300 ease-in-out dark:border-slate-800 dark:bg-slate-900 ${isMobileViewport
+            className={`flex-shrink-0 border-r border-slate-200 bg-white/95 shadow-sm backdrop-blur transition-all duration-300 ease-in-out dark:border-slate-800 dark:bg-slate-900/95 ${isMobileViewport
               ? showMobileList
                 ? 'flex w-full flex-col overflow-hidden border-r-0 pb-40'
                 : 'hidden'
@@ -3231,7 +3459,7 @@ export default function ProjectsPage() {
             className={`${showMainStage ? 'flex' : 'hidden'} min-w-0 flex-1 flex-col overflow-hidden transition-all duration-300 ease-in-out ${!projectsSidebarOpen && !contextSidebarOpen ? 'lg:w-full' : 'lg:w-1/2'}`}
           >
             {selectedProject ? (
-              <div className="h-full flex flex-col bg-white dark:bg-[#0F172A]">
+              <div className="flex h-full flex-col bg-white dark:bg-slate-950">
                 {(!isMobileViewport || !mobileConversationChromeCollapsed) && (
                 <div className="flex-shrink-0 border-b border-slate-200 bg-white/95 px-4 py-3 backdrop-blur dark:border-slate-800 dark:bg-slate-900/95 lg:hidden">
                   <div className="flex items-center gap-2">
@@ -3831,6 +4059,13 @@ export default function ProjectsPage() {
             onGenerateContentBlock={handleGenerateContentBlock}
             contentGuidanceByType={contentGuidanceByType}
             onContentGuidanceChange={handleContentGuidanceChange}
+            contentContextByType={contentContextByType}
+            defaultContentContext={defaultStudioContext}
+            onContentContextChange={handleContentContextChange}
+            creatorProfiles={creatorProfiles}
+            brandVoices={brandVoices}
+            campaigns={campaigns}
+            contentLibraries={contentLibraries}
             analysisStates={Object.fromEntries(
               ANALYSIS_OPTION_CONFIG.map((option) => [
                 option.key,

@@ -1,15 +1,17 @@
 import { NextRequest, NextResponse } from 'next/server';
 
 import { RouteAccessError } from '@/lib/api/route-auth';
-import { requireActiveOrganizationForUser } from '@/lib/authz/permissions';
+import { can } from '@/lib/authz/permissions';
 import { OrganizationAccessError } from '@/lib/authz/types';
 import {
   CampaignLibraryValidationError,
   canManageCampaignLibrary,
   createCampaign,
-  listCampaigns,
+  decorateCampaignScope,
+  listCampaignsForOrganizations,
 } from '@/lib/campaigns-content-library';
 import { isDemoUser } from '@/lib/demo-mode';
+import { requireStudioAssetContext } from '@/lib/studio-assets';
 import { supabaseAdmin } from '@/lib/supabase/server';
 
 export const dynamic = 'force-dynamic';
@@ -36,22 +38,32 @@ function requestedOrganizationIdFrom(request: NextRequest, body?: any): string |
 
 export async function GET(request: NextRequest) {
   try {
-    const { organization, membership } = await requireActiveOrganizationForUser(request, {
+    const context = await requireStudioAssetContext(request, {
       requestedOrganizationId: requestedOrganizationIdFrom(request),
     });
-    const campaigns = await listCampaigns(supabaseAdmin, organization.id);
+    const campaigns = (await listCampaignsForOrganizations(supabaseAdmin, context.organizationIds))
+      .map((campaign) => decorateCampaignScope(campaign, {
+        activeOrganizationId: context.activeOrganizationId,
+        privateOrganizationId: context.privateOrganizationId,
+        userId: context.user.id,
+        role: context.membership.role,
+        organizationType: context.organization.type,
+      }));
 
     return NextResponse.json({
       success: true,
       organization: {
-        id: organization.id,
-        name: organization.name,
-        type: organization.type,
+        id: context.organization.id,
+        name: context.organization.name,
+        type: context.organization.type,
+      },
+      privateOrganization: {
+        id: context.privateOrganization.id,
       },
       membership: {
-        role: membership.role,
-        status: membership.status,
-        canManageCampaignLibrary: canManageCampaignLibrary(membership.role, organization.type),
+        role: context.membership.role,
+        status: context.membership.status,
+        canManageCampaignLibrary: canManageCampaignLibrary(context.membership.role, context.organization.type),
       },
       campaigns,
     });
@@ -63,22 +75,32 @@ export async function GET(request: NextRequest) {
 export async function POST(request: NextRequest) {
   try {
     const body = await request.json().catch(() => ({}));
-    const { user, organization, membership } = await requireActiveOrganizationForUser(request, {
+    const context = await requireStudioAssetContext(request, {
       requestedOrganizationId: requestedOrganizationIdFrom(request, body),
     });
 
-    if (isDemoUser(user)) {
+    if (isDemoUser(context.user)) {
       return NextResponse.json({ error: 'Demo account is read-only' }, { status: 403 });
     }
-
-    if (!canManageCampaignLibrary(membership.role, organization.type)) {
-      return NextResponse.json(
-        { error: 'Campaign and library management requires organization owner or admin access' },
-        { status: 403 }
-      );
+    if (!can({
+      userId: context.user.id,
+      organizationId: context.activeOrganizationId,
+      organizationType: context.organization.type,
+      role: context.membership.role,
+    }, 'plan.create', { organizationId: context.activeOrganizationId })) {
+      return NextResponse.json({ error: 'You do not have permission to create plans' }, { status: 403 });
     }
 
-    const campaign = await createCampaign(supabaseAdmin, organization.id, user.id, body);
+    const campaign = decorateCampaignScope(
+      await createCampaign(supabaseAdmin, context.privateOrganizationId, context.user.id, body),
+      {
+        activeOrganizationId: context.activeOrganizationId,
+        privateOrganizationId: context.privateOrganizationId,
+        userId: context.user.id,
+        role: context.membership.role,
+        organizationType: context.organization.type,
+      }
+    );
 
     return NextResponse.json({
       success: true,

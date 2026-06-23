@@ -1,15 +1,16 @@
 import { NextRequest, NextResponse } from 'next/server';
 
 import { RouteAccessError } from '@/lib/api/route-auth';
-import { requireActiveOrganizationForUser } from '@/lib/authz/permissions';
+import { can, requirePermissionContext } from '@/lib/authz/permissions';
 import { OrganizationAccessError } from '@/lib/authz/types';
 import {
   CampaignLibraryValidationError,
-  canManageCampaignLibrary,
   createContentLibraryItem,
+  decorateContentLibraryItemAccess,
   listContentLibraryItems,
 } from '@/lib/campaigns-content-library';
-import { isDemoUser } from '@/lib/demo-mode';
+import { recordOrganizationAuditLog } from '@/lib/organizations/audit';
+import { createResourceVersion } from '@/lib/resource-versions';
 import { supabaseAdmin } from '@/lib/supabase/server';
 
 export const dynamic = 'force-dynamic';
@@ -34,15 +35,46 @@ function requestedOrganizationIdFrom(request: NextRequest, body?: any): string |
   return new URL(request.url).searchParams.get('organization_id');
 }
 
+function buildVersionSnapshot(item: any) {
+  return {
+    id: item.id,
+    title: item.title,
+    contentType: item.contentType,
+    platform: item.platform,
+    status: item.status,
+    excerpt: item.excerpt,
+    body: item.body,
+    sourceLabel: item.sourceLabel,
+    tags: item.tags,
+    libraryId: item.libraryId,
+    campaignId: item.campaignId,
+    creatorProfileId: item.creatorProfileId,
+    brandVoiceId: item.brandVoiceId,
+    projectId: item.projectId,
+    outputId: item.outputId,
+    publishedAt: item.publishedAt,
+    scheduledFor: item.scheduledFor || null,
+    approvedByUserId: item.approvedByUserId || null,
+    approvedAt: item.approvedAt || null,
+    generationContextSnapshot: item.generationContextSnapshot || {},
+    ownerUserId: item.ownerUserId || null,
+    locked: Boolean(item.locked),
+    metadata: item.metadata || {},
+    updatedAt: item.updatedAt,
+  };
+}
+
 export async function GET(request: NextRequest) {
   try {
     const { searchParams } = new URL(request.url);
-    const { organization, membership } = await requireActiveOrganizationForUser(request, {
+    const { user, organization, membership, permissionContext } = await requirePermissionContext(request, {
       requestedOrganizationId: requestedOrganizationIdFrom(request),
     });
     const rawLimit = Number(searchParams.get('limit') || '100');
     const contentItems = await listContentLibraryItems(supabaseAdmin, organization.id, {
       campaignId: searchParams.get('campaign_id'),
+      libraryId: searchParams.get('library_id'),
+      creatorProfileId: searchParams.get('creator_profile_id'),
       status: searchParams.get('status'),
       limit: Number.isFinite(rawLimit) ? rawLimit : 100,
     });
@@ -57,9 +89,17 @@ export async function GET(request: NextRequest) {
       membership: {
         role: membership.role,
         status: membership.status,
-        canManageCampaignLibrary: canManageCampaignLibrary(membership.role, organization.type),
+        canManageCampaignLibrary: can(permissionContext, 'library_item.create', {
+          organizationId: organization.id,
+          visibility: 'workspace',
+        }),
       },
-      contentItems,
+      contentItems: contentItems.map((item) => decorateContentLibraryItemAccess(item, {
+        organizationId: organization.id,
+        userId: user.id,
+        role: membership.role,
+        organizationType: organization.type,
+      })),
     });
   } catch (error) {
     return errorResponse(error, 'Failed to load content library');
@@ -69,22 +109,50 @@ export async function GET(request: NextRequest) {
 export async function POST(request: NextRequest) {
   try {
     const body = await request.json().catch(() => ({}));
-    const { user, organization, membership } = await requireActiveOrganizationForUser(request, {
+    const { user, organization, permissionContext } = await requirePermissionContext(request, {
       requestedOrganizationId: requestedOrganizationIdFrom(request, body),
     });
 
-    if (isDemoUser(user)) {
+    if (permissionContext.isDemo) {
       return NextResponse.json({ error: 'Demo account is read-only' }, { status: 403 });
     }
-
-    if (!canManageCampaignLibrary(membership.role, organization.type)) {
-      return NextResponse.json(
-        { error: 'Campaign and library management requires organization owner or admin access' },
-        { status: 403 }
-      );
+    if (!can(permissionContext, 'library_item.create', { organizationId: organization.id, visibility: 'workspace' })) {
+      return NextResponse.json({ error: 'You do not have permission to create drafts' }, { status: 403 });
     }
 
     const contentItem = await createContentLibraryItem(supabaseAdmin, organization.id, user.id, body);
+
+    await recordOrganizationAuditLog({
+      supabase: supabaseAdmin,
+      organizationId: organization.id,
+      actorUserId: user.id,
+      action: 'library_item.created',
+      resourceType: 'library_item',
+      resourceId: contentItem.id,
+      metadata: {
+        title: contentItem.title,
+        contentType: contentItem.contentType,
+        status: contentItem.status,
+        platform: contentItem.platform,
+        libraryId: contentItem.libraryId,
+        campaignId: contentItem.campaignId,
+      },
+    });
+
+    try {
+      await createResourceVersion({
+        supabase: supabaseAdmin,
+        organizationId: organization.id,
+        resourceType: 'library_item',
+        resourceId: contentItem.id,
+        changedByUserId: user.id,
+        changeSummary: 'Created draft',
+        snapshot: buildVersionSnapshot(contentItem),
+        previousSnapshot: null,
+      });
+    } catch (versionError) {
+      console.error('[CONTENT_LIBRARY] Failed to create initial version:', versionError);
+    }
 
     return NextResponse.json({
       success: true,

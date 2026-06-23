@@ -3,14 +3,15 @@ import { getConnection } from '../../_utils';
 import { supabaseAdmin } from '@/lib/supabase/server';
 import { importRecording } from '@/lib/integrations/importer';
 import { downloadYouTubeAudio, YouTubeImportError } from '@/lib/url-importer';
-import { billingErrorResponse, requireCredits } from '@/lib/billing/middleware';
+import { billingErrorResponse } from '@/lib/billing/middleware';
 import { estimateTranscriptionCostAsync } from '@/lib/billing/cost-map';
 import { getProcessingTierForAnalysis, normalizeAnalysisOptions } from '@/lib/analysis-options';
-import { createReservation, releaseReservation } from '@/lib/billing/credit';
-import { estimateReservationAmount } from '@/lib/billing/reserve-amount';
+import { releaseReservation } from '@/lib/billing/credit';
 import { resolveOrganizationIdForWrite } from '@/lib/authz/organization-context';
 import { runEntitlementGuard } from '@/lib/billing/entitlement-guards';
 import { recordSubscriptionUsage } from '@/lib/billing/subscription-usage-counters';
+import { assertPlanUploadDuration, createPlanCreditReservation } from '@/lib/billing/plan-credits';
+import { estimateAudioProductCredits } from '@/lib/billing/product-credits';
 
 export const runtime = 'nodejs';
 export const dynamic = 'force-dynamic';
@@ -41,9 +42,13 @@ export async function POST(request: NextRequest) {
       tier: performanceLevel,
       analysisOptions,
     });
-    const estimatedHold = estimateReservationAmount(estimatedCost.total, 'upload_processing');
 
     const organizationId = await resolveOrganizationIdForWrite(user.id);
+    const subscription = await assertPlanUploadDuration({
+      organizationId,
+      userId: user.id,
+      durationSeconds: estimatedDurationSeconds,
+    });
     const entitlementGuard = await runEntitlementGuard({
       organizationId,
       legacyUserId: user.id,
@@ -61,8 +66,6 @@ export async function POST(request: NextRequest) {
     if (entitlementGuard.response) {
       return entitlementGuard.response;
     }
-
-    await requireCredits(user.id, estimatedHold);
 
     if (!videoId) {
       return NextResponse.json({ error: 'Missing videoId' }, { status: 400 });
@@ -88,15 +91,23 @@ export async function POST(request: NextRequest) {
     const url = `https://www.youtube.com/watch?v=${encodeURIComponent(videoId)}`;
     const yt = await downloadYouTubeAudio(url);
 
-    const reservation = await createReservation({
+    const estimatedProductCredits = estimateAudioProductCredits({
+      durationSeconds: estimatedDurationSeconds,
+      tier: performanceLevel,
+    });
+    const reservation = await createPlanCreditReservation({
       userId: user.id,
       organizationId,
       workflowType: 'upload_processing',
-      amount: estimatedHold,
+      amount: estimatedProductCredits,
+      subscription,
       metadata: {
         source: 'youtube_import',
         videoId,
         estimatedCost: estimatedCost.total,
+        estimatedProviderCost: estimatedCost.total,
+        productCreditAmount: estimatedProductCredits,
+        productCreditWorkflow: performanceLevel,
         analysisOptions,
         estimatedDurationSeconds,
       },
@@ -115,7 +126,7 @@ export async function POST(request: NextRequest) {
         analysisOptions,
         organizationId,
         reservationId: reservation.id,
-        reservationHoldAmount: estimatedHold,
+        reservationHoldAmount: estimatedProductCredits,
         reservationEstimatedCost: estimatedCost.total,
         externalSource: { provider: 'youtube', recordingId: videoId }
       });

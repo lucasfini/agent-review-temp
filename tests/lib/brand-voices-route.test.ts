@@ -1,24 +1,36 @@
 import { OrganizationAccessError } from '@/lib/authz/types';
 
 const mockRequireActiveOrganizationForUser = jest.fn();
-const mockListBrandVoices = jest.fn();
+const mockRequirePermissionContext = jest.fn();
+const mockRequireStudioAssetContext = jest.fn();
+const mockListBrandVoicesForOrganizations = jest.fn();
 const mockCreateBrandVoice = jest.fn();
-const mockGetBrandVoice = jest.fn();
+const mockGetBrandVoiceInOrganizations = jest.fn();
 const mockUpdateBrandVoice = jest.fn();
 const mockDeleteBrandVoice = jest.fn();
 const mockIsDemoUser = jest.fn();
+const mockRecordOrganizationAuditLog = jest.fn();
 
-jest.mock('@/lib/authz/permissions', () => ({
-  requireActiveOrganizationForUser: (...args: any[]) => mockRequireActiveOrganizationForUser(...args),
+jest.mock('@/lib/authz/permissions', () => {
+  const actual = jest.requireActual('@/lib/authz/permissions');
+  return {
+    ...actual,
+    requireActiveOrganizationForUser: (...args: any[]) => mockRequireActiveOrganizationForUser(...args),
+    requirePermissionContext: (...args: any[]) => mockRequirePermissionContext(...args),
+  };
+});
+
+jest.mock('@/lib/studio-assets', () => ({
+  requireStudioAssetContext: (...args: any[]) => mockRequireStudioAssetContext(...args),
 }));
 
 jest.mock('@/lib/brand-voices', () => {
   const actual = jest.requireActual('@/lib/brand-voices');
   return {
     ...actual,
-    listBrandVoices: (...args: any[]) => mockListBrandVoices(...args),
+    listBrandVoicesForOrganizations: (...args: any[]) => mockListBrandVoicesForOrganizations(...args),
     createBrandVoice: (...args: any[]) => mockCreateBrandVoice(...args),
-    getBrandVoice: (...args: any[]) => mockGetBrandVoice(...args),
+    getBrandVoiceInOrganizations: (...args: any[]) => mockGetBrandVoiceInOrganizations(...args),
     updateBrandVoice: (...args: any[]) => mockUpdateBrandVoice(...args),
     deleteBrandVoice: (...args: any[]) => mockDeleteBrandVoice(...args),
   };
@@ -26,6 +38,10 @@ jest.mock('@/lib/brand-voices', () => {
 
 jest.mock('@/lib/demo-mode', () => ({
   isDemoUser: (...args: any[]) => mockIsDemoUser(...args),
+}));
+
+jest.mock('@/lib/organizations/audit', () => ({
+  recordOrganizationAuditLog: (...args: any[]) => mockRecordOrganizationAuditLog(...args),
 }));
 
 jest.mock('@/lib/supabase/server', () => ({
@@ -38,18 +54,24 @@ const organization = {
   name: 'Acme Workspace',
   type: 'saas_customer',
 };
+const privateOrganization = {
+  id: 'personal-1',
+  name: 'User Workspace',
+  type: 'personal_legacy',
+};
 const ownerMembership = {
   role: 'owner',
   status: 'active',
 };
 const memberMembership = {
-  role: 'member',
+  role: 'editor',
   status: 'active',
 };
 const brandVoice = {
   id: 'voice-1',
   organizationId: 'org-1',
   clientId: null,
+  sharedFromVoiceId: null,
   name: 'Default voice',
   description: null,
   tone: 'Direct',
@@ -66,24 +88,49 @@ const brandVoice = {
 describe('brand voice routes', () => {
   beforeEach(() => {
     mockRequireActiveOrganizationForUser.mockReset();
-    mockListBrandVoices.mockReset();
+    mockRequirePermissionContext.mockReset();
+    mockRequireStudioAssetContext.mockReset();
+    mockListBrandVoicesForOrganizations.mockReset();
     mockCreateBrandVoice.mockReset();
-    mockGetBrandVoice.mockReset();
+    mockGetBrandVoiceInOrganizations.mockReset();
     mockUpdateBrandVoice.mockReset();
     mockDeleteBrandVoice.mockReset();
     mockIsDemoUser.mockReset();
+    mockRecordOrganizationAuditLog.mockReset();
 
     mockRequireActiveOrganizationForUser.mockResolvedValue({
       user,
       organization,
       membership: ownerMembership,
     });
+    mockRequirePermissionContext.mockResolvedValue({
+      user,
+      organization,
+      membership: ownerMembership,
+      permissionContext: {
+        userId: user.id,
+        organizationId: organization.id,
+        organizationType: organization.type,
+        role: ownerMembership.role,
+        isDemo: false,
+      },
+    });
+    mockRequireStudioAssetContext.mockResolvedValue({
+      user,
+      organization,
+      membership: ownerMembership,
+      privateOrganization,
+      privateOrganizationId: privateOrganization.id,
+      activeOrganizationId: organization.id,
+      organizationIds: [privateOrganization.id, organization.id],
+    });
     mockIsDemoUser.mockReturnValue(false);
+    mockRecordOrganizationAuditLog.mockResolvedValue(undefined);
   });
 
   it('lists brand voices for the requested organization context', async () => {
     const { GET } = await import('@/app/api/brand-voices/route');
-    mockListBrandVoices.mockResolvedValue([brandVoice]);
+    mockListBrandVoicesForOrganizations.mockResolvedValue([brandVoice]);
 
     const response = await GET(
       new Request('http://localhost/api/brand-voices?organization_id=org-1') as any
@@ -91,18 +138,24 @@ describe('brand voice routes', () => {
     const payload = await response.json();
 
     expect(response.status).toBe(200);
-    expect(payload.brandVoices).toEqual([brandVoice]);
+    expect(payload.brandVoices).toEqual([
+      expect.objectContaining({
+        id: 'voice-1',
+        scope: 'organization',
+        canEdit: true,
+      }),
+    ]);
     expect(payload.membership.canManageBrandVoice).toBe(true);
-    expect(mockRequireActiveOrganizationForUser).toHaveBeenCalledWith(
+    expect(mockRequireStudioAssetContext).toHaveBeenCalledWith(
       expect.anything(),
       { requestedOrganizationId: 'org-1' }
     );
-    expect(mockListBrandVoices).toHaveBeenCalledWith(expect.anything(), 'org-1');
+    expect(mockListBrandVoicesForOrganizations).toHaveBeenCalledWith(expect.anything(), ['personal-1', 'org-1']);
   });
 
   it('does not list brand voices when organization access is denied', async () => {
     const { GET } = await import('@/app/api/brand-voices/route');
-    mockRequireActiveOrganizationForUser.mockRejectedValue(new OrganizationAccessError(403, 'Forbidden'));
+    mockRequireStudioAssetContext.mockRejectedValue(new OrganizationAccessError(403, 'Forbidden'));
 
     const response = await GET(
       new Request('http://localhost/api/brand-voices?organization_id=other-org') as any
@@ -111,12 +164,15 @@ describe('brand voice routes', () => {
 
     expect(response.status).toBe(403);
     expect(payload).toEqual({ error: 'Forbidden' });
-    expect(mockListBrandVoices).not.toHaveBeenCalled();
+    expect(mockListBrandVoicesForOrganizations).not.toHaveBeenCalled();
   });
 
-  it('creates a brand voice for organization owners', async () => {
+  it('creates a private brand voice for signed-in users', async () => {
     const { POST } = await import('@/app/api/brand-voices/route');
-    mockCreateBrandVoice.mockResolvedValue(brandVoice);
+    mockCreateBrandVoice.mockResolvedValue({
+      ...brandVoice,
+      organizationId: 'personal-1',
+    });
 
     const response = await POST(new Request('http://localhost/api/brand-voices', {
       method: 'POST',
@@ -129,21 +185,35 @@ describe('brand voice routes', () => {
     const payload = await response.json();
 
     expect(response.status).toBe(201);
-    expect(payload.brandVoice).toEqual(brandVoice);
+    expect(payload.brandVoice).toEqual(expect.objectContaining({
+      organizationId: 'personal-1',
+      scope: 'private',
+      canEdit: true,
+    }));
     expect(mockCreateBrandVoice).toHaveBeenCalledWith(
       expect.anything(),
-      'org-1',
+      'personal-1',
       'user-1',
       expect.objectContaining({ name: 'Default voice', tone: 'Direct' })
     );
   });
 
-  it('blocks non-admin members from creating brand voices', async () => {
+  it('allows non-admin members to create private brand voices', async () => {
     const { POST } = await import('@/app/api/brand-voices/route');
-    mockRequireActiveOrganizationForUser.mockResolvedValue({
+    mockRequireStudioAssetContext.mockResolvedValue({
       user,
       organization,
       membership: memberMembership,
+      privateOrganization,
+      privateOrganizationId: privateOrganization.id,
+      activeOrganizationId: organization.id,
+      organizationIds: [privateOrganization.id, organization.id],
+    });
+    mockCreateBrandVoice.mockResolvedValue({
+      ...brandVoice,
+      id: 'voice-member',
+      organizationId: 'personal-1',
+      name: 'Member edit',
     });
 
     const response = await POST(new Request('http://localhost/api/brand-voices', {
@@ -152,9 +222,17 @@ describe('brand voice routes', () => {
     }) as any);
     const payload = await response.json();
 
-    expect(response.status).toBe(403);
-    expect(payload.error).toBe('Brand voice management requires organization owner or admin access');
-    expect(mockCreateBrandVoice).not.toHaveBeenCalled();
+    expect(response.status).toBe(201);
+    expect(payload.brandVoice).toEqual(expect.objectContaining({
+      id: 'voice-member',
+      scope: 'private',
+    }));
+    expect(mockCreateBrandVoice).toHaveBeenCalledWith(
+      expect.anything(),
+      'personal-1',
+      'user-1',
+      expect.objectContaining({ name: 'Member edit' })
+    );
   });
 
   it('blocks demo users from brand voice writes', async () => {
@@ -174,6 +252,7 @@ describe('brand voice routes', () => {
 
   it('updates an existing brand voice by id', async () => {
     const { PATCH } = await import('@/app/api/brand-voices/[id]/route');
+    mockGetBrandVoiceInOrganizations.mockResolvedValue(brandVoice);
     mockUpdateBrandVoice.mockResolvedValue({ ...brandVoice, tone: 'Warm' });
 
     const response = await PATCH(new Request('http://localhost/api/brand-voices/voice-1', {
@@ -194,7 +273,7 @@ describe('brand voice routes', () => {
 
   it('returns 404 when updating a missing brand voice', async () => {
     const { PATCH } = await import('@/app/api/brand-voices/[id]/route');
-    mockUpdateBrandVoice.mockResolvedValue(null);
+    mockGetBrandVoiceInOrganizations.mockResolvedValue(null);
 
     const response = await PATCH(new Request('http://localhost/api/brand-voices/missing', {
       method: 'PATCH',
@@ -208,6 +287,7 @@ describe('brand voice routes', () => {
 
   it('deletes an existing brand voice by id', async () => {
     const { DELETE } = await import('@/app/api/brand-voices/[id]/route');
+    mockGetBrandVoiceInOrganizations.mockResolvedValue(brandVoice);
     mockDeleteBrandVoice.mockResolvedValue(true);
 
     const response = await DELETE(

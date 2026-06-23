@@ -56,7 +56,8 @@ function summarizePlanRows(rows) {
     ? rows.filter((row) => row && row.is_active !== false)
     : [];
   const activePlansMissingStripePrice = activePlans
-    .filter((row) => !isFilled(row.stripe_price_id))
+    .filter((row) => row.slug !== 'free')
+    .filter((row) => !isFilled(row.stripe_monthly_price_id || row.stripe_price_id) || !isFilled(row.stripe_annual_price_id))
     .map((row) => row.slug || row.id || '(unknown)');
 
   return {
@@ -108,7 +109,7 @@ async function loadReadOnlyDatabaseChecks(options = {}) {
 
   const planResult = await supabase
     .from('plans')
-    .select('id, slug, name, is_active, stripe_price_id')
+    .select('id, slug, name, is_active, stripe_price_id, stripe_monthly_price_id, stripe_annual_price_id')
     .eq('is_active', true)
     .order('display_order', { ascending: true });
 

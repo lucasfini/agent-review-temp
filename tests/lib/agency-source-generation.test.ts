@@ -112,7 +112,7 @@ describe('agency source generation helpers', () => {
       brandVoiceId: 'voice-1',
       contentType: 'linkedin_posts',
       platform: 'linkedin',
-      status: 'review',
+      status: 'in_review',
       body: 'Generated draft body',
       metadata: expect.objectContaining({
         agencyGenerated: true,

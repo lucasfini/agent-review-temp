@@ -20,6 +20,25 @@ Use these files instead of hard-coded pricing notes in older docs:
 
 The actual billed pricing shown by the app is derived from the code, not from static markdown tables.
 
+## Product Credits
+
+Subscription plans and top-ups use org-scoped product credits, not cash-equivalent legacy credits.
+
+Runtime source:
+
+- `lib/billing/product-credits.ts`
+- `lib/billing/plan-credits.ts`
+- `lib/billing/credit-packages.ts`
+
+Current product-credit rates:
+
+- Transcript: 1 credit per audio minute
+- Content Kit: 3 credits per audio minute
+- Repurpose Pack: 5 credits per audio minute
+- Extra draft/regeneration: 25 credits
+
+A 60-minute Repurpose Pack costs 300 credits. Plan and top-up copy should derive capacity from that rate.
+
 ## Markup
 
 The app reads the configured markup from:

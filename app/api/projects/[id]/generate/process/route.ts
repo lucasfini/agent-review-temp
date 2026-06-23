@@ -2,7 +2,7 @@ import { NextRequest, NextResponse } from 'next/server';
 import { supabaseAdmin } from '@/lib/supabase/server';
 import { isAuthorizedMaintenanceRequest } from '@/lib/maintenance-auth';
 import { getInternalAppBaseUrl } from '@/lib/app-url';
-import { createReservation, failReservation, InsufficientCreditError } from '@/lib/billing/credit';
+import { failReservation, InsufficientCreditError } from '@/lib/billing/credit';
 import { estimateAnalysisJobCostAsync, estimateContentGenerationCostAsync } from '@/lib/billing/cost-map';
 import { isDemoUser } from '@/lib/demo-mode';
 import { estimateReservationAmount } from '@/lib/billing/reserve-amount';
@@ -20,6 +20,8 @@ import {
   shouldEnforceSubscriptionEntitlements,
 } from '@/lib/billing/entitlement-guards';
 import { resolveOrganizationIdForWrite } from '@/lib/authz/organization-context';
+import { createPlanCreditReservation, InsufficientPlanCreditsError } from '@/lib/billing/plan-credits';
+import { estimateDraftProductCredits } from '@/lib/billing/product-credits';
 
 function isMissingFailureNotifiedAtColumn(error: any): boolean {
   return error?.code === 'PGRST204'
@@ -37,7 +39,8 @@ async function updateJob(jobId: string, payload: Record<string, unknown>) {
     return primaryResult;
   }
 
-  const { failure_notified_at, ...fallbackPayload } = payload;
+  const fallbackPayload = { ...payload };
+  delete fallbackPayload.failure_notified_at;
   return (supabaseAdmin as any)
     .from('project_generation_jobs')
     .update(fallbackPayload)
@@ -264,16 +267,23 @@ export async function POST(
           }
 
           const reconcileTarget = mapAnalysisJobKeyToReconcileTarget(job.target_key);
+          const legacyEstimatedHold = estimateReservationAmount(estimatedCost, 'analysis_job');
+          const productCreditAmount = estimateDraftProductCredits(1);
           const reservation = estimatedCost > 0
-            ? await createReservation({
+            ? await createPlanCreditReservation({
                 userId: project.user_id,
-                organizationId: project.organization_id || undefined,
+                organizationId: project.organization_id || await resolveOrganizationIdForWrite(project.user_id),
                 projectId,
                 workflowType: 'analysis_job',
-                amount: estimateReservationAmount(estimatedCost, 'analysis_job'),
+                amount: productCreditAmount,
                 metadata: {
                   targetKey: job.target_key,
                   queuedJobId: job.id,
+                  estimatedCost,
+                  estimatedProviderCost: estimatedCost,
+                  legacyEstimatedHold,
+                  productCreditAmount,
+                  productCreditWorkflow: 'extra_draft_or_regeneration',
                 },
                 expiresAt: new Date(Date.now() + (60 * 60 * 1000)).toISOString(),
               })
@@ -381,8 +391,10 @@ export async function POST(
               segments: project.transcription_segments || [],
               speakerData: project.speaker_data || {},
               blocks: [block],
+              creator_profile_id: job.creator_profile_id || undefined,
               brand_voice_id: job.brand_voice_id || undefined,
               campaign_id: job.campaign_id || undefined,
+              library_id: job.library_id || undefined,
             }),
           });
 
@@ -397,6 +409,8 @@ export async function POST(
         console.error('[PROJECT-GENERATE-PROCESS] Job failed:', error);
         const message = error instanceof InsufficientCreditError
           ? `Insufficient credits: need $${error.required.toFixed(4)}, have $${error.available.toFixed(4)}`
+          : error instanceof InsufficientPlanCreditsError
+            ? `Insufficient credits: need ${error.required.toFixed(4)}, have ${error.available.toFixed(4)}`
           : (error?.message || 'Generation failed');
         await failJob(job.id, message);
       } finally {

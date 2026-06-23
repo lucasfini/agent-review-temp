@@ -48,11 +48,11 @@ describe('agency permission helpers', () => {
     expect(isInternalAgencyOrganization('saas_customer')).toBe(false);
   });
 
-  it('allows active internal agency members to access the agency console', () => {
+  it('allows active internal agency operators to access the agency console', () => {
     expect(canAccessAgencyConsole('owner', 'internal_agency')).toBe(true);
+    expect(canAccessAgencyConsole('editor', 'internal_agency')).toBe(true);
     expect(canAccessAgencyConsole('agency_admin', 'internal_agency')).toBe(true);
     expect(canAccessAgencyConsole('agency_member', 'internal_agency')).toBe(true);
-    expect(canAccessAgencyConsole('member', 'internal_agency')).toBe(true);
     expect(canAccessAgencyConsole('owner', 'saas_customer')).toBe(false);
   });
 
@@ -69,7 +69,7 @@ describe('agency permission helpers', () => {
     expect(canManageAgencySourceImport('admin', 'internal_agency')).toBe(true);
     expect(canManageAgencySourceImport('agency_admin', 'internal_agency')).toBe(true);
     expect(canManageAgencySourceImport('agency_member', 'internal_agency')).toBe(true);
-    expect(canManageAgencySourceImport('member', 'internal_agency')).toBe(false);
+    expect(canManageAgencySourceImport('editor', 'internal_agency')).toBe(false);
     expect(canManageAgencySourceImport('agency_member', 'saas_customer')).toBe(false);
   });
 
@@ -78,7 +78,7 @@ describe('agency permission helpers', () => {
     expect(canManageAgencyProductionTask('admin', 'internal_agency')).toBe(true);
     expect(canManageAgencyProductionTask('agency_admin', 'internal_agency')).toBe(true);
     expect(canManageAgencyProductionTask('agency_member', 'internal_agency')).toBe(true);
-    expect(canManageAgencyProductionTask('member', 'internal_agency')).toBe(false);
+    expect(canManageAgencyProductionTask('editor', 'internal_agency')).toBe(false);
     expect(canManageAgencyProductionTask('agency_member', 'saas_customer')).toBe(false);
   });
 
@@ -87,7 +87,7 @@ describe('agency permission helpers', () => {
     expect(canManageAgencyDraft('admin', 'internal_agency')).toBe(true);
     expect(canManageAgencyDraft('agency_admin', 'internal_agency')).toBe(true);
     expect(canManageAgencyDraft('agency_member', 'internal_agency')).toBe(false);
-    expect(canManageAgencyDraft('member', 'internal_agency')).toBe(false);
+    expect(canManageAgencyDraft('editor', 'internal_agency')).toBe(false);
     expect(canManageAgencyDraft('agency_admin', 'saas_customer')).toBe(false);
   });
 

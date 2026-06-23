@@ -10,6 +10,7 @@ const mockGetAgencyClientIntegration = jest.fn();
 const mockSetAgencyClientIntegration = jest.fn();
 const mockCreateAgencySourceImport = jest.fn();
 const mockIsDemoUser = jest.fn();
+const mockUploadRateLimit = jest.fn();
 
 jest.mock('@/lib/authz/agency-permissions', () => {
   const actual = jest.requireActual('@/lib/authz/agency-permissions');
@@ -50,6 +51,12 @@ jest.mock('@/lib/agency-source-imports', () => {
 
 jest.mock('@/lib/demo-mode', () => ({
   isDemoUser: (...args: any[]) => mockIsDemoUser(...args),
+}));
+
+jest.mock('@/lib/rate-limit', () => ({
+  uploadRatelimit: {
+    limit: (...args: any[]) => mockUploadRateLimit(...args),
+  },
 }));
 
 jest.mock('@/lib/supabase/server', () => ({
@@ -112,6 +119,7 @@ describe('agency Slack channel and import routes', () => {
     mockSetAgencyClientIntegration.mockReset();
     mockCreateAgencySourceImport.mockReset();
     mockIsDemoUser.mockReset();
+    mockUploadRateLimit.mockReset();
 
     mockRequireAgencyClientAccess.mockResolvedValue({
       user,
@@ -133,6 +141,7 @@ describe('agency Slack channel and import routes', () => {
     mockGetAgencyClientIntegration.mockResolvedValue(slackIntegration);
     mockSetAgencyClientIntegration.mockResolvedValue(slackIntegration);
     mockIsDemoUser.mockReturnValue(false);
+    mockUploadRateLimit.mockResolvedValue({ success: true, limit: 30, remaining: 29, reset: Date.now() + 60000 });
   });
 
   it('lists Slack channels for an authorized agency client without exposing tokens', async () => {

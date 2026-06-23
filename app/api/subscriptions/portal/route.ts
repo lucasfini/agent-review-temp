@@ -1,16 +1,12 @@
 import { NextRequest, NextResponse } from 'next/server';
-import Stripe from 'stripe';
 
 import { RouteAccessError, requireAuthenticatedUser } from '@/lib/api/route-auth';
 import { requireOrganizationBillingManager } from '@/lib/authz/billing-permissions';
 import { OrganizationAccessError } from '@/lib/authz/types';
 import { getAppBaseUrl } from '@/lib/app-url';
 import { getOrganizationStripeCustomerId } from '@/lib/billing/subscriptions';
+import { getStripeClient } from '@/lib/billing/stripe-runtime';
 import { supabaseAdmin } from '@/lib/supabase/server';
-
-const stripe = new Stripe(process.env.STRIPE_SECRET_KEY!, {
-  apiVersion: '2025-10-29.clover',
-});
 
 export const dynamic = 'force-dynamic';
 export const revalidate = 0;
@@ -58,6 +54,7 @@ export async function POST(request: NextRequest) {
     const returnUrl = safeReturnUrl(
       body?.returnUrl || body?.return_url || process.env.STRIPE_BILLING_PORTAL_RETURN_URL
     );
+    const stripe = getStripeClient('subscription portal');
     const session = await stripe.billingPortal.sessions.create({
       customer: stripeCustomerId,
       return_url: returnUrl,

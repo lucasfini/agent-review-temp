@@ -1,6 +1,6 @@
 "use client";
 
-import { useState, useEffect, useMemo, useCallback, type ReactNode } from 'react';
+import { useState, useEffect, useMemo, useCallback, type ElementType, type ReactNode } from 'react';
 import Link from 'next/link';
 import {
   FileText,
@@ -17,11 +17,6 @@ import {
   ChevronUp,
   Trash2,
   Eye,
-  Zap,
-  FolderOpen,
-  FolderKanban,
-  Library,
-  Palette,
   Sparkles,
   Users,
   Mic,
@@ -31,14 +26,19 @@ import {
   ListChecks,
   CheckSquare,
   Square,
-  X
+  X,
+  MoreHorizontal,
+  SlidersHorizontal,
+  Star,
+  UploadCloud
 } from 'lucide-react';
 import { useAuth } from '@/lib/auth/context';
 import { useCurrentOrganization } from '@/lib/hooks/useCurrentOrganization';
 import { supabase } from '@/lib/supabase/client';
-import { KPICard, CollapsibleStatsRow } from '@/components/ui/kpi-card';
 import { Badge } from '@/components/ui/badge';
+import { DropdownMenu, DropdownMenuItem, DropdownMenuSeparator } from '@/components/ui/dropdown-menu';
 import { cn } from '@/lib/utils';
+import { DashboardPageShell, DashboardPanel } from '@/components/dashboard/shell';
 import { emitProjectMutation } from '@/lib/project-events';
 import { toast } from 'sonner';
 import ConfirmModal from '@/components/ui/confirm-modal';
@@ -154,25 +154,65 @@ function isAudioExpired(project: Project): boolean {
   return Boolean(project.audio_deleted_at);
 }
 
+function getStatusLabel(status: Project['status']): string {
+  const labels: Record<Project['status'], string> = {
+    completed: 'Completed',
+    processing: 'Processing',
+    uploading: 'Uploading',
+    failed: 'Failed',
+    cancelled: 'Cancelled',
+  };
+  return labels[status];
+}
+
+function getNextAction(project: Project, assetCount: number): string {
+  if (project.status === 'failed') return 'Retry processing';
+  if (project.status === 'cancelled') return 'Review source';
+  if (project.status === 'uploading') return 'Finishing upload';
+  if (project.status === 'processing') return 'Generating assets';
+  if (assetCount > 0) return 'Ready to review';
+  return 'Generate reusable assets';
+}
+
+function getSourceIconElement(project: Project) {
+  const fileName = (project.audio_file_name || project.title || '').toLowerCase();
+  if (project.project_type === 'PODCAST') return <Radio className="h-5 w-5" />;
+  if (project.project_type === 'INTERVIEW') return <Mic className="h-5 w-5" />;
+  if (project.project_type === 'DEBATE') return <Users className="h-5 w-5" />;
+  if (fileName.includes('video') || fileName.endsWith('.mp4') || fileName.endsWith('.mov')) {
+    return <FileText className="h-5 w-5" />;
+  }
+  return <FileText className="h-5 w-5" />;
+}
+
+function getSourceLabel(project: Project): string {
+  if (project.audio_file_name) {
+    const extension = project.audio_file_name.split('.').pop()?.toUpperCase();
+    if (extension && extension.length <= 5) return `${extension} source`;
+  }
+  if (project.project_type) return project.project_type.toLowerCase().replace(/^\w/, (char) => char.toUpperCase());
+  return 'Audio source';
+}
+
 // ============================================================================
 // SUB-COMPONENTS
 // ============================================================================
 
 function StatusBadge({ status }: { status: Project['status'] }) {
-  const config: Record<Project['status'], { variant: 'success' | 'info' | 'warning' | 'destructive' | 'secondary'; icon: any; label: string }> = {
-    completed: { variant: 'success' as const, icon: CheckCircle, label: 'Completed' },
-    processing: { variant: 'info' as const, icon: Loader2, label: 'Processing' },
-    uploading: { variant: 'warning' as const, icon: Loader2, label: 'Uploading' },
-    failed: { variant: 'destructive' as const, icon: AlertCircle, label: 'Failed' },
-    cancelled: { variant: 'secondary' as const, icon: AlertCircle, label: 'Cancelled' }
+  const config: Record<Project['status'], { className: string; icon: ElementType }> = {
+    completed: { className: 'border-emerald-200 bg-emerald-50 text-emerald-700 dark:border-emerald-500/20 dark:bg-emerald-500/10 dark:text-emerald-300', icon: CheckCircle },
+    processing: { className: 'border-blue-200 bg-blue-50 text-blue-700 dark:border-blue-500/20 dark:bg-blue-500/10 dark:text-blue-300', icon: Loader2 },
+    uploading: { className: 'border-amber-200 bg-amber-50 text-amber-700 dark:border-amber-500/20 dark:bg-amber-500/10 dark:text-amber-300', icon: Loader2 },
+    failed: { className: 'border-rose-200 bg-rose-50 text-rose-700 dark:border-rose-500/20 dark:bg-rose-500/10 dark:text-rose-300', icon: AlertCircle },
+    cancelled: { className: 'border-slate-200 bg-slate-100 text-slate-600 dark:border-slate-700 dark:bg-slate-800 dark:text-slate-300', icon: AlertCircle }
   };
 
-  const { variant, icon: Icon, label } = config[status];
+  const { className, icon: Icon } = config[status];
 
   return (
-    <Badge variant={variant} className="gap-1">
-      <Icon className={cn("h-3 w-3", status === 'processing' && "animate-spin")} />
-      {label}
+    <Badge variant="outline" className={cn("gap-1.5 rounded-full px-2.5 py-1 font-medium", className)}>
+      <Icon className={cn("h-3.5 w-3.5", (status === 'processing' || status === 'uploading') && "motion-safe:animate-spin")} />
+      {getStatusLabel(status)}
     </Badge>
   );
 }
@@ -229,80 +269,278 @@ function ProjectTypeBadge({ type }: { type?: ProjectType }) {
   );
 }
 
-function EmptyState() {
+function PremiumStatCard({
+  icon,
+  value,
+  label,
+  detail,
+  tone,
+}: {
+  icon: ReactNode;
+  value: string | number;
+  label: string;
+  detail: string;
+  tone: 'blue' | 'emerald' | 'amber' | 'slate';
+}) {
+  const toneClasses = {
+    blue: 'bg-blue-50 text-blue-700 ring-blue-100 dark:bg-blue-500/10 dark:text-blue-300 dark:ring-blue-500/20',
+    emerald: 'bg-emerald-50 text-emerald-700 ring-emerald-100 dark:bg-emerald-500/10 dark:text-emerald-300 dark:ring-emerald-500/20',
+    amber: 'bg-amber-50 text-amber-700 ring-amber-100 dark:bg-amber-500/10 dark:text-amber-300 dark:ring-amber-500/20',
+    slate: 'bg-slate-100 text-slate-700 ring-slate-200 dark:bg-slate-800 dark:text-slate-200 dark:ring-slate-700',
+  };
+
   return (
-    <div className="flex flex-col items-center justify-center py-16 px-4 text-center">
-      <div className="rounded-full bg-slate-100 dark:bg-slate-800 p-4 mb-4">
-        <FolderOpen className="h-8 w-8 text-slate-500" />
-      </div>
-      <h3 className="text-lg font-semibold text-slate-800 dark:text-slate-100 mb-1">No source projects yet</h3>
-      <p className="text-sm text-slate-500 dark:text-slate-400 mb-6 max-w-sm">
-        Add a call, meeting, demo, webinar, founder update, or podcast to start building your team&apos;s content pipeline.
-      </p>
-      <div className="flex flex-col gap-2 sm:flex-row">
-        <Link
-          href="/dashboard/upload"
-          className="inline-flex items-center justify-center gap-2 px-4 py-2 bg-blue-600 text-white text-sm font-medium rounded-lg hover:bg-blue-700 transition-colors"
-        >
-          <Upload className="h-4 w-4" />
-          Add Source
-        </Link>
-        <Link
-          href="/dashboard/onboarding"
-          className="inline-flex items-center justify-center gap-2 rounded-lg border border-slate-300 bg-white px-4 py-2 text-sm font-medium text-slate-700 transition-colors hover:bg-slate-100 dark:border-slate-700 dark:bg-slate-900 dark:text-slate-200 dark:hover:bg-slate-800"
-        >
-          <ListChecks className="h-4 w-4" />
-          Set Up Workspace
-        </Link>
+    <div className="min-h-[116px] rounded-2xl border border-slate-200 bg-white p-4 shadow-[0_18px_55px_-42px_rgba(15,23,42,0.45)] transition-colors dark:border-slate-800 dark:bg-slate-900">
+      <div className="flex items-start gap-3">
+        <div className={cn("flex h-11 w-11 flex-shrink-0 items-center justify-center rounded-2xl ring-1", toneClasses[tone])}>
+          {icon}
+        </div>
+        <div className="min-w-0">
+          <p className="text-2xl font-semibold tracking-tight text-slate-950 dark:text-white">{value}</p>
+          <p className="mt-1 text-sm font-medium text-slate-800 dark:text-slate-100">{label}</p>
+          <p className="mt-1 text-xs leading-5 text-slate-500 dark:text-slate-400">{detail}</p>
+        </div>
       </div>
     </div>
   );
 }
 
-function WorkspaceStatusItem({
-  icon,
-  title,
-  value,
-  detail,
-  href,
-  action,
-  good,
+function EmptyState({
+  variant,
+  onClearFilters,
 }: {
-  icon: ReactNode;
-  title: string;
-  value: string;
-  detail: string;
-  href: string;
-  action: string;
-  good?: boolean;
+  variant: 'no-projects' | 'filtered';
+  onClearFilters?: () => void;
 }) {
+  const isFiltered = variant === 'filtered';
+
   return (
-    <Link
-      href={href}
-      className="group rounded-lg border border-slate-200 bg-white p-4 transition-colors hover:border-blue-200 hover:bg-blue-50/50 dark:border-slate-800 dark:bg-slate-900 dark:hover:border-blue-900/70 dark:hover:bg-blue-950/20"
-    >
-      <div className="flex items-start gap-3">
-        <div className={cn(
-          "flex h-9 w-9 flex-shrink-0 items-center justify-center rounded-lg",
-          good
-            ? "bg-emerald-100 text-emerald-700 dark:bg-emerald-950/50 dark:text-emerald-300"
-            : "bg-slate-100 text-slate-500 dark:bg-slate-800 dark:text-slate-300"
-        )}>
-          {icon}
+    <div className="flex flex-col items-center justify-center px-4 py-16 text-center">
+      <div className="mb-5 rounded-2xl border border-slate-200 bg-slate-50 p-4 shadow-sm dark:border-slate-800 dark:bg-slate-900">
+        {isFiltered ? (
+          <Filter className="h-8 w-8 text-slate-500 dark:text-slate-400" />
+        ) : (
+          <UploadCloud className="h-8 w-8 text-blue-600 dark:text-blue-300" />
+        )}
+      </div>
+      <h3 className="text-lg font-semibold text-slate-950 dark:text-slate-50">
+        {isFiltered ? 'No projects match this view' : 'Start your project pipeline'}
+      </h3>
+      <p className="mt-2 max-w-md text-sm leading-6 text-slate-600 dark:text-slate-400">
+        {isFiltered
+          ? 'Try clearing filters or changing your search, status, or type view.'
+          : 'Upload a call, demo, webinar, founder update, or podcast. AudioRepurpose will turn it into transcripts, insights, and publish-ready drafts.'}
+      </p>
+      {isFiltered ? (
+        <button
+          type="button"
+          onClick={onClearFilters}
+          className="mt-6 inline-flex items-center justify-center rounded-xl bg-slate-950 px-4 py-2.5 text-sm font-semibold text-white transition-all duration-200 hover:-translate-y-0.5 hover:bg-slate-800 focus:outline-none focus:ring-2 focus:ring-blue-500 focus:ring-offset-2 motion-reduce:transition-none motion-reduce:hover:translate-y-0 dark:bg-white dark:text-slate-950 dark:hover:bg-slate-100 dark:focus:ring-offset-slate-950"
+        >
+          Clear Filters
+        </button>
+      ) : (
+        <div className="mt-6 flex flex-col gap-2 sm:flex-row">
+          <Link
+            href="/dashboard/upload"
+            className="inline-flex items-center justify-center gap-2 rounded-xl bg-blue-600 px-4 py-2.5 text-sm font-semibold text-white shadow-[0_12px_30px_-18px_rgba(37,99,235,0.8)] transition-all duration-200 hover:-translate-y-0.5 hover:bg-blue-700 focus:outline-none focus:ring-2 focus:ring-blue-500 focus:ring-offset-2 motion-reduce:transition-none motion-reduce:hover:translate-y-0 dark:focus:ring-offset-slate-950"
+          >
+            <Upload className="h-4 w-4" />
+            Add Source
+          </Link>
+          <Link
+            href="/dashboard/studio/profile"
+            className="inline-flex items-center justify-center gap-2 rounded-xl border border-slate-300 bg-white px-4 py-2.5 text-sm font-semibold text-slate-700 transition-all duration-200 hover:-translate-y-0.5 hover:bg-slate-50 focus:outline-none focus:ring-2 focus:ring-blue-500 focus:ring-offset-2 motion-reduce:transition-none motion-reduce:hover:translate-y-0 dark:border-slate-700 dark:bg-slate-900 dark:text-slate-200 dark:hover:bg-slate-800 dark:focus:ring-offset-slate-950"
+          >
+            <SlidersHorizontal className="h-4 w-4" />
+            Set Up Profile
+          </Link>
         </div>
-        <div className="min-w-0 flex-1">
-          <div className="flex items-center justify-between gap-2">
-            <p className="truncate text-sm font-semibold text-slate-900 dark:text-slate-100">{title}</p>
-            {good && <CheckCircle className="h-4 w-4 flex-shrink-0 text-emerald-600 dark:text-emerald-300" />}
+      )}
+    </div>
+  );
+}
+
+function ProjectSourceTile({ project }: { project: Project }) {
+  const icon = getSourceIconElement(project);
+  const tone =
+    project.status === 'failed' || project.status === 'cancelled'
+      ? 'from-rose-500 to-red-600'
+      : project.status === 'processing' || project.status === 'uploading'
+        ? 'from-blue-600 to-cyan-600'
+        : project.project_type === 'PODCAST'
+          ? 'from-indigo-600 to-violet-600'
+          : project.project_type === 'INTERVIEW'
+            ? 'from-emerald-600 to-teal-600'
+            : 'from-slate-800 to-blue-800';
+
+  return (
+    <div className={cn("flex h-12 w-12 flex-shrink-0 items-center justify-center rounded-2xl bg-gradient-to-br text-white shadow-[0_16px_35px_-24px_rgba(15,23,42,0.7)]", tone)}>
+      {icon}
+    </div>
+  );
+}
+
+function ProjectCardRow({
+  project,
+  assetCount,
+  selectionMode,
+  selected,
+  starred,
+  deleting,
+  bulkDeleting,
+  isDemoMode,
+  formatRelativeDate,
+  onToggleSelection,
+  onToggleStar,
+  onDelete,
+}: {
+  project: Project;
+  assetCount: number;
+  selectionMode: boolean;
+  selected: boolean;
+  starred: boolean;
+  deleting: boolean;
+  bulkDeleting: boolean;
+  isDemoMode: boolean;
+  formatRelativeDate: (date: string) => string;
+  onToggleSelection: () => void;
+  onToggleStar: () => void;
+  onDelete: () => void;
+}) {
+  const nextAction = getNextAction(project, assetCount);
+  const createdAt = new Date(project.created_at).toLocaleString(undefined, {
+    month: 'short',
+    day: 'numeric',
+    year: 'numeric',
+    hour: 'numeric',
+    minute: '2-digit',
+  });
+
+  const openHref = `/dashboard/projects?id=${project.id}`;
+  const generateHref = `/dashboard/projects?id=${project.id}&generate=true`;
+
+  return (
+    <article
+      className={cn(
+        "group rounded-2xl border bg-white p-4 shadow-[0_18px_55px_-48px_rgba(15,23,42,0.55)] transition-all duration-200 ease-out hover:-translate-y-0.5 hover:border-slate-300 hover:bg-slate-50/70 hover:shadow-[0_22px_70px_-50px_rgba(15,23,42,0.62)] focus-within:ring-2 focus-within:ring-blue-500 focus-within:ring-offset-2 motion-reduce:transition-none motion-reduce:hover:translate-y-0 dark:bg-slate-900 dark:hover:bg-slate-900/80 dark:focus-within:ring-offset-slate-950",
+        selected
+          ? 'border-blue-300 bg-blue-50/80 dark:border-blue-500/40 dark:bg-blue-500/10'
+          : 'border-slate-200 dark:border-slate-800 dark:hover:border-slate-700'
+      )}
+    >
+      <div className="grid gap-4 md:grid-cols-[minmax(0,1.8fr)_minmax(140px,0.75fr)_minmax(120px,0.55fr)_minmax(150px,0.7fr)_auto] md:items-center">
+        <div className="flex min-w-0 items-start gap-3">
+          {selectionMode && (
+            <button
+              type="button"
+              onClick={onToggleSelection}
+              className="mt-3 flex-shrink-0 rounded-md text-slate-500 transition-colors hover:text-blue-600 focus:outline-none focus:ring-2 focus:ring-blue-500 dark:hover:text-blue-300"
+              aria-label={selected ? `Deselect ${project.title || 'project'}` : `Select ${project.title || 'project'}`}
+            >
+              {selected ? (
+                <CheckSquare className="h-5 w-5 text-blue-600 dark:text-blue-300" />
+              ) : (
+                <Square className="h-5 w-5" />
+              )}
+            </button>
+          )}
+          <ProjectSourceTile project={project} />
+          <div className="min-w-0">
+            <Link
+              href={openHref}
+              onClick={(event) => {
+                if (!selectionMode) return;
+                event.preventDefault();
+                onToggleSelection();
+              }}
+              className="block rounded-md focus:outline-none focus:ring-2 focus:ring-blue-500 focus:ring-offset-2 dark:focus:ring-offset-slate-900"
+            >
+              <h3 className="truncate text-sm font-semibold text-slate-950 transition-colors group-hover:text-blue-700 dark:text-white dark:group-hover:text-blue-300">
+                {project.title || 'Untitled'}
+              </h3>
+            </Link>
+            <div className="mt-1 flex flex-wrap items-center gap-x-2 gap-y-1 text-xs text-slate-500 dark:text-slate-400">
+              <ProjectTypeBadge type={project.project_type} />
+              <span>{getSourceLabel(project)}</span>
+              {project.audio_duration && <span>{formatDuration(project.audio_duration)}</span>}
+            </div>
+            {project.status === 'completed' && isAudioExpired(project) && (
+              <p className="mt-1 text-xs text-rose-600 dark:text-rose-300">Source audio expired</p>
+            )}
+            <p className="mt-2 text-xs font-medium text-slate-600 dark:text-slate-300">{nextAction}</p>
           </div>
-          <p className="mt-1 text-lg font-semibold leading-6 text-slate-900 dark:text-slate-50">{value}</p>
-          <p className="mt-1 text-xs leading-5 text-slate-500 dark:text-slate-400">{detail}</p>
-          <p className="mt-3 text-xs font-semibold text-blue-600 transition-colors group-hover:text-blue-700 dark:text-blue-300 dark:group-hover:text-blue-200">
-            {action}
-          </p>
+        </div>
+
+        <div>
+          <StatusBadge status={project.status} />
+        </div>
+
+        <div className="text-sm text-slate-900 dark:text-slate-100">
+          <p className="font-semibold tabular-nums">{assetCount}</p>
+          <p className="mt-0.5 text-xs text-slate-500 dark:text-slate-400">{assetCount === 1 ? 'asset' : 'assets'}</p>
+        </div>
+
+        <div className="text-sm text-slate-600 dark:text-slate-300">
+          <p>{formatRelativeDate(project.created_at)}</p>
+          <p className="mt-0.5 text-xs text-slate-500 dark:text-slate-400">{createdAt}</p>
+        </div>
+
+        <div className="flex items-center justify-between gap-2 border-t border-slate-100 pt-3 dark:border-slate-800 md:justify-end md:border-t-0 md:pt-0">
+          <button
+            type="button"
+            onClick={onToggleStar}
+            className={cn(
+              "inline-flex h-9 w-9 items-center justify-center rounded-xl border transition-colors focus:outline-none focus:ring-2 focus:ring-blue-500",
+              starred
+                ? 'border-amber-200 bg-amber-50 text-amber-600 dark:border-amber-500/20 dark:bg-amber-500/10 dark:text-amber-300'
+                : 'border-transparent text-slate-500 hover:border-slate-200 hover:bg-white hover:text-slate-800 dark:text-slate-400 dark:hover:border-slate-700 dark:hover:bg-slate-800 dark:hover:text-slate-100'
+            )}
+            aria-label={starred ? `Unstar ${project.title || 'project'}` : `Star ${project.title || 'project'}`}
+          >
+            <Star className={cn("h-4 w-4", starred && "fill-current")} />
+          </button>
+
+          <DropdownMenu
+            align="right"
+            portal
+            trigger={
+              <button
+                type="button"
+                className="inline-flex h-9 w-9 items-center justify-center rounded-xl border border-transparent text-slate-500 transition-colors hover:border-slate-200 hover:bg-white hover:text-slate-800 focus:outline-none focus:ring-2 focus:ring-blue-500 dark:text-slate-400 dark:hover:border-slate-700 dark:hover:bg-slate-800 dark:hover:text-slate-100"
+                aria-label={`Open actions for ${project.title || 'project'}`}
+              >
+                <MoreHorizontal className="h-4 w-4" />
+              </button>
+            }
+          >
+            <DropdownMenuItem onClick={() => { window.location.href = openHref; }}>
+              <Eye className="h-4 w-4" />
+              View project
+            </DropdownMenuItem>
+            {project.status === 'completed' && (
+              <DropdownMenuItem onClick={() => { window.location.href = generateHref; }}>
+                <Sparkles className="h-4 w-4" />
+                Generate content
+              </DropdownMenuItem>
+            )}
+            {!isDemoMode && (
+              <>
+                <DropdownMenuSeparator />
+                <DropdownMenuItem
+                  onClick={onDelete}
+                  disabled={deleting || bulkDeleting}
+                  destructive
+                >
+                  {deleting ? <Loader2 className="h-4 w-4 animate-spin" /> : <Trash2 className="h-4 w-4" />}
+                  Delete project
+                </DropdownMenuItem>
+              </>
+            )}
+          </DropdownMenu>
         </div>
       </div>
-    </Link>
+    </article>
   );
 }
 
@@ -326,6 +564,7 @@ export default function ProjectHubPage() {
   const [showFilters, setShowFilters] = useState(false);
   const [deletingId, setDeletingId] = useState<string | null>(null);
   const [pendingDeleteId, setPendingDeleteId] = useState<string | null>(null);
+  const [starredProjectIds, setStarredProjectIds] = useState<Set<string>>(new Set());
   const [selectionMode, setSelectionMode] = useState(false);
   const [selectedProjectIds, setSelectedProjectIds] = useState<Set<string>>(new Set());
   const [pendingBulkDelete, setPendingBulkDelete] = useState(false);
@@ -496,6 +735,14 @@ export default function ProjectHubPage() {
     };
   }, [projects, outputs]);
 
+  const outputCountByProject = useMemo(() => {
+    const counts: Record<string, number> = {};
+    outputs.forEach((output) => {
+      counts[output.project_id] = (counts[output.project_id] || 0) + 1;
+    });
+    return counts;
+  }, [outputs]);
+
   // Filtered and sorted projects
   const filteredProjects = useMemo(() => {
     let result = [...projects];
@@ -597,15 +844,6 @@ export default function ProjectHubPage() {
       return next.size === previous.size ? previous : next;
     });
   }, [projects]);
-
-  // Output counts by project
-  const outputCountByProject = useMemo(() => {
-    const counts: Record<string, number> = {};
-    outputs.forEach(o => {
-      counts[o.project_id] = (counts[o.project_id] || 0) + 1;
-    });
-    return counts;
-  }, [outputs]);
 
   // Delete handler — opens confirmation modal
   const handleDelete = (projectId: string) => {
@@ -855,19 +1093,21 @@ export default function ProjectHubPage() {
   // Loading state
   if (loading) {
     return (
-      <div className="p-6">
-        <div className="max-w-7xl mx-auto">
-          <div className="animate-pulse space-y-6">
-            <div className="h-8 bg-slate-200 dark:bg-slate-800 rounded w-48" />
-            <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
-              {[1, 2, 3, 4].map(i => (
-                <div key={i} className="h-24 bg-slate-200 dark:bg-slate-800 rounded-lg" />
-              ))}
-            </div>
-            <div className="h-96 bg-slate-200 dark:bg-slate-800 rounded-lg" />
+      <DashboardPageShell maxWidth="7xl">
+        <div className="animate-pulse space-y-6">
+          <div className="rounded-lg border border-slate-200 bg-white p-5 shadow-sm dark:border-slate-800 dark:bg-slate-900">
+            <div className="h-3 w-28 rounded bg-blue-100 dark:bg-blue-950" />
+            <div className="mt-4 h-8 w-64 rounded bg-slate-200 dark:bg-slate-800" />
+            <div className="mt-3 h-4 w-full max-w-2xl rounded bg-slate-200 dark:bg-slate-800" />
           </div>
+          <div className="grid grid-cols-2 gap-4 md:grid-cols-4">
+            {[1, 2, 3, 4].map(i => (
+              <div key={i} className="h-24 rounded-lg bg-slate-200 dark:bg-slate-800" />
+            ))}
+          </div>
+          <div className="h-96 rounded-lg bg-slate-200 dark:bg-slate-800" />
         </div>
-      </div>
+      </DashboardPageShell>
     );
   }
 
@@ -884,7 +1124,7 @@ export default function ProjectHubPage() {
   }
 
   return (
-    <div className="p-3 sm:p-6">
+    <DashboardPageShell maxWidth="7xl">
       <ConfirmModal
         isOpen={!!pendingDeleteId}
         onClose={() => setPendingDeleteId(null)}
@@ -912,228 +1152,189 @@ export default function ProjectHubPage() {
         projects={exportProjects}
         onExport={handleExport}
       />
-      <div className="max-w-7xl mx-auto space-y-6">
-        {/* Header */}
-        <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-3">
-          <div>
-            <h1 className="text-2xl font-bold text-slate-900 dark:text-slate-50">Content Workspace</h1>
-            <p className="text-sm text-slate-500 dark:text-slate-400 mt-1">
-              Start with source material, then review transcripts, ideas, and generated B2B content in one place.
-            </p>
-          </div>
-          <div className="flex items-center gap-2 self-start sm:self-auto">
-            {!isDemoMode && projects.length > 0 && (
-              <button
-                type="button"
-                onClick={() => {
-                  if (selectionMode) {
-                    exitSelectionMode();
-                  } else {
-                    setSelectionMode(true);
-                  }
-                }}
-                className={cn(
-                  "inline-flex items-center gap-2 px-3 py-2 text-sm font-medium rounded-lg border transition-colors",
-                  selectionMode
-                    ? "bg-blue-50 dark:bg-blue-900/20 border-blue-700 text-blue-600 dark:text-blue-400"
-                    : "bg-white dark:bg-slate-900 border-slate-300 dark:border-slate-700 text-slate-600 dark:text-slate-300 hover:bg-slate-100 dark:hover:bg-slate-800"
-                )}
-              >
-                {selectionMode ? (
-                  <>
-                    <X className="h-4 w-4" />
-                    Cancel
-                  </>
-                ) : (
-                  <>
-                    <ListChecks className="h-4 w-4" />
-                    Select
-                  </>
-                )}
-              </button>
-            )}
-            <Link
-              href="/dashboard/upload"
-              className="inline-flex items-center gap-2 px-4 py-2 bg-blue-600 text-white text-sm font-medium rounded-lg hover:bg-blue-700 transition-colors"
-            >
-              <Upload className="h-4 w-4" />
-              Add Source
-            </Link>
-          </div>
-        </div>
-
-        <div className="grid gap-3 md:grid-cols-2 xl:grid-cols-4">
-          <WorkspaceStatusItem
-            icon={<Palette className="h-4 w-4" />}
-            title="Brand Voice"
-            value={workspaceStatus.loading ? 'Checking...' : workspaceStatus.brandVoiceCount > 0 ? 'Ready' : 'Not set'}
-            detail={
-              workspaceStatus.brandVoiceCount > 0
-                ? `${workspaceStatus.brandVoiceCount} profile${workspaceStatus.brandVoiceCount === 1 ? '' : 's'} available for generation`
-                : 'Add tone, audience, pillars, and banned phrases'
-            }
-            href="/dashboard/brand-voice"
-            action={workspaceStatus.brandVoiceCount > 0 ? 'Review voice' : 'Set up voice'}
-            good={workspaceStatus.brandVoiceCount > 0}
-          />
-          <WorkspaceStatusItem
-            icon={<FolderKanban className="h-4 w-4" />}
-            title="Campaigns"
-            value={workspaceStatus.loading ? 'Checking...' : `${workspaceStatus.activeCampaignCount} active`}
-            detail={`${workspaceStatus.campaignCount} total campaign${workspaceStatus.campaignCount === 1 ? '' : 's'} in this workspace`}
-            href="/dashboard/campaigns"
-            action={workspaceStatus.campaignCount > 0 ? 'Open campaigns' : 'Create campaign'}
-            good={workspaceStatus.activeCampaignCount > 0}
-          />
-          <WorkspaceStatusItem
-            icon={<Library className="h-4 w-4" />}
-            title="Content Library"
-            value={workspaceStatus.loading ? 'Checking...' : `${workspaceStatus.contentItemCount} items`}
-            detail={`${workspaceStatus.readyContentCount} approved or published item${workspaceStatus.readyContentCount === 1 ? '' : 's'}`}
-            href="/dashboard/campaigns"
-            action={workspaceStatus.contentItemCount > 0 ? 'Review library' : 'Add library item'}
-            good={workspaceStatus.contentItemCount > 0}
-          />
-          <WorkspaceStatusItem
-            icon={<CreditCard className="h-4 w-4" />}
-            title="Subscription"
-            value={workspaceStatus.loading ? 'Checking...' : workspaceStatus.subscriptionPlanName || workspaceStatus.subscriptionStatus}
-            detail={workspaceStatus.subscriptionPlanName ? workspaceStatus.subscriptionStatus : 'Review billing when you are ready'}
-            href="/dashboard/billing"
-            action="Review billing"
-            good={workspaceStatus.subscriptionStatus === 'Active' || workspaceStatus.subscriptionStatus === 'Trialing'}
-          />
-        </div>
-
-        {/* Collapsible Stats Row */}
-        <CollapsibleStatsRow title="Key Metrics">
-          <div data-tour="hub-stats" className="grid grid-cols-2 md:grid-cols-4 gap-4">
-            <KPICard
-              title="Total Projects"
-              value={stats.totalProjects}
-              icon={<FolderOpen className="h-5 w-5" />}
-              subtitle={`${stats.completedProjects} completed`}
-            />
-            <KPICard
-              title="Content Created"
-              value={stats.totalContent}
-              icon={<FileText className="h-5 w-5" />}
-              subtitle={stats.totalContent > 0 ? `across ${stats.completedProjects} project${stats.completedProjects !== 1 ? 's' : ''}` : 'Generate your first piece'}
-            />
-            <KPICard
-              title="Time Saved"
-              value={`${stats.timeSavedHours}h`}
-              icon={<Clock className="h-5 w-5" />}
-              subtitle="Estimated vs. doing it manually"
-            />
-            <KPICard
-              title="Audio Processed"
-              value={formatDuration(stats.totalProcessingTime)}
-              icon={<Zap className="h-5 w-5" />}
-              subtitle="Total compute time"
-            />
-          </div>
-        </CollapsibleStatsRow>
-
-        {/* Filters & Search Bar */}
-        <div data-tour="hub-filters" className="bg-white dark:bg-slate-900 rounded-lg border border-slate-200 dark:border-slate-800 shadow-sm">
-          <div className="p-4 border-b border-slate-200 dark:border-slate-800">
-            <div className="flex flex-col sm:flex-row gap-3">
-              {/* Search */}
-              <div className="relative flex-1">
-                <Search className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-slate-500" />
+      <div className="space-y-6">
+        <header className="rounded-3xl border border-slate-200 bg-[#fbfaf7] p-5 shadow-[0_22px_70px_-54px_rgba(15,23,42,0.55)] dark:border-slate-800 dark:bg-slate-950 sm:p-6">
+          <div className="flex flex-col gap-5 xl:flex-row xl:items-start xl:justify-between">
+            <div className="min-w-0">
+              <p className="text-xs font-semibold uppercase tracking-[0.18em] text-blue-700 dark:text-blue-300">
+                Project Control Center
+              </p>
+              <h1 className="mt-2 text-3xl font-semibold tracking-tight text-slate-950 dark:text-white sm:text-4xl">
+                All Projects
+              </h1>
+              <p className="mt-3 max-w-2xl text-sm leading-6 text-slate-600 dark:text-slate-300">
+                Track every uploaded source as it moves from raw recording to reusable content assets.
+              </p>
+            </div>
+            <div className="grid gap-2 sm:grid-cols-[minmax(220px,1fr)_auto_auto_auto] xl:min-w-[680px]">
+              <div className="relative">
+                <Search className="pointer-events-none absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-slate-500" />
                 <input
                   type="text"
                   placeholder="Search projects..."
                   value={searchTerm}
-                  onChange={(e) => setSearchTerm(e.target.value)}
-                  className="w-full pl-10 pr-4 py-2 text-sm border border-slate-300 dark:border-slate-700 bg-white dark:bg-slate-800 text-slate-900 dark:text-slate-200 placeholder:text-slate-500 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-transparent"
+                  onChange={(event) => setSearchTerm(event.target.value)}
+                  className="h-11 w-full rounded-xl border border-slate-200 bg-white pl-10 pr-4 text-sm text-slate-950 shadow-sm placeholder:text-slate-400 transition-colors focus:border-blue-500 focus:outline-none focus:ring-2 focus:ring-blue-500/20 dark:border-slate-800 dark:bg-slate-900 dark:text-slate-100"
                 />
               </div>
-
-              {/* Filter Toggle */}
               <button
                 type="button"
                 onClick={() => setShowFilters(!showFilters)}
                 className={cn(
-                  "inline-flex items-center gap-2 px-3 py-2 text-sm font-medium rounded-lg border transition-colors",
+                  "inline-flex h-11 items-center justify-center gap-2 rounded-xl border px-4 text-sm font-medium shadow-sm transition-all duration-200 hover:-translate-y-0.5 focus:outline-none focus:ring-2 focus:ring-blue-500 focus:ring-offset-2 motion-reduce:transition-none motion-reduce:hover:translate-y-0 dark:focus:ring-offset-slate-950",
                   showFilters
-                    ? "bg-blue-50 dark:bg-blue-900/20 border-blue-700 text-blue-600 dark:text-blue-400"
-                    : "bg-slate-100 dark:bg-slate-800 border-slate-300 dark:border-slate-700 text-slate-600 dark:text-slate-300 hover:bg-slate-200 dark:hover:bg-slate-700"
+                    ? 'border-blue-300 bg-blue-50 text-blue-700 dark:border-blue-500/30 dark:bg-blue-500/10 dark:text-blue-300'
+                    : 'border-slate-200 bg-white text-slate-700 hover:bg-slate-50 dark:border-slate-800 dark:bg-slate-900 dark:text-slate-200 dark:hover:bg-slate-800'
                 )}
               >
                 <Filter className="h-4 w-4" />
                 Filters
                 {showFilters ? <ChevronUp className="h-4 w-4" /> : <ChevronDown className="h-4 w-4" />}
               </button>
-
-              {/* Sort */}
               <select
                 value={sortBy}
-                onChange={(e) => setSortBy(e.target.value as any)}
-                className="px-3 py-2 text-sm border border-slate-300 dark:border-slate-700 rounded-lg bg-white dark:bg-slate-800 text-slate-900 dark:text-slate-200 focus:outline-none focus:ring-2 focus:ring-blue-500"
+                onChange={(event) => setSortBy(event.target.value as 'recent' | 'oldest' | 'name')}
+                className="h-11 rounded-xl border border-slate-200 bg-white px-3 text-sm font-medium text-slate-700 shadow-sm transition-colors focus:border-blue-500 focus:outline-none focus:ring-2 focus:ring-blue-500/20 dark:border-slate-800 dark:bg-slate-900 dark:text-slate-200"
+                aria-label="Sort projects"
               >
-                <option value="recent">Newest first</option>
-                <option value="oldest">Oldest first</option>
-                <option value="name">Name A-Z</option>
+                <option value="recent">Sort: Newest</option>
+                <option value="oldest">Sort: Oldest</option>
+                <option value="name">Sort: Name</option>
               </select>
+              <Link
+                href="/dashboard/upload"
+                className="inline-flex h-11 items-center justify-center gap-2 rounded-xl bg-blue-600 px-5 text-sm font-semibold text-white shadow-[0_18px_35px_-20px_rgba(37,99,235,0.8)] transition-all duration-200 hover:-translate-y-0.5 hover:bg-blue-700 focus:outline-none focus:ring-2 focus:ring-blue-500 focus:ring-offset-2 motion-reduce:transition-none motion-reduce:hover:translate-y-0 dark:focus:ring-offset-slate-950"
+              >
+                <Upload className="h-4 w-4" />
+                Add Source
+              </Link>
             </div>
+          </div>
 
-            {/* Expanded Filters */}
-            {showFilters && (
-              <div className="mt-3 pt-3 border-t border-slate-200 dark:border-slate-800 flex flex-wrap gap-3">
-                <div className="flex items-center gap-2">
-                  <span className="text-xs font-medium text-slate-500 dark:text-slate-400">Status:</span>
-                  <select
-                    value={statusFilter}
-                    onChange={(e) => setStatusFilter(e.target.value as any)}
-                    className="px-2 py-1 text-sm border border-slate-300 dark:border-slate-700 rounded bg-white dark:bg-slate-800 text-slate-900 dark:text-slate-200"
-                  >
-                    <option value="all">All</option>
-                    <option value="completed">Completed</option>
-                    <option value="processing">Processing</option>
-                    <option value="failed">Failed</option>
-                  </select>
-                </div>
-                <div className="flex items-center gap-2">
-                  <span className="text-xs font-medium text-slate-500 dark:text-slate-400">Type:</span>
-                  <select
-                    value={typeFilter}
-                    onChange={(e) => setTypeFilter(e.target.value as any)}
-                    className="px-2 py-1 text-sm border border-slate-300 dark:border-slate-700 rounded bg-white dark:bg-slate-800 text-slate-900 dark:text-slate-200"
-                  >
-                    <option value="all">All</option>
-                    <option value="DEBATE">Debate</option>
-                    <option value="INTERVIEW">Interview</option>
-                    <option value="PODCAST">Podcast</option>
-                    <option value="MONOLOGUE">Monologue</option>
-                    <option value="OTHER">Other</option>
-                  </select>
-                </div>
-                {(statusFilter !== 'all' || typeFilter !== 'all') && (
+          {showFilters && (
+            <div className="mt-5 flex flex-col gap-3 border-t border-slate-200 pt-4 dark:border-slate-800 sm:flex-row sm:items-center">
+              <label className="flex items-center gap-2 text-sm text-slate-600 dark:text-slate-300">
+                <span className="text-xs font-semibold uppercase tracking-[0.14em] text-slate-500">Status</span>
+                <select
+                  value={statusFilter}
+                  onChange={(event) => setStatusFilter(event.target.value as 'all' | Project['status'])}
+                  className="rounded-xl border border-slate-200 bg-white px-3 py-2 text-sm text-slate-900 focus:border-blue-500 focus:outline-none focus:ring-2 focus:ring-blue-500/20 dark:border-slate-800 dark:bg-slate-900 dark:text-slate-100"
+                >
+                  <option value="all">All</option>
+                  <option value="uploading">Uploading</option>
+                  <option value="processing">Processing</option>
+                  <option value="completed">Completed</option>
+                  <option value="failed">Failed</option>
+                  <option value="cancelled">Cancelled</option>
+                </select>
+              </label>
+              <label className="flex items-center gap-2 text-sm text-slate-600 dark:text-slate-300">
+                <span className="text-xs font-semibold uppercase tracking-[0.14em] text-slate-500">Type</span>
+                <select
+                  value={typeFilter}
+                  onChange={(event) => setTypeFilter(event.target.value as 'all' | ProjectType)}
+                  className="rounded-xl border border-slate-200 bg-white px-3 py-2 text-sm text-slate-900 focus:border-blue-500 focus:outline-none focus:ring-2 focus:ring-blue-500/20 dark:border-slate-800 dark:bg-slate-900 dark:text-slate-100"
+                >
+                  <option value="all">All</option>
+                  <option value="DEBATE">Debate</option>
+                  <option value="INTERVIEW">Interview</option>
+                  <option value="PODCAST">Podcast</option>
+                  <option value="MONOLOGUE">Monologue</option>
+                  <option value="OTHER">Other</option>
+                </select>
+              </label>
+              {(searchTerm || statusFilter !== 'all' || typeFilter !== 'all') && (
+                <button
+                  type="button"
+                  onClick={() => {
+                    setSearchTerm('');
+                    setStatusFilter('all');
+                    setTypeFilter('all');
+                  }}
+                  className="inline-flex items-center justify-center rounded-xl px-3 py-2 text-sm font-semibold text-blue-700 transition-colors hover:bg-blue-50 dark:text-blue-300 dark:hover:bg-blue-500/10"
+                >
+                  Clear filters
+                </button>
+              )}
+            </div>
+          )}
+        </header>
+
+        <div data-tour="hub-stats" className="grid gap-3 md:grid-cols-2 xl:grid-cols-4">
+          <PremiumStatCard
+            icon={<CheckCircle className="h-5 w-5" />}
+            value={stats.completedProjects}
+            label="Completed Projects"
+            detail="Ready for content generation"
+            tone="blue"
+          />
+          <PremiumStatCard
+            icon={<FileText className="h-5 w-5" />}
+            value={stats.totalContent}
+            label="Content Assets"
+            detail="Generated across workspace"
+            tone="emerald"
+          />
+          <PremiumStatCard
+            icon={<Clock className="h-5 w-5" />}
+            value={`${stats.timeSavedHours}h`}
+            label="Time Saved"
+            detail="Estimated vs. manual work"
+            tone="amber"
+          />
+          <PremiumStatCard
+            icon={<CreditCard className="h-5 w-5" />}
+            value={workspaceStatus.loading ? 'Checking...' : workspaceStatus.subscriptionPlanName || workspaceStatus.subscriptionStatus}
+            label="Subscription / Credits"
+            detail={workspaceStatus.subscriptionPlanName ? workspaceStatus.subscriptionStatus : 'Current billing state'}
+            tone="slate"
+          />
+        </div>
+
+        <DashboardPanel data-tour="hub-filters" className="overflow-hidden rounded-3xl bg-[#fbfaf7] dark:bg-slate-950">
+          <div className="border-b border-slate-200 bg-white/70 p-4 dark:border-slate-800 dark:bg-slate-900/70 sm:p-5">
+            <div className="flex flex-col gap-4 lg:flex-row lg:items-center lg:justify-between">
+              <div>
+                <h2 className="text-lg font-semibold tracking-tight text-slate-950 dark:text-white">Project List</h2>
+                <p className="mt-1 text-sm text-slate-600 dark:text-slate-400">
+                  {filteredProjects.length} {filteredProjects.length === 1 ? 'project' : 'projects'}
+                  {(searchTerm || statusFilter !== 'all' || typeFilter !== 'all') && ` filtered from ${projects.length}`}
+                </p>
+              </div>
+              <div className="flex flex-wrap items-center gap-2">
+                {!isDemoMode && projects.length > 0 && (
                   <button
                     type="button"
                     onClick={() => {
-                      setStatusFilter('all');
-                      setTypeFilter('all');
+                      if (selectionMode) {
+                        exitSelectionMode();
+                      } else {
+                        setSelectionMode(true);
+                      }
                     }}
-                    className="text-xs text-blue-600 hover:text-blue-500 dark:hover:text-blue-300"
+                    className={cn(
+                      "inline-flex items-center justify-center gap-2 rounded-xl border px-3 py-2 text-sm font-semibold transition-all duration-200 hover:-translate-y-0.5 focus:outline-none focus:ring-2 focus:ring-blue-500 focus:ring-offset-2 motion-reduce:transition-none motion-reduce:hover:translate-y-0 dark:focus:ring-offset-slate-950",
+                      selectionMode
+                        ? 'border-blue-300 bg-blue-50 text-blue-700 dark:border-blue-500/30 dark:bg-blue-500/10 dark:text-blue-300'
+                        : 'border-slate-200 bg-white text-slate-700 hover:bg-slate-50 dark:border-slate-800 dark:bg-slate-900 dark:text-slate-200 dark:hover:bg-slate-800'
+                    )}
                   >
-                    Clear filters
+                    {selectionMode ? <X className="h-4 w-4" /> : <ListChecks className="h-4 w-4" />}
+                    {selectionMode ? 'Cancel' : 'Select'}
                   </button>
                 )}
               </div>
-            )}
+            </div>
           </div>
 
           {selectionMode && filteredProjects.length > 0 && (
-            <div className="px-4 py-3 border-b border-slate-200 dark:border-slate-800 bg-blue-50 dark:bg-blue-950/20">
-              <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-3">
-                <div className="flex items-center gap-3">
+            <div className="border-b border-blue-100 bg-blue-50/80 px-4 py-3 dark:border-blue-500/20 dark:bg-blue-500/10 sm:px-5">
+              <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
+                <div className="flex flex-wrap items-center gap-3">
                   <button
                     type="button"
                     onClick={togglePagedProjectSelection}
-                    className="inline-flex items-center gap-2 text-sm font-medium text-blue-700 dark:text-blue-300"
+                    className="inline-flex items-center gap-2 text-sm font-semibold text-blue-800 dark:text-blue-200"
                     aria-label={allPagedProjectsSelected ? 'Deselect visible projects' : 'Select visible projects'}
                   >
                     {allPagedProjectsSelected ? (
@@ -1145,14 +1346,12 @@ export default function ProjectHubPage() {
                     )}
                     Select visible
                   </button>
-                  <span className="text-sm text-blue-700 dark:text-blue-300">
-                    {selectedProjectCount} selected
-                  </span>
+                  <span className="text-sm text-blue-800 dark:text-blue-200">{selectedProjectCount} selected</span>
                   {selectedProjectCount > 0 && (
                     <button
                       type="button"
                       onClick={() => setSelectedProjectIds(new Set())}
-                      className="text-xs font-medium text-blue-600 hover:text-blue-500 dark:text-blue-300 dark:hover:text-blue-200"
+                      className="text-xs font-semibold text-blue-700 hover:text-blue-600 dark:text-blue-300 dark:hover:text-blue-200"
                     >
                       Clear
                     </button>
@@ -1163,7 +1362,7 @@ export default function ProjectHubPage() {
                     type="button"
                     onClick={handleBulkExport}
                     disabled={selectedProjectCount === 0 || bulkDeleting}
-                    className="inline-flex items-center justify-center gap-2 rounded-lg bg-blue-600 px-3 py-2 text-sm font-medium text-white transition-colors hover:bg-blue-700 disabled:cursor-not-allowed disabled:opacity-50"
+                    className="inline-flex items-center justify-center gap-2 rounded-xl bg-blue-600 px-3 py-2 text-sm font-semibold text-white transition-colors hover:bg-blue-700 disabled:cursor-not-allowed disabled:opacity-50"
                   >
                     <Download className="h-4 w-4" />
                     Export selected
@@ -1172,7 +1371,7 @@ export default function ProjectHubPage() {
                     type="button"
                     onClick={() => setPendingBulkDelete(true)}
                     disabled={selectedProjectCount === 0 || bulkDeleting}
-                    className="inline-flex items-center justify-center gap-2 rounded-lg bg-red-600 px-3 py-2 text-sm font-medium text-white transition-colors hover:bg-red-700 disabled:cursor-not-allowed disabled:opacity-50"
+                    className="inline-flex items-center justify-center gap-2 rounded-xl bg-rose-600 px-3 py-2 text-sm font-semibold text-white transition-colors hover:bg-rose-700 disabled:cursor-not-allowed disabled:opacity-50"
                   >
                     {bulkDeleting ? <Loader2 className="h-4 w-4 animate-spin" /> : <Trash2 className="h-4 w-4" />}
                     Delete selected
@@ -1182,297 +1381,70 @@ export default function ProjectHubPage() {
             </div>
           )}
 
-          {/* Projects Table */}
           {filteredProjects.length === 0 ? (
-            projects.length === 0 ? (
-              <EmptyState />
-            ) : (
-              <div className="py-12 text-center text-slate-500 dark:text-slate-400 space-y-3">
-                <p>No projects match your filters.</p>
-                <button
-                  type="button"
-                  onClick={() => {
-                    setSearchTerm('');
-                    setStatusFilter('all');
-                    setTypeFilter('all');
-                  }}
-                  className="text-sm text-blue-600 dark:text-blue-400 hover:text-blue-500 dark:hover:text-blue-300 transition-colors"
-                >
-                  Clear all filters
-                </button>
-              </div>
-            )
+            <EmptyState
+              variant={projects.length === 0 ? 'no-projects' : 'filtered'}
+              onClearFilters={() => {
+                setSearchTerm('');
+                setStatusFilter('all');
+                setTypeFilter('all');
+              }}
+            />
           ) : (
-            <div data-tour="hub-grid">
-              {/* ── Mobile card list (< sm) ── */}
-              <div className="sm:hidden divide-y divide-slate-200 dark:divide-slate-800">
-                {pagedProjects.map((project) => (
-                  <div
-                    key={project.id}
-                    className={cn(
-                      "p-4 space-y-3 transition-colors",
-                      selectionMode && selectedProjectIds.has(project.id) && "bg-blue-50 dark:bg-blue-950/20"
-                    )}
-                  >
-                    {/* Title + status */}
-                    <div className="flex items-start justify-between gap-3">
-                      {selectionMode && (
-                        <button
-                          type="button"
-                          onClick={() => toggleProjectSelection(project.id)}
-                          className="mt-0.5 flex-shrink-0 text-slate-500 hover:text-blue-600 dark:hover:text-blue-400"
-                          aria-label={selectedProjectIds.has(project.id) ? `Deselect ${project.title || 'project'}` : `Select ${project.title || 'project'}`}
-                        >
-                          {selectedProjectIds.has(project.id) ? (
-                            <CheckSquare className="h-5 w-5 text-blue-600 dark:text-blue-400" />
-                          ) : (
-                            <Square className="h-5 w-5" />
-                          )}
-                        </button>
-                      )}
-                      <Link
-                        href={`/dashboard/projects?id=${project.id}`}
-                        className="flex-1 min-w-0"
-                        onClick={(event) => {
-                          if (!selectionMode) return;
-                          event.preventDefault();
-                          toggleProjectSelection(project.id);
-                        }}
-                      >
-                        <p className="font-medium text-slate-700 dark:text-slate-200 truncate">
-                          {project.title || 'Untitled'}
-                        </p>
-                        {project.audio_file_name && (
-                          <p className="text-xs text-slate-500 truncate mt-0.5">
-                            {project.audio_file_name}
-                          </p>
-                        )}
-                        {project.status === 'completed' && isAudioExpired(project) && (
-                          <p className="text-xs text-rose-500 dark:text-rose-300 mt-0.5">Source audio expired</p>
-                        )}
-                      </Link>
-                      <StatusBadge status={project.status} />
-                    </div>
-                    {/* Metadata row */}
-                    <div className="flex items-center gap-2 flex-wrap text-xs text-slate-500 dark:text-slate-500">
-                      <ProjectTypeBadge type={project.project_type} />
-                      <span>{prefs.formatRelativeDate(project.created_at)}</span>
-                      {project.audio_duration && (
-                        <span>{formatDuration(project.audio_duration)}</span>
-                      )}
-                      {outputCountByProject[project.id] > 0 && (
-                        <span className="inline-flex items-center gap-1">
-                          <FileText className="h-3 w-3" />
-                          {outputCountByProject[project.id]} pieces
-                        </span>
-                      )}
-                    </div>
-                    {/* Actions */}
-                    <div className="flex items-center gap-2">
-                      <Link
-                        href={`/dashboard/projects?id=${project.id}`}
-                        className="flex-1 py-2 text-xs font-medium text-center bg-slate-100 dark:bg-slate-800 hover:bg-slate-200 dark:hover:bg-slate-700 text-slate-600 dark:text-slate-300 rounded-lg transition-colors"
-                      >
-                        View
-                      </Link>
-                      {project.status === 'completed' && (
-                        <Link
-                          href={`/dashboard/projects?id=${project.id}&generate=true`}
-                          className="flex-1 py-2 text-xs font-medium text-center bg-slate-100 dark:bg-slate-800 hover:bg-slate-200 dark:hover:bg-slate-700 text-slate-600 dark:text-slate-300 rounded-lg transition-colors"
-                        >
-                          Generate
-                        </Link>
-                      )}
-                      {!isDemoMode && (
-                        <button
-                          type="button"
-                          onClick={() => handleDelete(project.id)}
-                          disabled={deletingId === project.id || bulkDeleting}
-                          className="p-2 text-slate-500 hover:text-red-500 dark:hover:text-red-400 hover:bg-red-50 dark:hover:bg-red-900/20 rounded-lg transition-colors disabled:opacity-50"
-                          title="Delete"
-                        >
-                          {deletingId === project.id ? (
-                            <Loader2 className="h-4 w-4 animate-spin" />
-                          ) : (
-                            <Trash2 className="h-4 w-4" />
-                          )}
-                        </button>
-                      )}
-                    </div>
-                  </div>
-                ))}
+            <div data-tour="hub-grid" className="p-3 sm:p-4">
+              <div className="hidden px-4 pb-3 text-xs font-semibold uppercase tracking-[0.12em] text-slate-500 dark:text-slate-400 md:grid md:grid-cols-[minmax(0,1.8fr)_minmax(140px,0.75fr)_minmax(120px,0.55fr)_minmax(150px,0.7fr)_auto]">
+                <span>Project</span>
+                <span>Status</span>
+                <span>Assets</span>
+                <span>Created</span>
+                <span className="text-right">Actions</span>
               </div>
-
-              {/* ── Desktop table (≥ sm) ── */}
-              <div className="hidden sm:block overflow-x-auto">
-                <table className="w-full text-sm">
-                  <thead>
-                    <tr className="border-b border-slate-200 dark:border-slate-800 bg-slate-50 dark:bg-slate-800/40">
-                      {selectionMode && (
-                        <th className="w-10 px-4 py-3">
-                          <button
-                            type="button"
-                            onClick={togglePagedProjectSelection}
-                            className="inline-flex text-slate-500 hover:text-blue-600 dark:hover:text-blue-400"
-                            aria-label={allPagedProjectsSelected ? 'Deselect visible projects' : 'Select visible projects'}
-                          >
-                            {allPagedProjectsSelected ? (
-                              <CheckSquare className="h-4 w-4 text-blue-600 dark:text-blue-400" />
-                            ) : somePagedProjectsSelected ? (
-                              <span className="h-4 w-4 rounded border-2 border-blue-600 bg-blue-600/20" />
-                            ) : (
-                              <Square className="h-4 w-4" />
-                            )}
-                          </button>
-                        </th>
-                      )}
-                      <th className="text-left font-medium text-slate-500 dark:text-slate-400 px-4 py-3">Project</th>
-                      <th className="text-left font-medium text-slate-500 dark:text-slate-400 px-4 py-3">Status</th>
-                      <th className="hidden sm:table-cell text-left font-medium text-slate-500 dark:text-slate-400 px-4 py-3">Type</th>
-                      <th className="hidden md:table-cell text-left font-medium text-slate-500 dark:text-slate-400 px-4 py-3">Duration</th>
-                      <th className="hidden md:table-cell text-left font-medium text-slate-500 dark:text-slate-400 px-4 py-3">Content</th>
-                      <th className="hidden sm:table-cell text-left font-medium text-slate-500 dark:text-slate-400 px-4 py-3">Created</th>
-                      <th className="text-right font-medium text-slate-500 dark:text-slate-400 px-4 py-3">Actions</th>
-                    </tr>
-                  </thead>
-                  <tbody className="divide-y divide-slate-200 dark:divide-slate-800">
-                    {pagedProjects.map((project) => (
-                      <tr
-                        key={project.id}
-                        className={cn(
-                          "hover:bg-slate-50 dark:hover:bg-slate-800/50 transition-colors group",
-                          selectionMode && selectedProjectIds.has(project.id) && "bg-blue-50 dark:bg-blue-950/20"
-                        )}
-                      >
-                        {selectionMode && (
-                          <td className="px-4 py-3 align-top">
-                            <button
-                              type="button"
-                              onClick={() => toggleProjectSelection(project.id)}
-                              className="inline-flex text-slate-500 hover:text-blue-600 dark:hover:text-blue-400"
-                              aria-label={selectedProjectIds.has(project.id) ? `Deselect ${project.title || 'project'}` : `Select ${project.title || 'project'}`}
-                            >
-                              {selectedProjectIds.has(project.id) ? (
-                                <CheckSquare className="h-4 w-4 text-blue-600 dark:text-blue-400" />
-                              ) : (
-                                <Square className="h-4 w-4" />
-                              )}
-                            </button>
-                          </td>
-                        )}
-                        <td className="px-4 py-3">
-                          <Link
-                            href={`/dashboard/projects?id=${project.id}`}
-                            className="block"
-                            onClick={(event) => {
-                              if (!selectionMode) return;
-                              event.preventDefault();
-                              toggleProjectSelection(project.id);
-                            }}
-                          >
-                            <div className="font-medium text-slate-700 dark:text-slate-200 group-hover:text-blue-600 dark:group-hover:text-blue-400 transition-colors">
-                              {project.title || 'Untitled'}
-                            </div>
-                            {project.audio_file_name && (
-                              <div className="text-xs text-slate-500 truncate max-w-[200px]">
-                                {project.audio_file_name}
-                              </div>
-                            )}
-                            {project.status === 'completed' && isAudioExpired(project) && (
-                              <div className="text-xs text-rose-500 dark:text-rose-300 truncate max-w-[200px]">
-                                Source audio expired
-                              </div>
-                            )}
-                          </Link>
-                        </td>
-                        <td className="px-4 py-3">
-                          <StatusBadge status={project.status} />
-                        </td>
-                        <td className="hidden sm:table-cell px-4 py-3">
-                          <div className="flex items-center gap-1.5">
-                            <ProjectTypeBadge type={project.project_type} />
-                          </div>
-                        </td>
-                        <td className="hidden md:table-cell px-4 py-3 text-slate-500 dark:text-slate-400">
-                          {project.audio_duration
-                            ? formatDuration(project.audio_duration)
-                            : '—'}
-                        </td>
-                        <td className="hidden md:table-cell px-4 py-3">
-                          <span className="inline-flex items-center gap-1 text-slate-500 dark:text-slate-400">
-                            <FileText className="h-3.5 w-3.5" />
-                            {outputCountByProject[project.id] || 0}
-                          </span>
-                        </td>
-                        <td className="hidden sm:table-cell px-4 py-3 text-slate-500 dark:text-slate-400">
-                          {prefs.formatRelativeDate(project.created_at)}
-                        </td>
-                        <td className="px-4 py-3">
-                          <div className="flex items-center justify-end gap-1">
-                            <Link
-                              href={`/dashboard/projects?id=${project.id}`}
-                              className="inline-flex items-center gap-1.5 rounded-md px-2 py-1.5 text-xs font-medium text-slate-600 transition-colors hover:bg-blue-50 hover:text-blue-600 dark:text-slate-300 dark:hover:bg-blue-900/20 dark:hover:text-blue-400"
-                              title="View"
-                            >
-                              <Eye className="h-4 w-4" />
-                              <span className="hidden lg:inline">View</span>
-                            </Link>
-                            {project.status === 'completed' && (
-                              <Link
-                                href={`/dashboard/projects?id=${project.id}&generate=true`}
-                                className="inline-flex items-center gap-1.5 rounded-md px-2 py-1.5 text-xs font-medium text-slate-600 transition-colors hover:bg-green-50 hover:text-green-600 dark:text-slate-300 dark:hover:bg-green-900/20 dark:hover:text-green-400"
-                                title="Generate Content"
-                              >
-                                <Sparkles className="h-4 w-4" />
-                                <span className="hidden lg:inline">Generate</span>
-                              </Link>
-                            )}
-                            {!isDemoMode && (
-                              <button
-                                type="button"
-                                onClick={() => handleDelete(project.id)}
-                                disabled={deletingId === project.id || bulkDeleting}
-                                className="inline-flex items-center gap-1.5 rounded-md px-2 py-1.5 text-xs font-medium text-slate-600 transition-colors hover:bg-red-50 hover:text-red-500 disabled:opacity-50 dark:text-slate-300 dark:hover:bg-red-900/20 dark:hover:text-red-400"
-                                title="Delete"
-                              >
-                                {deletingId === project.id ? (
-                                  <Loader2 className="h-4 w-4 animate-spin" />
-                                ) : (
-                                  <Trash2 className="h-4 w-4" />
-                                )}
-                                <span className="hidden lg:inline">Delete</span>
-                              </button>
-                            )}
-                          </div>
-                        </td>
-                      </tr>
-                    ))}
-                  </tbody>
-                </table>
+              <div className="space-y-3">
+                {pagedProjects.map((project) => (
+                  <ProjectCardRow
+                    key={project.id}
+                    project={project}
+                    assetCount={outputCountByProject[project.id] || 0}
+                    selectionMode={selectionMode}
+                    selected={selectedProjectIds.has(project.id)}
+                    starred={starredProjectIds.has(project.id)}
+                    deleting={deletingId === project.id}
+                    bulkDeleting={bulkDeleting}
+                    isDemoMode={isDemoMode}
+                    formatRelativeDate={prefs.formatRelativeDate}
+                    onToggleSelection={() => toggleProjectSelection(project.id)}
+                    onToggleStar={() => {
+                      setStarredProjectIds((current) => {
+                        const next = new Set(current);
+                        if (next.has(project.id)) {
+                          next.delete(project.id);
+                        } else {
+                          next.add(project.id);
+                        }
+                        return next;
+                      });
+                    }}
+                    onDelete={() => handleDelete(project.id)}
+                  />
+                ))}
               </div>
             </div>
           )}
 
-          {/* Footer with count + pagination */}
           {filteredProjects.length > 0 && (
-            <div className="px-4 py-3 border-t border-slate-200 dark:border-slate-800 bg-slate-100/60 dark:bg-slate-800/30 text-xs text-slate-500">
-              <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-2">
+            <div className="border-t border-slate-200 bg-white/70 px-4 py-3 text-xs text-slate-500 dark:border-slate-800 dark:bg-slate-900/70">
+              <div className="flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between">
                 <div>
                   Showing {pagedProjects.length} of {filteredProjects.length} projects
                 </div>
                 {totalPages > 1 && (
                   <div className="flex items-center gap-2">
-                    <span className="text-xs text-slate-500">
-                      Page {hubPage} of {totalPages}
-                    </span>
+                    <span className="text-xs text-slate-500">Page {hubPage} of {totalPages}</span>
                     <button
                       type="button"
                       onClick={() => setHubPage(hubPage - 1)}
                       disabled={hubPage <= 1}
-                      className={`px-2.5 py-1.5 text-xs font-medium rounded border transition-colors ${hubPage <= 1
-                        ? 'border-slate-200 dark:border-slate-800 text-slate-400 dark:text-slate-600 cursor-not-allowed'
-                        : 'border-slate-300 dark:border-slate-700 text-slate-600 dark:text-slate-300 hover:bg-slate-100 dark:hover:bg-slate-800'
-                        }`}
+                      className="rounded-xl border border-slate-200 px-3 py-1.5 text-xs font-semibold text-slate-600 transition-colors hover:bg-slate-50 disabled:cursor-not-allowed disabled:opacity-40 dark:border-slate-800 dark:text-slate-300 dark:hover:bg-slate-800"
                     >
                       Previous
                     </button>
@@ -1480,10 +1452,7 @@ export default function ProjectHubPage() {
                       type="button"
                       onClick={() => setHubPage(hubPage + 1)}
                       disabled={hubPage >= totalPages}
-                      className={`px-2.5 py-1.5 text-xs font-medium rounded border transition-colors ${hubPage >= totalPages
-                        ? 'border-slate-200 dark:border-slate-800 text-slate-400 dark:text-slate-600 cursor-not-allowed'
-                        : 'border-slate-300 dark:border-slate-700 text-slate-600 dark:text-slate-300 hover:bg-slate-100 dark:hover:bg-slate-800'
-                        }`}
+                      className="rounded-xl border border-slate-200 px-3 py-1.5 text-xs font-semibold text-slate-600 transition-colors hover:bg-slate-50 disabled:cursor-not-allowed disabled:opacity-40 dark:border-slate-800 dark:text-slate-300 dark:hover:bg-slate-800"
                     >
                       Next
                     </button>
@@ -1492,8 +1461,8 @@ export default function ProjectHubPage() {
               </div>
             </div>
           )}
-        </div>
+        </DashboardPanel>
       </div>
-    </div>
+    </DashboardPageShell>
   );
 }

@@ -104,6 +104,8 @@ describe('agency delivery package helpers', () => {
         id: 'item-1',
         organizationId: 'agency-org',
         clientId: 'client-1',
+        creatorProfileId: null,
+        libraryId: null,
         campaignId: null,
         brandVoiceId: null,
         projectId: null,

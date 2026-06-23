@@ -3,7 +3,7 @@ import { supabaseAdmin } from '@/lib/supabase/server';
 import { decryptToken, encryptToken } from '@/lib/integrations/crypto';
 import { resolveOrganizationIdForWrite } from '@/lib/authz/organization-context';
 
-export type IntegrationProvider = 'zoom' | 'microsoft' | 'youtube';
+export type IntegrationProvider = 'zoom' | 'microsoft' | 'youtube' | 'stripe' | 'onedrive' | 'google_drive' | 'granola' | 'slack';
 
 export async function getUserFromRequest(request: NextRequest) {
   const authHeader = request.headers.get('authorization');

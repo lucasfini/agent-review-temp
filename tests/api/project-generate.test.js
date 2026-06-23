@@ -26,7 +26,7 @@ function createExistingJobsBuilder(result) {
 describe('/api/projects/[id]/generate', () => {
   let POST;
   let supabaseAdmin;
-  let requireCredits;
+  let getOrganizationPlanCreditBalance;
   let scheduleBackgroundTask;
   let resolveGenerationContext;
 
@@ -67,11 +67,34 @@ describe('/api/projects/[id]/generate', () => {
     }));
 
     jest.doMock('../../lib/billing/middleware', () => ({
-      requireCredits: jest.fn().mockResolvedValue(undefined),
       billingErrorResponse: jest.fn((error) => {
         if (error?.status === 402) return error;
         return { status: 500 };
       }),
+    }));
+
+    jest.doMock('../../lib/billing/plan-credits', () => ({
+      getOrganizationPlanCreditBalance: jest.fn().mockResolvedValue({
+        available: 1000,
+        subscription: {
+          plan: {
+            slug: 'standard',
+            topUpEnabled: true,
+          },
+        },
+      }),
+      InsufficientPlanCreditsError: class InsufficientPlanCreditsError extends Error {
+        constructor(organizationId, required, available, planSlug, topUpsEnabled) {
+          super('Insufficient plan credits');
+          this.status = 402;
+          this.code = 'INSUFFICIENT_PLAN_CREDITS';
+          this.organizationId = organizationId;
+          this.required = required;
+          this.available = available;
+          this.planSlug = planSlug;
+          this.topUpsEnabled = topUpsEnabled;
+        }
+      },
     }));
 
     jest.doMock('../../lib/billing/cost-map', () => ({
@@ -93,12 +116,17 @@ describe('/api/projects/[id]/generate', () => {
       const actual = jest.requireActual('../../lib/generation-context');
       return {
         ...actual,
-        resolveGenerationContext: jest.fn().mockResolvedValue({ brandVoice: null, campaign: null }),
+        resolveGenerationContext: jest.fn().mockResolvedValue({
+          creatorProfile: null,
+          brandVoice: null,
+          campaign: null,
+          library: null,
+        }),
       };
     });
 
     ({ supabaseAdmin } = require('../../lib/supabase/server'));
-    ({ requireCredits } = require('../../lib/billing/middleware'));
+    ({ getOrganizationPlanCreditBalance } = require('../../lib/billing/plan-credits'));
     ({ scheduleBackgroundTask } = require('../../lib/background-task'));
     ({ resolveGenerationContext } = require('../../lib/generation-context'));
     ({ POST } = await import('../../app/api/projects/[id]/generate/route'));
@@ -115,7 +143,7 @@ describe('/api/projects/[id]/generate', () => {
     expect(response.status).toBe(401);
   });
 
-  it('queues jobs and uses the workflow reserve hold for billing preflight', async () => {
+  it('queues jobs and uses product credits for billing preflight', async () => {
     supabaseAdmin.auth.getUser.mockResolvedValue({ data: { user: { id: 'user-1' } }, error: null });
 
     const projectSelect = createSelectBuilder({
@@ -149,8 +177,10 @@ describe('/api/projects/[id]/generate', () => {
           { kind: 'content', targetKey: 'twitter_threads' },
           { kind: 'analysis', targetKey: 'summary' },
         ],
+        creator_profile_id: 'profile-1',
         brand_voice_id: 'voice-1',
         campaign_id: 'campaign-1',
+        library_id: 'library-1',
       }),
     });
 
@@ -158,11 +188,21 @@ describe('/api/projects/[id]/generate', () => {
     const data = await response.json();
 
     expect(response.status).toBe(200);
-    expect(requireCredits).toHaveBeenCalledWith('user-1', 5.04);
+    expect(getOrganizationPlanCreditBalance).toHaveBeenCalledWith({
+      organizationId: 'org-1',
+      userId: 'user-1',
+      ensureGrant: true,
+    });
     expect(resolveGenerationContext).toHaveBeenCalledWith(
       supabaseAdmin,
       'org-1',
-      { brandVoiceId: 'voice-1', campaignId: 'campaign-1' }
+      {
+        creatorProfileId: 'profile-1',
+        brandVoiceId: 'voice-1',
+        campaignId: 'campaign-1',
+        libraryId: 'library-1',
+      },
+      { userId: 'user-1' }
     );
     expect(insertSingle).toHaveBeenCalledWith([
       {
@@ -173,8 +213,10 @@ describe('/api/projects/[id]/generate', () => {
         target_key: 'twitter_threads',
         theme_id: 'professional',
         custom_guidance: null,
+        creator_profile_id: 'profile-1',
         brand_voice_id: 'voice-1',
         campaign_id: 'campaign-1',
+        library_id: 'library-1',
         status: 'queued',
       },
       {
@@ -185,8 +227,10 @@ describe('/api/projects/[id]/generate', () => {
         target_key: 'summary',
         theme_id: null,
         custom_guidance: null,
+        creator_profile_id: null,
         brand_voice_id: null,
         campaign_id: null,
+        library_id: null,
         status: 'queued',
       },
     ]);
@@ -196,6 +240,7 @@ describe('/api/projects/[id]/generate', () => {
       skipped: 0,
       estimatedCost: 5,
       estimatedReserveAmount: 5.04,
+      estimatedProductCredits: 50,
     });
     expect(global.fetch).toHaveBeenCalledWith(
       'http://localhost:3000/api/projects/project-1/generate/process',

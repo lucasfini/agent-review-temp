@@ -16,7 +16,6 @@ export function canReadOrganizationBilling(
 ): boolean {
   return role === 'owner'
     || role === 'admin'
-    || role === 'member'
     || role === 'agency_admin'
     || role === 'agency_member';
 }

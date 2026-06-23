@@ -2,6 +2,7 @@ const mockRequireAuthenticatedUser = jest.fn();
 const mockGetActiveOrganizationForUser = jest.fn();
 const mockGetFirstActiveOrganizationForUserByType = jest.fn();
 const mockIsDemoUser = jest.fn();
+const mockRecordOrganizationAuditLog = jest.fn();
 const mockFrom = jest.fn();
 const mockUpdate = jest.fn();
 const mockEq = jest.fn();
@@ -34,6 +35,10 @@ jest.mock('@/lib/demo-mode', () => ({
   isDemoUser: (...args: any[]) => mockIsDemoUser(...args),
 }));
 
+jest.mock('@/lib/organizations/audit', () => ({
+  recordOrganizationAuditLog: (...args: any[]) => mockRecordOrganizationAuditLog(...args),
+}));
+
 jest.mock('@/lib/supabase/server', () => ({
   supabaseAdmin: { from: (...args: any[]) => mockFrom(...args) },
 }));
@@ -60,7 +65,7 @@ const internalAgencyOrganization = {
   type: 'internal_agency',
 };
 const ownerMembership = { role: 'owner', status: 'active' };
-const memberMembership = { role: 'member', status: 'active' };
+const memberMembership = { role: 'editor', status: 'active' };
 const agencyAdminMembership = { role: 'agency_admin', status: 'active' };
 
 describe('current organization route', () => {
@@ -71,6 +76,7 @@ describe('current organization route', () => {
     mockGetActiveOrganizationForUser.mockReset();
     mockGetFirstActiveOrganizationForUserByType.mockReset();
     mockIsDemoUser.mockReset();
+    mockRecordOrganizationAuditLog.mockReset();
     mockFrom.mockReset();
     mockUpdate.mockReset();
     mockEq.mockReset();
@@ -88,6 +94,7 @@ describe('current organization route', () => {
       membership: agencyAdminMembership,
     });
     mockIsDemoUser.mockReturnValue(false);
+    mockRecordOrganizationAuditLog.mockResolvedValue(undefined);
     mockFrom.mockReturnValue({ update: mockUpdate });
     mockUpdate.mockImplementation((payload: Record<string, unknown>) => {
       latestUpdatePayload = payload;

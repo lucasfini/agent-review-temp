@@ -49,7 +49,7 @@ const agencyMember = {
   status: 'active',
 };
 const regularMember = {
-  role: 'member',
+  role: 'editor',
   status: 'active',
 };
 const task = {

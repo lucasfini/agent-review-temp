@@ -1,7 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { supabaseAdmin } from '@/lib/supabase/server';
 import { trackOpenAIUsage } from '@/lib/billing/track-usage';
-import { billingErrorResponse, requireCredits } from '@/lib/billing/middleware';
+import { billingErrorResponse } from '@/lib/billing/middleware';
 import { aiRatelimit } from '@/lib/rate-limit';
 import { getContentTypeById, normalizeCustomGuidance, type ContentBlock, type OutputType } from '@/lib/content-types';
 import { getThemeById, type ContentTheme } from '@/lib/content-themes';
@@ -16,18 +16,20 @@ import {
 } from '@/lib/generation-progress';
 import { getAICompletion, type AIMessage } from '@/lib/ai-providers/multi-provider';
 import { getOpenAIApiKeyForUser } from '@/lib/openai/consent';
-import { createReservation, failReservation, settleReservationAmount } from '@/lib/billing/credit';
+import { failReservation, settleReservationAmount } from '@/lib/billing/credit';
 import { isAuthorizedMaintenanceRequest } from '@/lib/maintenance-auth';
 import { estimateReservationAmount } from '@/lib/billing/reserve-amount';
 import { estimateContentBlocksCostAsync } from '@/lib/billing/cost-map';
 import { isDemoUser } from '@/lib/demo-mode';
-import { resolveOrganizationIdForWrite } from '@/lib/authz/organization-context';
+import { getActiveOrganizationForUser, resolveOrganizationIdForWrite } from '@/lib/authz/organization-context';
 import { RouteAccessError, requireProjectOwner } from '@/lib/api/route-auth';
+import { can } from '@/lib/authz/permissions';
 import {
   runEntitlementGuard,
-  shouldEnforceSubscriptionEntitlements,
 } from '@/lib/billing/entitlement-guards';
 import { recordSubscriptionUsage } from '@/lib/billing/subscription-usage-counters';
+import { createPlanCreditReservation } from '@/lib/billing/plan-credits';
+import { estimateDraftProductCredits } from '@/lib/billing/product-credits';
 import {
   buildGenerationContextMetadata,
   buildGenerationContextPrompt,
@@ -36,6 +38,7 @@ import {
   mergeGenerationContextWithStyle,
   readGenerationContextIds,
   resolveGenerationContext,
+  type GenerationContextIds,
   type ResolvedGenerationContext,
 } from '@/lib/generation-context';
 
@@ -578,7 +581,8 @@ export async function POST(request: NextRequest) {
 
     const payload = await request.json();
     projectId = payload.projectId;
-    const generationContextIds = readGenerationContextIds(payload);
+    const payloadContextIds = readGenerationContextIds(payload);
+    const payloadHasGenerationContext = hasGenerationContextIds(payloadContextIds);
     const { transcription, segments, blocks, speakerData, modelId, outputStyleModifier } = payload;
 
     if (!projectId || !transcription) {
@@ -649,15 +653,62 @@ export async function POST(request: NextRequest) {
       }
     }
 
-    if (!projectOrganizationId && !isMaintenance && shouldEnforceSubscriptionEntitlements()) {
+    if (!projectOrganizationId && !isMaintenance && userId) {
       projectOrganizationId = await resolveOrganizationIdForWrite(userId);
     }
 
-    let generationContext: ResolvedGenerationContext | null = null;
-    if (hasGenerationContextIds(generationContextIds)) {
+    if (!isMaintenance && projectOrganizationId) {
+      const { membership, organization } = await getActiveOrganizationForUser(
+        supabaseAdmin,
+        userId,
+        projectOrganizationId
+      );
+      if (!can(
+        {
+          userId,
+          organizationId: organization.id,
+          organizationType: organization.type,
+          role: membership.role,
+        },
+        'generation.run',
+        { organizationId: organization.id }
+      )) {
+        return NextResponse.json(
+          { error: 'You do not have permission to generate content in this workspace' },
+          { status: 403 }
+        );
+      }
+    }
+
+    const contextKeyFor = (ids: GenerationContextIds) => JSON.stringify([
+      ids.creatorProfileId || null,
+      ids.brandVoiceId || null,
+      ids.campaignId || null,
+      ids.libraryId || null,
+    ]);
+    const getEffectiveGenerationContextIds = (block: ContentBlock): GenerationContextIds => (
+      payloadHasGenerationContext ? payloadContextIds : readGenerationContextIds(block)
+    );
+    const contextIdsByKey = new Map<string, GenerationContextIds>();
+    for (const block of blocks as ContentBlock[]) {
+      const blockContextIds = getEffectiveGenerationContextIds(block);
+      if (hasGenerationContextIds(blockContextIds)) {
+        contextIdsByKey.set(contextKeyFor(blockContextIds), blockContextIds);
+      }
+    }
+
+    const resolvedGenerationContexts = new Map<string, ResolvedGenerationContext>();
+    if (contextIdsByKey.size > 0) {
       projectOrganizationId = projectOrganizationId || await resolveOrganizationIdForWrite(userId);
       try {
-        generationContext = await resolveGenerationContext(supabaseAdmin, projectOrganizationId, generationContextIds);
+        for (const [key, contextIds] of contextIdsByKey.entries()) {
+          resolvedGenerationContexts.set(
+            key,
+            await resolveGenerationContext(supabaseAdmin, projectOrganizationId, contextIds, {
+              userId,
+            })
+          );
+        }
       } catch (error) {
         if (error instanceof GenerationContextValidationError) {
           return NextResponse.json({ error: error.message }, { status: error.status });
@@ -665,6 +716,11 @@ export async function POST(request: NextRequest) {
         throw error;
       }
     }
+    const getGenerationContextForBlock = (block: ContentBlock): ResolvedGenerationContext | null => {
+      const blockContextIds = getEffectiveGenerationContextIds(block);
+      if (!hasGenerationContextIds(blockContextIds)) return null;
+      return resolvedGenerationContexts.get(contextKeyFor(blockContextIds)) || null;
+    };
 
     const estimatedGenerationCost = await estimateContentBlocksCostAsync(
       blocks
@@ -693,17 +749,24 @@ export async function POST(request: NextRequest) {
         return entitlementGuard.response;
       }
 
+      const enabledBlockCount = blocks.filter((block: ContentBlock) => block.enabled !== false).length;
       const estimatedHold = estimateReservationAmount(estimatedGenerationCost, 'content_generation');
-      await requireCredits(userId, estimatedHold);
-      const reservation = await createReservation({
+      const estimatedProductCredits = estimateDraftProductCredits(enabledBlockCount);
+      const reservation = await createPlanCreditReservation({
         userId,
+        organizationId: projectOrganizationId || await resolveOrganizationIdForWrite(userId),
         projectId,
         workflowType: 'content_generation',
-        amount: estimatedHold,
+        amount: estimatedProductCredits,
         metadata: {
           estimatedCost: estimatedGenerationCost,
+          estimatedProviderCost: estimatedGenerationCost,
+          legacyEstimatedHold: estimatedHold,
+          productCreditAmount: estimatedProductCredits,
+          productCreditWorkflow: 'extra_draft_or_regeneration',
           blockIds: blocks.map((block: ContentBlock) => block.contentTypeId),
           blockCount: blocks.length,
+          enabledBlockCount,
         },
         expiresAt: new Date(Date.now() + (60 * 60 * 1000)).toISOString(),
       });
@@ -758,8 +821,8 @@ export async function POST(request: NextRequest) {
     const contentStartTime = Date.now();
     const generatedContent: any[] = [];
     const usageEventIds: string[] = [];
-    let totalBilledCost = 0;
     let savedContentCount = 0;
+    let completedBlockCount = 0;
 
     for (let i = 0; i < blocks.length; i++) {
       const block = blocks[i];
@@ -787,7 +850,7 @@ export async function POST(request: NextRequest) {
           projectId,
           openaiApiKey || undefined,
           outputStyleModifier || undefined,
-          generationContext
+          getGenerationContextForBlock(block)
         );
         generatedContent.push(...blockResult.content);
 
@@ -796,15 +859,12 @@ export async function POST(request: NextRequest) {
         const savedIds = await saveGeneratedContent(projectId, blockResult.content);
         savedOutputIds.push(...savedIds);
         savedContentCount += savedIds.length;
+        completedBlockCount += 1;
 
         // Track usage and cost
         if (blockResult.usageEventId) {
           usageEventIds.push(blockResult.usageEventId);
         }
-        if (blockResult.billedCost > 0) {
-          totalBilledCost += blockResult.billedCost;
-        }
-
         // Update progress: Block completed
         await completeBlock(projectId, i + 1);
       } catch (error) {
@@ -826,8 +886,9 @@ export async function POST(request: NextRequest) {
     // Step 5: Debit credits now that we are sure block outputs were saved successfully
     if (contentReservationId) {
       try {
-        await settleReservationAmount(contentReservationId, totalBilledCost, usageEventIds);
-        console.log(`[BILLING] ✅ Settled reservation for $${totalBilledCost.toFixed(4)} across ${generatedContent.length} pieces of content`);
+        const actualProductCredits = estimateDraftProductCredits(completedBlockCount);
+        await settleReservationAmount(contentReservationId, actualProductCredits, usageEventIds);
+        console.log(`[BILLING] ✅ Settled reservation for ${actualProductCredits.toFixed(4)} product credits across ${completedBlockCount} completed blocks`);
       } catch (billingError) {
         console.error('[BILLING ERROR] ❌ Failed to settle content reservation:', billingError);
         if (savedOutputIds.length > 0) {
@@ -1044,8 +1105,9 @@ async function generateBlockContent(
     contentTypeName: contentType?.name || block.name,
     channel: contentType?.platformType || contentType?.platform || null,
   };
-  const hasOrganizationContext = Boolean(generationContext?.brandVoice || generationContext?.campaign);
-  const contextPrompt = hasOrganizationContext
+  const hasPromptContext = Boolean(generationContext?.creatorProfile || generationContext?.brandVoice || generationContext?.campaign);
+  const hasMetadataContext = Boolean(hasPromptContext || generationContext?.library);
+  const contextPrompt = hasPromptContext
     ? buildGenerationContextPrompt(generationContext, contextSelection)
     : '';
   const contextualOutputStyleModifier = mergeGenerationContextWithStyle(contextPrompt, outputStyleModifier);
@@ -1091,8 +1153,13 @@ async function generateBlockContent(
   }
 
   const customGuidance = normalizeCustomGuidance(block.customGuidance);
-  const generationContextMetadata = hasOrganizationContext
-    ? buildGenerationContextMetadata(generationContext, contextSelection)
+  const generationContextMetadata = hasMetadataContext
+    ? buildGenerationContextMetadata(generationContext, contextSelection, {
+      generatedAt: new Date().toISOString(),
+      generatedByUserId: userId || null,
+      model,
+      promptVersion: 'studio-context-v1',
+    })
     : undefined;
   if (customGuidance || generationContextMetadata) {
     result.content = result.content.map((item) => ({
@@ -2799,6 +2866,8 @@ async function saveGeneratedContent(projectId: string, generatedContent: any[]):
       client_id: null,
       campaign_id: typeof generationContext.campaignId === 'string' ? generationContext.campaignId : null,
       brand_voice_id: typeof generationContext.brandVoiceId === 'string' ? generationContext.brandVoiceId : null,
+      creator_profile_id: typeof generationContext.creatorProfileId === 'string' ? generationContext.creatorProfileId : null,
+      library_id: typeof generationContext.libraryId === 'string' ? generationContext.libraryId : null,
       project_id: projectId,
       output_id: outputIds[index],
       title,
@@ -2813,8 +2882,10 @@ async function saveGeneratedContent(projectId: string, generatedContent: any[]):
         platform,
         metadata.platform,
         metadata.theme,
+        generationContext.creatorProfileName,
         generationContext.campaignName,
         generationContext.brandVoiceName,
+        generationContext.libraryName,
       ]),
       metadata_json: {
         source: 'generation',
@@ -2824,6 +2895,11 @@ async function saveGeneratedContent(projectId: string, generatedContent: any[]):
         generation_context: generationContext,
         output_metadata: metadata,
       },
+      generation_context_snapshot: Object.keys(generationContext).length > 0
+        ? generationContext
+        : null,
+      owner_user_id: userId,
+      locked: false,
       created_by: userId,
     };
   });

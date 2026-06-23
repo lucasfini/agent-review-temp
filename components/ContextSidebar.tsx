@@ -40,7 +40,10 @@ import { cn } from '@/lib/utils';
 import { getSpeakerDisplayName, getSpeakerColor } from '@/lib/name-extraction';
 import { formatReviewReason, type SpeakerSuggestion } from '@/lib/speaker-review';
 import { InsightsSidebar, type Insight } from '@/components/insights';
-import InlineContentStudio from '@/components/project/InlineContentStudio';
+import InlineContentStudio, {
+  type StudioContentContext,
+  type StudioContextOption,
+} from '@/components/project/InlineContentStudio';
 import { ANALYSIS_OPTION_CONFIG, type AnalysisOptionKey } from '@/lib/analysis-options';
 import { CONTENT_TYPES } from '@/lib/content-types';
 
@@ -299,6 +302,13 @@ interface ContextSidebarProps {
   onGenerateContentBlock?: (block: any) => Promise<void>;
   contentGuidanceByType?: Record<string, string>;
   onContentGuidanceChange?: (contentTypeId: string, value: string) => void;
+  contentContextByType?: Record<string, StudioContentContext>;
+  defaultContentContext?: StudioContentContext;
+  onContentContextChange?: (contentTypeId: string, value: StudioContentContext) => void;
+  creatorProfiles?: StudioContextOption[];
+  brandVoices?: StudioContextOption[];
+  campaigns?: StudioContextOption[];
+  contentLibraries?: StudioContextOption[];
   analysisStates?: Partial<Record<AnalysisOptionKey, { available: boolean; generating: boolean }>>;
   onGenerateAnalysisOption?: (key: AnalysisOptionKey) => Promise<void> | void;
   /** When true, hides all write actions (demo mode) */
@@ -388,6 +398,13 @@ export function ContextSidebar({
   onGenerateContentBlock,
   contentGuidanceByType = {},
   onContentGuidanceChange,
+  contentContextByType = {},
+  defaultContentContext = {},
+  onContentContextChange,
+  creatorProfiles = [],
+  brandVoices = [],
+  campaigns = [],
+  contentLibraries = [],
   analysisStates = {},
   onGenerateAnalysisOption,
   readOnly = false,
@@ -1299,6 +1316,13 @@ export function ContextSidebar({
                       onDeleteOutput={async (outputId) => { await onDeleteOutput?.(outputId); }}
                       guidanceByType={contentGuidanceByType}
                       onGuidanceChange={onContentGuidanceChange}
+                      contextByType={contentContextByType}
+                      defaultContext={defaultContentContext}
+                      onContextChange={onContentContextChange}
+                      creatorProfiles={creatorProfiles}
+                      brandVoices={brandVoices}
+                      campaigns={campaigns}
+                      libraries={contentLibraries}
                       readOnly={readOnly}
                       compact
                       title=""
@@ -2215,6 +2239,13 @@ export function ContextSidebar({
               onDeleteOutput={async (outputId) => { await onDeleteOutput?.(outputId); }}
               guidanceByType={contentGuidanceByType}
               onGuidanceChange={onContentGuidanceChange}
+              contextByType={contentContextByType}
+              defaultContext={defaultContentContext}
+              onContextChange={onContentContextChange}
+              creatorProfiles={creatorProfiles}
+              brandVoices={brandVoices}
+              campaigns={campaigns}
+              libraries={contentLibraries}
               readOnly={readOnly}
               compact
               title=""

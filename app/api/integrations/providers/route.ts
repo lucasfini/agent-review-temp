@@ -17,7 +17,7 @@ export async function GET(request: NextRequest) {
     return NextResponse.json({ error: fetchError.message || 'Failed to load integrations' }, { status: 500 });
   }
 
-  const providers = ['zoom', 'microsoft', 'youtube'].map(provider => {
+  const providers = ['zoom', 'microsoft', 'youtube', 'stripe', 'onedrive', 'google_drive', 'granola', 'slack'].map(provider => {
     const row = data?.find((c: any) => c.provider === provider && c.status === 'connected');
     return {
       provider,

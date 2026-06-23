@@ -2,6 +2,7 @@ import {
   formatPlanPrice,
   formatSubscriptionStatus,
   getPlanActionLabel,
+  getPlanCreditItems,
   getPlanLimitItems,
   isPlanActionDisabled,
 } from '@/lib/billing/subscription-ui';
@@ -15,7 +16,10 @@ function plan(overrides: Partial<Plan> = {}): Plan {
     slug: 'starter',
     description: null,
     stripePriceId: 'price_live_123456789',
+    stripeMonthlyPriceId: 'price_live_monthly',
+    stripeAnnualPriceId: 'price_live_annual',
     monthlyPriceCents: 29900,
+    annualPriceCents: 286800,
     currency: 'usd',
     limits: {
       seatLimit: 3,
@@ -25,6 +29,13 @@ function plan(overrides: Partial<Plan> = {}): Plan {
       monthlyStorageMbLimit: 5120,
       integrationLimit: 2,
     },
+    monthlyCreditGrant: 10000,
+    creditRolloverMonths: 1,
+    topUpEnabled: true,
+    topUpCreditExpiryMonths: 12,
+    maxUploadMinutes: 60,
+    extraSeatPriceCents: null,
+    isPopular: false,
     features: {},
     isActive: true,
     displayOrder: 10,
@@ -61,6 +72,11 @@ describe('subscription UI helpers', () => {
     expect(formatPlanPrice(plan({ monthlyPriceCents: null }))).toBe('Custom');
   });
 
+  it('formats annual equivalent and Free plan pricing', () => {
+    expect(formatPlanPrice(plan(), 'year')).toBe('$239/mo');
+    expect(formatPlanPrice(plan({ slug: 'free', monthlyPriceCents: 0, annualPriceCents: 0 }))).toBe('$0 forever');
+  });
+
   it('formats plan limits for display', () => {
     expect(getPlanLimitItems(plan())).toEqual([
       '3 seats',
@@ -69,6 +85,23 @@ describe('subscription UI helpers', () => {
       '4 imports/mo',
       '5 GB storage',
       '2 integrations',
+    ]);
+  });
+
+  it('formats product credit capacity and top-up rules for display', () => {
+    expect(getPlanCreditItems(plan({
+      monthlyCreditGrant: 300,
+      creditRolloverMonths: 0,
+      topUpEnabled: false,
+      features: {
+        credit_label: '300 credits/month, up to 1 full 60-minute Repurpose Pack',
+      },
+    }))).toEqual([
+      '300 credits/month, up to 1 full 60-minute Repurpose Pack',
+      '60-minute max upload',
+      '3 seats',
+      'Credits reset monthly',
+      'Top-ups disabled',
     ]);
   });
 
@@ -83,7 +116,13 @@ describe('subscription UI helpers', () => {
     expect(getPlanActionLabel(starter, subscription())).toBe('Current plan');
     expect(isPlanActionDisabled(starter, subscription())).toBe(true);
 
-    const growth = plan({ id: 'plan-growth', slug: 'growth', stripePriceId: null });
+    const growth = plan({
+      id: 'plan-growth',
+      slug: 'growth',
+      stripePriceId: null,
+      stripeMonthlyPriceId: null,
+      stripeAnnualPriceId: null,
+    });
     expect(getPlanActionLabel(growth, subscription())).toBe('Not configured');
     expect(isPlanActionDisabled(growth, subscription())).toBe(true);
   });

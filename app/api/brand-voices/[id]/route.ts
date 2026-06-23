@@ -1,16 +1,18 @@
 import { NextRequest, NextResponse } from 'next/server';
 
 import { RouteAccessError } from '@/lib/api/route-auth';
-import { requireActiveOrganizationForUser } from '@/lib/authz/permissions';
 import { OrganizationAccessError } from '@/lib/authz/types';
+import { recordOrganizationAuditLog } from '@/lib/organizations/audit';
 import {
   BrandVoiceValidationError,
   canManageBrandVoice,
   deleteBrandVoice,
-  getBrandVoice,
+  decorateBrandVoiceScope,
+  getBrandVoiceInOrganizations,
   updateBrandVoice,
 } from '@/lib/brand-voices';
 import { isDemoUser } from '@/lib/demo-mode';
+import { requireStudioAssetContext } from '@/lib/studio-assets';
 import { supabaseAdmin } from '@/lib/supabase/server';
 
 export const dynamic = 'force-dynamic';
@@ -41,10 +43,17 @@ export async function GET(
 ) {
   try {
     const { id } = await params;
-    const { organization, membership } = await requireActiveOrganizationForUser(request, {
+    const context = await requireStudioAssetContext(request, {
       requestedOrganizationId: requestedOrganizationIdFrom(request),
     });
-    const brandVoice = await getBrandVoice(supabaseAdmin, organization.id, id);
+    const voice = await getBrandVoiceInOrganizations(supabaseAdmin, context.organizationIds, id);
+    const brandVoice = voice ? decorateBrandVoiceScope(voice, {
+      activeOrganizationId: context.activeOrganizationId,
+      privateOrganizationId: context.privateOrganizationId,
+      userId: context.user.id,
+      role: context.membership.role,
+      organizationType: context.organization.type,
+    }) : null;
 
     if (!brandVoice) {
       return NextResponse.json({ error: 'Brand voice not found' }, { status: 404 });
@@ -53,9 +62,9 @@ export async function GET(
     return NextResponse.json({
       success: true,
       membership: {
-        role: membership.role,
-        status: membership.status,
-        canManageBrandVoice: canManageBrandVoice(membership.role, organization.type),
+        role: context.membership.role,
+        status: context.membership.status,
+        canManageBrandVoice: canManageBrandVoice(context.membership.role, context.organization.type),
       },
       brandVoice,
     });
@@ -71,26 +80,59 @@ export async function PATCH(
   try {
     const { id } = await params;
     const body = await request.json().catch(() => ({}));
-    const { user, organization, membership } = await requireActiveOrganizationForUser(request, {
+    const context = await requireStudioAssetContext(request, {
       requestedOrganizationId: requestedOrganizationIdFrom(request, body),
     });
 
-    if (isDemoUser(user)) {
+    if (isDemoUser(context.user)) {
       return NextResponse.json({ error: 'Demo account is read-only' }, { status: 403 });
     }
 
-    if (!canManageBrandVoice(membership.role, organization.type)) {
+    const existingVoice = await getBrandVoiceInOrganizations(supabaseAdmin, context.organizationIds, id);
+    const scopedVoice = existingVoice ? decorateBrandVoiceScope(existingVoice, {
+      activeOrganizationId: context.activeOrganizationId,
+      privateOrganizationId: context.privateOrganizationId,
+      userId: context.user.id,
+      role: context.membership.role,
+      organizationType: context.organization.type,
+    }) : null;
+
+    if (!scopedVoice) {
+      return NextResponse.json({ error: 'Brand voice not found' }, { status: 404 });
+    }
+
+    if (!scopedVoice.canEdit) {
       return NextResponse.json(
-        { error: 'Brand voice management requires organization owner or admin access' },
+        { error: 'You do not have permission to edit this brand voice' },
         { status: 403 }
       );
     }
 
-    const brandVoice = await updateBrandVoice(supabaseAdmin, organization.id, id, body);
+    const updatedVoice = await updateBrandVoice(supabaseAdmin, scopedVoice.organizationId, id, body);
+    const brandVoice = updatedVoice ? decorateBrandVoiceScope(updatedVoice, {
+      activeOrganizationId: context.activeOrganizationId,
+      privateOrganizationId: context.privateOrganizationId,
+      userId: context.user.id,
+      role: context.membership.role,
+      organizationType: context.organization.type,
+    }) : null;
 
     if (!brandVoice) {
       return NextResponse.json({ error: 'Brand voice not found' }, { status: 404 });
     }
+
+    await recordOrganizationAuditLog({
+      supabase: supabaseAdmin,
+      organizationId: brandVoice.organizationId,
+      actorUserId: context.user.id,
+      action: 'voice.updated',
+      resourceType: 'voice',
+      resourceId: brandVoice.id,
+      metadata: {
+        name: brandVoice.name,
+        scope: brandVoice.scope,
+      },
+    });
 
     return NextResponse.json({
       success: true,
@@ -107,26 +149,52 @@ export async function DELETE(
 ) {
   try {
     const { id } = await params;
-    const { user, organization, membership } = await requireActiveOrganizationForUser(request, {
+    const context = await requireStudioAssetContext(request, {
       requestedOrganizationId: requestedOrganizationIdFrom(request),
     });
 
-    if (isDemoUser(user)) {
+    if (isDemoUser(context.user)) {
       return NextResponse.json({ error: 'Demo account is read-only' }, { status: 403 });
     }
 
-    if (!canManageBrandVoice(membership.role, organization.type)) {
+    const existingVoice = await getBrandVoiceInOrganizations(supabaseAdmin, context.organizationIds, id);
+    const scopedVoice = existingVoice ? decorateBrandVoiceScope(existingVoice, {
+      activeOrganizationId: context.activeOrganizationId,
+      privateOrganizationId: context.privateOrganizationId,
+      userId: context.user.id,
+      role: context.membership.role,
+      organizationType: context.organization.type,
+    }) : null;
+
+    if (!scopedVoice) {
+      return NextResponse.json({ error: 'Brand voice not found' }, { status: 404 });
+    }
+
+    if (!scopedVoice.canEdit) {
       return NextResponse.json(
-        { error: 'Brand voice management requires organization owner or admin access' },
+        { error: 'You do not have permission to delete this brand voice' },
         { status: 403 }
       );
     }
 
-    const deleted = await deleteBrandVoice(supabaseAdmin, organization.id, id);
+    const deleted = await deleteBrandVoice(supabaseAdmin, scopedVoice.organizationId, id);
 
     if (!deleted) {
       return NextResponse.json({ error: 'Brand voice not found' }, { status: 404 });
     }
+
+    await recordOrganizationAuditLog({
+      supabase: supabaseAdmin,
+      organizationId: scopedVoice.organizationId,
+      actorUserId: context.user.id,
+      action: 'voice.deleted',
+      resourceType: 'voice',
+      resourceId: scopedVoice.id,
+      metadata: {
+        name: scopedVoice.name,
+        scope: scopedVoice.scope,
+      },
+    });
 
     return NextResponse.json({ success: true });
   } catch (error) {

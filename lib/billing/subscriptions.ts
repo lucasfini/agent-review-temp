@@ -230,11 +230,12 @@ export async function storeOrganizationStripeCustomerId(
     ...(existing?.metadata || {}),
     ...(options.metadata || {}),
     stripeCustomerId,
+    pendingCheckoutPlanId: options.planId || null,
     customerStoredAt: new Date().toISOString(),
   };
   const payload = {
     organization_id: organizationId,
-    plan_id: options.planId || existing?.planId || null,
+    plan_id: existing?.planId || null,
     stripe_customer_id: stripeCustomerId,
     status: existing?.status || 'inactive',
     metadata_json: metadata,

@@ -7,12 +7,13 @@ import type {
   OrganizationRecord,
   OrganizationType,
 } from '@/lib/authz/types';
+import { normalizeOrganizationMemberRole } from '@/lib/authz/types';
 import { supabaseAdmin } from '@/lib/supabase/server';
 
 const AGENCY_ACCESS_ROLES = new Set<string>([
   'owner',
   'admin',
-  'member',
+  'editor',
   'agency_admin',
   'agency_member',
 ]);
@@ -66,35 +67,40 @@ export function canAccessAgencyConsole(
   role?: OrganizationMemberRole | string | null,
   organizationType?: OrganizationType | string | null
 ): boolean {
-  return isInternalAgencyOrganization(organizationType) && Boolean(role && AGENCY_ACCESS_ROLES.has(role));
+  const normalizedRole = normalizeOrganizationMemberRole(role);
+  return isInternalAgencyOrganization(organizationType) && Boolean(normalizedRole && AGENCY_ACCESS_ROLES.has(normalizedRole));
 }
 
 export function canManageAgencyClient(
   role?: OrganizationMemberRole | string | null,
   organizationType?: OrganizationType | string | null
 ): boolean {
-  return isInternalAgencyOrganization(organizationType) && Boolean(role && AGENCY_CLIENT_MANAGE_ROLES.has(role));
+  const normalizedRole = normalizeOrganizationMemberRole(role);
+  return isInternalAgencyOrganization(organizationType) && Boolean(normalizedRole && AGENCY_CLIENT_MANAGE_ROLES.has(normalizedRole));
 }
 
 export function canManageAgencySourceImport(
   role?: OrganizationMemberRole | string | null,
   organizationType?: OrganizationType | string | null
 ): boolean {
-  return isInternalAgencyOrganization(organizationType) && Boolean(role && AGENCY_SOURCE_IMPORT_MANAGE_ROLES.has(role));
+  const normalizedRole = normalizeOrganizationMemberRole(role);
+  return isInternalAgencyOrganization(organizationType) && Boolean(normalizedRole && AGENCY_SOURCE_IMPORT_MANAGE_ROLES.has(normalizedRole));
 }
 
 export function canManageAgencyProductionTask(
   role?: OrganizationMemberRole | string | null,
   organizationType?: OrganizationType | string | null
 ): boolean {
-  return isInternalAgencyOrganization(organizationType) && Boolean(role && AGENCY_PRODUCTION_TASK_MANAGE_ROLES.has(role));
+  const normalizedRole = normalizeOrganizationMemberRole(role);
+  return isInternalAgencyOrganization(organizationType) && Boolean(normalizedRole && AGENCY_PRODUCTION_TASK_MANAGE_ROLES.has(normalizedRole));
 }
 
 export function canManageAgencyDraft(
   role?: OrganizationMemberRole | string | null,
   organizationType?: OrganizationType | string | null
 ): boolean {
-  return isInternalAgencyOrganization(organizationType) && Boolean(role && AGENCY_DRAFT_MANAGE_ROLES.has(role));
+  const normalizedRole = normalizeOrganizationMemberRole(role);
+  return isInternalAgencyOrganization(organizationType) && Boolean(normalizedRole && AGENCY_DRAFT_MANAGE_ROLES.has(normalizedRole));
 }
 
 export async function requireAgencyAccess(

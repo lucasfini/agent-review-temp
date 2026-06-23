@@ -9,8 +9,9 @@ describe('billing permission rules', () => {
     expect(canManageOrganizationBilling('admin', 'personal_legacy')).toBe(true);
   });
 
-  it('blocks normal members from billing management', () => {
-    expect(canManageOrganizationBilling('member', 'saas_customer')).toBe(false);
+  it('blocks editors and readers from billing management', () => {
+    expect(canManageOrganizationBilling('editor', 'saas_customer')).toBe(false);
+    expect(canManageOrganizationBilling('reader', 'saas_customer')).toBe(false);
     expect(canManageOrganizationBilling('agency_member', 'internal_agency')).toBe(false);
     expect(canManageOrganizationBilling(null, 'saas_customer')).toBe(false);
   });
@@ -21,10 +22,11 @@ describe('billing permission rules', () => {
     expect(canManageOrganizationBilling('agency_admin', 'personal_legacy')).toBe(false);
   });
 
-  it('keeps active member billing reads broad', () => {
+  it('keeps billing reads limited to privileged roles', () => {
     expect(canReadOrganizationBilling('owner')).toBe(true);
     expect(canReadOrganizationBilling('admin')).toBe(true);
-    expect(canReadOrganizationBilling('member')).toBe(true);
+    expect(canReadOrganizationBilling('editor')).toBe(false);
+    expect(canReadOrganizationBilling('reader')).toBe(false);
     expect(canReadOrganizationBilling('agency_admin')).toBe(true);
     expect(canReadOrganizationBilling('agency_member')).toBe(true);
     expect(canReadOrganizationBilling('removed')).toBe(false);

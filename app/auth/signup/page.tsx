@@ -1,7 +1,7 @@
 "use client";
 
 import { useEffect, useState } from 'react';
-import { useRouter } from 'next/navigation';
+import { useRouter, useSearchParams } from 'next/navigation';
 import Link from 'next/link';
 import { useTheme } from 'next-themes';
 import { useAuth } from '@/lib/auth/context';
@@ -141,6 +141,9 @@ export default function SignupPage() {
 
   const { signUp, signInWithGoogle } = useAuth();
   const router = useRouter();
+  const searchParams = useSearchParams();
+  const inviteToken = searchParams.get('invite_token') || searchParams.get('token') || '';
+  const inviteNextPath = inviteToken ? `/invite?token=${encodeURIComponent(inviteToken)}` : null;
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -166,7 +169,7 @@ export default function SignupPage() {
       return;
     }
 
-    const { data, error } = await signUp(trimmedEmail, password, name.trim() || undefined);
+    const { data, error } = await signUp(trimmedEmail, password, name.trim() || undefined, inviteNextPath);
 
     if (error) {
       setError(error.message);
@@ -175,7 +178,7 @@ export default function SignupPage() {
     }
 
     if (data?.session) {
-      router.push('/dashboard');
+      router.push(inviteNextPath || '/dashboard');
       return;
     }
 
@@ -196,7 +199,7 @@ export default function SignupPage() {
     } catch (e) {
       console.warn('Failed to store signup consents in cookie:', e);
     }
-    const { error } = await signInWithGoogle();
+    const { error } = await signInWithGoogle(inviteNextPath);
     if (error) {
       setError(error.message);
       setIsGoogleLoading(false);
@@ -216,7 +219,7 @@ export default function SignupPage() {
               Click it to verify your account and get started.
             </p>
             <Link
-              href="/auth/login"
+              href={inviteToken ? `/auth/login?invite_token=${encodeURIComponent(inviteToken)}` : '/auth/login'}
               className="inline-block bg-blue-600 text-white py-3 px-6 rounded-xl text-sm font-semibold hover:bg-blue-700 transition-colors motion-safe:animate-fade-up-600"
             >
               Go to Login
@@ -429,7 +432,7 @@ export default function SignupPage() {
 
           <p className="text-center text-sm text-slate-500 dark:text-slate-400 mt-6 motion-safe:animate-fade-in-400">
             Already have an account?{' '}
-            <Link href="/auth/login" className="text-blue-600 dark:text-blue-400 hover:text-blue-600 dark:hover:text-blue-300 font-medium">
+            <Link href={inviteToken ? `/auth/login?invite_token=${encodeURIComponent(inviteToken)}` : '/auth/login'} className="text-blue-600 dark:text-blue-400 hover:text-blue-600 dark:hover:text-blue-300 font-medium">
               Sign in
             </Link>
           </p>

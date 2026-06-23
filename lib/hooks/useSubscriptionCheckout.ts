@@ -7,6 +7,7 @@ import { useAuth } from '@/lib/auth/context';
 type CheckoutInput = {
   planSlug?: string;
   planId?: string;
+  billingInterval?: 'month' | 'year';
 };
 
 type CheckoutResponse = {
@@ -66,6 +67,7 @@ export function useSubscriptionCheckout(organizationId?: string | null): UseSubs
         body: JSON.stringify({
           planSlug: input.planSlug,
           planId: input.planId,
+          billingInterval: input.billingInterval || 'month',
           organization_id: organizationId || undefined,
         }),
       });

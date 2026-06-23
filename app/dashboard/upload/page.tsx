@@ -1,7 +1,7 @@
 "use client";
 
 import { useState, useCallback, useEffect, useRef, useMemo } from 'react';
-import { Upload, FileAudio, X, AlertCircle, CheckCircle, Clock, History, Trash2, Eye, FileVideo, Loader2, ChevronDown, ChevronUp, Lightbulb, Users, Mic, Pencil, UserCircle, MoreHorizontal, Video, MessageSquare } from 'lucide-react';
+import { Upload, FileAudio, X, AlertCircle, CheckCircle, Clock, History, Trash2, Eye, FileVideo, Loader2, ChevronDown, ChevronUp, Lightbulb, Users, Mic, Pencil, MoreHorizontal, Video, MessageSquare, Globe2, Link2, Cloud, FileText, List, Quote, Star, Sparkles, Info, Network, Download } from 'lucide-react';
 import { supabase } from '@/lib/supabase/client';
 import { useAuth } from '@/lib/auth/context';
 import { useCurrentOrganization } from '@/lib/hooks/useCurrentOrganization';
@@ -16,6 +16,7 @@ import { useUploadProgressSync, type UploadedFile, type QueuedRosterSpeaker } fr
 import { toast } from 'sonner';
 import { isIntegrationEnabled } from '@/lib/integrations/availability';
 import { withOrganizationId } from '@/lib/organizations/current-organization';
+import { DashboardPageShell, DashboardPanel } from '@/components/dashboard/shell';
 
 const HISTORY_PAGE_SIZE = 10;
 const UPLOAD_METHOD_TABS = [
@@ -36,9 +37,9 @@ const COMING_SOON_INTEGRATIONS = [
     border: 'border-blue-100 dark:border-blue-400/20',
   },
   {
-    name: 'Teams',
-    detail: 'Call recordings',
-    Icon: Users,
+    name: 'Google Drive',
+    detail: 'Shared audio and video files',
+    Icon: Cloud,
     accent: 'text-indigo-600 dark:text-indigo-300',
     bg: 'bg-indigo-50 dark:bg-indigo-500/10',
     border: 'border-indigo-100 dark:border-indigo-400/20',
@@ -50,6 +51,14 @@ const COMING_SOON_INTEGRATIONS = [
     accent: 'text-emerald-600 dark:text-emerald-300',
     bg: 'bg-emerald-50 dark:bg-emerald-500/10',
     border: 'border-emerald-100 dark:border-emerald-400/20',
+  },
+  {
+    name: 'Granola',
+    detail: 'Meeting notes and recordings',
+    Icon: Network,
+    accent: 'text-violet-600 dark:text-violet-300',
+    bg: 'bg-violet-50 dark:bg-violet-500/10',
+    border: 'border-violet-100 dark:border-violet-400/20',
   },
 ];
 
@@ -90,6 +99,61 @@ const LIVE_INTEGRATIONS: Array<{
     border: 'border-rose-100 dark:border-rose-400/20',
   },
 ];
+
+const FEATURE_STRIP_ITEMS = [
+  {
+    title: 'Smart imports',
+    description: 'Local files, URLs, and app integrations.',
+    Icon: Globe2,
+  },
+  {
+    title: 'Speaker controls',
+    description: 'Set names, roles, and expected counts.',
+    Icon: Users,
+  },
+  {
+    title: 'Always saved',
+    description: 'Your upload history is always available.',
+    Icon: Clock,
+  },
+];
+
+const HELPFUL_TIPS = [
+  {
+    title: 'Speaker count',
+    description: 'Set or auto-detect the number of speakers for best accuracy.',
+    Icon: Users,
+  },
+  {
+    title: 'Naming',
+    description: 'Use clear names, e.g. "Interviewer" with {{Name}}, to help AI identify speakers automatically.',
+    Icon: Pencil,
+  },
+  {
+    title: 'Audio quality',
+    description: 'Keep speakers close to mics and minimize background noise for best results.',
+    Icon: Mic,
+  },
+  {
+    title: 'Clear turn-taking',
+    description: 'Avoid overlapping speech to improve speaker separation.',
+    Icon: MoreHorizontal,
+  },
+  {
+    title: 'File size & length',
+    description: 'Files up to 500 MB. Longer recordings may take more time to process.',
+    Icon: Clock,
+  },
+];
+
+const ANALYSIS_MODULE_ICONS: Record<keyof AnalysisOptions, typeof Users> = {
+  namedSpeakers: Users,
+  summary: FileText,
+  insights: Lightbulb,
+  chapters: List,
+  takeaways: Star,
+  quotes: Quote,
+};
 
 interface UploadHistory {
   id: string;
@@ -506,6 +570,7 @@ export default function UploadPage() {
   const [speakerCount, setSpeakerCount] = useState<number | undefined>(undefined);
   const [recommendedSpeakerCount, setRecommendedSpeakerCount] = useState<number | undefined>(undefined);
   const [showAdvancedOptions, setShowAdvancedOptions] = useState(true);
+  const [showHelpfulTips, setShowHelpfulTips] = useState(true);
   const [confirmDeleteId, setConfirmDeleteId] = useState<string | null>(null);
   const [activeTab, setActiveTab] = useState<UploadMethodTab>('local');
   const [urlInput, setUrlInput] = useState('');
@@ -600,6 +665,14 @@ export default function UploadPage() {
   }, [selectedQueuedFile, uploadedFiles]);
 
   useEffect(() => {
+    const mobileQuery = window.matchMedia('(max-width: 767px)');
+    if (mobileQuery.matches) {
+      setShowHelpfulTips(false);
+      setShowAdvancedOptions(false);
+    }
+  }, []);
+
+  useEffect(() => {
     if (selectedQueuedFile) {
       const normalizedSelectedOptions = normalizeAnalysisOptions(selectedQueuedFile.analysisOptions);
       const next = forceNamedSpeakersForRoster(
@@ -641,27 +714,43 @@ export default function UploadPage() {
     setRosterSpeakers([]);
   }, [queuedFiles, selectedQueuedFile, forceNamedSpeakersForRoster, setUploadedFiles]);
 
+  const updateAnalysisOptionsForCurrentContext = useCallback((nextOptions: AnalysisOptions) => {
+    const next = forceNamedSpeakersForRoster(normalizeAnalysisOptions(nextOptions), rosterSpeakers);
+    analysisOptionsRef.current = next;
+    setAnalysisOptions(next);
+    if (selectedQueuedFileId) {
+      setUploadedFiles((currentFiles) => currentFiles.map((file) => (
+        file.id === selectedQueuedFileId && file.status === 'queued'
+          ? {
+              ...file,
+              analysisOptions: next,
+              processingTier: getProcessingTierForAnalysis(next),
+            }
+          : file
+      )));
+    }
+  }, [forceNamedSpeakersForRoster, rosterSpeakers, selectedQueuedFileId, setUploadedFiles]);
+
   const handleAnalysisOptionToggle = (key: keyof AnalysisOptions) => {
     if (key === 'namedSpeakers' && rosterSpeakers.length > 0 && analysisOptions.namedSpeakers) {
       return;
     }
-    setAnalysisOptions(prev => {
-      const toggled = { ...prev, [key]: !prev[key] };
-      const next = forceNamedSpeakersForRoster(toggled, rosterSpeakers);
-      analysisOptionsRef.current = next;
-      if (selectedQueuedFileId) {
-        setUploadedFiles((currentFiles) => currentFiles.map((file) => (
-          file.id === selectedQueuedFileId && file.status === 'queued'
-            ? {
-                ...file,
-                analysisOptions: next,
-                processingTier: getProcessingTierForAnalysis(next),
-              }
-            : file
-        )));
-      }
-      return next;
+    updateAnalysisOptionsForCurrentContext({ ...analysisOptions, [key]: !analysisOptions[key] });
+  };
+
+  const handleSelectAllAnalysis = () => {
+    updateAnalysisOptionsForCurrentContext({
+      namedSpeakers: true,
+      summary: true,
+      insights: true,
+      chapters: true,
+      takeaways: true,
+      quotes: true,
     });
+  };
+
+  const handleClearAnalysis = () => {
+    updateAnalysisOptionsForCurrentContext({ ...DEFAULT_ANALYSIS_OPTIONS });
   };
 
   const updateSelectedQueuedFileAdvanced = useCallback((updates: Partial<Pick<UploadedFile, 'speakerCount' | 'rosterSpeakers'>>) => {
@@ -1009,6 +1098,42 @@ export default function UploadPage() {
     return `${mins}:${secs.toString().padStart(2, '0')}`;
   };
 
+  const formatUploadedAt = (value: string) => {
+    const date = new Date(value);
+    if (Number.isNaN(date.getTime())) return { date: 'Unknown date', time: '' };
+    return {
+      date: date.toLocaleDateString(undefined, { month: 'short', day: 'numeric', year: 'numeric' }),
+      time: date.toLocaleTimeString(undefined, { hour: 'numeric', minute: '2-digit' }),
+    };
+  };
+
+  const getHistorySourceLabel = (item: UploadHistory) => {
+    if (!item.audio_file_name) return 'Workspace source';
+    return 'Local upload';
+  };
+
+  const getHistoryFileMeta = (item: UploadHistory) => {
+    const parts: string[] = [];
+    const extension = item.audio_file_name?.split('.').pop()?.toUpperCase();
+    if (extension && extension.length <= 5) parts.push(`${extension} source`);
+    if (item.audio_duration) parts.push(formatDuration(item.audio_duration));
+    if (item.audio_file_size) parts.push(formatFileSize(item.audio_file_size));
+    return parts.join(' · ') || 'Source material';
+  };
+
+  const getHistoryStatusClass = (status: string) => {
+    switch (status) {
+      case 'completed':
+        return 'border-emerald-200 bg-emerald-50 text-emerald-700 dark:border-emerald-800/30 dark:bg-emerald-900/20 dark:text-emerald-300';
+      case 'processing':
+        return 'border-amber-200 bg-amber-50 text-amber-700 dark:border-amber-800/30 dark:bg-amber-900/20 dark:text-amber-300';
+      case 'failed':
+        return 'border-red-200 bg-red-50 text-red-700 dark:border-red-800/30 dark:bg-red-900/20 dark:text-red-300';
+      default:
+        return 'border-slate-200 bg-slate-50 text-slate-600 dark:border-slate-800 dark:bg-slate-800/60 dark:text-slate-300';
+    }
+  };
+
   const getStatusIcon = (status: string) => {
     switch (status) {
       case 'completed':
@@ -1177,8 +1302,26 @@ export default function UploadPage() {
     });
 
     const maxSize = 500 * 1024 * 1024; // 500MB
-    const oversizedFiles = audioFiles.filter(file => file.size > maxSize);
+    const acceptedFiles = new Set([...audioFiles, ...videoFiles]);
+    const unsupportedFiles = files.filter(file => !acceptedFiles.has(file));
+    const oversizedFiles = [...audioFiles, ...videoFiles].filter(file => file.size > maxSize);
     const validAudioFiles = audioFiles.filter(file => file.size <= maxSize);
+    const validVideoFiles = videoFiles.filter(file => file.size <= maxSize);
+
+    const unsupportedEntries: UploadedFile[] = unsupportedFiles.map(file => ({
+      file,
+      id: Math.random().toString(36).substr(2, 9),
+      status: 'error' as const,
+      progress: 0,
+      processingStage: 'failed' as ProcessingStage,
+      stageProgress: 0,
+      processingMessage: 'Unsupported file type',
+      error: 'Unsupported file type. Upload MP3, WAV, M4A, FLAC, OGG, WEBM, MP4, MOV, MKV, or AVI.',
+      processingTier: selectedProcessingTier,
+      analysisOptions: selectedAnalysisOptions,
+      displayName: file.name,
+      sourceType: 'local',
+    }));
 
     // Build error entries for oversized files (inline error instead of alert())
     const oversizedEntries: UploadedFile[] = oversizedFiles.map(file => ({
@@ -1197,6 +1340,7 @@ export default function UploadPage() {
     }));
 
     const newFiles: UploadedFile[] = [
+      ...unsupportedEntries,
       ...oversizedEntries,
       ...validAudioFiles.map((file): UploadedFile => ({
         file,
@@ -1213,7 +1357,7 @@ export default function UploadPage() {
         speakerCount,
         rosterSpeakers: rosterSpeakers as QueuedRosterSpeaker[],
       })),
-      ...videoFiles.map((file): UploadedFile => ({
+      ...validVideoFiles.map((file): UploadedFile => ({
         file,
         id: Math.random().toString(36).substr(2, 9),
         status: 'queued' as const,
@@ -1248,43 +1392,68 @@ export default function UploadPage() {
     if (p.title && localTitles.has(p.title.toLowerCase())) return false;
     return true;
   });
+  const selectedAnalysisKeys = getSelectedAnalysisKeys(analysisOptions);
+  const transcriptOnly = selectedAnalysisKeys.length === 0;
+  const urlImportReady = urlInput.trim().length > 0;
 
   return (
-    <div className="py-4 sm:py-6">
-      <div className="max-w-7xl mx-auto px-3 sm:px-6 md:px-8">
-
-        {/* Header */}
-        <div className="mb-6">
-          <h1 className="text-2xl font-bold leading-7 text-slate-900 dark:text-slate-50 sm:text-3xl">
+    <DashboardPageShell
+      maxWidth="full"
+      contentClassName="max-w-[1480px]"
+      className="bg-[#f7f9fd] text-[#07132d] dark:bg-slate-950 dark:text-slate-50"
+    >
+        <header className="mb-6 motion-safe:animate-fade-up">
+          <p className="mb-2 text-xs font-bold uppercase text-blue-600 dark:text-blue-300">
+            UPLOAD
+          </p>
+          <h1 className="font-serif text-4xl font-semibold leading-tight text-[#07132d] dark:text-white sm:text-5xl">
             Add Source Material
           </h1>
-          <p className="mt-1 text-sm text-slate-500 dark:text-slate-400">
-            Bring in a call, meeting, demo, webinar, founder update, or podcast. We&apos;ll handle transcription first, then your team can generate any of the 11 content types from the finished project.
+          <p className="mt-3 max-w-3xl text-base leading-7 text-slate-600 dark:text-slate-300">
+            Bring in a call, meeting, webinar, founder update, or podcast and turn it into accurate transcripts and content your team can use.
           </p>
-        </div>
+        </header>
 
-        <div className="xl:flex xl:gap-8 xl:items-start">
+        <section className="mb-5 rounded-xl border border-slate-200 bg-white/95 p-5 shadow-[0_18px_60px_rgba(15,23,42,0.06)] motion-safe:animate-fade-up-200 dark:border-slate-800 dark:bg-slate-900">
+          <div className="grid gap-4 text-sm md:grid-cols-3 md:divide-x md:divide-slate-200 md:dark:divide-slate-800">
+            {FEATURE_STRIP_ITEMS.map(({ title, description, Icon }) => (
+              <div key={title} className="flex items-center gap-4 md:px-6 md:first:pl-0 md:last:pr-0">
+                <span className="inline-flex h-12 w-12 shrink-0 items-center justify-center rounded-full bg-blue-50 text-blue-600 dark:bg-blue-500/10 dark:text-blue-300">
+                  <Icon className="h-6 w-6" />
+                </span>
+                <div>
+                  <p className="font-semibold text-slate-950 dark:text-slate-100">{title}</p>
+                  <p className="mt-1 text-sm leading-6 text-slate-600 dark:text-slate-400">{description}</p>
+                </div>
+              </div>
+            ))}
+          </div>
+        </section>
+
+        <div className="grid gap-6 xl:grid-cols-[minmax(0,1fr)_320px] xl:items-start">
           <div className="flex-1 min-w-0">
             {/* Upload methods */}
             <div className="mb-6">
-              <div className="flex w-full items-center gap-1 rounded-lg border border-slate-300 bg-slate-50 p-1 shadow-sm dark:border-slate-700 dark:bg-slate-900">
+              <div
+                role="tablist"
+                aria-label="Upload source"
+                className="flex w-full items-center rounded-lg border border-slate-200 bg-white shadow-sm dark:border-slate-800 dark:bg-slate-900"
+              >
                 {UPLOAD_METHOD_TABS.map((tab) => (
                   <button
                     key={tab.id}
                     type="button"
+                    role="tab"
+                    id={`upload-tab-${tab.id}`}
+                    aria-selected={activeTab === tab.id}
+                    aria-controls={`upload-panel-${tab.id}`}
                     onClick={() => setActiveTab(tab.id)}
-                    className={`${tab.soon ? 'relative flex-[0.62] sm:flex-[0.54] overflow-hidden' : 'flex-1'} px-2.5 py-1.5 text-sm font-medium rounded-md transition-all text-center ${activeTab === tab.id
-                        ? tab.soon
-                          ? 'bg-slate-900 text-white shadow dark:bg-white dark:text-slate-950'
-                          : 'bg-white dark:bg-slate-700 text-slate-900 dark:text-white shadow'
-                        : tab.soon
-                          ? 'text-slate-500 dark:text-slate-400 hover:text-slate-800 dark:hover:text-slate-100 hover:bg-white/80 dark:hover:bg-slate-800'
-                          : 'text-slate-500 dark:text-slate-400 hover:text-slate-700 dark:hover:text-slate-50 hover:bg-slate-100 dark:hover:bg-slate-800'
-                      }`}
+                    className={`relative flex-1 border-r border-slate-200 px-3 py-3 text-center text-sm font-semibold transition-colors last:border-r-0 focus:outline-none focus-visible:z-10 focus-visible:ring-2 focus-visible:ring-blue-500 dark:border-slate-800 ${
+                      activeTab === tab.id
+                        ? 'bg-blue-50 text-blue-700 shadow-[inset_0_-2px_0_#2563eb] dark:bg-blue-500/10 dark:text-blue-200'
+                        : 'text-slate-600 hover:bg-slate-50 hover:text-slate-950 dark:text-slate-400 dark:hover:bg-slate-800 dark:hover:text-slate-100'
+                    }`}
                   >
-                    {tab.soon && (
-                      <span className="pointer-events-none absolute inset-y-1 left-1 w-8 rounded bg-white/15 blur-sm motion-safe:animate-pulse" />
-                    )}
                     <span className="relative inline-flex items-center justify-center gap-1.5">
                       <span className="sm:hidden">{tab.label}</span>
                       <span className="hidden sm:inline">{tab.labelFull}</span>
@@ -1297,46 +1466,67 @@ export default function UploadPage() {
               </div>
             </div>
 
-            <div className="mb-6 rounded-2xl border border-slate-200 dark:border-slate-800 bg-white dark:bg-slate-900">
+            <DashboardPanel className="mb-6 overflow-hidden rounded-xl border-slate-200 bg-white shadow-[0_18px_60px_rgba(15,23,42,0.06)] motion-safe:animate-fade-up-400 dark:border-slate-800 dark:bg-slate-900">
               <div className="border-b border-slate-200 dark:border-slate-800 px-5 py-5">
                 {activeTab === 'local' && (
-                  <div data-tour="upload-zone">
-                    <div className="mb-4">
-                      <div className="flex items-center gap-2">
-                        <h2 className="text-lg font-semibold text-slate-900 dark:text-slate-50">Upload audio or video</h2>
-                        <FeatureHelp
-                          title="File upload"
-                          description="Upload audio or video directly, then use the transcript and selected analysis outputs as source material for B2B content."
-                          bestFor="local calls, meetings, demos, webinars, podcasts, or exported files already on your device"
-                        />
+                  <div id="upload-panel-local" role="tabpanel" aria-labelledby="upload-tab-local" data-tour="upload-zone">
+                    <div className="mb-5 flex flex-col gap-4 sm:flex-row sm:items-start sm:justify-between">
+                      <div>
+                        <div className="flex items-center gap-2">
+                          <h2 className="text-lg font-semibold text-slate-950 dark:text-slate-50">Upload audio or video</h2>
+                          <FeatureHelp
+                            title="File upload"
+                            description="Upload audio or video directly, then use the transcript and selected analysis outputs as source material for B2B content."
+                            bestFor="local calls, meetings, demos, webinars, podcasts, or exported files already on your device"
+                          />
+                        </div>
+                        <p className="mt-1 text-sm text-slate-500 dark:text-slate-400">
+                          Drag & drop a file here, or browse from your device.
+                        </p>
                       </div>
-                      <p className="mt-1 text-sm text-slate-500 dark:text-slate-400">
-                        Drag in a source file or browse from your device. Video is converted to audio automatically before transcription.
-                      </p>
+                      <div className="flex items-center gap-2 rounded-full border border-slate-200 bg-slate-50 px-3 py-2 dark:border-slate-800 dark:bg-slate-950">
+                        <span className="text-sm font-medium text-slate-700 dark:text-slate-300">Transcript only</span>
+                        <FeatureHelp
+                          title="Transcript only"
+                          description="When enabled, AudioRepurpose creates the transcript and speaker labels without generating analysis modules during upload."
+                          bestFor="quick intake when you want to decide on summaries, quotes, chapters, and insights later"
+                        />
+                        <button
+                          type="button"
+                          role="switch"
+                          aria-checked={transcriptOnly}
+                          aria-label="Toggle transcript only mode"
+                          onClick={transcriptOnly ? handleSelectAllAnalysis : handleClearAnalysis}
+                          className={`relative inline-flex h-6 w-11 items-center rounded-full transition-colors focus:outline-none focus-visible:ring-2 focus-visible:ring-blue-500 focus-visible:ring-offset-2 dark:focus-visible:ring-offset-slate-900 ${
+                            transcriptOnly ? 'bg-blue-600' : 'bg-slate-300 dark:bg-slate-700'
+                          }`}
+                        >
+                          <span className={`inline-block h-5 w-5 rounded-full bg-white shadow transition-transform ${transcriptOnly ? 'translate-x-5' : 'translate-x-1'}`} />
+                        </button>
+                      </div>
                     </div>
                     <div
-                      className={`relative border-2 border-dashed rounded-xl transition-all ${isDragActive
-                          ? 'border-blue-400 bg-blue-50 dark:bg-blue-900/20 scale-[1.005]'
-                          : 'border-slate-300 dark:border-slate-600 bg-white dark:bg-slate-900 hover:border-slate-400 dark:hover:border-slate-500 hover:bg-slate-50 dark:hover:bg-slate-800/50'
+                      className={`relative overflow-hidden rounded-xl border-2 border-dashed transition-all duration-200 ${isDragActive
+                          ? 'scale-[1.003] border-blue-500 bg-blue-50 shadow-inner dark:bg-blue-500/10'
+                          : 'border-blue-300 bg-blue-50/40 hover:border-blue-500 hover:bg-blue-50/80 dark:border-blue-400/30 dark:bg-blue-500/10'
                         }`}
                       onDragEnter={onDragEnter}
                       onDragLeave={onDragLeave}
                       onDragOver={onDragOver}
                       onDrop={onDrop}
                     >
-                      <label htmlFor="file-upload" className="flex flex-col items-center justify-center py-8 sm:py-14 px-6 cursor-pointer">
-                        <div className={`w-14 h-14 rounded-full flex items-center justify-center mb-4 transition-colors ${isDragActive ? 'bg-blue-50 dark:bg-blue-900/20' : 'bg-slate-100 dark:bg-slate-800'
-                          }`}>
-                          <Upload className={`w-6 h-6 transition-colors ${isDragActive ? 'text-blue-500' : 'text-slate-500'}`} />
+                      <label htmlFor="file-upload" className="flex min-h-48 cursor-pointer flex-col items-center justify-center px-6 py-10 text-center focus-within:ring-2 focus-within:ring-blue-500 focus-within:ring-offset-2 dark:focus-within:ring-offset-slate-900 sm:min-h-56">
+                        <div className="mb-4 flex h-14 w-14 items-center justify-center rounded-full bg-blue-100 text-blue-600 transition-colors dark:bg-blue-500/15 dark:text-blue-300">
+                          <Upload className="h-6 w-6" />
                         </div>
-                        <p className="text-base font-semibold text-slate-600 dark:text-slate-300">
+                        <p className="text-base font-semibold text-slate-900 dark:text-slate-50">
                           {isDragActive ? 'Drop to upload' : 'Drop audio or video here'}
                         </p>
                         <p className="mt-1 text-sm text-slate-500 dark:text-slate-400">
                           or <span className="text-blue-600 hover:text-blue-500 font-medium">browse files</span>
                         </p>
                         <p className="mt-3 text-xs text-slate-400 dark:text-slate-500 text-center">
-                          MP3, WAV, M4A, FLAC, OGG, MP4, MOV · up to 500 MB · video is converted to audio automatically before transcription
+                          MP3, WAV, M4A, FLAC, OGG, MP4, MOV · up to 500 MB
                         </p>
                         <input
                           id="file-upload"
@@ -1349,14 +1539,45 @@ export default function UploadPage() {
                         />
                       </label>
                     </div>
+                    <div className="mt-4 flex flex-col gap-3 sm:flex-row sm:items-center">
+                      <p className="text-sm font-semibold text-slate-900 dark:text-slate-50">Add from</p>
+                      <div className="flex flex-wrap gap-2">
+                        <button
+                          type="button"
+                          disabled
+                          className="inline-flex items-center gap-2 rounded-lg border border-slate-200 bg-slate-50 px-4 py-2 text-sm font-semibold text-slate-400 disabled:cursor-not-allowed dark:border-slate-800 dark:bg-slate-950 dark:text-slate-600"
+                          title="Zoom import is coming soon"
+                        >
+                          <Video className="h-4 w-4" />
+                          Zoom
+                        </button>
+                        <button
+                          type="button"
+                          disabled
+                          className="inline-flex items-center gap-2 rounded-lg border border-slate-200 bg-slate-50 px-4 py-2 text-sm font-semibold text-slate-400 disabled:cursor-not-allowed dark:border-slate-800 dark:bg-slate-950 dark:text-slate-600"
+                          title="Google Drive import is coming soon"
+                        >
+                          <Cloud className="h-4 w-4" />
+                          Google Drive
+                        </button>
+                        <button
+                          type="button"
+                          onClick={() => setActiveTab('url')}
+                          className="inline-flex items-center gap-2 rounded-lg border border-slate-200 bg-white px-4 py-2 text-sm font-semibold text-slate-700 shadow-sm transition hover:-translate-y-px hover:border-blue-200 hover:text-blue-700 focus:outline-none focus-visible:ring-2 focus-visible:ring-blue-500 dark:border-slate-700 dark:bg-slate-900 dark:text-slate-200 dark:hover:text-blue-200"
+                        >
+                          <Link2 className="h-4 w-4" />
+                          RSS / URL
+                        </button>
+                      </div>
+                    </div>
                   </div>
                 )}
 
                 {activeTab === 'url' && (
-                  <div className="space-y-4">
+                  <div id="upload-panel-url" role="tabpanel" aria-labelledby="upload-tab-url" className="space-y-4">
                     <div>
                       <div className="flex items-center gap-2">
-                        <h2 className="text-lg font-semibold text-slate-900 dark:text-slate-50">Import from URL</h2>
+                        <h2 className="text-lg font-semibold text-slate-900 dark:text-slate-50">Import from a URL</h2>
                         <FeatureHelp
                           title="URL import"
                           description="Import hosted source material once, transcribe it, and use the finished project for analysis or content generation later."
@@ -1364,18 +1585,18 @@ export default function UploadPage() {
                         />
                       </div>
                       <p className="mt-1 text-sm text-slate-500 dark:text-slate-400">
-                        Paste a YouTube link or direct media URL, then transcribe once and generate whichever B2B outputs you need later.
+                        Paste a public audio, video, RSS, or transcript URL.
                       </p>
                     </div>
                     <div className="grid gap-3">
                       <div>
                         <label htmlFor="url-input" className="block text-sm font-medium text-slate-700 dark:text-slate-300">
-                          Media URL
+                          Source URL
                         </label>
                         <input
                           id="url-input"
                           type="url"
-                          placeholder="https://www.youtube.com/watch?v=..."
+                          placeholder="https://example.com/podcast-episode"
                           value={urlInput}
                           onChange={(e) => setUrlInput(e.target.value)}
                           className="mt-1 w-full rounded-md border border-slate-300 dark:border-slate-600 bg-white dark:bg-slate-800 text-slate-900 dark:text-slate-200 px-3 py-2 text-sm shadow-sm focus:outline-none focus:ring-1 focus:ring-blue-500 focus:border-blue-500 placeholder:text-slate-500"
@@ -1401,14 +1622,19 @@ export default function UploadPage() {
                         YouTube import is best effort for public videos. Some links may still be blocked by YouTube&apos;s anti-bot checks even if they open normally in a browser. If that happens, download the audio or video file and upload it directly instead.
                       </div>
                       <p className="text-xs text-slate-500 dark:text-slate-400">
-                        Supports public YouTube videos and direct audio/video links. Direct file upload is the most reliable option for transcription and works with the same downstream content workflow.
+                        Supports public audio, video, podcast RSS feeds, and transcript links when available.
                       </p>
+                      <div className="flex flex-wrap gap-2 text-xs text-slate-600 dark:text-slate-400">
+                        <span className="rounded-full bg-slate-100 px-3 py-1 dark:bg-slate-800">Podcast RSS</span>
+                        <span className="rounded-full bg-slate-100 px-3 py-1 dark:bg-slate-800">Webinar recording link</span>
+                        <span className="rounded-full bg-slate-100 px-3 py-1 dark:bg-slate-800">Public MP3 / MP4</span>
+                      </div>
                     </div>
                   </div>
                 )}
 
                 {activeTab === 'integrations' && (
-                  <div className="relative overflow-hidden rounded-lg border border-slate-200 bg-slate-50 p-4 dark:border-slate-700 dark:bg-slate-950">
+                  <div id="upload-panel-integrations" role="tabpanel" aria-labelledby="upload-tab-integrations" className="relative overflow-hidden rounded-lg border border-slate-200 bg-slate-50 p-4 dark:border-slate-700 dark:bg-slate-950">
                     <div className="pointer-events-none absolute inset-x-0 top-0 h-px bg-gradient-to-r from-transparent via-cyan-400/70 to-transparent" />
                     <div className="min-w-0">
                       <h2 className="text-base font-semibold text-slate-900 dark:text-slate-50">Import from integrations</h2>
@@ -1556,7 +1782,7 @@ export default function UploadPage() {
                 <div className="flex items-start justify-between gap-4">
                   <div>
                     <div className="flex items-center gap-2">
-                      <h2 className="text-base font-semibold text-slate-900 dark:text-slate-50">Options</h2>
+                      <h2 className="text-base font-semibold text-slate-900 dark:text-slate-50">Analysis modules</h2>
                       <FeatureHelp
                         title="Processing options"
                         description="These are optional analysis add-ons. Leave them all off if you only want the transcript now."
@@ -1564,7 +1790,7 @@ export default function UploadPage() {
                       />
                     </div>
                     <p className="mt-1 text-sm text-slate-500 dark:text-slate-400">
-                      Pick exactly what to generate during processing. Leave everything off if you just want the transcript now.
+                      Pick what to generate. You can change these later.
                     </p>
                     <p className="mt-2 text-xs font-medium text-slate-500 dark:text-slate-400">
                       {selectedQueuedFile
@@ -1577,65 +1803,77 @@ export default function UploadPage() {
                       </p>
                     )}
                   </div>
-                  <div className="rounded-full border border-slate-200 dark:border-slate-700 bg-slate-50 dark:bg-slate-800 px-3 py-1 text-xs font-medium text-slate-600 dark:text-slate-300">
-                    {selectedAnalysisSummary}
+                  <div className="flex flex-wrap items-center justify-end gap-3">
+                    <div className="rounded-full border border-slate-200 dark:border-slate-700 bg-slate-50 dark:bg-slate-800 px-3 py-1 text-xs font-medium text-slate-600 dark:text-slate-300">
+                      {selectedAnalysisSummary}
+                    </div>
+                    <button type="button" onClick={handleSelectAllAnalysis} className="text-sm font-semibold text-blue-700 hover:text-blue-600 dark:text-blue-300">
+                      Select all
+                    </button>
+                    <button type="button" onClick={handleClearAnalysis} className="text-sm font-semibold text-slate-500 hover:text-slate-800 dark:text-slate-400 dark:hover:text-slate-200">
+                      Clear all
+                    </button>
                   </div>
                 </div>
               </div>
-              <div className="grid gap-3 p-5 md:grid-cols-2">
-                {ANALYSIS_OPTION_CONFIG.map((option) => (
-                  <div key={option.key} className="relative">
-                    <div className="absolute right-4 top-4 z-10">
-                      <FeatureHelp
-                        title={option.label}
-                        description={ANALYSIS_HELP_COPY[option.key].description}
-                        bestFor={ANALYSIS_HELP_COPY[option.key].bestFor}
-                      />
-                    </div>
-                    <button
-                      type="button"
-                      onClick={() => handleAnalysisOptionToggle(option.key)}
-                      disabled={option.key === 'namedSpeakers' && rosterSpeakers.length > 0 && analysisOptions.namedSpeakers}
-                      className={`w-full rounded-xl border p-4 pr-10 text-left transition-colors ${
-                        analysisOptions[option.key]
-                          ? 'border-blue-500 bg-blue-50 dark:bg-blue-900/20'
-                          : 'border-slate-200 dark:border-slate-800 bg-slate-50/70 dark:bg-slate-950 hover:border-slate-300 dark:hover:border-slate-700'
-                      } ${(option.key === 'namedSpeakers' && rosterSpeakers.length > 0 && analysisOptions.namedSpeakers) ? 'cursor-not-allowed opacity-85' : ''}`}
+              <div className="grid gap-3 p-5 md:grid-cols-2 xl:grid-cols-3">
+                {ANALYSIS_OPTION_CONFIG.map((option) => {
+                  const ModuleIcon = ANALYSIS_MODULE_ICONS[option.key];
+                  const checked = analysisOptions[option.key];
+                  const locked = option.key === 'namedSpeakers' && rosterSpeakers.length > 0 && checked;
+                  return (
+                    <label
+                      key={option.key}
+                      className={`group relative flex min-h-24 cursor-pointer gap-3 rounded-xl border p-4 transition-all hover:-translate-y-px focus-within:ring-2 focus-within:ring-blue-500 focus-within:ring-offset-2 dark:focus-within:ring-offset-slate-900 ${
+                        checked
+                          ? 'border-blue-500 bg-blue-50 shadow-sm dark:bg-blue-900/20'
+                          : 'border-slate-200 bg-white hover:border-blue-200 dark:border-slate-800 dark:bg-slate-950 dark:hover:border-blue-400/30'
+                      } ${locked ? 'cursor-not-allowed opacity-85' : ''}`}
                     >
-                      <div className="flex items-start gap-3">
-                        <div className={`mt-0.5 flex h-5 w-5 items-center justify-center rounded border ${
-                          analysisOptions[option.key]
-                            ? 'border-blue-500 bg-blue-600 text-white'
-                            : 'border-slate-300 dark:border-slate-700 bg-white dark:bg-slate-900'
-                        }`}>
-                          {analysisOptions[option.key] ? <CheckCircle className="h-3.5 w-3.5" /> : null}
-                        </div>
-                        <div>
-                          <p className="text-sm font-semibold text-slate-900 dark:text-slate-50">{option.label}</p>
-                          <p className="mt-1 text-xs leading-5 text-slate-500 dark:text-slate-400">{option.description}</p>
-                        </div>
-                      </div>
-                    </button>
-                  </div>
-                ))}
+                      <input
+                        type="checkbox"
+                        checked={checked}
+                        disabled={locked}
+                        onChange={() => handleAnalysisOptionToggle(option.key)}
+                        className="mt-1 h-4 w-4 rounded border-slate-300 text-blue-600 focus:ring-blue-500"
+                      />
+                      <span className="inline-flex h-10 w-10 shrink-0 items-center justify-center rounded-lg bg-blue-50 text-blue-600 dark:bg-blue-500/10 dark:text-blue-300">
+                        <ModuleIcon className="h-5 w-5" />
+                      </span>
+                      <span>
+                        <span className="block text-sm font-semibold text-slate-900 dark:text-slate-50">{option.label}</span>
+                        <span className="mt-1 block text-xs leading-5 text-slate-500 dark:text-slate-400">{option.description}</span>
+                      </span>
+                      <span className="absolute right-3 top-3">
+                        <FeatureHelp
+                          title={option.label}
+                          description={ANALYSIS_HELP_COPY[option.key].description}
+                          bestFor={ANALYSIS_HELP_COPY[option.key].bestFor}
+                        />
+                      </span>
+                    </label>
+                  );
+                })}
               </div>
               <div className="border-t border-slate-200 dark:border-slate-800 px-5 py-3">
                 <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
-                  <span className="text-xs text-slate-500 dark:text-slate-400">
-                    Transcription and numbered speaker labels are always included. You can generate any unselected analysis or content later from the project page.
+                  <span className="flex items-center gap-2 text-xs text-slate-500 dark:text-slate-400">
+                    <Info className="h-4 w-4 text-blue-600 dark:text-blue-300" />
+                    You can review and adjust these after upload.
                   </span>
                   <button
                     type="button"
                     onClick={activeTab === 'url' ? handleUrlImport : activeTab === 'local' ? handleStartQueuedUploads : undefined}
                     disabled={
                       activeTab === 'url'
-                        ? isUrlSubmitting
+                        ? isUrlSubmitting || !urlImportReady
                         : activeTab === 'integrations'
                           ? true
                         : queuedFiles.length === 0 || isStartingQueuedUploads
                     }
-                    className="inline-flex items-center justify-center rounded-lg bg-blue-600 px-4 py-2 text-sm font-medium text-white transition-colors hover:bg-blue-700 disabled:cursor-not-allowed disabled:opacity-60"
+                    className="inline-flex w-full items-center justify-center gap-2 rounded-lg bg-blue-600 px-5 py-3 text-sm font-semibold text-white shadow-sm shadow-blue-600/20 transition hover:-translate-y-px hover:bg-blue-700 disabled:cursor-not-allowed disabled:opacity-60 sm:w-auto"
                   >
+                    {isStartingQueuedUploads || isUrlSubmitting ? <Loader2 className="h-4 w-4 animate-spin" /> : <Upload className="h-4 w-4" />}
                     {activeTab === 'url'
                       ? (isUrlSubmitting ? 'Importing...' : 'Import URL')
                       : activeTab === 'integrations'
@@ -1648,36 +1886,294 @@ export default function UploadPage() {
                   </button>
                 </div>
               </div>
-            </div>
+            </DashboardPanel>
 
-            {/* Retention notice — quiet footnote, not a warning */}
-            <p className="mb-4 text-xs text-slate-400 dark:text-slate-600 text-center">
-              Source media stays available until you delete the project. Transcripts and generated content stay with it.
-            </p>
+            <DashboardPanel className="mt-8 overflow-hidden rounded-xl border-slate-200 bg-white shadow-sm motion-safe:animate-fade-up-600 dark:border-slate-800 dark:bg-slate-900" data-tour="upload-history">
+              <div className="flex flex-col gap-3 border-b border-slate-200 px-5 py-4 dark:border-slate-800 sm:flex-row sm:items-center sm:justify-between">
+                <div>
+                  <div className="flex items-center gap-2">
+                    <History className="h-5 w-5 text-blue-600 dark:text-blue-300" />
+                    <h3 className="text-base font-semibold text-slate-950 dark:text-slate-50">Upload history</h3>
+                  </div>
+                  <p className="mt-1 text-sm text-slate-500 dark:text-slate-400">
+                    Previous source material for this workspace appears here.
+                  </p>
+                </div>
+                <div className="flex flex-wrap items-center gap-2">
+                  <a href="/dashboard/hub" className="rounded-lg px-3 py-2 text-sm font-semibold text-blue-700 transition hover:bg-blue-50 dark:text-blue-300 dark:hover:bg-blue-500/10">
+                    View all
+                  </a>
+                  <button
+                    type="button"
+                    disabled
+                    className="inline-flex items-center gap-2 rounded-lg border border-slate-200 px-3 py-2 text-sm font-semibold text-slate-400 disabled:cursor-not-allowed dark:border-slate-800 dark:text-slate-600"
+                    title="Export is not available for upload history yet"
+                  >
+                    <Download className="h-4 w-4" />
+                    Export
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => setShowHistory(!showHistory)}
+                    className="rounded-lg px-3 py-2 text-sm font-semibold text-slate-500 transition hover:bg-slate-50 hover:text-slate-900 dark:text-slate-400 dark:hover:bg-slate-800 dark:hover:text-slate-100"
+                  >
+                    {showHistory ? 'Hide' : 'Show'}
+                  </button>
+                </div>
+              </div>
 
-            {/* Advanced Options — collapsible, out of the critical path */}
-            <div className="mb-8 border border-slate-300 dark:border-slate-700 rounded-lg overflow-hidden" data-tour="advanced-options" data-expanded={showAdvancedOptions ? 'true' : 'false'}>
-              <div className="flex items-center gap-2 bg-slate-100/80 px-4 py-3 dark:bg-slate-800/50">
+              {showHistory && (
+                <>
+                  {historyLoading ? (
+                    <div className="p-5">
+                      <div className="animate-pulse space-y-3">
+                        {[1, 2, 3].map(i => (
+                          <div key={i} className="grid gap-4 rounded-lg border border-slate-100 p-4 dark:border-slate-800 md:grid-cols-[minmax(0,1.6fr)_0.8fr_0.8fr_0.7fr_0.9fr_0.6fr]">
+                            <div className="h-10 rounded bg-slate-200 dark:bg-slate-700" />
+                            <div className="h-10 rounded bg-slate-100 dark:bg-slate-800" />
+                            <div className="h-10 rounded bg-slate-100 dark:bg-slate-800" />
+                            <div className="h-10 rounded bg-slate-100 dark:bg-slate-800" />
+                            <div className="h-10 rounded bg-slate-100 dark:bg-slate-800" />
+                            <div className="h-10 rounded bg-slate-100 dark:bg-slate-800" />
+                          </div>
+                        ))}
+                      </div>
+                    </div>
+                  ) : uploadHistory.length === 0 ? (
+                    <div className="px-5 py-10 text-center">
+                      <FileAudio className="mx-auto h-10 w-10 text-slate-400" />
+                      <h3 className="mt-3 text-sm font-semibold text-slate-950 dark:text-slate-50">No uploads yet</h3>
+                      <p className="mx-auto mt-1 max-w-sm text-sm text-slate-500 dark:text-slate-400">
+                        Your uploaded source material will appear here once processing begins.
+                      </p>
+                    </div>
+                  ) : (
+                    <>
+                      <div className="overflow-x-auto">
+                        <table className="min-w-[920px] w-full text-left text-sm">
+                          <thead className="bg-slate-50 text-xs font-semibold text-slate-500 dark:bg-slate-950 dark:text-slate-400">
+                            <tr>
+                              <th scope="col" className="px-5 py-3">File</th>
+                              <th scope="col" className="px-4 py-3">Source</th>
+                              <th scope="col" className="px-4 py-3">Uploaded</th>
+                              <th scope="col" className="px-4 py-3">Status</th>
+                              <th scope="col" className="px-4 py-3">Modules</th>
+                              <th scope="col" className="px-4 py-3 text-right">Actions</th>
+                            </tr>
+                          </thead>
+                          <tbody className="divide-y divide-slate-200 dark:divide-slate-800">
+                            {uploadHistory.map((item) => {
+                              const uploadedAt = formatUploadedAt(item.created_at);
+                              return (
+                                <tr key={item.id} className="transition-colors hover:bg-slate-50/80 dark:hover:bg-slate-800/40">
+                                  <td className="max-w-[320px] px-5 py-4">
+                                    <div className="flex items-center gap-3">
+                                      <span className="inline-flex h-9 w-9 shrink-0 items-center justify-center rounded-full bg-blue-50 text-blue-600 dark:bg-blue-500/10 dark:text-blue-300">
+                                        {getStatusIcon(item.status)}
+                                      </span>
+                                      <div className="min-w-0">
+                                        <a
+                                          href={`/dashboard/projects?id=${item.id}`}
+                                          className="block truncate font-semibold text-slate-950 hover:text-blue-700 dark:text-slate-50 dark:hover:text-blue-300"
+                                          title={item.title}
+                                        >
+                                          {item.title}
+                                        </a>
+                                        <p className="mt-0.5 truncate text-xs text-slate-500 dark:text-slate-400">
+                                          {getHistoryFileMeta(item)}
+                                        </p>
+                                      </div>
+                                    </div>
+                                  </td>
+                                  <td className="px-4 py-4 text-slate-600 dark:text-slate-300">
+                                    <span className="inline-flex items-center gap-2">
+                                      <FileAudio className="h-4 w-4 text-slate-400" />
+                                      {getHistorySourceLabel(item)}
+                                    </span>
+                                  </td>
+                                  <td className="px-4 py-4">
+                                    <p className="font-medium text-slate-700 dark:text-slate-200">{uploadedAt.date}</p>
+                                    {uploadedAt.time && (
+                                      <p className="mt-0.5 text-xs text-slate-500 dark:text-slate-400">{uploadedAt.time}</p>
+                                    )}
+                                  </td>
+                                  <td className="px-4 py-4">
+                                    <span className={`inline-flex items-center rounded-full border px-2.5 py-1 text-xs font-semibold ${getHistoryStatusClass(item.status)}`}>
+                                      {item.status.charAt(0).toUpperCase() + item.status.slice(1)}
+                                    </span>
+                                  </td>
+                                  <td className="px-4 py-4">
+                                    {item.status === 'completed' ? (
+                                      <span className="inline-flex items-center gap-1.5 rounded-full bg-blue-50 px-2.5 py-1 text-xs font-semibold text-blue-700 dark:bg-blue-500/10 dark:text-blue-300">
+                                        <FileText className="h-3.5 w-3.5" />
+                                        Transcript
+                                      </span>
+                                    ) : (
+                                      <span className="inline-flex items-center rounded-full bg-slate-100 px-2.5 py-1 text-xs font-semibold text-slate-500 dark:bg-slate-800 dark:text-slate-400">
+                                        No outputs
+                                      </span>
+                                    )}
+                                  </td>
+                                  <td className="px-4 py-4">
+                                    <div className="flex items-center justify-end gap-1.5">
+                                      <a
+                                        href={`/dashboard/projects?id=${item.id}`}
+                                        className="inline-flex h-8 w-8 items-center justify-center rounded-lg text-blue-600 transition hover:bg-blue-50 hover:text-blue-700 dark:text-blue-300 dark:hover:bg-blue-500/10"
+                                        title="View project"
+                                        aria-label={`View ${item.title}`}
+                                      >
+                                        <Eye className="h-4 w-4" />
+                                      </a>
+                                      {confirmDeleteId === item.id ? (
+                                        <div className="flex items-center gap-1">
+                                          <button
+                                            type="button"
+                                            onClick={() => deleteHistoryItem(item.id)}
+                                            className="rounded bg-red-500 px-2 py-1 text-xs font-semibold text-white transition-colors hover:bg-red-600"
+                                          >
+                                            Delete
+                                          </button>
+                                          <button
+                                            type="button"
+                                            onClick={() => setConfirmDeleteId(null)}
+                                            className="rounded bg-slate-100 px-2 py-1 text-xs font-semibold text-slate-600 transition-colors hover:bg-slate-200 dark:bg-slate-800 dark:text-slate-300 dark:hover:bg-slate-700"
+                                          >
+                                            Cancel
+                                          </button>
+                                        </div>
+                                      ) : (
+                                        <button
+                                          type="button"
+                                          onClick={() => item.status !== 'processing' && setConfirmDeleteId(item.id)}
+                                          disabled={item.status === 'processing'}
+                                          className={`inline-flex h-8 w-8 items-center justify-center rounded-lg transition-colors ${item.status === 'processing'
+                                              ? 'cursor-not-allowed text-slate-300 dark:text-slate-600'
+                                              : 'text-slate-500 hover:bg-red-50 hover:text-red-500 dark:hover:bg-red-900/20'
+                                            }`}
+                                          title={item.status === 'processing' ? 'Cannot delete while processing' : 'Delete upload'}
+                                          aria-label={`Delete ${item.title}`}
+                                        >
+                                          <Trash2 className="h-4 w-4" />
+                                        </button>
+                                      )}
+                                    </div>
+                                  </td>
+                                </tr>
+                              );
+                            })}
+                          </tbody>
+                        </table>
+                      </div>
+
+                      <div className="flex flex-col gap-3 border-t border-slate-200 px-5 py-3 dark:border-slate-800 sm:flex-row sm:items-center sm:justify-between">
+                        <p className="text-xs text-slate-500 dark:text-slate-400">
+                          Upload history is saved for this workspace and will appear here.
+                        </p>
+                        {historyTotalPages > 1 && (
+                          <div className="flex items-center gap-3">
+                            <span className="text-xs text-slate-500 dark:text-slate-400">
+                              Page {historyPage} of {historyTotalPages}
+                              {historyTotalCount > 0 && (
+                                <span className="ml-1">· {historyTotalCount} uploads</span>
+                              )}
+                            </span>
+                            <div className="flex items-center gap-2">
+                              <button
+                                type="button"
+                                onClick={() => handleHistoryPageChange(historyPage - 1)}
+                                disabled={historyPage <= 1}
+                                className={`rounded border px-2.5 py-1.5 text-xs font-medium transition-colors ${historyPage <= 1
+                                    ? 'cursor-not-allowed border-slate-200 text-slate-400 dark:border-slate-800 dark:text-slate-600'
+                                    : 'border-slate-300 text-slate-600 hover:bg-slate-50 dark:border-slate-700 dark:text-slate-300 dark:hover:bg-slate-800'
+                                  }`}
+                              >
+                                Previous
+                              </button>
+                              <button
+                                type="button"
+                                onClick={() => handleHistoryPageChange(historyPage + 1)}
+                                disabled={historyPage >= historyTotalPages}
+                                className={`rounded border px-2.5 py-1.5 text-xs font-medium transition-colors ${historyPage >= historyTotalPages
+                                    ? 'cursor-not-allowed border-slate-200 text-slate-400 dark:border-slate-800 dark:text-slate-600'
+                                    : 'border-slate-300 text-slate-600 hover:bg-slate-50 dark:border-slate-700 dark:text-slate-300 dark:hover:bg-slate-800'
+                                  }`}
+                              >
+                                Next
+                              </button>
+                            </div>
+                          </div>
+                        )}
+                      </div>
+                    </>
+                  )}
+                </>
+              )}
+            </DashboardPanel>
+
+          </div>{/* end main column */}
+
+          <div className="space-y-5 xl:sticky xl:top-6">
+            <DashboardPanel className="overflow-hidden rounded-xl border-slate-200 bg-white shadow-sm dark:border-slate-800 dark:bg-slate-900">
+              <button
+                type="button"
+                onClick={() => setShowHelpfulTips(!showHelpfulTips)}
+                className="flex w-full items-center justify-between gap-3 px-5 py-4 text-left transition-colors hover:bg-slate-50 focus:outline-none focus-visible:ring-2 focus-visible:ring-blue-500 dark:hover:bg-slate-800/60"
+                aria-expanded={showHelpfulTips}
+              >
+                <span className="flex items-center gap-2">
+                  <Sparkles className="h-5 w-5 shrink-0 text-blue-600 dark:text-blue-300" />
+                  <span className="text-base font-semibold text-slate-950 dark:text-slate-50">Helpful tips</span>
+                </span>
+                {showHelpfulTips
+                  ? <ChevronUp className="h-4 w-4 text-slate-500" />
+                  : <ChevronDown className="h-4 w-4 text-slate-500" />
+                }
+              </button>
+              {showHelpfulTips && (
+                <div className="border-t border-slate-200 px-5 py-5 dark:border-slate-800">
+                  <div className="space-y-5">
+                    {HELPFUL_TIPS.map(({ title, description, Icon }) => (
+                      <div key={title} className="flex gap-3">
+                        <span className="mt-0.5 inline-flex h-8 w-8 shrink-0 items-center justify-center rounded-full bg-blue-50 text-blue-600 dark:bg-blue-500/10 dark:text-blue-300">
+                          <Icon className="h-4 w-4" />
+                        </span>
+                        <div>
+                          <p className="text-sm font-semibold text-slate-800 dark:text-slate-100">{title}</p>
+                          <p className="mt-1 text-xs leading-5 text-slate-500 dark:text-slate-400">{description}</p>
+                        </div>
+                      </div>
+                    ))}
+                  </div>
+                  <a href="/dashboard/studio/profile" className="mt-5 inline-flex text-sm font-semibold text-blue-700 hover:text-blue-600 dark:text-blue-300">
+                    Open Studio Profile →
+                  </a>
+                </div>
+              )}
+            </DashboardPanel>
+
+            <DashboardPanel className="overflow-hidden rounded-xl border-slate-200 bg-white shadow-sm dark:border-slate-800 dark:bg-slate-900" data-tour="advanced-options" data-expanded={showAdvancedOptions ? 'true' : 'false'}>
+              <div className="flex items-center gap-2 border-b border-slate-200 px-5 py-4 dark:border-slate-800">
                 <button
                   type="button"
                   onClick={() => setShowAdvancedOptions(!showAdvancedOptions)}
-                  className="flex min-w-0 flex-1 items-center justify-between transition-colors text-left hover:text-slate-900 dark:hover:text-slate-100"
+                  className="flex min-w-0 flex-1 items-center justify-between text-left transition-colors hover:text-slate-950 focus:outline-none focus-visible:ring-2 focus-visible:ring-blue-500 dark:hover:text-slate-100"
                   data-tour="advanced-options-toggle"
+                  aria-expanded={showAdvancedOptions}
                 >
-                  <div className="flex items-center gap-2">
-                    <span className="text-sm font-semibold text-slate-600 dark:text-slate-300">Advanced Options</span>
+                  <span className="flex min-w-0 items-center gap-2">
+                    <span className="text-base font-semibold text-slate-950 dark:text-slate-50">Advanced options</span>
                     {(speakerCount || rosterSpeakers.length > 0) && (
-                        <span className="rounded-full border border-blue-200 bg-blue-50 px-2 py-0.5 text-xs font-medium text-blue-700 dark:border-blue-800/30 dark:bg-blue-900/20 dark:text-blue-300">
+                      <span className="rounded-full border border-blue-200 bg-blue-50 px-2 py-0.5 text-xs font-medium text-blue-700 dark:border-blue-800/30 dark:bg-blue-900/20 dark:text-blue-300">
                         {[
                           speakerCount ? `${speakerCount} speakers` : null,
                           rosterSpeakers.length > 0 ? `${rosterSpeakers.length} roster` : null,
                         ].filter(Boolean).join(' · ')}
                       </span>
                     )}
-                  </div>
+                  </span>
                   {showAdvancedOptions
-                    ? <ChevronUp className="h-4 w-4 text-slate-500" />
-                    : <ChevronDown className="h-4 w-4 text-slate-500" />
+                    ? <ChevronUp className="h-4 w-4 shrink-0 text-slate-500" />
+                    : <ChevronDown className="h-4 w-4 shrink-0 text-slate-500" />
                   }
                 </button>
                 <FeatureHelp
@@ -1689,62 +2185,54 @@ export default function UploadPage() {
               </div>
 
               {showAdvancedOptions && (
-                <div className="px-4 py-5 space-y-6 bg-white dark:bg-slate-900">
-                  {/* Expected Speaker Count */}
+                <div className="space-y-6 px-5 py-5">
                   <div>
-                    <label htmlFor="speaker-count" className="block text-sm font-semibold text-slate-800 dark:text-slate-100">
-                      Number of Speakers
+                    <label htmlFor="speaker-count" className="block text-sm font-semibold text-slate-900 dark:text-slate-100">
+                      Number of speakers
                     </label>
-                    <p className="text-xs text-slate-500 dark:text-slate-400 mt-0.5 mb-2">
-                      If you know how many speakers are in your audio, set it here (2–12). Leave on auto-detect if unsure.
+                    <p className="mt-1 text-xs leading-5 text-slate-500 dark:text-slate-400">
+                      Let us know how many people are in your audio. Leave on auto-detect if unsure.
                     </p>
-                    <p className="mb-2 flex items-center gap-1.5 text-xs text-blue-700 dark:text-blue-300">
-                      <Users className="w-3 h-3 flex-shrink-0" />
-                      <span>Crucial for debates: Specifying the exact count prevents the AI from merging distinct voices into a single speaker ID.</span>
-                    </p>
-                    <div className="flex items-center gap-3 flex-wrap">
-                      <select
-                        id="speaker-count"
-                        value={speakerCount ?? ''}
-                        onChange={(e) => {
-                          const value = e.target.value;
-                          const nextSpeakerCount = value === '' ? undefined : parseInt(value, 10);
-                          setSpeakerCount(nextSpeakerCount);
-                          updateSelectedQueuedFileAdvanced({ speakerCount: nextSpeakerCount });
-                          if (selectedQueuedFileId && nextSpeakerCount) {
-                            setUploadedFiles((currentFiles) => currentFiles.map((file) => (
-                              file.id === selectedQueuedFileId && file.status === 'queued'
-                                ? {
-                                    ...file,
-                                    speakerCountNudgeDismissed: true,
-                                  }
-                                : file
-                            )));
-                          }
+                    <select
+                      id="speaker-count"
+                      value={speakerCount ?? ''}
+                      onChange={(e) => {
+                        const value = e.target.value;
+                        const nextSpeakerCount = value === '' ? undefined : parseInt(value, 10);
+                        setSpeakerCount(nextSpeakerCount);
+                        updateSelectedQueuedFileAdvanced({ speakerCount: nextSpeakerCount });
+                        if (selectedQueuedFileId && nextSpeakerCount) {
+                          setUploadedFiles((currentFiles) => currentFiles.map((file) => (
+                            file.id === selectedQueuedFileId && file.status === 'queued'
+                              ? {
+                                  ...file,
+                                  speakerCountNudgeDismissed: true,
+                                }
+                              : file
+                          )));
+                        }
+                      }}
+                      className="mt-3 block w-full rounded-lg border border-slate-300 bg-white px-3 py-2.5 text-sm text-slate-900 shadow-sm focus:border-blue-500 focus:outline-none focus:ring-2 focus:ring-blue-500/20 dark:border-slate-700 dark:bg-slate-950 dark:text-slate-200"
+                    >
+                      <option value="">Auto-detect</option>
+                      {[1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12].map((num) => (
+                        <option key={num} value={num}>{num} speaker{num === 1 ? '' : 's'}</option>
+                      ))}
+                    </select>
+                    {recommendedSpeakerCount && !speakerCount && (
+                      <button
+                        type="button"
+                        onClick={() => {
+                          setSpeakerCount(recommendedSpeakerCount);
+                          updateSelectedQueuedFileAdvanced({ speakerCount: recommendedSpeakerCount });
                         }}
-                        className="block w-36 rounded-md border border-slate-300 dark:border-slate-600 px-3 py-2 text-sm shadow-sm focus:outline-none focus:ring-1 focus:ring-blue-500 focus:border-blue-500 bg-white dark:bg-slate-900 text-slate-900 dark:text-slate-200"
+                        className="mt-3 rounded-full border border-blue-200 bg-blue-50 px-3 py-1.5 text-xs font-medium text-blue-700 transition-colors hover:bg-blue-100 dark:border-blue-800/30 dark:bg-blue-900/20 dark:text-blue-300"
                       >
-                        <option value="">Auto-detect</option>
-                        {[2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12].map((num) => (
-                          <option key={num} value={num}>{num} speakers</option>
-                        ))}
-                      </select>
-                      {/* Recommendation chip — now properly inline with the select */}
-                      {recommendedSpeakerCount && !speakerCount && (
-                        <button
-                          type="button"
-                          onClick={() => {
-                            setSpeakerCount(recommendedSpeakerCount);
-                            updateSelectedQueuedFileAdvanced({ speakerCount: recommendedSpeakerCount });
-                          }}
-                          className="rounded-full border border-blue-200 bg-blue-50 px-3 py-1.5 text-xs font-medium text-blue-700 transition-colors hover:bg-blue-100 dark:border-blue-800/30 dark:bg-blue-900/20 dark:text-blue-300"
-                        >
-                          Use suggested: {recommendedSpeakerCount} (from filename)
-                        </button>
-                      )}
-                    </div>
+                        Use suggested: {recommendedSpeakerCount} from filename
+                      </button>
+                    )}
                     {rosterSpeakers.length >= 2 && !speakerCount && !selectedQueuedFile?.speakerCountNudgeDismissed && (
-                      <div className="mt-3 rounded-md border border-amber-200 bg-amber-50 px-3 py-2 text-xs text-amber-800 dark:border-amber-800/30 dark:bg-amber-900/20 dark:text-amber-200">
+                      <div className="mt-3 rounded-lg border border-amber-200 bg-amber-50 px-3 py-2 text-xs text-amber-800 dark:border-amber-800/30 dark:bg-amber-900/20 dark:text-amber-200">
                         <div className="flex items-center justify-between gap-2">
                           <span>Set expected speaker count? This reduces roster merge/split errors.</span>
                           <div className="flex items-center gap-2">
@@ -1782,14 +2270,13 @@ export default function UploadPage() {
                     )}
                   </div>
 
-                  {/* Speaker Roster */}
                   <div data-tour="speaker-roster">
-                    <p className="text-xs text-blue-400/80 mb-3 flex items-center gap-1.5">
-                      <Pencil className="w-3 h-3 flex-shrink-0" />
-                      <span>Assigning names and roles here (e.g., Host, Guest) helps the AI match voices to identities from the very first second.</span>
+                    <p className="mb-3 flex items-center gap-1.5 text-xs leading-5 text-blue-700 dark:text-blue-300">
+                      <Pencil className="h-3.5 w-3.5 shrink-0" />
+                      <span>Pre-define names and roles to help the AI match voices to identities earlier.</span>
                     </p>
                     {rosterSpeakers.length > 0 && (
-                      <p className="text-xs text-blue-700 dark:text-blue-300 mb-3">
+                      <p className="mb-3 text-xs text-blue-700 dark:text-blue-300">
                         Named Speakers stays on while a roster is set so your provided names are applied reliably.
                       </p>
                     )}
@@ -1831,242 +2318,27 @@ export default function UploadPage() {
                             toast.success('Applied roster to selected queued file.');
                           }
                         }}
-                        className="rounded-md border border-slate-300 bg-white px-2.5 py-1.5 text-xs font-medium text-slate-700 hover:bg-slate-50 disabled:cursor-not-allowed disabled:opacity-50 dark:border-slate-700 dark:bg-slate-900 dark:text-slate-200 dark:hover:bg-slate-800"
+                        className="rounded-md border border-slate-300 bg-white px-2.5 py-1.5 text-xs font-medium text-slate-700 hover:bg-slate-50 disabled:cursor-not-allowed disabled:opacity-50 dark:border-slate-700 dark:bg-slate-950 dark:text-slate-200 dark:hover:bg-slate-800"
                       >
-                        Apply roster to selected queued file
+                        Apply to selected
                       </button>
                       <button
                         type="button"
                         disabled={queuedFiles.length === 0 || rosterSpeakers.length === 0}
                         onClick={applyRosterToAllQueuedFiles}
-                        className="rounded-md border border-slate-300 bg-white px-2.5 py-1.5 text-xs font-medium text-slate-700 hover:bg-slate-50 disabled:cursor-not-allowed disabled:opacity-50 dark:border-slate-700 dark:bg-slate-900 dark:text-slate-200 dark:hover:bg-slate-800"
+                        className="rounded-md border border-slate-300 bg-white px-2.5 py-1.5 text-xs font-medium text-slate-700 hover:bg-slate-50 disabled:cursor-not-allowed disabled:opacity-50 dark:border-slate-700 dark:bg-slate-950 dark:text-slate-200 dark:hover:bg-slate-800"
                       >
-                        Apply roster to all queued files
+                        Apply to all queued
                       </button>
                     </div>
                   </div>
                 </div>
               )}
-            </div>
-
-            {/* Upload History */}
-            <div className="mt-8" data-tour="upload-history">
-              <div className="flex items-center justify-between mb-4">
-                <div className="flex items-center space-x-2">
-                  <History className="h-5 w-5 text-slate-500" />
-                  <h3 className="text-base font-semibold text-slate-900 dark:text-slate-50">Upload History</h3>
-                </div>
-                <button
-                  onClick={() => setShowHistory(!showHistory)}
-                  className="text-sm text-blue-600 hover:text-blue-400"
-                >
-                  {showHistory ? 'Hide' : 'Show'}
-                </button>
-              </div>
-
-              {showHistory && (
-                <div className="bg-white dark:bg-slate-900 shadow-sm rounded-lg border border-slate-200 dark:border-slate-700">
-                  {historyLoading ? (
-                    <div className="p-6">
-                      <div className="animate-pulse space-y-4">
-                        {[1, 2, 3].map(i => (
-                          <div key={i} className="flex items-center space-x-4">
-                            <div className="w-10 h-10 bg-slate-200 dark:bg-slate-700 rounded"></div>
-                            <div className="flex-1 space-y-2">
-                              <div className="h-4 bg-slate-200 dark:bg-slate-700 rounded w-3/4"></div>
-                              <div className="h-3 bg-slate-200 dark:bg-slate-700 rounded w-1/2"></div>
-                            </div>
-                          </div>
-                        ))}
-                      </div>
-                    </div>
-                  ) : uploadHistory.length === 0 ? (
-                    <div className="p-8 text-center">
-                      <FileAudio className="mx-auto h-10 w-10 text-slate-500" />
-                      <h3 className="mt-2 text-sm font-medium text-slate-900 dark:text-slate-50">No uploads yet</h3>
-                      <p className="mt-1 text-sm text-slate-500 dark:text-slate-400">
-                        Your upload history will appear here once you start uploading.
-                      </p>
-                    </div>
-                  ) : (
-                    <>
-                      <div className="divide-y divide-slate-200 dark:divide-slate-800">
-                        {uploadHistory.map((item) => (
-                          <div key={item.id} className="p-4 hover:bg-slate-50 dark:hover:bg-slate-800/50 transition-colors">
-                            <div className="flex items-center justify-between">
-                              <div className="flex items-center space-x-3 flex-1 min-w-0">
-                                <div className="flex-shrink-0">
-                                  {getStatusIcon(item.status)}
-                                </div>
-
-                                <div className="flex-1 min-w-0">
-                                  <h4
-                                    className="text-sm font-medium text-slate-900 dark:text-slate-50 truncate"
-                                    title={item.title}
-                                  >
-                                    {item.title}
-                                  </h4>
-                                  <div className="mt-0.5 flex items-center flex-wrap gap-x-2 gap-y-0.5 text-xs text-slate-500">
-                                    <span>{formatFileSize(item.audio_file_size)}</span>
-                                    {item.audio_duration && (
-                                      <span>{formatDuration(item.audio_duration)}</span>
-                                    )}
-                                    <span className="hidden sm:inline">{new Date(item.created_at).toLocaleDateString()}</span>
-                                  </div>
-                                  {item.status === 'completed' && (
-                                    <div className="mt-1 text-xs text-slate-500 dark:text-slate-400">
-                                      {item.audio_deleted_at
-                                        ? 'Source audio was deleted.'
-                                        : 'Source audio is retained until the project is deleted.'}
-                                    </div>
-                                  )}
-                                </div>
-                              </div>
-
-                              <div className="flex items-center space-x-2 flex-shrink-0 ml-3">
-                                <span className={`hidden sm:inline-flex items-center px-2 py-0.5 rounded-full text-xs font-medium ${item.status === 'completed' ? 'bg-emerald-100 dark:bg-emerald-900/20 text-emerald-700 dark:text-emerald-300' :
-                                    item.status === 'processing' ? 'bg-amber-100 dark:bg-amber-900/20 text-amber-700 dark:text-amber-300' :
-                                      item.status === 'failed' ? 'bg-red-100 dark:bg-red-900/20 text-red-700 dark:text-red-300' :
-                                        'bg-slate-100 dark:bg-slate-800/60 text-slate-600 dark:text-slate-300'
-                                  }`}>
-                                  {item.status.charAt(0).toUpperCase() + item.status.slice(1)}
-                                </span>
-
-                                <a
-                                  href={`/dashboard/projects?id=${item.id}`}
-                                  className="p-1.5 text-blue-600 hover:text-blue-500 hover:bg-blue-50 dark:hover:bg-blue-900/20 rounded transition-colors"
-                                  title="View project"
-                                >
-                                  <Eye className="h-4 w-4" />
-                                </a>
-
-                                {/* Inline delete confirmation — replaces native confirm() dialog */}
-                                {confirmDeleteId === item.id ? (
-                                  <div className="flex items-center gap-1">
-                                    <button
-                                      onClick={() => deleteHistoryItem(item.id)}
-                                      className="px-2 py-1 text-xs font-medium text-white bg-red-500 hover:bg-red-600 rounded transition-colors"
-                                    >
-                                      Delete
-                                    </button>
-                                    <button
-                                      onClick={() => setConfirmDeleteId(null)}
-                                      className="px-2 py-1 text-xs font-medium text-slate-600 dark:text-slate-400 bg-slate-100 dark:bg-slate-800 hover:bg-slate-200 dark:hover:bg-slate-700 rounded transition-colors"
-                                    >
-                                      Cancel
-                                    </button>
-                                  </div>
-                                ) : (
-                                  <button
-                                    onClick={() => item.status !== 'processing' && setConfirmDeleteId(item.id)}
-                                    disabled={item.status === 'processing'}
-                                    className={`p-1.5 rounded transition-colors ${item.status === 'processing'
-                                        ? 'text-slate-400 dark:text-slate-300 cursor-not-allowed'
-                                        : 'text-slate-500 hover:text-red-500 hover:bg-red-50 dark:hover:bg-red-900/20'
-                                      }`}
-                                    title={item.status === 'processing' ? 'Cannot delete while processing' : 'Delete upload'}
-                                  >
-                                    <Trash2 className="h-4 w-4" />
-                                  </button>
-                                )}
-                              </div>
-                            </div>
-                          </div>
-                        ))}
-                      </div>
-
-                      {historyTotalPages > 1 && (
-                        <div className="flex items-center justify-between px-4 py-3 border-t border-slate-200 dark:border-slate-800">
-                          <div className="text-xs text-slate-500 dark:text-slate-400">
-                            Page {historyPage} of {historyTotalPages}
-                            {historyTotalCount > 0 && (
-                              <span className="ml-1">· {historyTotalCount} uploads</span>
-                            )}
-                          </div>
-                          <div className="flex items-center gap-2">
-                            <button
-                              type="button"
-                              onClick={() => handleHistoryPageChange(historyPage - 1)}
-                              disabled={historyPage <= 1}
-                              className={`px-2.5 py-1.5 text-xs font-medium rounded border transition-colors ${historyPage <= 1
-                                  ? 'border-slate-200 dark:border-slate-800 text-slate-400 dark:text-slate-600 cursor-not-allowed'
-                                  : 'border-slate-300 dark:border-slate-700 text-slate-600 dark:text-slate-300 hover:bg-slate-50 dark:hover:bg-slate-800'
-                                }`}
-                            >
-                              Previous
-                            </button>
-                            <button
-                              type="button"
-                              onClick={() => handleHistoryPageChange(historyPage + 1)}
-                              disabled={historyPage >= historyTotalPages}
-                              className={`px-2.5 py-1.5 text-xs font-medium rounded border transition-colors ${historyPage >= historyTotalPages
-                                  ? 'border-slate-200 dark:border-slate-800 text-slate-400 dark:text-slate-600 cursor-not-allowed'
-                                  : 'border-slate-300 dark:border-slate-700 text-slate-600 dark:text-slate-300 hover:bg-slate-50 dark:hover:bg-slate-800'
-                                }`}
-                            >
-                              Next
-                            </button>
-                          </div>
-                        </div>
-                      )}
-                    </>
-                  )}
-                </div>
-              )}
-            </div>
-
-          </div>{/* end main column */}
-
-          {/* Tips sidebar */}
-          <div className="w-64 flex-shrink-0 sticky top-6 hidden xl:block">
-            <div className="rounded-xl border border-blue-200 bg-blue-50 p-4 dark:border-blue-500/20 dark:bg-blue-900/10">
-              <div className="flex items-center gap-2 mb-3">
-                <Lightbulb className="h-4 w-4 flex-shrink-0 text-blue-600 dark:text-blue-400" />
-                <span className="text-sm font-semibold text-blue-700 dark:text-blue-400">Tips</span>
-              </div>
-              <div className="space-y-4">
-                <div className="flex gap-2.5">
-                  <Users className="mt-0.5 h-4 w-4 flex-shrink-0 text-blue-600 dark:text-blue-400" />
-                  <div>
-                    <p className="text-xs font-semibold text-slate-700 dark:text-slate-300 mb-0.5">Speaker Count</p>
-                    <p className="text-xs text-slate-500 dark:text-slate-400 leading-relaxed">5+ speakers? Setting the count manually drastically improves accuracy for panels.</p>
-                  </div>
-                </div>
-                <div className="flex gap-2.5">
-                  <Pencil className="mt-0.5 h-4 w-4 flex-shrink-0 text-blue-600 dark:text-blue-400" />
-                  <div>
-                    <p className="text-xs font-semibold text-slate-700 dark:text-slate-300 mb-0.5">Naming</p>
-                    <p className="text-xs text-slate-500 dark:text-slate-400 leading-relaxed">Filenames like &quot;Interview with [Name]&quot; help the AI identify guests automatically.</p>
-                  </div>
-                </div>
-                <div className="flex gap-2.5">
-                  <Mic className="mt-0.5 h-4 w-4 flex-shrink-0 text-blue-600 dark:text-blue-400" />
-                  <div>
-                    <p className="text-xs font-semibold text-slate-700 dark:text-slate-300 mb-0.5">Audio Quality</p>
-                    <p className="text-xs text-slate-500 dark:text-slate-400 leading-relaxed">Keep speakers close to mics and minimize background noise for best transcription.</p>
-                  </div>
-                </div>
-                <div className="flex gap-2.5">
-                  <UserCircle className="mt-0.5 h-4 w-4 flex-shrink-0 text-blue-600 dark:text-blue-400" />
-                  <div>
-                    <p className="text-xs font-semibold text-slate-700 dark:text-slate-300 mb-0.5">Named Speaker Upgrade</p>
-                    <p className="text-xs text-slate-500 dark:text-slate-400 leading-relaxed">Turn on the Named speakers option when the conversation clearly introduces who is speaking. Otherwise, you still get clean numbered speakers.</p>
-                  </div>
-                </div>
-                <div className="flex gap-2.5">
-                  <MoreHorizontal className="mt-0.5 h-4 w-4 flex-shrink-0 text-blue-600 dark:text-blue-400" />
-                  <div>
-                    <p className="text-xs font-semibold text-slate-700 dark:text-slate-300 mb-0.5">Clear Turn-Taking</p>
-                    <p className="text-xs text-slate-500 dark:text-slate-400 leading-relaxed">Avoid talking over each other — overlapping speech reduces speaker separation accuracy.</p>
-                  </div>
-                </div>
-              </div>
-            </div>
+            </DashboardPanel>
           </div>
 
         </div>{/* end flex layout */}
 
-      </div>
-    </div>
+    </DashboardPageShell>
   );
 }
