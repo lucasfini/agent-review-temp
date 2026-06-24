@@ -65,9 +65,6 @@ Fill in real values for:
 - `NEXT_PUBLIC_SUPABASE_ANON_KEY`
 - `SUPABASE_SERVICE_ROLE_KEY`
 - `RESEND_API_KEY`
-- `AGENCY_LEAD_FROM_EMAIL`
-- `AGENCY_LEAD_NOTIFICATION_EMAIL`
-- `AGENCY_LEAD_ORGANIZATION_ID`
 - `ASSEMBLYAI_API_KEY`
 - `OPENAI_API_KEY`
 - `STRIPE_SECRET_KEY`
@@ -93,6 +90,7 @@ Optional but recommended:
 - `ADMIN_EMAILS`
 - `CONTACT_FROM_EMAIL`
 - `CONTACT_TO_EMAIL`
+- `AGENCY_LEAD_FROM_EMAIL`, `AGENCY_LEAD_NOTIFICATION_EMAIL`, and `AGENCY_LEAD_ORGANIZATION_ID` only if paused legacy lead-capture APIs are intentionally active
 - Stripe checkout/portal return URL overrides
 - Zoom / Microsoft / YouTube OAuth credentials if those imports will be live
 

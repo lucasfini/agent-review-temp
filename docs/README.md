@@ -6,6 +6,7 @@ This folder contains both current operational docs and older implementation note
 
 Use these first:
 
+- [CURRENT_REPO_STATE.md](./CURRENT_REPO_STATE.md)
 - [../README.md](../README.md)
 - [DEPLOYMENT.md](./DEPLOYMENT.md)
 - [guides/DIGITALOCEAN_HOSTING_GUIDE.md](./guides/DIGITALOCEAN_HOSTING_GUIDE.md)
@@ -22,6 +23,9 @@ Use these first:
 
 These can still be useful for context, but they are not the production source of truth:
 
+- root-level `PHASE_*.md` files
+- [../B2B_AGENCY_PIVOT_PRODUCT_SPEC.md](../B2B_AGENCY_PIVOT_PRODUCT_SPEC.md)
+- [../CODEX_PHASE_RUNBOOK.md](../CODEX_PHASE_RUNBOOK.md)
 - implementation summaries
 - migration writeups
 - prompt/design explorations
@@ -29,3 +33,5 @@ These can still be useful for context, but they are not the production source of
 - anything under [archive/](./archive/)
 
 If a document conflicts with the current deployment docs or runtime code, trust the current deployment docs and code.
+
+Public agency marketing docs are historical unless Lucas explicitly says to resume that work in a separate standalone project.

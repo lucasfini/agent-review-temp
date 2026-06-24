@@ -1,5 +1,9 @@
 # B2B SaaS + Internal Agency Operating System Product Spec
 
+> Current status: historical planning document.
+>
+> This spec explains the pivot that produced parts of the current local branch, but it is not the current public-product source of truth. The public agency marketing site has been removed from this repo. Treat public agency-site sections as superseded unless Lucas explicitly revives that work in a separate standalone project. Current orientation lives in `AGENTS.md`, `docs/CURRENT_REPO_STATE.md`, `README.md`, and `docs/README.md`.
+
 ## 1. Product Vision
 
 This codebase will evolve from a B2C pay-as-you-go AI audio repurposing tool into a shared AI content and customer communication platform that supports two separate business lines:
@@ -1675,7 +1679,7 @@ Tasks:
 Acceptance criteria:
 
 * Product spec exists in repo
-* Codex can use it as source of truth
+* Historical note: this was once intended as a source of truth, but it has been superseded by `docs/CURRENT_REPO_STATE.md` for current repo orientation
 * No product code changed yet
 
 ## Phase 1: Multi-Tenant Foundation
@@ -1779,6 +1783,8 @@ Acceptance criteria:
 
 ## Phase 6: Agency Marketing Site
 
+Current status: superseded. The public agency marketing site was removed from this repo and should not be rebuilt here unless Lucas explicitly reopens that direction in a separate standalone project.
+
 Goal: Launch separate public agency brand.
 
 Tasks:
@@ -1821,12 +1827,12 @@ Acceptance criteria:
 
 Do not ask Codex to implement the entire pivot at once.
 
-Use this spec as the source of truth and assign one phase at a time.
+Historical note: these prompts are preserved for context only. Do not use this spec as the active source of truth unless Lucas explicitly asks to resume this historical pivot plan.
 
 General Codex instruction format:
 
 ```text
-Read B2B_AGENCY_PIVOT_PRODUCT_SPEC.md first.
+Read AGENTS.md and docs/CURRENT_REPO_STATE.md first.
 Implement only Phase X.
 Do not implement future phases.
 Preserve existing functionality unless explicitly instructed.

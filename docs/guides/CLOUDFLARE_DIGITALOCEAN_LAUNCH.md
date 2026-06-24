@@ -24,9 +24,9 @@ Set these values at minimum:
 - `ACME_EMAIL=<your real email>`
 - Supabase URL, anon key, and service role key
 - Stripe secret, publishable key, and webhook secret
-- Resend API key plus agency lead from and notification emails
-- `AGENCY_LEAD_ORGANIZATION_ID`
-- Slack OAuth client ID, client secret, redirect URI, and `INTEGRATIONS_ENCRYPTION_KEY`
+- Resend API key plus product contact from/to emails
+- Agency lead envs only if intentionally keeping paused legacy lead-capture APIs active
+- Slack OAuth client ID, client secret, redirect URI, and `INTEGRATIONS_ENCRYPTION_KEY` only if testing private internal agency Slack workflows
 - R2 account, key pair, and bucket name
 - Upstash Redis REST URL and token for durable public rate limiting
 - `CRON_SECRET`

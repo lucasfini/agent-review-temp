@@ -1,12 +1,20 @@
-# AudioRepurpose Website Instructions
+# AudioRepurpose Repo Instructions
 
 ## Scope
 - This repo is a Next.js App Router application with React, TypeScript, Tailwind, and Framer Motion.
 - AudioRepurpose is B2B SaaS/product only.
 - Public product marketing pages live under `app/`.
 - The main B2B SaaS launch page is `app/page.tsx`.
-- The founder LinkedIn agency belongs in a separate standalone project, not this repo.
-- Do not add or restore public agency marketing routes, agency landing pages, agency intake pages, or agency marketing screenshot coverage here.
+- The public agency marketing site has been removed from this repo.
+- Do not add or restore public agency marketing routes, agency landing pages, agency intake pages, agency pricing pages, or agency marketing screenshot coverage here.
+- Private internal agency operations may exist under `/dashboard/agency` and `/api/agency/*`. Treat those as internal operations surfaces only, not public product positioning.
+- Legacy public agency lead/event APIs may exist for compatibility. Do not wire new first-party public pages to them unless Lucas explicitly reopens that direction.
+
+## Source Of Truth
+- Read `docs/CURRENT_REPO_STATE.md` before using older phase docs or handoff notes.
+- `codex-agency-style-pr` contains newer local workspace, organization, subscription, and internal-operations work that GitHub `main` may not contain yet.
+- Root-level `PHASE_*.md`, `B2B_AGENCY_PIVOT_PRODUCT_SPEC.md`, and `CODEX_PHASE_RUNBOOK.md` are historical context unless Lucas explicitly says to resume that phase plan.
+- If docs conflict with runtime code, inspect the current branch and preserve the branch's actual product boundaries.
 
 ## Brand Direction
 - The public site should feel premium, modern, sharp, and B2B-focused.
@@ -42,3 +50,4 @@
 - Mobile, tablet, desktop, and large desktop layouts are coherent.
 - No public page links to agency marketing routes.
 - No placeholder content remains.
+- GitHub branch, local branch, and docs being used all describe the same target state.

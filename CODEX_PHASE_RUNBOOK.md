@@ -2,6 +2,10 @@
 
 # Codex Phase Runbook: B2B SaaS + Internal Agency Platform
 
+> Current status: frozen historical runbook.
+>
+> Do not use this file as the default next-step instruction source. The local branch has pivoted since this queue was written, the public agency site has been removed from this repo, and GitHub `main` may not match the local branch. Read `AGENTS.md`, `docs/CURRENT_REPO_STATE.md`, `README.md`, and `docs/README.md` first. Only resume this runbook if Lucas explicitly asks to continue this exact phase plan.
+
 ## Purpose
 
 This file is the operating runbook for Codex. It exists so Lucas does not need to keep pasting huge prompts phase by phase like some kind of medieval scribe with Stripe keys.
@@ -3138,6 +3142,8 @@ For every Phase 6 subphase:
 
 ## [ ] Phase 6A: Agency Positioning and Offer Definition
 
+Current status: superseded/frozen. Do not run Phase 6 public agency website work in this repo unless Lucas explicitly reopens it. The public agency marketing site has been removed from this repo.
+
 Status: Ready after Phase 5F is committed.
 
 ### Objective
@@ -3312,6 +3318,8 @@ git commit -m "Define public agency positioning and offers"
 ---
 
 ## [ ] Phase 6B: Public Agency Website Foundation
+
+Current status: superseded/frozen. Do not rebuild public agency pages in this repo unless Lucas explicitly asks for that direction again.
 
 Status: Ready after Phase 6A is committed.
 
@@ -4215,6 +4223,8 @@ Lucas and ChatGPT will then review the summary and decide whether Phase 7 should
 ---
 
 # Phase 7: Public Agency Funnel Enhancements
+
+Current status: superseded/frozen. Public agency funnel work is historical context only because the public agency site has been removed from this repo.
 
 Phase 7 improves the public agency website lead funnel.
 
@@ -5310,6 +5320,8 @@ Lucas and ChatGPT will then review the summary and decide whether Phase 8 should
 ---
 
 # Phase 8: Production Launch Hardening
+
+Current status: partially historical. Use current production docs and `docs/CURRENT_REPO_STATE.md` before applying Phase 8 assumptions, especially any references to a public agency website or lead funnel.
 
 Phase 8 prepares the full platform for real deployment and real traffic.
 

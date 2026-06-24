@@ -43,8 +43,8 @@ docker compose -f docker-compose.prod.yml up -d --build
 - Runtime OpenAI-backed features use `OPENAI_API_KEY`.
 - `OPENAI_API_KEY_OPTIN` remains a backward-compatible fallback.
 - Some legacy scripts still reference `OPENAI_API_KEY`; that is not the main production runtime path.
-- Public agency lead ownership should be pinned with `AGENCY_LEAD_ORGANIZATION_ID`.
-- Slack OAuth needs `SLACK_CLIENT_ID`, `SLACK_CLIENT_SECRET`, `SLACK_REDIRECT_URI`, and `INTEGRATIONS_ENCRYPTION_KEY` before Slack launch tests.
+- The public agency marketing site is not part of the current production launch. Only configure `AGENCY_LEAD_*` variables if intentionally supporting paused legacy lead-capture APIs.
+- Slack OAuth needs `SLACK_CLIENT_ID`, `SLACK_CLIENT_SECRET`, `SLACK_REDIRECT_URI`, and `INTEGRATIONS_ENCRYPTION_KEY` only before private internal agency Slack tests.
 - Public traffic should use durable Redis rate limiting through `UPSTASH_REDIS_REST_URL` and `UPSTASH_REDIS_REST_TOKEN`.
 - Subscription Stripe price IDs are stored in `plans.stripe_price_id`; they are verified by the subscription launch checker, not by env vars.
 

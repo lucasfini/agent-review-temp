@@ -2,6 +2,12 @@
 
 AudioRepurpose turns long-form audio into transcripts, structured speaker data, analytics, and publish-ready content inside a single workflow.
 
+## Current Branch Context
+
+This local branch includes newer workspace, organization, subscription, and private internal-operations work that may not yet be on GitHub `main`.
+
+Use [docs/CURRENT_REPO_STATE.md](docs/CURRENT_REPO_STATE.md) before relying on older phase docs or Codex handoffs. The public agency marketing site has been removed from this repo; internal agency routes may still exist as private operations surfaces.
+
 ## Current Stack
 
 - Next.js 16 App Router
@@ -19,8 +25,10 @@ AudioRepurpose turns long-form audio into transcripts, structured speaker data, 
 - Transcribe audio and organize speaker segments
 - Review projects in the dashboard
 - Generate summaries, quotes, chapters, takeaways, and social content
-- Track usage and billing inside the product
+- Manage workspace profile, brand voice, plans, content library, and campaign context on the current branch
+- Track usage, subscriptions, product credits, and billing inside the product on the current branch
 - Support admin, maintenance, and cleanup flows through internal routes
+- Support private internal agency operations when an internal agency organization is configured
 
 ## Project Structure
 
@@ -85,14 +93,23 @@ STRIPE_WEBHOOK_SECRET=
 RESEND_API_KEY=
 CONTACT_FROM_EMAIL=support@audiorepurpose.com
 CONTACT_TO_EMAIL=support@audiorepurpose.com
-AGENCY_LEAD_FROM_EMAIL=
-AGENCY_LEAD_NOTIFICATION_EMAIL=
-AGENCY_LEAD_ORGANIZATION_ID=
 
 R2_ACCOUNT_ID=
 R2_ACCESS_KEY_ID=
 R2_SECRET_ACCESS_KEY=
 R2_BUCKET_NAME=
+```
+
+Only set agency and Slack variables when intentionally testing private internal agency operations or paused legacy lead-capture APIs:
+
+```env
+AGENCY_LEAD_FROM_EMAIL=
+AGENCY_LEAD_NOTIFICATION_EMAIL=
+AGENCY_LEAD_ORGANIZATION_ID=
+SLACK_CLIENT_ID=
+SLACK_CLIENT_SECRET=
+SLACK_REDIRECT_URI=
+INTEGRATIONS_ENCRYPTION_KEY=
 ```
 
 4. Start the app:
@@ -130,6 +147,8 @@ Primary production docs:
 - [deploy/Caddyfile](deploy/Caddyfile)
 - [docker-compose.prod.yml](docker-compose.prod.yml)
 - [deploy/cron/audiorepurpose.cron.example](deploy/cron/audiorepurpose.cron.example)
+
+Older root-level phase docs are implementation history, not the default product roadmap.
 
 ## Notes On OpenAI Keys
 
