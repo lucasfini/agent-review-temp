@@ -70,10 +70,6 @@ Fill in real values for:
 - `STRIPE_SECRET_KEY`
 - `NEXT_PUBLIC_STRIPE_PUBLISHABLE_KEY`
 - `STRIPE_WEBHOOK_SECRET`
-- `SLACK_CLIENT_ID`
-- `SLACK_CLIENT_SECRET`
-- `SLACK_REDIRECT_URI`
-- `INTEGRATIONS_ENCRYPTION_KEY`
 - `R2_ACCOUNT_ID`
 - `R2_ACCESS_KEY_ID`
 - `R2_SECRET_ACCESS_KEY`
@@ -91,6 +87,7 @@ Optional but recommended:
 - `CONTACT_FROM_EMAIL`
 - `CONTACT_TO_EMAIL`
 - `AGENCY_LEAD_FROM_EMAIL`, `AGENCY_LEAD_NOTIFICATION_EMAIL`, and `AGENCY_LEAD_ORGANIZATION_ID` only if paused legacy lead-capture APIs are intentionally active
+- `SLACK_CLIENT_ID`, `SLACK_CLIENT_SECRET`, `SLACK_REDIRECT_URI`, and `INTEGRATIONS_ENCRYPTION_KEY` only if private internal agency Slack imports will be live
 - Stripe checkout/portal return URL overrides
 - Zoom / Microsoft / YouTube OAuth credentials if those imports will be live
 

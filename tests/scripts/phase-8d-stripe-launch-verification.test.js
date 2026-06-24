@@ -9,7 +9,7 @@ function read(relativePath) {
 
 describe('Phase 8D Stripe subscription launch verification artifacts', () => {
   it('documents the required Stripe dashboard, checkout, portal, webhook, enforcement, and rollback checks', () => {
-    const report = read('PHASE_8D_STRIPE_SUBSCRIPTION_LAUNCH_VERIFICATION.md');
+    const report = read('docs/archive/phase-handoffs/PHASE_8D_STRIPE_SUBSCRIPTION_LAUNCH_VERIFICATION.md');
 
     [
       'Stripe Dashboard Setup',

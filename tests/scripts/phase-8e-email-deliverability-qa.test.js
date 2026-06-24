@@ -9,7 +9,7 @@ function read(relativePath) {
 
 describe('Phase 8E email deliverability QA artifacts', () => {
   it('documents the required email environment, sender verification, manual QA, failure behavior, and blockers', () => {
-    const report = read('PHASE_8E_EMAIL_DELIVERABILITY_QA.md');
+    const report = read('docs/archive/phase-handoffs/PHASE_8E_EMAIL_DELIVERABILITY_QA.md');
 
     [
       'Required Environment',

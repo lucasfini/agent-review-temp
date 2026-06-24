@@ -9,7 +9,7 @@ function read(relativePath) {
 
 describe('Phase 8F monitoring, logging, and error visibility artifacts', () => {
   it('documents critical flows, expected logs, safe logging rules, monitoring recommendations, and triage steps', () => {
-    const report = read('PHASE_8F_MONITORING_LOGGING_ERROR_VISIBILITY.md');
+    const report = read('docs/archive/phase-handoffs/PHASE_8F_MONITORING_LOGGING_ERROR_VISIBILITY.md');
     const reportLower = report.toLowerCase();
 
     [
@@ -84,7 +84,7 @@ describe('Phase 8F monitoring, logging, and error visibility artifacts', () => {
     const adminMonitoringRoute = read('app/api/admin/monitoring/route.ts');
     const adminMonitoringPage = read('app/dashboard/admin/monitoring/page.tsx');
     const prodCompose = read('docker-compose.prod.yml');
-    const report = read('PHASE_8F_MONITORING_LOGGING_ERROR_VISIBILITY.md');
+    const report = read('docs/archive/phase-handoffs/PHASE_8F_MONITORING_LOGGING_ERROR_VISIBILITY.md');
 
     expect(healthRoute).toContain("status: 'healthy'");
     expect(healthRoute).toContain('process.uptime()');

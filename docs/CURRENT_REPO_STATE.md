@@ -42,7 +42,7 @@ Use docs in this order:
 5. Current deployment docs under `docs/DEPLOYMENT.md` and `docs/guides/`
 6. Runtime code and tests
 
-Root-level `PHASE_*.md` files, `B2B_AGENCY_PIVOT_PRODUCT_SPEC.md`, and `CODEX_PHASE_RUNBOOK.md` are historical implementation context unless Lucas explicitly says to resume that phase plan.
+Archived phase docs under `docs/archive/phase-handoffs/` are historical implementation context unless Lucas explicitly says to resume that phase plan.
 
 ## Practical Rules
 

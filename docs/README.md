@@ -23,9 +23,7 @@ Use these first:
 
 These can still be useful for context, but they are not the production source of truth:
 
-- root-level `PHASE_*.md` files
-- [../B2B_AGENCY_PIVOT_PRODUCT_SPEC.md](../B2B_AGENCY_PIVOT_PRODUCT_SPEC.md)
-- [../CODEX_PHASE_RUNBOOK.md](../CODEX_PHASE_RUNBOOK.md)
+- phase handoffs under [archive/phase-handoffs/](./archive/phase-handoffs/)
 - implementation summaries
 - migration writeups
 - prompt/design explorations

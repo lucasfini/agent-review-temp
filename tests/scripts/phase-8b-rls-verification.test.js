@@ -2,7 +2,7 @@ const { readFileSync } = require('fs');
 const path = require('path');
 
 const sqlPath = path.join(process.cwd(), 'scripts/sql/verify-rls-launch-readiness.sql');
-const reportPath = path.join(process.cwd(), 'PHASE_8B_SUPABASE_RLS_VERIFICATION.md');
+const reportPath = path.join(process.cwd(), 'docs/archive/phase-handoffs/PHASE_8B_SUPABASE_RLS_VERIFICATION.md');
 
 const sql = readFileSync(sqlPath, 'utf8');
 const report = readFileSync(reportPath, 'utf8');

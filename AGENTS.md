@@ -13,7 +13,7 @@
 ## Source Of Truth
 - Read `docs/CURRENT_REPO_STATE.md` before using older phase docs or handoff notes.
 - `codex-agency-style-pr` contains newer local workspace, organization, subscription, and internal-operations work that GitHub `main` may not contain yet.
-- Root-level `PHASE_*.md`, `B2B_AGENCY_PIVOT_PRODUCT_SPEC.md`, and `CODEX_PHASE_RUNBOOK.md` are historical context unless Lucas explicitly says to resume that phase plan.
+- Archived phase docs under `docs/archive/phase-handoffs/` are historical context unless Lucas explicitly says to resume that phase plan.
 - If docs conflict with runtime code, inspect the current branch and preserve the branch's actual product boundaries.
 
 ## Brand Direction

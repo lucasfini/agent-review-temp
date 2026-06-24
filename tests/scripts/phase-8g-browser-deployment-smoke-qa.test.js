@@ -9,7 +9,7 @@ function read(relativePath) {
 
 describe('Phase 8G browser deployment smoke QA artifacts', () => {
   it('documents the launch smoke routes, browser checks, deployment checklist, and blockers', () => {
-    const report = read('PHASE_8G_BROWSER_DEPLOYMENT_SMOKE_QA.md');
+    const report = read('docs/archive/phase-handoffs/PHASE_8G_BROWSER_DEPLOYMENT_SMOKE_QA.md');
 
     [
       'Routes Tested',

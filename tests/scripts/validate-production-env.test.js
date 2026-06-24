@@ -21,13 +21,13 @@ function completeEnv(overrides = {}) {
     NEXT_PUBLIC_STRIPE_PUBLISHABLE_KEY: 'stripe-publishable-key-value',
     STRIPE_WEBHOOK_SECRET: 'stripe-webhook-secret-value',
     RESEND_API_KEY: 'resend-api-key-value',
-    AGENCY_LEAD_FROM_EMAIL: 'leads@audiorepurpose.com',
-    AGENCY_LEAD_NOTIFICATION_EMAIL: 'ops@audiorepurpose.com',
-    AGENCY_LEAD_ORGANIZATION_ID: 'agency-org-id',
-    SLACK_CLIENT_ID: 'slack-client-id',
-    SLACK_CLIENT_SECRET: 'slack-client-secret-value',
-    SLACK_REDIRECT_URI: 'https://audiorepurpose.com/api/agency/slack/oauth/callback',
-    INTEGRATIONS_ENCRYPTION_KEY: validEncryptionKey,
+    AGENCY_LEAD_FROM_EMAIL: '',
+    AGENCY_LEAD_NOTIFICATION_EMAIL: '',
+    AGENCY_LEAD_ORGANIZATION_ID: '',
+    SLACK_CLIENT_ID: '',
+    SLACK_CLIENT_SECRET: '',
+    SLACK_REDIRECT_URI: '',
+    INTEGRATIONS_ENCRYPTION_KEY: '',
     OPENAI_API_KEY: 'openai-key-value',
     ASSEMBLYAI_API_KEY: 'assemblyai-key-value',
     R2_ACCOUNT_ID: 'r2-account-id',
@@ -57,7 +57,7 @@ describe('production env validator', () => {
   });
 
   it('passes a complete production env without reporting secret values', async () => {
-    const env = completeEnv();
+    const env = completeEnv({ INTEGRATIONS_ENCRYPTION_KEY: validEncryptionKey });
     const output = [];
     jest.spyOn(console, 'log').mockImplementation((message = '') => output.push(String(message)));
     jest.spyOn(console, 'warn').mockImplementation((message = '') => output.push(String(message)));
@@ -75,14 +75,39 @@ describe('production env validator', () => {
     const report = collectProductionEnvChecks(completeEnv({
       OPENAI_API_KEY: 'replace-with-your-openai-api-key',
       NEXT_PUBLIC_SUPABASE_URL: 'https://your-project.supabase.co',
-      AGENCY_LEAD_ORGANIZATION_ID: '',
+      STRIPE_WEBHOOK_SECRET: '',
     }));
 
     expect(report.placeholderRequiredEnv).toEqual(expect.arrayContaining([
       'NEXT_PUBLIC_SUPABASE_URL',
       'OPENAI_API_KEY',
     ]));
-    expect(report.missingRequiredEnv).toContain('AGENCY_LEAD_ORGANIZATION_ID');
+    expect(report.missingRequiredEnv).toContain('STRIPE_WEBHOOK_SECRET');
+  });
+
+  it('does not require paused agency lead or Slack credentials for product launch', () => {
+    const report = collectProductionEnvChecks(completeEnv());
+
+    expect(report.missingRequiredEnv).not.toEqual(expect.arrayContaining([
+      'AGENCY_LEAD_FROM_EMAIL',
+      'AGENCY_LEAD_NOTIFICATION_EMAIL',
+      'AGENCY_LEAD_ORGANIZATION_ID',
+      'SLACK_CLIENT_ID',
+      'SLACK_CLIENT_SECRET',
+      'SLACK_REDIRECT_URI',
+      'INTEGRATIONS_ENCRYPTION_KEY',
+    ]));
+    expect(report.configurationErrors).toEqual([]);
+  });
+
+  it('validates private Slack credentials only when partially configured', () => {
+    const report = collectProductionEnvChecks(completeEnv({
+      SLACK_CLIENT_ID: 'slack-client-id',
+    }));
+
+    expect(report.configurationErrors).toContain(
+      'Set usable values for SLACK_CLIENT_ID, SLACK_CLIENT_SECRET, SLACK_REDIRECT_URI or leave the credentials blank'
+    );
   });
 
   it('requires one AssemblyAI credential and validates paired provider config', () => {

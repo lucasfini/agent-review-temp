@@ -148,7 +148,7 @@ Primary production docs:
 - [docker-compose.prod.yml](docker-compose.prod.yml)
 - [deploy/cron/audiorepurpose.cron.example](deploy/cron/audiorepurpose.cron.example)
 
-Older root-level phase docs are implementation history, not the default product roadmap.
+Archived phase docs under `docs/archive/phase-handoffs/` are implementation history, not the default product roadmap.
 
 ## Notes On OpenAI Keys
 
