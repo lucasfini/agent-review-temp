@@ -37,5 +37,6 @@ docker compose -f docker-compose.prod.yml up -d --build
 - Runtime OpenAI-backed features use `OPENAI_API_KEY`.
 - `OPENAI_API_KEY_OPTIN` remains a backward-compatible fallback.
 - Some legacy scripts still reference `OPENAI_API_KEY`; that is not the main production runtime path.
+- The public agency marketing site is not part of the current production launch. Do not configure agency lead variables unless the target branch intentionally supports paused legacy lead-capture APIs.
 
 Do not treat older Vercel-oriented or PyAnnote-heavy docs as the production source of truth for launch.

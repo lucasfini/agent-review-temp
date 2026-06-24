@@ -64,6 +64,7 @@ Fill in real values for:
 - `NEXT_PUBLIC_SUPABASE_URL`
 - `NEXT_PUBLIC_SUPABASE_ANON_KEY`
 - `SUPABASE_SERVICE_ROLE_KEY`
+- `RESEND_API_KEY`
 - `ASSEMBLYAI_API_KEY`
 - `OPENAI_API_KEY`
 - `STRIPE_SECRET_KEY`
@@ -82,7 +83,10 @@ Optional but recommended:
 - `UPSTASH_REDIS_REST_URL`
 - `UPSTASH_REDIS_REST_TOKEN`
 - `ADMIN_EMAILS`
-- Zoom / Microsoft OAuth credentials if those imports will be live
+- `CONTACT_FROM_EMAIL`
+- `CONTACT_TO_EMAIL`
+- Stripe checkout/portal return URL overrides
+- Zoom / Microsoft / YouTube OAuth credentials if those imports will be live
 
 Notes:
 

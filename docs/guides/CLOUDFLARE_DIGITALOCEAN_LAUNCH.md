@@ -24,6 +24,7 @@ Set these values at minimum:
 - `ACME_EMAIL=<your real email>`
 - Supabase URL, anon key, and service role key
 - Stripe secret, publishable key, and webhook secret
+- Resend API key plus product contact from/to emails
 - R2 account, key pair, and bucket name
 - `CRON_SECRET`
 - `INTERNAL_JOB_SECRET`

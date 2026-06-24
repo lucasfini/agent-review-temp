@@ -2,6 +2,12 @@
 
 AudioRepurpose turns long-form audio into transcripts, structured speaker data, analytics, and publish-ready content inside a single workflow.
 
+## Current Branch Context
+
+GitHub `main` is currently older than the active local development branch, `codex-agency-style-pr`, which contains newer workspace, organization, subscription, and private internal-operations work.
+
+Use [docs/CURRENT_REPO_STATE.md](docs/CURRENT_REPO_STATE.md) before relying on older phase docs or Codex handoffs. The public agency marketing site has been removed from this repo; internal agency routes may still exist as private operations surfaces.
+
 ## Current Stack
 
 - Next.js 16 App Router
@@ -92,6 +98,18 @@ R2_SECRET_ACCESS_KEY=
 R2_BUCKET_NAME=
 ```
 
+Only set agency and Slack variables on branches that intentionally include private internal agency operations or paused legacy lead-capture APIs:
+
+```env
+AGENCY_LEAD_FROM_EMAIL=
+AGENCY_LEAD_NOTIFICATION_EMAIL=
+AGENCY_LEAD_ORGANIZATION_ID=
+SLACK_CLIENT_ID=
+SLACK_CLIENT_SECRET=
+SLACK_REDIRECT_URI=
+INTEGRATIONS_ENCRYPTION_KEY=
+```
+
 4. Start the app:
 
 ```bash
@@ -127,6 +145,8 @@ Primary production docs:
 - [deploy/Caddyfile](deploy/Caddyfile)
 - [docker-compose.prod.yml](docker-compose.prod.yml)
 - [deploy/cron/audiorepurpose.cron.example](deploy/cron/audiorepurpose.cron.example)
+
+Older root-level phase docs are implementation history, not the default product roadmap.
 
 ## Notes On OpenAI Keys
 
