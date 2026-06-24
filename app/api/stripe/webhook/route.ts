@@ -5,7 +5,7 @@
 
 import { NextRequest, NextResponse } from 'next/server';
 import Stripe from 'stripe';
-import { addCredit, debitCredit } from '@/lib/billing/credit';
+import { addStripePurchaseCredit, debitCredit } from '@/lib/billing/credit';
 import { supabaseAdmin } from '@/lib/supabase/server';
 import { getTotalCredits, resolveCreditPackage } from '@/lib/billing/credit-packages';
 import { isSubscriptionUsable, upsertOrganizationSubscriptionFromStripe } from '@/lib/billing/subscriptions';
@@ -17,7 +17,164 @@ const stripe = new Stripe(process.env.STRIPE_SECRET_KEY!, {
 
 const webhookSecret = process.env.STRIPE_WEBHOOK_SECRET!;
 
+const WEBHOOK_LEDGER_MISSING_CODES = new Set(['42P01', 'PGRST205']);
+const WEBHOOK_PROCESSING_STALE_MS = 15 * 60 * 1000;
+
+type WebhookLedgerStatus = 'processing' | 'processed' | 'failed' | 'ignored';
+
+type BeginWebhookLedgerResult = {
+  skip: boolean;
+  disabled: boolean;
+  reason?: 'duplicate_final' | 'already_processing' | 'retry_not_claimed';
+};
+
+function webhookObjectId(event: Stripe.Event): string | null {
+  const object = event.data?.object as { id?: string } | undefined;
+  return typeof object?.id === 'string' ? object.id : null;
+}
+
+function isLedgerMissing(error: any) {
+  return error && WEBHOOK_LEDGER_MISSING_CODES.has(error.code);
+}
+
+function errorMessage(error: unknown) {
+  return error instanceof Error ? error.message : String(error || 'Unknown error');
+}
+
+function getPaymentIntentId(session: Stripe.Checkout.Session): string | undefined {
+  if (!session.payment_intent) return undefined;
+  return typeof session.payment_intent === 'string' ? session.payment_intent : session.payment_intent.id;
+}
+
+function processingStartedAt(value: unknown): number | null {
+  if (typeof value !== 'string' || !value) return null;
+  const parsed = Date.parse(value);
+  return Number.isFinite(parsed) ? parsed : null;
+}
+
+function isProcessingStale(startedAt: unknown, now = Date.now()) {
+  const timestamp = processingStartedAt(startedAt);
+  return timestamp === null || now - timestamp > WEBHOOK_PROCESSING_STALE_MS;
+}
+
+async function claimExistingWebhookLedger(event: Stripe.Event, existing: any): Promise<BeginWebhookLedgerResult> {
+  if (existing?.status === 'processed' || existing?.status === 'ignored') {
+    console.log(`[STRIPE] Webhook event ${event.id} already ${existing.status}; skipping duplicate delivery`);
+    return { skip: true, disabled: false, reason: 'duplicate_final' };
+  }
+
+  if (existing?.status === 'processing' && !isProcessingStale(existing.processing_started_at)) {
+    console.log(`[STRIPE] Webhook event ${event.id} is already processing; skipping overlapping delivery`);
+    return { skip: true, disabled: false, reason: 'already_processing' };
+  }
+
+  let claimQuery = supabaseAdmin
+    .from('stripe_webhook_events')
+    .update({
+      status: 'processing',
+      attempts: Number(existing?.attempts || 0) + 1,
+      processing_started_at: new Date().toISOString(),
+      last_error: null,
+      payload: event as any,
+    } as any)
+    .eq('event_id', event.id);
+
+  if (existing?.status === 'processing') {
+    claimQuery = claimQuery.eq('status', 'processing');
+    if (typeof existing.processing_started_at === 'string' && existing.processing_started_at) {
+      claimQuery = claimQuery.eq('processing_started_at', existing.processing_started_at);
+    } else {
+      claimQuery = claimQuery.is('processing_started_at', null);
+    }
+  } else {
+    claimQuery = claimQuery.eq('status', existing?.status || 'failed');
+  }
+
+  const { data: claimed, error: updateError } = await claimQuery
+    .select('event_id')
+    .maybeSingle() as { data: any; error: any };
+
+  if (updateError) {
+    if (isLedgerMissing(updateError)) {
+      console.warn('[STRIPE] stripe_webhook_events table missing during retry claim; continuing');
+      return { skip: false, disabled: true };
+    }
+    throw new Error(`Failed to claim Stripe webhook event ${event.id}: ${updateError.message}`);
+  }
+
+  if (!claimed) {
+    console.log(`[STRIPE] Webhook event ${event.id} retry was not claimed; skipping duplicate delivery`);
+    return { skip: true, disabled: false, reason: 'retry_not_claimed' };
+  }
+
+  return { skip: false, disabled: false };
+}
+
+export async function beginWebhookLedger(event: Stripe.Event): Promise<BeginWebhookLedgerResult> {
+  const { error } = await supabaseAdmin
+    .from('stripe_webhook_events')
+    .insert({
+      event_id: event.id,
+      event_type: event.type,
+      livemode: event.livemode,
+      api_version: event.api_version || null,
+      object_id: webhookObjectId(event),
+      status: 'processing',
+      attempts: 1,
+      received_at: new Date(event.created * 1000).toISOString(),
+      processing_started_at: new Date().toISOString(),
+      payload: event as any,
+    } as any) as { error: any };
+
+  if (!error) {
+    return { skip: false, disabled: false };
+  }
+
+  if (isLedgerMissing(error)) {
+    console.warn('[STRIPE] stripe_webhook_events table missing; continuing without persisted event ledger');
+    return { skip: false, disabled: true };
+  }
+
+  if (error.code !== '23505') {
+    throw new Error(`Failed to record Stripe webhook event ${event.id}: ${error.message}`);
+  }
+
+  const { data: existing, error: lookupError } = await supabaseAdmin
+    .from('stripe_webhook_events')
+    .select('status, attempts, processing_started_at')
+    .eq('event_id', event.id)
+    .maybeSingle() as { data: any; error: any };
+
+  if (lookupError) {
+    if (isLedgerMissing(lookupError)) {
+      console.warn('[STRIPE] stripe_webhook_events table missing during duplicate lookup; continuing');
+      return { skip: false, disabled: true };
+    }
+    throw new Error(`Failed to read Stripe webhook event ${event.id}: ${lookupError.message}`);
+  }
+
+  return claimExistingWebhookLedger(event, existing);
+}
+
+async function finishWebhookLedger(eventId: string, status: WebhookLedgerStatus, error?: unknown) {
+  const { error: updateError } = await supabaseAdmin
+    .from('stripe_webhook_events')
+    .update({
+      status,
+      processed_at: status === 'processed' || status === 'ignored' ? new Date().toISOString() : null,
+      last_error: error ? errorMessage(error).slice(0, 4000) : null,
+    } as any)
+    .eq('event_id', eventId) as { error: any };
+
+  if (updateError && !isLedgerMissing(updateError)) {
+    console.warn(`[STRIPE] Failed to update webhook ledger for ${eventId}:`, updateError);
+  }
+}
+
 export async function POST(request: NextRequest) {
+  let event: Stripe.Event | null = null;
+  let ledgerDisabled = false;
+
   try {
     const body = await request.text();
     const signature = request.headers.get('stripe-signature');
@@ -31,7 +188,6 @@ export async function POST(request: NextRequest) {
     }
 
     // Verify webhook signature
-    let event: Stripe.Event;
     try {
       event = stripe.webhooks.constructEvent(body, signature, webhookSecret);
     } catch (err) {
@@ -40,6 +196,13 @@ export async function POST(request: NextRequest) {
         { error: 'Invalid signature' },
         { status: 400 }
       );
+    }
+
+    const ledger = await beginWebhookLedger(event);
+    ledgerDisabled = ledger.disabled;
+
+    if (ledger.skip) {
+      return NextResponse.json({ received: true, duplicate: true });
     }
 
     // Handle different event types
@@ -77,11 +240,17 @@ export async function POST(request: NextRequest) {
 
       default:
         console.log(`Unhandled event type: ${event.type}`);
+        if (!ledgerDisabled) await finishWebhookLedger(event.id, 'ignored');
+        return NextResponse.json({ received: true, ignored: true });
     }
 
+    if (!ledgerDisabled) await finishWebhookLedger(event.id, 'processed');
     return NextResponse.json({ received: true });
   } catch (error) {
     console.error('Error processing webhook:', error);
+    if (event && !ledgerDisabled) {
+      await finishWebhookLedger(event.id, 'failed', error);
+    }
     return NextResponse.json(
       { error: 'Webhook processing failed' },
       { status: 500 }
@@ -183,9 +352,9 @@ async function handleCheckoutComplete(session: Stripe.Checkout.Session) {
     }
 
     const creditsAmount = getTotalCredits(pkg);
+    const paymentIntentId = getPaymentIntentId(session);
 
     // Dedup: check if this payment_intent was already processed
-    const paymentIntentId = session.payment_intent as string;
     if (paymentIntentId) {
       const { data: existing } = await supabaseAdmin
         .from('credit_transactions')
@@ -216,19 +385,27 @@ async function handleCheckoutComplete(session: Stripe.Checkout.Session) {
     }
 
     if (!organizationId) {
-      const result = await addCredit(userId, creditsAmount, 'purchase', {
-        paymentId: session.payment_intent as string,
+      const result = await addStripePurchaseCredit({
+        userId,
+        amount: creditsAmount,
+        paymentId: paymentIntentId,
+        sessionId: session.id,
         invoiceNumber,
         reason: `Legacy Stripe purchase: ${packageId} package`,
         metadata: {
-          sessionId: session.id,
           packageId,
+          credits: pkg.credits,
+          expiresAfterMonths: pkg.expiresAfterMonths,
           amountPaid: (session.amount_total || 0) / 100,
           customerEmail: session.customer_email,
           legacyCreditUnit: 'account_credit',
         },
       });
-      console.log(`Successfully added ${creditsAmount} legacy credits to user ${userId}. New balance: $${result.newBalance}`);
+      if (result.alreadyProcessed) {
+        console.log(`Payment ${paymentIntentId || session.id} already processed for user ${userId}, skipping`);
+        return;
+      }
+      console.log(`Successfully added ${creditsAmount} legacy credits to user ${userId}. New balance: ${result.newBalance}`);
       return;
     }
 
@@ -260,7 +437,7 @@ async function handleCheckoutComplete(session: Stripe.Checkout.Session) {
 async function handleRefund(charge: Stripe.Charge) {
   try {
     // Find the original transaction by payment intent
-    const paymentIntent = charge.payment_intent as string;
+    const paymentIntent = getStripeId(charge.payment_intent as any);
 
     console.log(`Processing refund for payment: ${paymentIntent}`);
 
@@ -274,6 +451,8 @@ async function handleRefund(charge: Stripe.Charge) {
       .select('id, user_id, amount, invoice_number, payment_id, metadata')
       .eq('payment_id', paymentIntent)
       .eq('transaction_type', 'purchase')
+      .order('created_at', { ascending: true })
+      .limit(1)
       .maybeSingle();
 
     if (!originalTx) {
@@ -282,20 +461,6 @@ async function handleRefund(charge: Stripe.Charge) {
     }
 
     const refundId = charge.refunds?.data?.[0]?.id || charge.id;
-    if (refundId) {
-      const { data: existingRefund } = await supabaseAdmin
-        .from('credit_transactions')
-        .select('id')
-        .eq('payment_id', paymentIntent)
-        .eq('transaction_type', 'refund')
-        .contains('metadata', { refundId })
-        .maybeSingle();
-
-      if (existingRefund) {
-        console.log(`[STRIPE] Refund ${refundId} already processed, skipping`);
-        return;
-      }
-    }
 
     const refundedCents = charge.amount_refunded || 0;
     const totalCents = charge.amount || 0;
@@ -305,11 +470,26 @@ async function handleRefund(charge: Stripe.Charge) {
     }
 
     const ratio = refundedCents / totalCents;
-    const originalCredits = Number(originalTx.amount);
-    const refundCredits = Number((originalCredits * ratio).toFixed(4));
+    const originalCredits = Math.abs(Number(originalTx.amount));
+    const cumulativeRefundCredits = Number((originalCredits * ratio).toFixed(4));
+
+    const { data: refundRows, error: refundLookupError } = await supabaseAdmin
+      .from('credit_transactions')
+      .select('amount')
+      .eq('payment_id', paymentIntent)
+      .eq('transaction_type', 'refund') as { data: Array<{ amount: string | number }> | null; error: any };
+
+    if (refundLookupError) {
+      throw new Error(refundLookupError.message || 'Failed to load prior refunds');
+    }
+
+    const alreadyRefundedCredits = Number(
+      ((refundRows || []).reduce((sum, row) => sum + Math.abs(Number(row.amount || 0)), 0)).toFixed(4)
+    );
+    const refundCredits = Number(Math.max(0, cumulativeRefundCredits - alreadyRefundedCredits).toFixed(4));
 
     if (refundCredits <= 0) {
-      console.warn('[STRIPE] Computed refund credits is zero, skipping');
+      console.log(`[STRIPE] Refund for ${paymentIntent} already applied up to ${alreadyRefundedCredits} credits, skipping`);
       return;
     }
 
@@ -317,9 +497,9 @@ async function handleRefund(charge: Stripe.Charge) {
     if (metadata.creditUnit === 'plan_credit' && typeof metadata.grantId === 'string') {
       const { data: grantRow, error: grantError } = await supabaseAdmin
         .from('billing_credit_grants')
-        .select('credits_remaining')
+        .select('credits_remaining, metadata_json')
         .eq('id', metadata.grantId)
-        .maybeSingle() as { data: { credits_remaining: string | number } | null; error: any };
+        .maybeSingle() as { data: { credits_remaining: string | number; metadata_json?: any } | null; error: any };
 
       if (grantError || !grantRow) {
         console.warn(`[STRIPE] Could not locate credit grant ${metadata.grantId} for refund ${refundId}`);
@@ -330,13 +510,18 @@ async function handleRefund(charge: Stripe.Charge) {
       const revokedCredits = Number(Math.min(currentRemaining, refundCredits).toFixed(4));
       const unrecoveredCredits = Number(Math.max(0, refundCredits - revokedCredits).toFixed(4));
       const nextRemaining = Number(Math.max(0, currentRemaining - revokedCredits).toFixed(4));
+      const grantMetadata = grantRow.metadata_json && typeof grantRow.metadata_json === 'object'
+        ? grantRow.metadata_json
+        : {};
       const { error: updateError } = await supabaseAdmin
         .from('billing_credit_grants')
         .update({
           credits_remaining: nextRemaining,
           metadata_json: {
-            ...metadata,
-            refundedCredits: refundCredits,
+            ...grantMetadata,
+            cumulativeRefundCredits,
+            alreadyRefundedCredits,
+            latestRefundCredits: refundCredits,
             revokedCredits,
             unrecoveredRefundCredits: unrecoveredCredits,
             refundId,
@@ -349,7 +534,7 @@ async function handleRefund(charge: Stripe.Charge) {
         throw new Error(updateError.message || 'Failed to refund top-up credit grant');
       }
 
-      await supabaseAdmin.from('credit_transactions').insert({
+      const { error: txError } = await supabaseAdmin.from('credit_transactions').insert({
         user_id: originalTx.user_id,
         amount: -revokedCredits,
         balance_before: currentRemaining,
@@ -364,18 +549,25 @@ async function handleRefund(charge: Stripe.Charge) {
           paymentIntent,
           chargeId: charge.id,
           creditUnit: 'plan_credit',
+          cumulativeRefundCredits,
+          alreadyRefundedCredits,
           refundedCredits: refundCredits,
           revokedCredits,
           unrecoveredRefundCredits: unrecoveredCredits,
         },
       } as any);
 
-      console.log(`[STRIPE] Refunded ${refundCredits} top-up credits for ${paymentIntent}`);
+      if (txError) {
+        throw new Error(txError.message || 'Failed to log top-up refund transaction');
+      }
+
+      console.log(`[STRIPE] Refunded ${revokedCredits} top-up credits for ${paymentIntent}`);
       return;
     }
 
     await debitCredit(originalTx.user_id, refundCredits, undefined, {
       transactionType: 'refund',
+      paymentId: paymentIntent,
       invoiceNumber: originalTx.invoice_number || undefined,
       reason: 'Stripe refund',
       metadata: {
@@ -384,6 +576,9 @@ async function handleRefund(charge: Stripe.Charge) {
         refundedAmount: refundedCents / 100,
         originalAmount: totalCents / 100,
         refundRatio: ratio,
+        cumulativeRefundCredits,
+        alreadyRefundedCredits,
+        refundedCredits: refundCredits,
         chargeId: charge.id,
       },
     });

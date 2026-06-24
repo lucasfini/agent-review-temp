@@ -7,7 +7,7 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { supabaseAdmin } from '@/lib/supabase/server';
 import { isDemoUser } from '@/lib/demo-mode';
-import { addCredit } from '@/lib/billing/credit';
+import { addStripePurchaseCredit } from '@/lib/billing/credit';
 import { getTotalCredits, resolveCreditPackage } from '@/lib/billing/credit-packages';
 import { grantTopUpCredits } from '@/lib/billing/plan-credits';
 import { getStripeClient } from '@/lib/billing/stripe-runtime';
@@ -63,7 +63,9 @@ export async function POST(request: NextRequest) {
     }
 
     // Dedup: check if this payment_intent was already processed (by webhook or prior verify call)
-    const paymentIntentId = session.payment_intent as string;
+    const paymentIntentId = typeof session.payment_intent === 'string'
+      ? session.payment_intent
+      : session.payment_intent?.id;
     if (paymentIntentId) {
       const { data: existingTransaction } = await supabaseAdmin
         .from('credit_transactions')
@@ -79,6 +81,9 @@ export async function POST(request: NextRequest) {
           success: true,
           alreadyProcessed: true,
           message: 'Credits already added',
+          creditUnit: session.metadata?.creditUnit === 'plan_credit' || session.metadata?.organizationId
+            ? 'plan_credit'
+            : 'legacy_usd',
         });
       }
     }
@@ -123,9 +128,9 @@ export async function POST(request: NextRequest) {
         organizationId,
         userId: user.id,
         credits: creditsAmount,
-        paymentId: session.payment_intent as string,
+        paymentId: paymentIntentId,
         invoiceNumber,
-        idempotencyKey: `top_up:${session.payment_intent || session.id}`,
+        idempotencyKey: `top_up:${paymentIntentId || session.id}`,
         metadata: {
           sessionId: session.id,
           packageId,
@@ -141,16 +146,21 @@ export async function POST(request: NextRequest) {
         alreadyProcessed: false,
         creditsAdded: creditsAmount,
         grantId: grant.id,
+        creditUnit: 'plan_credit',
       });
     }
 
-    const result = await addCredit(user.id, creditsAmount, 'purchase', {
-      paymentId: session.payment_intent as string,
+    const result = await addStripePurchaseCredit({
+      userId: user.id,
+      amount: creditsAmount,
+      paymentId: paymentIntentId,
+      sessionId: session.id,
       invoiceNumber,
       reason: `Legacy Stripe purchase: ${packageId} package (verified on success page)`,
       metadata: {
-        sessionId: session.id,
         packageId,
+        credits: pkg.credits,
+        expiresAfterMonths: pkg.expiresAfterMonths,
         amountPaid: (session.amount_total || 0) / 100,
         customerEmail: session.customer_email,
         verifiedViaSuccessPage: true,
@@ -158,12 +168,24 @@ export async function POST(request: NextRequest) {
       },
     });
 
+    if (result.alreadyProcessed) {
+      console.log(`Credits already added for payment ${paymentIntentId || session.id} (session ${sessionId})`);
+      return NextResponse.json({
+        success: true,
+        alreadyProcessed: true,
+        message: 'Credits already added',
+        newBalance: result.newBalance,
+        creditUnit: 'legacy_usd',
+      });
+    }
+
     console.log(`Successfully added ${creditsAmount} legacy credits to user ${user.id}. New balance: $${result.newBalance}`);
     return NextResponse.json({
       success: true,
       alreadyProcessed: false,
       creditsAdded: creditsAmount,
       newBalance: result.newBalance,
+      creditUnit: 'legacy_usd',
     });
   } catch (error) {
     console.error('Error verifying session:', error);

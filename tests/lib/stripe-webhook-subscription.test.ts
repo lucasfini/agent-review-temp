@@ -1,6 +1,7 @@
 const mockConstructEvent = jest.fn();
 const mockRetrieveSubscription = jest.fn();
 const mockAddCredit = jest.fn();
+const mockAddStripePurchaseCredit = jest.fn();
 const mockDebitCredit = jest.fn();
 const mockUpsertOrganizationSubscriptionFromStripe = jest.fn();
 const mockEnsureCurrentPlanCreditGrant = jest.fn();
@@ -29,6 +30,7 @@ jest.mock('stripe', () => {
 
 jest.mock('@/lib/billing/credit', () => ({
   addCredit: (...args: any[]) => mockAddCredit(...args),
+  addStripePurchaseCredit: (...args: any[]) => mockAddStripePurchaseCredit(...args),
   debitCredit: (...args: any[]) => mockDebitCredit(...args),
 }));
 
@@ -58,6 +60,7 @@ describe('Stripe webhook subscription handling', () => {
     mockConstructEvent.mockReset();
     mockRetrieveSubscription.mockReset();
     mockAddCredit.mockReset();
+    mockAddStripePurchaseCredit.mockReset();
     mockDebitCredit.mockReset();
     mockUpsertOrganizationSubscriptionFromStripe.mockReset();
     mockEnsureCurrentPlanCreditGrant.mockReset();
@@ -70,6 +73,15 @@ describe('Stripe webhook subscription handling', () => {
     mockRefundTransactionPayload = null;
 
     mockSupabaseFrom.mockImplementation((table: string) => {
+      if (table === 'stripe_webhook_events') {
+        return {
+          insert: jest.fn(async () => ({ error: null })),
+          update: jest.fn(() => ({
+            eq: jest.fn(async () => ({ error: null })),
+          })),
+        };
+      }
+
       if (table === 'credit_transactions') {
         return {
           select: jest.fn(() => {
@@ -80,6 +92,8 @@ describe('Stripe webhook subscription handling', () => {
                 return chain;
               }),
               contains: jest.fn(() => chain),
+              order: jest.fn(() => chain),
+              limit: jest.fn(() => chain),
               maybeSingle: jest.fn(async () => {
                 if (conditions.transaction_type === 'purchase') {
                   return { data: mockOriginalTransaction, error: null };
@@ -135,7 +149,11 @@ describe('Stripe webhook subscription handling', () => {
       items: { data: [] },
     };
     mockConstructEvent.mockReturnValue({
+      id: 'evt_sub_checkout',
       type: 'checkout.session.completed',
+      livemode: false,
+      api_version: '2025-10-29.clover',
+      created: 1710000000,
       data: {
         object: {
           id: 'cs_sub',
@@ -187,6 +205,7 @@ describe('Stripe webhook subscription handling', () => {
       }),
     });
     expect(mockAddCredit).not.toHaveBeenCalled();
+    expect(mockAddStripePurchaseCredit).not.toHaveBeenCalled();
   });
 
   it('records only remaining top-up credits revoked when refunded credits were already used', async () => {
@@ -206,7 +225,11 @@ describe('Stripe webhook subscription handling', () => {
       credits_remaining: 100,
     };
     mockConstructEvent.mockReturnValue({
+      id: 'evt_refund',
       type: 'charge.refunded',
+      livemode: false,
+      api_version: '2025-10-29.clover',
+      created: 1710000000,
       data: {
         object: {
           id: 'ch_123',
@@ -232,7 +255,9 @@ describe('Stripe webhook subscription handling', () => {
     expect(mockGrantUpdatePayload).toEqual(expect.objectContaining({
       credits_remaining: 0,
       metadata_json: expect.objectContaining({
-        refundedCredits: 5000,
+        cumulativeRefundCredits: 5000,
+        alreadyRefundedCredits: 0,
+        latestRefundCredits: 5000,
         revokedCredits: 100,
         unrecoveredRefundCredits: 4900,
         refundId: 're_123',

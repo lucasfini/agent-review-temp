@@ -341,6 +341,22 @@ export async function ensureCurrentPlanCreditGrant(params: {
     .select('*')
     .single() as { data: GrantRow | null; error: any };
 
+  if (error?.code === '23505') {
+    const { data: racedGrant, error: racedError } = await supabase
+      .from('billing_credit_grants')
+      .select('*')
+      .eq('idempotency_key', idempotencyKey)
+      .limit(1)
+      .maybeSingle() as { data: GrantRow | null; error: any };
+
+    if (racedError) {
+      throw new Error(racedError.message || 'Failed to load raced plan credit grant');
+    }
+    if (racedGrant) {
+      return { subscription, grant: mapGrantRow(racedGrant) };
+    }
+  }
+
   if (error || !data) {
     throw new Error(error?.message || 'Failed to create plan credit grant');
   }
@@ -885,11 +901,27 @@ export async function grantTopUpCredits(params: {
     .select('*')
     .single() as { data: GrantRow | null; error: any };
 
+  if (error?.code === '23505') {
+    const { data: racedGrant, error: racedError } = await supabase
+      .from('billing_credit_grants')
+      .select('*')
+      .eq('idempotency_key', params.idempotencyKey)
+      .limit(1)
+      .maybeSingle() as { data: GrantRow | null; error: any };
+
+    if (racedError) {
+      throw new Error(racedError.message || 'Failed to load raced top-up grant');
+    }
+    if (racedGrant) {
+      return mapGrantRow(racedGrant);
+    }
+  }
+
   if (error || !data) {
     throw new Error(error?.message || 'Failed to grant top-up credits');
   }
 
-  await supabase.from('credit_transactions').insert({
+  const { error: txError } = await supabase.from('credit_transactions').insert({
     user_id: params.userId,
     amount: credits,
     balance_before: 0,
@@ -906,6 +938,10 @@ export async function grantTopUpCredits(params: {
       expiresAt,
     },
   } as any);
+
+  if (txError) {
+    console.warn('[PLAN_CREDITS] Failed to log top-up credit purchase transaction:', txError.message || txError);
+  }
 
   return mapGrantRow(data);
 }

@@ -18,6 +18,46 @@ function parseRangeToIso(range: string | null): string | null {
   return new Date(now - offset).toISOString();
 }
 
+function normalizeSearch(search: string | null): string | null {
+  const trimmed = search?.trim();
+  if (!trimmed) return null;
+
+  // PostgREST .or() uses commas and parentheses as syntax, so keep admin search plain.
+  return trimmed.replace(/[(),]/g, ' ').slice(0, 100).trim() || null;
+}
+
+function parseBoundedInteger(
+  value: string | null,
+  defaultValue: number,
+  { min, max }: { min: number; max: number }
+): { value?: number; error?: string } {
+  if (!value) return { value: defaultValue };
+
+  if (!/^\d+$/.test(value)) {
+    return { error: `Must be an integer between ${min} and ${max}` };
+  }
+
+  const parsed = Number(value);
+  if (!Number.isSafeInteger(parsed) || parsed < min || parsed > max) {
+    return { error: `Must be an integer between ${min} and ${max}` };
+  }
+
+  return { value: parsed };
+}
+
+function aggregateTotals(rows: any[]) {
+  return rows.reduce(
+    (acc: any, row: any) => {
+      const amount = Number(row.amount || 0);
+      if (row.transaction_type === 'purchase') acc.purchases += amount;
+      if (row.transaction_type === 'refund') acc.refunds += Math.abs(amount);
+      if (row.transaction_type === 'debit') acc.debits += Math.abs(amount);
+      return acc;
+    },
+    { purchases: 0, refunds: 0, debits: 0 }
+  );
+}
+
 export async function GET(request: NextRequest) {
   try {
     const authHeader = request.headers.get('Authorization');
@@ -36,18 +76,39 @@ export async function GET(request: NextRequest) {
 
     const { searchParams } = new URL(request.url);
     const range = searchParams.get('range');
-    const search = searchParams.get('search')?.trim();
-    const limit = parseInt(searchParams.get('limit') || '30');
-    const offset = parseInt(searchParams.get('offset') || '0');
+    const search = normalizeSearch(searchParams.get('search'));
+    const parsedLimit = parseBoundedInteger(searchParams.get('limit'), 30, { min: 1, max: 100 });
+    const parsedOffset = parseBoundedInteger(searchParams.get('offset'), 0, { min: 0, max: 100000 });
 
-    const sinceIso = parseRangeToIso(range) || new Date(Date.now() - DAYS_30_MS).toISOString();
+    if (parsedLimit.error || parsedOffset.error) {
+      return NextResponse.json(
+        {
+          error: 'Invalid pagination parameters',
+          details: {
+            limit: parsedLimit.error || null,
+            offset: parsedOffset.error || null,
+          },
+        },
+        { status: 400 }
+      );
+    }
+
+    const limit = parsedLimit.value!;
+    const offset = parsedOffset.value!;
+
+    const sinceIso = range === 'all'
+      ? null
+      : parseRangeToIso(range) || new Date(Date.now() - DAYS_30_MS).toISOString();
 
     let txQuery = supabaseAdmin
       .from('credit_transactions')
       .select('id, user_id, amount, transaction_type, reason, invoice_number, created_at', { count: 'exact' })
-      .gte('created_at', sinceIso)
       .order('created_at', { ascending: false })
       .range(offset, offset + limit - 1);
+
+    if (sinceIso) {
+      txQuery = txQuery.gte('created_at', sinceIso);
+    }
 
     if (search) {
       txQuery = txQuery.or(
@@ -55,18 +116,30 @@ export async function GET(request: NextRequest) {
       );
     }
 
-    const { data: txRows, count: total } = await txQuery;
+    const { data: txRows, error: txError, count: total } = await txQuery;
+    if (txError) {
+      throw new Error(`Failed to load billing transactions: ${txError.message}`);
+    }
 
-    const totals = (txRows || []).reduce(
-      (acc: any, row: any) => {
-        const amount = Number(row.amount || 0);
-        if (row.transaction_type === 'purchase') acc.purchases += amount;
-        if (row.transaction_type === 'refund') acc.refunds += Math.abs(amount);
-        if (row.transaction_type === 'debit') acc.debits += Math.abs(amount);
-        return acc;
-      },
-      { purchases: 0, refunds: 0, debits: 0 }
-    );
+    const fallbackTotals = aggregateTotals(txRows || []);
+
+    const { data: aggregateRows, error: aggregateError } = await supabaseAdmin.rpc('get_admin_billing_totals', {
+      p_since: sinceIso,
+      p_search: search,
+    } as any) as { data: any[] | null; error: any };
+
+    if (aggregateError) {
+      console.warn('[ADMIN BILLING] Falling back to paged totals because aggregate RPC failed:', aggregateError.message || aggregateError);
+    }
+
+    const aggregate = aggregateRows?.[0];
+    const totals = aggregateError || !aggregate
+      ? fallbackTotals
+      : {
+        purchases: Number(aggregate.purchases || 0),
+        refunds: Number(aggregate.refunds || 0),
+        debits: Number(aggregate.debits || 0),
+      };
 
     const userIds = Array.from(new Set((txRows || []).map((row: any) => row.user_id))).filter(Boolean);
     const userEmailMap: Record<string, string> = {};
@@ -91,6 +164,7 @@ export async function GET(request: NextRequest) {
     return NextResponse.json({
       success: true,
       totals,
+      totalsScope: aggregateError ? 'current_page_fallback' : 'all_matching_rows',
       transactions,
       rangeDays: range === '7d' ? 7 : range === '6m' ? 180 : range === 'all' ? null : 30,
       total: total || 0,

@@ -221,6 +221,14 @@ export class CreditAccountNotFoundError extends Error {
   }
 }
 
+export interface StripePurchaseCreditResult {
+  success: true;
+  alreadyProcessed: boolean;
+  newBalance: number;
+  newVersion: number;
+  transactionId: string;
+}
+
 // ============================================================================
 // Core Credit Operations
 // ============================================================================
@@ -347,6 +355,7 @@ export async function debitCredit(
     metadata?: Record<string, unknown>;
     transactionType?: 'debit' | 'refund';
     invoiceNumber?: string;
+    paymentId?: string;
   }
 ): Promise<{
   success: true;
@@ -406,6 +415,7 @@ export async function debitCredit(
       transaction_type: options?.transactionType || 'debit',
       usage_event_id: usageEventId,
       reservation_id: options?.metadata?.reservationId,
+      payment_id: options?.paymentId,
       invoice_number: options?.invoiceNumber,
       reason: options?.reason,
       metadata: options?.metadata || {},
@@ -423,6 +433,49 @@ export async function debitCredit(
     newBalance: result.new_balance,
     newVersion: result.new_version,
     transactionId: transaction?.id || '',
+  };
+}
+
+/**
+ * Grant Stripe checkout purchase credits and record the purchase transaction in
+ * one database transaction. This is intentionally separate from the generic
+ * addCredit helper because Stripe purchases need payment/session idempotency
+ * across webhook, success-page, and admin recovery paths.
+ */
+export async function addStripePurchaseCredit(params: {
+  userId: string;
+  amount: number;
+  paymentId?: string | null;
+  sessionId: string;
+  invoiceNumber?: string | null;
+  reason?: string;
+  metadata?: Record<string, unknown>;
+}): Promise<StripePurchaseCreditResult> {
+  const { data, error } = await supabase.rpc('grant_stripe_purchase_credits', {
+    p_user_id: params.userId,
+    p_amount: params.amount,
+    p_payment_id: params.paymentId || null,
+    p_session_id: params.sessionId,
+    p_invoice_number: params.invoiceNumber || null,
+    p_reason: params.reason || null,
+    p_metadata: params.metadata || {},
+  } as any) as { data: any[] | null; error: any };
+
+  if (error) {
+    throw new Error(`Failed to grant Stripe purchase credits: ${error.message}`);
+  }
+
+  const row = Array.isArray(data) ? data[0] : data;
+  if (!row?.success) {
+    throw new Error('Failed to grant Stripe purchase credits');
+  }
+
+  return {
+    success: true,
+    alreadyProcessed: Boolean(row.already_processed),
+    newBalance: Number(row.new_balance || 0),
+    newVersion: Number(row.new_version || 0),
+    transactionId: row.transaction_id || '',
   };
 }
 

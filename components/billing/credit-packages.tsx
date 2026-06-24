@@ -11,33 +11,32 @@ import { toast } from 'sonner';
 import { useAuth } from '@/lib/auth/context';
 import { formatProductCredits } from '@/lib/billing/product-credits';
 import { useCurrentSubscription } from '@/lib/hooks/useCurrentSubscription';
+import { CREDIT_PACKAGES, getTotalCredits, type CreditPackageId } from '@/lib/billing/credit-packages';
 
-interface Package {
-  id: string;
+interface PackageOption {
+  id: CreditPackageId;
   credits: number;
   price: number;
+  expiresAfterMonths: number;
   popular?: boolean;
   label: string;
 }
 
-const packages: Package[] = [
+const packages: PackageOption[] = [
   {
     id: 'top_up_1000',
-    credits: 1000,
-    price: 19,
+    ...CREDIT_PACKAGES.top_up_1000,
     label: 'Good for shorter batches',
   },
   {
     id: 'top_up_5000',
-    credits: 5000,
-    price: 79,
+    ...CREDIT_PACKAGES.top_up_5000,
     popular: true,
     label: 'Best for recurring workflows',
   },
   {
     id: 'top_up_15000',
-    credits: 15000,
-    price: 229,
+    ...CREDIT_PACKAGES.top_up_15000,
     label: 'For heavy content periods',
   },
 ];
@@ -47,13 +46,13 @@ interface CreditPackagesProps {
 }
 
 export default function CreditPackages({ organizationId }: CreditPackagesProps) {
-  const [selectedPackage, setSelectedPackage] = useState<string>('top_up_5000');
+  const [selectedPackage, setSelectedPackage] = useState<CreditPackageId>('top_up_5000');
   const [isProcessing, setIsProcessing] = useState(false);
   const { session } = useAuth();
   const { subscription, loading: loadingSubscription } = useCurrentSubscription(organizationId);
   const topUpsEnabled = Boolean(subscription?.plan?.topUpEnabled);
 
-  const handlePurchase = async (packageId: string) => {
+  const handlePurchase = async (packageId: CreditPackageId) => {
     setIsProcessing(true);
     try {
       if (!session?.access_token) {
@@ -126,7 +125,7 @@ export default function CreditPackages({ organizationId }: CreditPackagesProps) 
             </div>
 
             <div className="text-[13px] text-slate-800 dark:text-slate-50 font-medium mb-1">
-              {formatProductCredits(pkg.credits)} credits
+              {formatProductCredits(getTotalCredits(pkg))} credits
             </div>
 
             <div className="text-[11px] text-slate-500 dark:text-slate-400 mb-3">
@@ -135,11 +134,11 @@ export default function CreditPackages({ organizationId }: CreditPackagesProps) 
 
             <div className="flex items-center gap-1 text-[11px] text-slate-500 dark:text-slate-500">
               <Check className="h-3 w-3" />
-              Expires after 12 months
+              Expires after {pkg.expiresAfterMonths} months
             </div>
 
             {selectedPackage === pkg.id && (
-              <div className="absolute top-2 right-2">
+              <div className="absolute bottom-2 right-2">
                 <div className="bg-blue-500 rounded-full p-0.5">
                   <Check className="h-3.5 w-3.5 text-white" />
                 </div>
@@ -151,7 +150,7 @@ export default function CreditPackages({ organizationId }: CreditPackagesProps) 
 
       <div className="flex items-center justify-between mb-4">
         <p className="text-xs text-slate-500 dark:text-slate-400">
-          Top-ups are consumed after rollover and current monthly credits
+          Top-ups are consumed after rollover and current monthly credits.
         </p>
         <p className="text-xs text-slate-500 dark:text-slate-500">
           Secure payment via Stripe
@@ -167,7 +166,7 @@ export default function CreditPackages({ organizationId }: CreditPackagesProps) 
           ? 'Processing...'
           : !topUpsEnabled
             ? 'Upgrade to buy top-ups'
-            : `Purchase $${selected?.price ?? 0} - Get ${formatProductCredits(selected?.credits ?? 0)} credits`}
+            : `Purchase $${selected?.price ?? 0} - Get ${formatProductCredits(selected ? getTotalCredits(selected) : 0)} credits`}
       </button>
     </div>
   );
