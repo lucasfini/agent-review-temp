@@ -14,6 +14,13 @@
 
 import { supabaseAdmin as supabase } from '@/lib/supabase/server';
 import { formatUsageEventReason } from '@/lib/billing/presentation';
+import { resolveOrganizationIdForWrite, resolveOrganizationIdFromProjectForWrite } from '@/lib/authz/organization-context';
+import { buildBillingOrgScopedLegacyFallbackFilter } from '@/lib/billing/organization-scope';
+import {
+  isPlanCreditReservation,
+  releasePlanCreditReservation,
+  settlePlanCreditReservationAmount,
+} from '@/lib/billing/plan-credits';
 
 // ============================================================================
 // Types and Interfaces
@@ -36,6 +43,7 @@ export interface DisplayCreditBalance extends CreditBalance {
 export interface UsageEvent {
   id: string;
   userId: string;
+  organizationId?: string | null;
   projectId?: string;
   reservationId?: string;
   serviceKey: string;
@@ -54,6 +62,7 @@ export interface UsageEvent {
 export interface BillingReservation {
   id: string;
   userId: string;
+  organizationId?: string | null;
   projectId?: string;
   workflowType: string;
   status: 'pending' | 'active' | 'settling' | 'settled' | 'released' | 'expired' | 'failed';
@@ -61,6 +70,7 @@ export interface BillingReservation {
   settledAmount: number;
   releasedAmount: number;
   currency: string;
+  creditUnit: 'legacy_usd' | 'plan_credit' | string;
   metadata: Record<string, unknown>;
   expiresAt?: string | null;
   createdAt: string;
@@ -82,6 +92,75 @@ export interface CreditTransaction {
   reason?: string;
   metadata: Record<string, unknown>;
   createdAt: string;
+}
+
+function applyBillingReadScope(query: any, userId: string, organizationId?: string) {
+  if (!organizationId) {
+    return query.eq('user_id', userId);
+  }
+
+  return query.or(buildBillingOrgScopedLegacyFallbackFilter(organizationId, userId));
+}
+
+async function filterCreditTransactionsForOrganization(
+  userId: string,
+  transactions: any[],
+  organizationId?: string
+): Promise<any[]> {
+  if (!organizationId || transactions.length === 0) {
+    return transactions;
+  }
+
+  const scopeFilter = buildBillingOrgScopedLegacyFallbackFilter(organizationId, userId);
+  const reservationIds = Array.from(new Set(transactions.map((tx) => tx.reservation_id).filter(Boolean)));
+  const usageEventIds = Array.from(new Set(transactions.map((tx) => tx.usage_event_id).filter(Boolean)));
+  const allowedReservationIds = new Set<string>();
+  const allowedUsageEventIds = new Set<string>();
+
+  if (reservationIds.length > 0) {
+    const { data, error } = await supabase
+      .from('billing_reservations')
+      .select('id')
+      .in('id', reservationIds)
+      .or(scopeFilter) as { data: Array<{ id: string }> | null; error: any };
+
+    if (error) {
+      throw new Error(`Failed to scope reservation transactions: ${error.message}`);
+    }
+
+    for (const row of data || []) {
+      allowedReservationIds.add(row.id);
+    }
+  }
+
+  if (usageEventIds.length > 0) {
+    const { data, error } = await supabase
+      .from('usage_events')
+      .select('id')
+      .in('id', usageEventIds)
+      .or(scopeFilter) as { data: Array<{ id: string }> | null; error: any };
+
+    if (error) {
+      throw new Error(`Failed to scope usage transactions: ${error.message}`);
+    }
+
+    for (const row of data || []) {
+      allowedUsageEventIds.add(row.id);
+    }
+  }
+
+  return transactions.filter((tx) => {
+    if (tx.reservation_id) {
+      return allowedReservationIds.has(tx.reservation_id);
+    }
+    if (tx.usage_event_id) {
+      return allowedUsageEventIds.has(tx.usage_event_id);
+    }
+
+    // Standalone purchases, bonuses, refunds, and admin adjustments have no
+    // organization column yet, so they remain part of the user credit ledger.
+    return true;
+  });
 }
 
 export class ReservationNotFoundError extends Error {
@@ -140,6 +219,14 @@ export class CreditAccountNotFoundError extends Error {
     super(`Credit account not found for user: ${userId}`);
     this.name = 'CreditAccountNotFoundError';
   }
+}
+
+export interface StripePurchaseCreditResult {
+  success: true;
+  alreadyProcessed: boolean;
+  newBalance: number;
+  newVersion: number;
+  transactionId: string;
 }
 
 // ============================================================================
@@ -268,6 +355,7 @@ export async function debitCredit(
     metadata?: Record<string, unknown>;
     transactionType?: 'debit' | 'refund';
     invoiceNumber?: string;
+    paymentId?: string;
   }
 ): Promise<{
   success: true;
@@ -327,6 +415,7 @@ export async function debitCredit(
       transaction_type: options?.transactionType || 'debit',
       usage_event_id: usageEventId,
       reservation_id: options?.metadata?.reservationId,
+      payment_id: options?.paymentId,
       invoice_number: options?.invoiceNumber,
       reason: options?.reason,
       metadata: options?.metadata || {},
@@ -344,6 +433,49 @@ export async function debitCredit(
     newBalance: result.new_balance,
     newVersion: result.new_version,
     transactionId: transaction?.id || '',
+  };
+}
+
+/**
+ * Grant Stripe checkout purchase credits and record the purchase transaction in
+ * one database transaction. This is intentionally separate from the generic
+ * addCredit helper because Stripe purchases need payment/session idempotency
+ * across webhook, success-page, and admin recovery paths.
+ */
+export async function addStripePurchaseCredit(params: {
+  userId: string;
+  amount: number;
+  paymentId?: string | null;
+  sessionId: string;
+  invoiceNumber?: string | null;
+  reason?: string;
+  metadata?: Record<string, unknown>;
+}): Promise<StripePurchaseCreditResult> {
+  const { data, error } = await supabase.rpc('grant_stripe_purchase_credits', {
+    p_user_id: params.userId,
+    p_amount: params.amount,
+    p_payment_id: params.paymentId || null,
+    p_session_id: params.sessionId,
+    p_invoice_number: params.invoiceNumber || null,
+    p_reason: params.reason || null,
+    p_metadata: params.metadata || {},
+  } as any) as { data: any[] | null; error: any };
+
+  if (error) {
+    throw new Error(`Failed to grant Stripe purchase credits: ${error.message}`);
+  }
+
+  const row = Array.isArray(data) ? data[0] : data;
+  if (!row?.success) {
+    throw new Error('Failed to grant Stripe purchase credits');
+  }
+
+  return {
+    success: true,
+    alreadyProcessed: Boolean(row.already_processed),
+    newBalance: Number(row.new_balance || 0),
+    newVersion: Number(row.new_version || 0),
+    transactionId: row.transaction_id || '',
   };
 }
 
@@ -432,6 +564,7 @@ export async function addCredit(
  */
 export async function logUsageEvent(params: {
   userId: string;
+  organizationId?: string;
   projectId?: string;
   projectTitle?: string;
   reservationId?: string;
@@ -459,10 +592,23 @@ export async function logUsageEvent(params: {
     resolvedProjectTitle = proj?.title ?? undefined;
   }
 
+  let resolvedOrganizationId: string | null = params.organizationId || null;
+  try {
+    if (params.projectId) {
+      const projectOrg = await resolveOrganizationIdFromProjectForWrite(supabase, params.projectId, params.userId);
+      resolvedOrganizationId = projectOrg.organizationId;
+    } else if (!resolvedOrganizationId) {
+      resolvedOrganizationId = await resolveOrganizationIdForWrite(params.userId, null, supabase);
+    }
+  } catch (error) {
+    console.warn('[BILLING] Could not resolve organization_id for usage event:', error);
+  }
+
   const { data, error } = await supabase
     .from('usage_events')
     .insert({
       user_id: params.userId,
+      organization_id: resolvedOrganizationId,
       project_id: params.projectId,
       reservation_id: params.reservationId,
       project_title: resolvedProjectTitle ?? null,
@@ -489,6 +635,7 @@ export async function logUsageEvent(params: {
   return {
     id: data.id,
     userId: data.user_id,
+    organizationId: data.organization_id ?? null,
     projectId: data.project_id,
     reservationId: data.reservation_id,
     serviceKey: data.service_key,
@@ -511,6 +658,7 @@ export async function logUsageEvent(params: {
 export async function getUsageHistory(
   userId: string,
   filters?: {
+    organizationId?: string;
     projectId?: string;
     serviceKey?: string;
     provider?: string;
@@ -525,8 +673,8 @@ export async function getUsageHistory(
   let query = supabase
     .from('usage_events')
     .select('*, projects:project_id(title)', { count: 'exact' })
-    .eq('user_id', userId)
     .order('created_at', { ascending: false });
+  query = applyBillingReadScope(query, userId, filters?.organizationId);
 
   // Apply filters
   if (filters?.projectId) {
@@ -562,6 +710,7 @@ export async function getUsageHistory(
   const events: (UsageEvent & { projectTitle?: string })[] = (data || []).map((row) => ({
     id: row.id,
     userId: row.user_id,
+    organizationId: row.organization_id ?? null,
     projectId: row.project_id,
     serviceKey: row.service_key,
     serviceName: formatUsageEventReason({
@@ -593,6 +742,7 @@ export async function getUsageHistory(
 export async function getTransactionHistory(
   userId: string,
   filters?: {
+    organizationId?: string;
     transactionType?: 'purchase' | 'bonus' | 'refund' | 'debit' | 'admin_adjustment' | 'reserve' | 'release' | 'settle';
     startDate?: Date;
     endDate?: Date;
@@ -618,10 +768,11 @@ export async function getTransactionHistory(
     query = query.lte('created_at', filters.endDate.toISOString());
   }
 
-  // Pagination
   const limit = filters?.limit || 100;
   const offset = filters?.offset || 0;
-  query = query.range(offset, offset + limit - 1);
+  if (!filters?.organizationId) {
+    query = query.range(offset, offset + limit - 1);
+  }
 
   const { data, error, count } = await query as { data: any[] | null; error: any; count: number | null };
 
@@ -629,7 +780,14 @@ export async function getTransactionHistory(
     throw new Error(`Failed to get transaction history: ${error.message}`);
   }
 
-  const transactions: CreditTransaction[] = (data || []).map((row) => ({
+  const scopedRows = await filterCreditTransactionsForOrganization(
+    userId,
+    data || [],
+    filters?.organizationId
+  );
+  const pagedRows = filters?.organizationId ? scopedRows.slice(offset, offset + limit) : scopedRows;
+
+  const transactions: CreditTransaction[] = pagedRows.map((row) => ({
     id: row.id,
     userId: row.user_id,
     amount: row.amount,
@@ -647,7 +805,7 @@ export async function getTransactionHistory(
 
   return {
     transactions,
-    total: count || 0,
+    total: filters?.organizationId ? scopedRows.length : count || 0,
   };
 }
 
@@ -655,6 +813,7 @@ function mapReservationRow(row: any): BillingReservation {
   return {
     id: row.id,
     userId: row.user_id,
+    organizationId: row.organization_id ?? null,
     projectId: row.project_id,
     workflowType: row.workflow_type,
     status: row.status,
@@ -662,6 +821,7 @@ function mapReservationRow(row: any): BillingReservation {
     settledAmount: Number(row.settled_amount || 0),
     releasedAmount: Number(row.released_amount || 0),
     currency: row.currency || 'USD',
+    creditUnit: row.credit_unit || row.metadata?.creditUnit || 'legacy_usd',
     metadata: row.metadata || {},
     expiresAt: row.expires_at,
     createdAt: row.created_at,
@@ -730,6 +890,7 @@ export async function getReservation(reservationId: string): Promise<BillingRese
 
 export async function createReservation(params: {
   userId: string;
+  organizationId?: string;
   projectId?: string;
   workflowType: string;
   amount: number;
@@ -738,18 +899,30 @@ export async function createReservation(params: {
 }): Promise<BillingReservation> {
   const amount = Number(params.amount.toFixed(4));
   const { balanceBefore, result } = await runBalanceRpc('reserve_user_credits', params.userId, amount);
+  let resolvedOrganizationId: string | null = null;
+
+  if (params.organizationId) {
+    resolvedOrganizationId = await resolveOrganizationIdForWrite(params.userId, params.organizationId, supabase);
+  } else if (params.projectId) {
+    const projectOrg = await resolveOrganizationIdFromProjectForWrite(supabase, params.projectId, params.userId);
+    resolvedOrganizationId = projectOrg.organizationId;
+  } else {
+    resolvedOrganizationId = await resolveOrganizationIdForWrite(params.userId, null, supabase);
+  }
 
   try {
     const { data, error } = await supabase
       .from('billing_reservations')
       .insert({
         user_id: params.userId,
+        organization_id: resolvedOrganizationId,
         project_id: params.projectId || null,
         workflow_type: params.workflowType,
         status: 'active',
         reserved_amount: amount,
         settled_amount: 0,
         released_amount: 0,
+        credit_unit: 'legacy_usd',
         metadata: params.metadata || {},
         expires_at: params.expiresAt || null,
       } as any)
@@ -789,6 +962,16 @@ async function releaseHeldAmount(
   nextStatus: BillingReservation['status']
 ): Promise<BillingReservation> {
   const releaseAmount = Number(Math.max(0, amount).toFixed(4));
+  if (isPlanCreditReservation(reservation)) {
+    await releasePlanCreditReservation({
+      reservation,
+      amount: releaseAmount,
+      reason,
+      nextStatus,
+    });
+    return getReservation(reservation.id);
+  }
+
   if (releaseAmount <= 0) {
     const { data } = await supabase
       .from('billing_reservations')
@@ -898,6 +1081,28 @@ async function ensureReservationCoverage(
   reservation: BillingReservation,
   actualCost: number
 ): Promise<BillingReservation> {
+  if (isPlanCreditReservation(reservation)) {
+    if (actualCost <= reservation.reservedAmount + 0.0001) {
+      return reservation;
+    }
+
+    await supabase
+      .from('billing_reservations')
+      .update({
+        status: 'failed',
+        updated_at: new Date().toISOString(),
+        metadata: {
+          ...(reservation.metadata || {}),
+          actualCost,
+          overrun: Number((actualCost - reservation.reservedAmount).toFixed(4)),
+          overrunReason: 'plan_credit_reservation_overrun',
+        },
+      } as any)
+      .eq('id', reservation.id);
+
+    throw new ReservationOverrunError(reservation.id, reservation.reservedAmount, actualCost);
+  }
+
   if (actualCost <= reservation.reservedAmount + 0.0001) {
     return reservation;
   }
@@ -1024,6 +1229,28 @@ export async function settleReservation(reservationId: string): Promise<BillingR
     } as any)
     .eq('id', reservationId);
 
+  if (isPlanCreditReservation(reservation)) {
+    const metadataCredits = Number(reservation.metadata?.productCreditAmount ?? reservation.reservedAmount);
+    const actualCredits = Number(
+      (Number.isFinite(metadataCredits) ? metadataCredits : reservation.reservedAmount).toFixed(4)
+    );
+    await settlePlanCreditReservationAmount({
+      reservation,
+      actualCredits,
+    });
+
+    await supabase
+      .from('usage_events')
+      .update({
+        status: 'completed',
+        processed_at: new Date().toISOString(),
+      } as any)
+      .eq('reservation_id', reservationId)
+      .neq('status', 'failed');
+
+    return getReservation(reservationId);
+  }
+
   const { data: usageRows, error: usageError } = await supabase
     .from('usage_events')
     .select('id, billed_cost, status')
@@ -1105,6 +1332,30 @@ export async function settleReservationAmount(
   }
 
   const normalizedCost = Number(Math.max(0, actualCost).toFixed(4));
+
+  if (isPlanCreditReservation(reservation)) {
+    await settlePlanCreditReservationAmount({
+      reservation,
+      actualCredits: normalizedCost,
+      usageEventIds,
+    });
+
+    if (usageEventIds.length > 0) {
+      await attachUsageEventsToReservation(reservationId, usageEventIds);
+    }
+
+    await supabase
+      .from('usage_events')
+      .update({
+        status: 'completed',
+        processed_at: new Date().toISOString(),
+      } as any)
+      .eq('reservation_id', reservationId)
+      .neq('status', 'failed');
+
+    return getReservation(reservationId);
+  }
+
   reservation = await ensureReservationCoverage(reservation, normalizedCost);
 
   if (usageEventIds.length > 0) {

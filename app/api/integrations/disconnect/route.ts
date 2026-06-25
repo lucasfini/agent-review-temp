@@ -10,7 +10,16 @@ export async function POST(request: NextRequest) {
 
   const body = await request.json().catch(() => ({}));
   const provider = body?.provider;
-  if (provider !== 'zoom' && provider !== 'microsoft' && provider !== 'youtube') {
+  if (
+    provider !== 'zoom'
+    && provider !== 'microsoft'
+    && provider !== 'youtube'
+    && provider !== 'stripe'
+    && provider !== 'onedrive'
+    && provider !== 'google_drive'
+    && provider !== 'granola'
+    && provider !== 'slack'
+  ) {
     return NextResponse.json({ error: 'Invalid provider' }, { status: 400 });
   }
 

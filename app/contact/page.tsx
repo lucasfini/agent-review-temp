@@ -17,7 +17,8 @@ export default function ContactPage() {
 
         <div className="space-y-4">
           <h1 className="text-3xl font-semibold tracking-tight text-slate-950 dark:text-white sm:text-4xl">
-            Reach support at {SUPPORT_EMAIL}
+            Reach support at{' '}
+            <span className="break-all sm:break-normal">{SUPPORT_EMAIL}</span>
           </h1>
           <p className="max-w-2xl text-base leading-7 text-slate-600 dark:text-slate-300">
             Questions about billing, account access, broken workflows, or feature requests should go to our support inbox.

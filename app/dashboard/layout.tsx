@@ -46,6 +46,12 @@ function DashboardLayoutContent({
     || pathname === '/dashboard/billing'
     || pathname === '/dashboard/usage'
     || pathname === '/dashboard/contact'
+    || pathname.startsWith('/dashboard/studio')
+    || pathname.startsWith('/dashboard/library')
+    || pathname.startsWith('/dashboard/agency')
+    || pathname === '/dashboard/onboarding'
+    || pathname === '/dashboard/brand-voice'
+    || pathname === '/dashboard/campaigns'
     || pathname === '/dashboard/analytics';
   const syncedProjectIds = new Set(syncedUploads.map((upload) => upload.projectId).filter(Boolean));
   const displayedUploads = isUploadRoute
@@ -242,6 +248,10 @@ function DashboardLayoutContent({
           onGoToUpload={async () => {
             await dismissFirstLoginWelcome();
             router.push('/dashboard/upload');
+          }}
+          onGoToOnboarding={async () => {
+            await dismissFirstLoginWelcome();
+            router.push('/dashboard/studio/profile');
           }}
         />
       )}

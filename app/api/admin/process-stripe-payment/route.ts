@@ -7,13 +7,44 @@
 import { NextRequest, NextResponse } from 'next/server';
 import Stripe from 'stripe';
 import { supabaseAdmin } from '@/lib/supabase/server';
-import { addCredit } from '@/lib/billing/credit';
+import { addStripePurchaseCredit } from '@/lib/billing/credit';
 import { getTotalCredits, resolveCreditPackage } from '@/lib/billing/credit-packages';
 import { isAdminEmail } from '@/lib/admin-access';
 
 const stripe = new Stripe(process.env.STRIPE_SECRET_KEY!, {
   apiVersion: '2025-10-29.clover',
 });
+
+function getPaymentIntentId(session: Stripe.Checkout.Session): string | undefined {
+  if (!session.payment_intent) return undefined;
+  return typeof session.payment_intent === 'string' ? session.payment_intent : session.payment_intent.id;
+}
+
+async function findProcessedPurchase(userId: string, sessionId: string, paymentIntentId?: string) {
+  if (paymentIntentId) {
+    const { data } = await supabaseAdmin
+      .from('credit_transactions')
+      .select('id, amount, created_at, payment_id, metadata')
+      .eq('user_id', userId)
+      .eq('payment_id', paymentIntentId)
+      .eq('transaction_type', 'purchase')
+      .limit(1)
+      .maybeSingle();
+
+    if (data) return data;
+  }
+
+  const { data } = await supabaseAdmin
+    .from('credit_transactions')
+    .select('id, amount, created_at, payment_id, metadata')
+    .eq('user_id', userId)
+    .eq('transaction_type', 'purchase')
+    .contains('metadata', { sessionId })
+    .limit(1)
+    .maybeSingle();
+
+  return data || null;
+}
 
 export async function POST(request: NextRequest) {
   try {
@@ -37,7 +68,7 @@ export async function POST(request: NextRequest) {
     const body = await request.json();
     const { sessionId } = body;
 
-    if (!sessionId) {
+    if (!sessionId || typeof sessionId !== 'string') {
       return NextResponse.json(
         { error: 'Session ID required' },
         { status: 400 }
@@ -69,14 +100,23 @@ export async function POST(request: NextRequest) {
       );
     }
 
+    if (session.metadata?.organizationId || session.metadata?.creditUnit === 'plan_credit') {
+      return NextResponse.json(
+        {
+          error: 'Organization-scoped top-up recovery is not supported by this legacy recovery route',
+          message: 'Do not process this payment into user-scoped legacy credits. Use the product-credit recovery path for organization-scoped top-ups.',
+          sessionId,
+          organizationId: session.metadata?.organizationId,
+          creditUnit: session.metadata?.creditUnit || 'plan_credit',
+        },
+        { status: 409 }
+      );
+    }
+
+    const paymentIntentId = getPaymentIntentId(session);
+
     // Check if already processed
-    const { data: existingTransaction } = await supabaseAdmin
-      .from('credit_transactions')
-      .select('id, amount, created_at')
-      .eq('user_id', userId)
-      .eq('transaction_type', 'purchase')
-      .contains('metadata', { sessionId })
-      .maybeSingle();
+    const existingTransaction = await findProcessedPurchase(userId, session.id, paymentIntentId);
 
     if (existingTransaction) {
       return NextResponse.json({
@@ -84,15 +124,14 @@ export async function POST(request: NextRequest) {
         alreadyProcessed: true,
         message: 'Payment already processed',
         transaction: existingTransaction,
+        sessionId,
+        paymentIntentId,
       });
     }
 
     // Process the payment
     const packageId = session.metadata?.packageId;
-    const pkg = resolveCreditPackage(
-      packageId || '',
-      session.metadata?.customAmount ? Number(session.metadata.customAmount) : undefined
-    );
+    const pkg = resolveCreditPackage(packageId || '');
 
     if (!pkg) {
       return NextResponse.json(
@@ -124,15 +163,17 @@ export async function POST(request: NextRequest) {
       }
     }
 
-    const result = await addCredit(userId, creditsAmount, 'purchase', {
-      paymentId: session.payment_intent as string,
+    const result = await addStripePurchaseCredit({
+      userId,
+      amount: creditsAmount,
+      paymentId: paymentIntentId,
+      sessionId: session.id,
       invoiceNumber,
       reason: `Stripe purchase: ${packageId} package (admin processed)`,
       metadata: {
-        sessionId: session.id,
         packageId,
-        baseAmount: pkg.amount,
-        bonusAmount: pkg.bonus,
+        credits: pkg.credits,
+        expiresAfterMonths: pkg.expiresAfterMonths,
         amountPaid: (session.amount_total || 0) / 100,
         customerEmail: session.customer_email,
         adminProcessed: true,
@@ -140,19 +181,31 @@ export async function POST(request: NextRequest) {
       },
     });
 
-    if (result.success) {
-      console.log(`Successfully added ${creditsAmount} credits to user ${userId}`);
+    if (result.alreadyProcessed) {
       return NextResponse.json({
-        success: true,
-        creditsAdded: creditsAmount,
-        newBalance: result.newBalance,
-        transactionId: result.transactionId,
+        success: false,
+        alreadyProcessed: true,
+        message: 'Payment already processed',
+        transaction: {
+          id: result.transactionId,
+          balance_after: result.newBalance,
+        },
         sessionId,
-        userId,
+        paymentIntentId,
       });
-    } else {
-      throw new Error('Failed to add credits');
     }
+
+    console.log(`Successfully added ${creditsAmount} credits to user ${userId}`);
+    return NextResponse.json({
+      success: true,
+      creditsAdded: creditsAmount,
+      newBalance: result.newBalance,
+      transactionId: result.transactionId,
+      creditUnit: 'legacy_usd',
+      sessionId,
+      paymentIntentId,
+      userId,
+    });
   } catch (error) {
     console.error('Error processing payment:', error);
     return NextResponse.json(

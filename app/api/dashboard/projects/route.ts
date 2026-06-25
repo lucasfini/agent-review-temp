@@ -1,5 +1,6 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { requireAuthenticatedUser, RouteAccessError } from '@/lib/api/route-auth';
+import { buildOrgScopedLegacyFallbackFilter, getDashboardOrganizationContext } from '@/lib/api/dashboard-org-context';
 import { supabaseAdmin } from '@/lib/supabase/server';
 
 export const dynamic = 'force-dynamic';
@@ -11,15 +12,17 @@ const OUTPUT_LIST_SELECT = 'id, project_id, type, platform, status, created_at';
 export async function GET(request: NextRequest) {
   try {
     const user = await requireAuthenticatedUser(request);
+    const { organizationId } = await getDashboardOrganizationContext(request, user.id);
     const { searchParams } = new URL(request.url);
     const includeOutputs = searchParams.get('includeOutputs') === '1';
     const rawLimit = Number(searchParams.get('limit') || '100');
     const limit = Number.isFinite(rawLimit) ? Math.max(1, Math.min(200, rawLimit)) : 100;
+    const scopeFilter = buildOrgScopedLegacyFallbackFilter(organizationId, user.id);
 
     const { data: projects, error: projectsError } = await supabaseAdmin
       .from('projects')
       .select(PROJECT_LIST_SELECT)
-      .eq('user_id', user.id)
+      .or(scopeFilter)
       .neq('status', 'cancelled')
       .order('created_at', { ascending: false })
       .limit(limit);

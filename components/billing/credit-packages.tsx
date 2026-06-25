@@ -9,70 +9,50 @@ import { useState } from 'react';
 import { Check, Zap } from 'lucide-react';
 import { toast } from 'sonner';
 import { useAuth } from '@/lib/auth/context';
-import { formatSiteCreditsFromUsd } from '@/lib/billing/display';
+import { formatProductCredits } from '@/lib/billing/product-credits';
+import { useCurrentSubscription } from '@/lib/hooks/useCurrentSubscription';
+import { CREDIT_PACKAGES, getTotalCredits, type CreditPackageId } from '@/lib/billing/credit-packages';
 
-interface Package {
-  id: string;
-  amount: number;
+interface PackageOption {
+  id: CreditPackageId;
+  credits: number;
   price: number;
+  expiresAfterMonths: number;
   popular?: boolean;
-  bonus?: number;
-  bonusPercent?: string;
-  episodes?: string;
-  custom?: boolean;
+  label: string;
 }
 
-const packages: Package[] = [
+const packages: PackageOption[] = [
   {
-    id: 'basic',
-    amount: 25,
-    price: 25,
-    bonus: 2,
-    bonusPercent: '+8%',
-    episodes: '~45-75 episodes',
+    id: 'top_up_1000',
+    ...CREDIT_PACKAGES.top_up_1000,
+    label: 'Good for shorter batches',
   },
   {
-    id: 'pro',
-    amount: 50,
-    price: 50,
+    id: 'top_up_5000',
+    ...CREDIT_PACKAGES.top_up_5000,
     popular: true,
-    bonus: 5,
-    bonusPercent: '+10%',
-    episodes: '~92-150 episodes',
+    label: 'Best for recurring workflows',
   },
   {
-    id: 'enterprise',
-    amount: 100,
-    price: 100,
-    bonus: 15,
-    bonusPercent: '+15%',
-    episodes: '~190-320 episodes',
-  },
-  {
-    id: 'custom',
-    amount: 0,
-    price: 0,
-    custom: true,
-    episodes: 'Choose your amount',
+    id: 'top_up_15000',
+    ...CREDIT_PACKAGES.top_up_15000,
+    label: 'For heavy content periods',
   },
 ];
 
 interface CreditPackagesProps {
-  onSuccess?: () => void;
+  organizationId?: string | null;
 }
 
-export default function CreditPackages({ onSuccess }: CreditPackagesProps) {
-  const [selectedPackage, setSelectedPackage] = useState<string>('pro');
-  const [customAmount, setCustomAmount] = useState<string>('');
+export default function CreditPackages({ organizationId }: CreditPackagesProps) {
+  const [selectedPackage, setSelectedPackage] = useState<CreditPackageId>('top_up_5000');
   const [isProcessing, setIsProcessing] = useState(false);
   const { session } = useAuth();
+  const { subscription, loading: loadingSubscription } = useCurrentSubscription(organizationId);
+  const topUpsEnabled = Boolean(subscription?.plan?.topUpEnabled);
 
-  const parsedCustomAmount = Number(customAmount);
-  const isCustomSelected = selectedPackage === 'custom';
-  const isCustomValid = Number.isFinite(parsedCustomAmount) && parsedCustomAmount >= 5;
-  const customValue = isCustomValid ? parsedCustomAmount : 0;
-
-  const handlePurchase = async (packageId: string) => {
+  const handlePurchase = async (packageId: CreditPackageId) => {
     setIsProcessing(true);
     try {
       if (!session?.access_token) {
@@ -89,7 +69,7 @@ export default function CreditPackages({ onSuccess }: CreditPackagesProps) {
         },
         body: JSON.stringify({
           packageId,
-          customAmount: packageId === 'custom' ? customValue : undefined,
+          organization_id: organizationId || undefined,
         }),
       });
 
@@ -112,18 +92,17 @@ export default function CreditPackages({ onSuccess }: CreditPackagesProps) {
     }
   };
 
-  const selected = isCustomSelected
-    ? {
-      id: 'custom',
-      amount: customValue,
-      price: customValue,
-      bonus: 0,
-    }
-    : packages.find(p => p.id === selectedPackage);
+  const selected = packages.find(p => p.id === selectedPackage);
 
   return (
     <div>
-      <div className="grid gap-3 md:grid-cols-2 lg:grid-cols-4 mb-4">
+      {!loadingSubscription && !topUpsEnabled && (
+        <div className="mb-4 rounded-lg border border-amber-200 bg-amber-50 px-3 py-2 text-sm text-amber-700 dark:border-amber-900/60 dark:bg-amber-950/30 dark:text-amber-300">
+          Top-ups are available on paid plans. Upgrade from Free to buy additional credits.
+        </div>
+      )}
+
+      <div className="grid gap-3 md:grid-cols-3 mb-4">
         {packages.map((pkg) => (
           <button
             key={pkg.id}
@@ -142,52 +121,24 @@ export default function CreditPackages({ onSuccess }: CreditPackagesProps) {
             )}
 
             <div className="text-2xl font-bold text-slate-900 dark:text-slate-50 mb-1">
-              {pkg.custom ? 'Custom' : `$${pkg.price}`}
+              ${pkg.price}
             </div>
 
-            {pkg.custom ? (
-              <div className="mt-2">
-                <label className="block text-[11px] text-slate-500 dark:text-slate-400 mb-1">Amount (min $5)</label>
-                <input
-                  type="number"
-                  min={5}
-                  step={1}
-                  value={customAmount}
-                  onChange={(e) => setCustomAmount(e.target.value)}
-                  onFocus={() => setSelectedPackage('custom')}
-                  className={`w-full px-2.5 py-1.5 text-sm border rounded-lg bg-white dark:bg-slate-900 text-slate-700 dark:text-slate-200 focus:outline-none focus:ring-2 focus:ring-blue-500 ${
-                    isCustomSelected && !isCustomValid && customAmount !== ''
-                      ? 'border-red-500'
-                      : 'border-slate-300 dark:border-slate-700'
-                  }`}
-                  placeholder="Enter amount"
-                />
-                <div className="mt-2 text-[11px] text-slate-500 dark:text-slate-500">
-                  {isCustomValid ? `${formatSiteCreditsFromUsd(customValue)} will be added.` : 'Credits are converted from your dollar amount.'}
-                </div>
-              </div>
-            ) : (
-              <div className="text-[13px] text-slate-800 dark:text-slate-50 font-medium mb-1">
-                {formatSiteCreditsFromUsd(pkg.amount)}
-                {pkg.bonus ? (
-                  <span className="ml-1 inline-flex items-center rounded-full bg-emerald-100 dark:bg-emerald-900/40 text-emerald-600 dark:text-emerald-300 px-1.5 py-0.5 text-[10px] font-semibold">
-                    +{formatSiteCreditsFromUsd(pkg.bonus)}
-                  </span>
-                ) : null}
-              </div>
-            )}
+            <div className="text-[13px] text-slate-800 dark:text-slate-50 font-medium mb-1">
+              {formatProductCredits(getTotalCredits(pkg))} credits
+            </div>
 
             <div className="text-[11px] text-slate-500 dark:text-slate-400 mb-3">
-              {pkg.episodes}
+              {pkg.label}
             </div>
 
             <div className="flex items-center gap-1 text-[11px] text-slate-500 dark:text-slate-500">
               <Check className="h-3 w-3" />
-              No expiration
+              Expires after {pkg.expiresAfterMonths} months
             </div>
 
             {selectedPackage === pkg.id && (
-              <div className="absolute top-2 right-2">
+              <div className="absolute bottom-2 right-2">
                 <div className="bg-blue-500 rounded-full p-0.5">
                   <Check className="h-3.5 w-3.5 text-white" />
                 </div>
@@ -199,7 +150,7 @@ export default function CreditPackages({ onSuccess }: CreditPackagesProps) {
 
       <div className="flex items-center justify-between mb-4">
         <p className="text-xs text-slate-500 dark:text-slate-400">
-          Pay as you go — no subscriptions, credits never expire
+          Top-ups are consumed after rollover and current monthly credits.
         </p>
         <p className="text-xs text-slate-500 dark:text-slate-500">
           Secure payment via Stripe
@@ -208,16 +159,14 @@ export default function CreditPackages({ onSuccess }: CreditPackagesProps) {
 
       <button
         onClick={() => handlePurchase(selectedPackage)}
-        disabled={isProcessing || (isCustomSelected && !isCustomValid)}
+        disabled={isProcessing || loadingSubscription || !topUpsEnabled}
         className="w-full bg-blue-600 text-white py-3 rounded-lg font-semibold hover:bg-blue-700 disabled:opacity-50 disabled:cursor-not-allowed transition-colors"
       >
         {isProcessing
           ? 'Processing...'
-          : isCustomSelected
-            ? isCustomValid
-              ? `Purchase $${customValue.toFixed(2)} — Get ${formatSiteCreditsFromUsd(customValue)}`
-              : 'Enter a custom amount (min $5)'
-            : `Purchase $${selected?.price ?? 0} — Get ${formatSiteCreditsFromUsd((selected?.amount ?? 0) + (selected?.bonus ?? 0))}`}
+          : !topUpsEnabled
+            ? 'Upgrade to buy top-ups'
+            : `Purchase $${selected?.price ?? 0} - Get ${formatProductCredits(selected ? getTotalCredits(selected) : 0)} credits`}
       </button>
     </div>
   );

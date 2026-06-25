@@ -4,26 +4,14 @@
  */
 
 import { NextRequest, NextResponse } from 'next/server';
-import { supabaseAdmin } from '@/lib/supabase/server';
+import { getBillingOrganizationContext } from '@/lib/api/billing-org-context';
+import { requireAuthenticatedUser, RouteAccessError } from '@/lib/api/route-auth';
 import { getTransactionHistory } from '@/lib/billing/credit';
 
 export async function GET(request: NextRequest) {
   try {
-    // Get authenticated user from Authorization header
-    const authHeader = request.headers.get('Authorization');
-    if (!authHeader || !authHeader.startsWith('Bearer ')) {
-      return NextResponse.json({ error: 'Unauthorized - Missing token' }, { status: 401 });
-    }
-
-    const token = authHeader.replace('Bearer ', '');
-    const {
-      data: { user },
-      error: authError,
-    } = await supabaseAdmin.auth.getUser(token);
-
-    if (authError || !user) {
-      return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
-    }
+    const user = await requireAuthenticatedUser(request);
+    const { organizationId } = await getBillingOrganizationContext(request, user.id);
 
     // Parse query parameters
     const { searchParams } = new URL(request.url);
@@ -45,6 +33,7 @@ export async function GET(request: NextRequest) {
 
     // Get transaction history
     const history = await getTransactionHistory(user.id, {
+      organizationId,
       transactionType: transactionType || undefined,
       limit,
       offset,
@@ -61,6 +50,10 @@ export async function GET(request: NextRequest) {
       hasMore: offset + limit < history.total,
     });
   } catch (error) {
+    if (error instanceof RouteAccessError) {
+      return NextResponse.json({ error: error.message }, { status: error.status });
+    }
+
     console.error('[BILLING API] Error fetching transaction history:', error);
     return NextResponse.json(
       { error: 'Failed to fetch transaction history' },

@@ -1,5 +1,6 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { getProjectFingerprint, decrementReferenceCount } from '@/lib/transcription-cache';
+import { RouteAccessError, requireProjectOwner } from '@/lib/api/route-auth';
 
 /**
  * API endpoint to cleanup transcription cache reference when project is deleted
@@ -17,6 +18,15 @@ export async function POST(
         { error: 'Project ID is required' },
         { status: 400 }
       );
+    }
+
+    try {
+      await requireProjectOwner(request, projectId, 'id');
+    } catch (authError) {
+      if (authError instanceof RouteAccessError) {
+        return NextResponse.json({ error: authError.message }, { status: authError.status });
+      }
+      throw authError;
     }
 
     // Get the audio fingerprint for this project

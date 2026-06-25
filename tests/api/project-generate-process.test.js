@@ -3,7 +3,7 @@ import { NextRequest } from 'next/server';
 describe('/api/projects/[id]/generate/process', () => {
   let POST;
   let supabaseAdmin;
-  let createReservation;
+  let createPlanCreditReservation;
   let failReservation;
 
   beforeEach(async () => {
@@ -16,6 +16,9 @@ describe('/api/projects/[id]/generate/process', () => {
       const mock = {
         auth: {
           getUser: jest.fn(),
+          admin: {
+            getUserById: jest.fn().mockResolvedValue({ data: { user: { id: 'user-1' } }, error: null }),
+          },
         },
         from: jest.fn(),
       };
@@ -27,11 +30,10 @@ describe('/api/projects/[id]/generate/process', () => {
     }));
 
     jest.doMock('../../lib/app-url', () => ({
-      getAppBaseUrl: jest.fn(() => 'http://localhost:3000'),
+      getInternalAppBaseUrl: jest.fn(() => 'http://localhost:3000'),
     }));
 
     jest.doMock('../../lib/billing/credit', () => ({
-      createReservation: jest.fn().mockResolvedValue({ id: 'reservation-1' }),
       failReservation: jest.fn().mockResolvedValue(undefined),
       InsufficientCreditError: class InsufficientCreditError extends Error {
         constructor(required, available) {
@@ -42,17 +44,40 @@ describe('/api/projects/[id]/generate/process', () => {
       },
     }));
 
+    jest.doMock('../../lib/billing/plan-credits', () => ({
+      createPlanCreditReservation: jest.fn().mockResolvedValue({ id: 'reservation-1' }),
+      InsufficientPlanCreditsError: class InsufficientPlanCreditsError extends Error {
+        constructor(organizationId, required, available) {
+          super('Insufficient plan credits');
+          this.organizationId = organizationId;
+          this.required = required;
+          this.available = available;
+        }
+      },
+    }));
+
     jest.doMock('../../lib/billing/cost-map', () => ({
-      estimateAnalysisJobCost: jest.fn(() => 2),
-      estimateContentGenerationCost: jest.fn(() => 3),
+      estimateAnalysisJobCostAsync: jest.fn(() => Promise.resolve(2)),
+      estimateContentGenerationCostAsync: jest.fn(() => Promise.resolve(3)),
     }));
 
     jest.doMock('../../lib/billing/middleware', () => ({
       requireCredits: jest.fn().mockResolvedValue(undefined),
     }));
 
+    jest.doMock('../../lib/demo-mode', () => ({
+      isDemoUser: jest.fn(() => false),
+    }));
+
+    jest.doMock('../../lib/concurrency', () => ({
+      acquireGlobalJobLock: jest.fn().mockResolvedValue(true),
+      releaseGlobalJobLock: jest.fn().mockResolvedValue(undefined),
+      heartbeatGlobalJobLock: jest.fn().mockResolvedValue(undefined),
+    }));
+
     ({ supabaseAdmin } = require('../../lib/supabase/server'));
-    ({ createReservation, failReservation } = require('../../lib/billing/credit'));
+    ({ failReservation } = require('../../lib/billing/credit'));
+    ({ createPlanCreditReservation } = require('../../lib/billing/plan-credits'));
     ({ POST } = await import('../../app/api/projects/[id]/generate/process/route'));
   });
 
@@ -164,6 +189,10 @@ describe('/api/projects/[id]/generate/process', () => {
           kind: 'content',
           target_key: 'twitter_threads',
           theme_id: 'professional',
+          creator_profile_id: 'profile-1',
+          brand_voice_id: 'voice-1',
+          campaign_id: 'campaign-1',
+          library_id: 'library-1',
           status: 'queued',
         },
       ],
@@ -192,6 +221,12 @@ describe('/api/projects/[id]/generate/process', () => {
         body: expect.stringContaining('"contentTypeId":"twitter_threads"'),
       })
     );
+    expect(JSON.parse(global.fetch.mock.calls[0][1].body)).toMatchObject({
+      creator_profile_id: 'profile-1',
+      brand_voice_id: 'voice-1',
+      campaign_id: 'campaign-1',
+      library_id: 'library-1',
+    });
     expect(updates.some((entry) => entry.id === 'job-1' && entry.payload.status === 'running')).toBe(true);
     expect(updates.some((entry) => entry.id === 'job-1' && entry.payload.status === 'completed')).toBe(true);
   });
@@ -200,6 +235,7 @@ describe('/api/projects/[id]/generate/process', () => {
     const project = {
       id: 'project-1',
       user_id: 'user-1',
+      organization_id: 'org-1',
       transcription_text: 'hello world',
       transcription_segments: [],
       speaker_data: {},
@@ -248,6 +284,7 @@ describe('/api/projects/[id]/generate/process', () => {
     const project = {
       id: 'project-1',
       user_id: 'user-1',
+      organization_id: 'org-1',
       transcription_text: 'hello world',
       transcription_segments: [],
       speaker_data: {},
@@ -280,10 +317,12 @@ describe('/api/projects/[id]/generate/process', () => {
     const response = await POST(request, { params: Promise.resolve({ id: 'project-1' }) });
     await response.json();
 
-    expect(createReservation).toHaveBeenCalledWith(expect.objectContaining({
+    expect(createPlanCreditReservation).toHaveBeenCalledWith(expect.objectContaining({
       userId: 'user-1',
+      organizationId: 'org-1',
       projectId: 'project-1',
       workflowType: 'analysis_job',
+      amount: 25,
     }));
     expect(failReservation).toHaveBeenCalledWith('reservation-1', 'Reconcile failed hard');
     expect(global.fetch).toHaveBeenCalledWith(

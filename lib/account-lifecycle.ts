@@ -4,6 +4,16 @@ import { failReservation } from '@/lib/billing/credit';
 import { supabaseAdmin } from '@/lib/supabase/server';
 import { clearUserAvatarFiles, deleteProjectStoragePrefixes } from '@/lib/storage-lifecycle';
 
+export class AccountDeletionError extends Error {
+  public readonly status: number;
+
+  constructor(message: string, status: number) {
+    super(message);
+    this.name = 'AccountDeletionError';
+    this.status = status;
+  }
+}
+
 type AccountDeletionResult = {
   deletedProjects: number;
   deletedProjectStorageObjects: number;
@@ -16,6 +26,53 @@ type AccountDeletionResult = {
   deletedRows: Record<string, number>;
   warnings: string[];
 };
+
+function getActiveMembersByOrganization(
+  rows: Array<{ organization_id: string }>
+): Record<string, number> {
+  const map: Record<string, number> = {};
+  for (const row of rows) {
+    map[row.organization_id] = (map[row.organization_id] || 0) + 1;
+  }
+  return map;
+}
+
+export async function assertOwnerDeletionAllowed(userId: string): Promise<void> {
+  const { data: ownedRows, error } = await supabaseAdmin
+    .from('organization_members')
+    .select('organization_id')
+    .eq('user_id', userId)
+    .eq('status', 'active')
+    .eq('role', 'owner') as { data: Array<{ organization_id: string }> | null; error: any };
+
+  if (error) {
+    throw new AccountDeletionError(error.message || 'Failed to verify workspace ownership', 500);
+  }
+
+  if (!ownedRows || ownedRows.length === 0) {
+    return;
+  }
+
+  const organizationIds = Array.from(new Set(ownedRows.map((row) => row.organization_id)));
+  const { data: activeMembers, error: membersError } = await supabaseAdmin
+    .from('organization_members')
+    .select('organization_id')
+    .in('organization_id', organizationIds)
+    .eq('status', 'active') as { data: Array<{ organization_id: string }> | null; error: any };
+
+  if (membersError) {
+    throw new AccountDeletionError(membersError.message || 'Failed to verify active workspace members', 500);
+  }
+
+  const activeMemberCounts = getActiveMembersByOrganization(activeMembers || []);
+  const blockedOrg = organizationIds.find((organizationId) => (activeMemberCounts[organizationId] || 0) > 1);
+  if (blockedOrg) {
+    throw new AccountDeletionError(
+      'Transfer workspace ownership before deleting this account',
+      409
+    );
+  }
+}
 
 async function deleteRows(
   table: string,

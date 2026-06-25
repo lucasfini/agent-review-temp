@@ -2,11 +2,15 @@ import { NextRequest, NextResponse } from 'next/server';
 import { getConnection, getDecryptedTokens } from '../../_utils';
 import { supabaseAdmin } from '@/lib/supabase/server';
 import { importRecording } from '@/lib/integrations/importer';
-import { billingErrorResponse, requireCredits } from '@/lib/billing/middleware';
+import { billingErrorResponse } from '@/lib/billing/middleware';
 import { estimateTranscriptionCostAsync } from '@/lib/billing/cost-map';
 import { getProcessingTierForAnalysis, normalizeAnalysisOptions } from '@/lib/analysis-options';
-import { createReservation, releaseReservation } from '@/lib/billing/credit';
-import { estimateReservationAmount } from '@/lib/billing/reserve-amount';
+import { releaseReservation } from '@/lib/billing/credit';
+import { resolveOrganizationIdForWrite } from '@/lib/authz/organization-context';
+import { runEntitlementGuard } from '@/lib/billing/entitlement-guards';
+import { recordSubscriptionUsage } from '@/lib/billing/subscription-usage-counters';
+import { assertPlanUploadDuration, createPlanCreditReservation } from '@/lib/billing/plan-credits';
+import { estimateAudioProductCredits } from '@/lib/billing/product-credits';
 
 async function ensureAuth(request: NextRequest) {
   const authHeader = request.headers.get('authorization');
@@ -34,9 +38,30 @@ export async function POST(request: NextRequest) {
       tier: performanceLevel,
       analysisOptions,
     });
-    const estimatedHold = estimateReservationAmount(estimatedCost.total, 'upload_processing');
 
-    await requireCredits(user.id, estimatedHold);
+    const organizationId = await resolveOrganizationIdForWrite(user.id);
+    const subscription = await assertPlanUploadDuration({
+      organizationId,
+      userId: user.id,
+      durationSeconds: estimatedDurationSeconds,
+    });
+    const entitlementGuard = await runEntitlementGuard({
+      organizationId,
+      legacyUserId: user.id,
+      action: 'integration_import',
+      requestedAmount: 1,
+      logContext: {
+        route: 'app/api/integrations/microsoft/import',
+        userId: user.id,
+        metadata: {
+          provider: 'microsoft',
+          estimatedDurationSeconds,
+        },
+      },
+    });
+    if (entitlementGuard.response) {
+      return entitlementGuard.response;
+    }
 
     if (!itemId) {
       return NextResponse.json({ error: 'Missing itemId' }, { status: 400 });
@@ -85,14 +110,23 @@ export async function POST(request: NextRequest) {
     const fileName = item.name || 'Teams Recording.mp4';
     const contentType = item.file?.mimeType || 'video/mp4';
 
-    const reservation = await createReservation({
+    const estimatedProductCredits = estimateAudioProductCredits({
+      durationSeconds: estimatedDurationSeconds,
+      tier: performanceLevel,
+    });
+    const reservation = await createPlanCreditReservation({
       userId: user.id,
+      organizationId,
       workflowType: 'upload_processing',
-      amount: estimatedHold,
+      amount: estimatedProductCredits,
+      subscription,
       metadata: {
         source: 'microsoft_import',
         itemId,
         estimatedCost: estimatedCost.total,
+        estimatedProviderCost: estimatedCost.total,
+        productCreditAmount: estimatedProductCredits,
+        productCreditWorkflow: performanceLevel,
         analysisOptions,
         estimatedDurationSeconds,
       },
@@ -109,8 +143,9 @@ export async function POST(request: NextRequest) {
         buffer: arrayBuffer,
         performanceLevel,
         analysisOptions,
+        organizationId,
         reservationId: reservation.id,
-        reservationHoldAmount: estimatedHold,
+        reservationHoldAmount: estimatedProductCredits,
         reservationEstimatedCost: estimatedCost.total,
         externalSource: { provider: 'microsoft', recordingId: itemId }
       });
@@ -123,11 +158,31 @@ export async function POST(request: NextRequest) {
 
     await supabaseAdmin.from('integration_imports').insert({
       user_id: user.id,
+      organization_id: result.organizationId || organizationId,
       provider: 'microsoft',
       external_recording_id: itemId,
       project_id: result.projectId,
       status: 'imported'
     } as any);
+
+    await recordSubscriptionUsage({
+      organizationId: result.organizationId || organizationId,
+      userId: user.id,
+      counterKey: 'integration_import',
+      quantity: 1,
+      idempotencyKey: `integration_import:microsoft:${itemId}`,
+      metadata: {
+        source: 'microsoft_import',
+        itemId,
+        projectId: result.projectId,
+      },
+      logContext: {
+        route: 'app/api/integrations/microsoft/import',
+        userId: user.id,
+        projectId: result.projectId,
+        source: 'microsoft_import',
+      },
+    });
 
     return NextResponse.json({ projectId: result.projectId });
   } catch (error) {

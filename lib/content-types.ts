@@ -321,6 +321,10 @@ export interface ContentBlock {
   enabled: boolean;
   theme: string; // Theme ID from content-themes.ts
   customGuidance?: string;
+  creatorProfileId?: string | null;
+  brandVoiceId?: string | null;
+  campaignId?: string | null;
+  libraryId?: string | null;
 }
 
 // Helper functions

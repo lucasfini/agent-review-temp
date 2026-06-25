@@ -9,11 +9,16 @@ import {
   downloadDirectMedia,
   extractAudioFromVideoBuffer
 } from '@/lib/url-importer';
-import { billingErrorResponse, requireCredits } from '@/lib/billing/middleware';
+import { billingErrorResponse } from '@/lib/billing/middleware';
 import { estimateTranscriptionCostAsync } from '@/lib/billing/cost-map';
 import { getProcessingTierForAnalysis, normalizeAnalysisOptions } from '@/lib/analysis-options';
-import { createReservation, releaseReservation } from '@/lib/billing/credit';
-import { estimateReservationAmount } from '@/lib/billing/reserve-amount';
+import { releaseReservation } from '@/lib/billing/credit';
+import { resolveOrganizationIdForWrite } from '@/lib/authz/organization-context';
+import { runEntitlementGuard } from '@/lib/billing/entitlement-guards';
+import { recordSubscriptionUsage } from '@/lib/billing/subscription-usage-counters';
+import { uploadRatelimit } from '@/lib/rate-limit';
+import { assertPlanUploadDuration, createPlanCreditReservation } from '@/lib/billing/plan-credits';
+import { estimateAudioProductCredits } from '@/lib/billing/product-credits';
 
 export const runtime = 'nodejs';
 export const dynamic = 'force-dynamic';
@@ -63,9 +68,17 @@ export async function POST(request: NextRequest) {
       return NextResponse.json({ error: 'Authentication required' }, { status: 401 });
     }
 
+    const { success } = await uploadRatelimit.limit(user.id);
+    if (!success) {
+      return NextResponse.json({ error: 'Rate limit exceeded. Too many upload or import requests.' }, { status: 429 });
+    }
+
     const body = await request.json();
     const url = typeof body?.url === 'string' ? body.url.trim() : '';
     const titleInput = typeof body?.title === 'string' ? body.title : '';
+    const requestedOrganizationId = typeof body?.organization_id === 'string'
+      ? body.organization_id
+      : null;
     const rosterSpeakers = Array.isArray(body?.rosterSpeakers) ? body.rosterSpeakers : undefined;
     const analysisOptions = enforceNamedSpeakersForRoster(
       normalizeAnalysisOptions(body?.analysisOptions),
@@ -87,8 +100,30 @@ export async function POST(request: NextRequest) {
       analysisOptions,
     });
 
-    const estimatedHold = estimateReservationAmount(estimatedCost.total, 'upload_processing');
-    await requireCredits(user.id, estimatedHold);
+    const organizationId = await resolveOrganizationIdForWrite(user.id, requestedOrganizationId);
+    const subscription = await assertPlanUploadDuration({
+      organizationId,
+      userId: user.id,
+      durationSeconds: estimatedDurationSeconds,
+    });
+    const entitlementGuard = await runEntitlementGuard({
+      organizationId,
+      legacyUserId: user.id,
+      action: 'audio_upload',
+      requestedAmount: 1,
+      logContext: {
+        route: 'app/api/upload/url',
+        userId: user.id,
+        metadata: {
+          estimatedDurationSeconds,
+          processingTier,
+          source: isYouTubeUrl(url) ? 'youtube_url' : 'direct_url',
+        },
+      },
+    });
+    if (entitlementGuard.response) {
+      return entitlementGuard.response;
+    }
 
     await validatePublicUrl(url);
 
@@ -118,14 +153,23 @@ export async function POST(request: NextRequest) {
     }
 
     const finalTitle = sanitizeTitle(title || getTitleFromFileName(fileName));
-    const reservation = await createReservation({
+    const estimatedProductCredits = estimateAudioProductCredits({
+      durationSeconds: estimatedDurationSeconds,
+      tier: processingTier,
+    });
+    const reservation = await createPlanCreditReservation({
       userId: user.id,
+      organizationId,
       workflowType: 'upload_processing',
-      amount: estimatedHold,
+      amount: estimatedProductCredits,
+      subscription,
       metadata: {
         source: 'url_import',
         url,
         estimatedCost: estimatedCost.total,
+        estimatedProviderCost: estimatedCost.total,
+        productCreditAmount: estimatedProductCredits,
+        productCreditWorkflow: processingTier,
         analysisOptions,
         estimatedDurationSeconds,
       },
@@ -142,8 +186,9 @@ export async function POST(request: NextRequest) {
         buffer,
         performanceLevel: processingTier,
         analysisOptions,
+        organizationId,
         reservationId: reservation.id,
-        reservationHoldAmount: estimatedHold,
+        reservationHoldAmount: estimatedProductCredits,
         reservationEstimatedCost: estimatedCost.total,
         speakerCount,
         externalSource: {
@@ -177,6 +222,24 @@ export async function POST(request: NextRequest) {
         // Non-fatal for URL imports
       }
     }
+
+    await recordSubscriptionUsage({
+      organizationId: importResult.organizationId || organizationId,
+      userId: user.id,
+      counterKey: 'audio_upload',
+      quantity: 1,
+      idempotencyKey: `audio_upload:url:${importResult.projectId}`,
+      metadata: {
+        source: 'url_import',
+        provider: isYouTubeUrl(url) ? 'youtube_url' : 'direct_url',
+      },
+      logContext: {
+        route: 'app/api/upload/url',
+        userId: user.id,
+        projectId: importResult.projectId,
+        source: 'url_import',
+      },
+    });
 
     return NextResponse.json({
       success: true,

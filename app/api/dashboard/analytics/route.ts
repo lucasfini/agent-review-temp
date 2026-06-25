@@ -1,5 +1,6 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { requireAuthenticatedUser, RouteAccessError } from '@/lib/api/route-auth';
+import { buildOrgScopedLegacyFallbackFilter, getDashboardOrganizationContext } from '@/lib/api/dashboard-org-context';
 import { supabaseAdmin } from '@/lib/supabase/server';
 
 export const dynamic = 'force-dynamic';
@@ -8,11 +9,13 @@ export const revalidate = 0;
 export async function GET(request: NextRequest) {
   try {
     const user = await requireAuthenticatedUser(request);
+    const { organizationId } = await getDashboardOrganizationContext(request, user.id);
+    const scopeFilter = buildOrgScopedLegacyFallbackFilter(organizationId, user.id);
 
     const { data: projects, error: projectsError } = await supabaseAdmin
       .from('projects')
       .select('*')
-      .eq('user_id', user.id)
+      .or(scopeFilter)
       .order('created_at', { ascending: false })
       .limit(200);
 
@@ -49,7 +52,7 @@ export async function GET(request: NextRequest) {
     const { data: coverageSnapshots, error: coverageError } = await supabaseAdmin
       .from('narrative_coverage_snapshots')
       .select('*')
-      .eq('user_id', user.id)
+      .or(scopeFilter)
       .order('created_at', { ascending: false })
       .limit(30);
 
@@ -64,7 +67,7 @@ export async function GET(request: NextRequest) {
     const { data: coverageGoals, error: goalsError } = await supabaseAdmin
       .from('narrative_goals')
       .select('*')
-      .eq('user_id', user.id)
+      .or(scopeFilter)
       .order('created_at', { ascending: true })
       .limit(200);
 

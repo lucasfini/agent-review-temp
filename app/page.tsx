@@ -1,3042 +1,2033 @@
 "use client";
 
-import {
-  useEffect,
-  useMemo,
-  useRef,
-  useState,
-  type ElementType,
-  type SVGProps,
-} from "react";
+import type { CSSProperties } from "react";
+import { useEffect, useState } from "react";
+import Image from "next/image";
 import Link from "next/link";
-import { useTheme } from "next-themes";
+import { MotionConfig, motion } from "framer-motion";
 import {
-  AnimatePresence,
-  MotionConfig,
-  animate,
-  motion,
-  useInView,
-  useReducedMotion,
-  useScroll,
-  useSpring,
-} from "framer-motion";
-import {
-  Mic,
-  Sparkles,
-  Zap,
   ArrowRight,
+  ArrowUpRight,
+  AudioLines,
+  Building2,
   Check,
-  BarChart3,
-  Target,
-  Lightbulb,
-  Menu,
-  X as CloseIcon,
-  Upload,
-  Sun,
-  Moon,
-  Facebook,
-  Instagram,
-  Youtube,
-  Mail,
+  CheckCircle2,
+  CircleCheck,
+  Clock,
+  CloudUpload,
+  Eye,
   FileText,
-  Quote,
-  Newspaper,
+  Lock,
+  Mail,
+  Mic,
+  Monitor,
+  Phone,
+  PlayCircle,
+  SlidersHorizontal,
+  Sparkles,
+  Sun,
+  TrendingUp,
+  User,
+  Video,
+  X,
+  Zap,
+  Moon,
+  type LucideIcon,
 } from "lucide-react";
-import BrandLogo from "@/components/site/BrandLogo";
-import { ANALYSIS_OPTION_CONFIG } from "@/lib/analysis-options";
-import { CONTENT_TYPES } from "@/lib/content-types";
-import { getCuratedThemes } from "@/lib/content-themes";
-import {
-  PAYG_SECTIONS,
-  PRICING_MODEL_SUMMARY,
-} from "@/lib/pricing-config";
+import { cn } from "@/lib/utils";
 
-const XIcon = ({ className, ...props }: SVGProps<SVGSVGElement>) => (
-  <svg viewBox="0 0 24 24" fill="currentColor" className={className} {...props}>
-    <path d="M4 4h4l4 5 4-5h4l-6 7 6 9h-4l-4-5-4 5H4l6-9z" />
-  </svg>
-);
+const SIGNUP_HREF = "#pricing";
+const LOGIN_HREF = "/auth/login";
+const CONTACT_HREF = "#pricing";
+const SHOW_LEGACY_ONE_SOURCE_SECTION = false;
+const SHOW_STANDALONE_SPEAKER_SECTION = false;
 
-const LinkedinIcon = ({ className, ...props }: SVGProps<SVGSVGElement>) => (
-  <svg viewBox="0 0 24 24" fill="currentColor" className={className} {...props}>
-    <path d="M20.447 20.452h-3.554v-5.569c0-1.328-.027-3.037-1.852-3.037-1.853 0-2.136 1.445-2.136 2.939v5.667H9.351V9h3.414v1.561h.046c.477-.9 1.637-1.85 3.37-1.85 3.601 0 4.267 2.37 4.267 5.455v6.286zM5.337 7.433a2.062 2.062 0 01-2.063-2.065 2.064 2.064 0 112.063 2.065zm1.782 13.019H3.555V9h3.564v11.452zM22.225 0H1.771C.792 0 0 .774 0 1.729v20.542C0 23.227.792 24 1.771 24h20.451C23.2 24 24 23.227 24 22.271V1.729C24 .774 23.2 0 22.222 0h.003z" />
-  </svg>
-);
+type ThemeName = "light" | "dark";
+type ThemeVars = CSSProperties & Record<`--${string}`, string>;
 
-const TikTokIcon = ({ className, ...props }: SVGProps<SVGSVGElement>) => (
-  <svg viewBox="0 0 24 24" fill="currentColor" className={className} {...props}>
-    <path d="M19.59 6.69a4.83 4.83 0 0 1-3.77-4.35h-3.2v12.4a2.89 2.89 0 1 1-2-2.75V8.72a6.13 6.13 0 1 0 5.2 6.02V8.45a8.06 8.06 0 0 0 4.77 1.57V6.69Z" />
-  </svg>
-);
+const NAV_LINKS = [
+  { label: "Home", href: "#home", id: "home" },
+  { label: "About Us", href: "#about", id: "about" },
+  { label: "How it works", href: "#how-it-works", id: "how-it-works" },
+  { label: "Features", href: "#features", id: "features" },
+  { label: "Pricing", href: "#pricing", id: "pricing" },
+] as const;
 
-const OUTPUT_ICONS = {
-  x: XIcon,
-  linkedin: LinkedinIcon,
-  facebook: Facebook,
-  instagram: Instagram,
-  youtube: Youtube,
-  tiktok: TikTokIcon,
-  podcast: Mic,
-  showNotes: FileText,
-  blog: Newspaper,
-  newsletter: Mail,
-  quote: Quote,
-} as const;
+const themeTokens: Record<ThemeName, ThemeVars> = {
+  light: {
+    "--bg-home": "#F8FBFF",
+    "--bg-a": "#F8FBFF",
+    "--bg-b": "#F6FAFF",
+    "--bg-warm": "#F2F7FF",
+    "--bg-card": "#FFFFFF",
+    "--bg-card-soft": "#F6F8FF",
+    "--card": "#FFFFFF",
+    "--card-soft": "#F6F8FF",
+    "--text-main": "#050B24",
+    "--text-muted": "#52607A",
+    "--border-soft": "#E3E8F3",
+    "--warm": "#F59E0B",
+    "--bg": "#FAFBFF",
+    "--surface": "#FFFFFF",
+    "--surface-soft": "#F6F8FF",
+    "--text": "#050B24",
+    "--muted": "#52607A",
+    "--border": "#E3E8F3",
+    "--blue": "#1463FF",
+    "--purple": "#7C3AED",
+    "--success": "#20B26B",
+    "--warning": "#F59E0B",
+    "--grid-line": "rgba(35, 64, 120, 0.035)",
+    "--nav-bg": "rgba(255,255,255,0.84)",
+    "--nav-h": "var(--nav-height)",
+    "--container-max": "var(--container-width)",
+    "--container-x": "var(--page-gutter)",
+    "--section-y": "var(--section-padding-y)",
+    "--shadow-card": "0 18px 50px rgba(15, 23, 42, 0.06)",
+    "--shadow-card-hover": "0 24px 70px rgba(15, 23, 42, 0.09)",
+  },
+  dark: {
+    "--bg-home": "#050814",
+    "--bg-a": "#050814",
+    "--bg-b": "#0A1022",
+    "--bg-warm": "#071024",
+    "--bg-card": "#0F172A",
+    "--bg-card-soft": "#111C34",
+    "--card": "#0F172A",
+    "--card-soft": "#111C34",
+    "--text-main": "#F8FBFF",
+    "--text-muted": "#AAB5CC",
+    "--border-soft": "rgba(255,255,255,0.12)",
+    "--warm": "#FBBF24",
+    "--bg": "#050814",
+    "--surface": "#0B1020",
+    "--surface-soft": "#10182D",
+    "--text": "#F8FBFF",
+    "--muted": "#AAB5CC",
+    "--border": "rgba(255,255,255,0.12)",
+    "--blue": "#4F8BFF",
+    "--purple": "#A78BFA",
+    "--success": "#34D399",
+    "--warning": "#FBBF24",
+    "--grid-line": "rgba(255,255,255,0.035)",
+    "--nav-bg": "rgba(8,12,28,0.78)",
+    "--nav-h": "var(--nav-height)",
+    "--container-max": "var(--container-width)",
+    "--container-x": "var(--page-gutter)",
+    "--section-y": "var(--section-padding-y)",
+    "--shadow-card": "0 18px 60px rgba(0, 0, 0, 0.22)",
+    "--shadow-card-hover": "0 24px 78px rgba(0, 0, 0, 0.28)",
+  },
+};
 
-type OutputIconKey = keyof typeof OUTPUT_ICONS;
+const gridStyle: CSSProperties = {
+  backgroundImage:
+    "linear-gradient(to right, var(--grid-line) 1px, transparent 1px), linear-gradient(to bottom, var(--grid-line) 1px, transparent 1px)",
+  backgroundSize: "28px 28px",
+};
 
-// Constants
-const SOCIAL_TAGS = [
-  "Creators: podcasts and interviews",
-  "Teams: meetings and customer calls",
-  "Educators: lectures and panels",
-  "Speaker-attributed transcripts",
-  "Choose analysis runs per upload",
-  "Generate outputs only when needed",
-  "Review and edit before export",
-  "No subscription required",
-];
+const smoothEase = [0.16, 1, 0.3, 1] as const;
 
-const SECTION_VIEWPORT = { once: true, amount: 0.2 };
-const MOBILE_SECTION_VIEWPORT = { once: true, amount: 0.08 };
-const sectionContainer = {
-  hidden: { opacity: 0, y: 20 },
+const fadeUp = {
+  hidden: { opacity: 0, y: 24 },
   show: {
     opacity: 1,
     y: 0,
+    transition: { duration: 0.54, ease: smoothEase },
+  },
+};
+
+const fadeDown = {
+  hidden: { opacity: 0, y: -18 },
+  show: {
+    opacity: 1,
+    y: 0,
+    transition: { duration: 0.5, ease: smoothEase },
+  },
+};
+
+const stagger = {
+  hidden: {},
+  show: {
     transition: {
-      duration: 0.55,
-      ease: "easeOut" as const,
-      staggerChildren: 0.12,
+      staggerChildren: 0.1,
+      delayChildren: 0.04,
     },
   },
 };
-const sectionItem = {
-  hidden: { opacity: 0, y: 16 },
+
+const slowStagger = {
+  hidden: {},
   show: {
-    opacity: 1,
-    y: 0,
-    transition: { duration: 0.45, ease: "easeOut" as const },
+    transition: {
+      staggerChildren: 0.1,
+      delayChildren: 0.08,
+    },
   },
 };
 
-type InteractiveGroup = "addons" | "content";
-type PreviewMeta = { label: string; value: string };
-type InteractivePreview = {
-  title: string;
-  eyebrow: string;
-  meta: PreviewMeta[];
-  body: string;
-};
-type InteractiveItem = {
-  id: string;
-  group: InteractiveGroup;
-  label: string;
-  helpText: string;
-  iconKey: OutputIconKey;
-  badgeBg: string;
-  preview: InteractivePreview;
-};
-
-const CONTENT_ENGINE_TONES = getCuratedThemes().map((theme) => theme.name);
-const DEFAULT_CONTENT_ENGINE_TONE = CONTENT_ENGINE_TONES[0] ?? "Professional";
-
-const TONE_GUIDANCE: Record<string, string> = {
-  Professional: "Clear, polished, and business-ready language.",
-  Casual: "Relaxed, conversational phrasing with simpler structure.",
-  Educational: "Explains concepts step-by-step with teaching clarity.",
-  Storytelling: "Narrative arc with setup, tension, and payoff.",
-  Witty: "Sharper framing, concise punchlines, and clever transitions.",
-  Inspirational: "Future-facing, uplifting language that motivates action.",
-  Bold: "Direct claims, stronger conviction, and decisive framing.",
-  Actionable: "Practical next steps and implementation-first wording.",
-  Authentic: "Personal, grounded voice with transparent phrasing.",
-  "Thought Leader": "Contrarian insight and category-level perspective.",
-  "Data-Driven": "Metric-centric framing with quantified outcomes.",
-  Contrarian: "Challenges common assumptions with an alternative view.",
-};
-
-function renderToneVariantPreview(
-  item: InteractiveItem | undefined,
-  tone: string,
-): string {
-  if (!item) return "";
-
-  const baseTitle = item.preview.title;
-  const baseBody = item.preview.body;
-  const isAddon = item.group === "addons";
-
-  const snippets: Record<string, string> = {
-    Professional: `Executive summary:\n${baseTitle} is framed with concise context, clear attribution, and a practical recommendation path.\n\nKey message:\n${baseBody.split("\n")[0]}\n\nRecommended next step: publish this as a clean internal brief and route it to stakeholders who own rollout decisions.`,
-    Casual: `Quick take:\nThis one is straightforward: ${baseTitle.toLowerCase()} gives you the useful parts without extra noise.\n\nWhat stands out:\n${baseBody.split("\n")[0]}\n\nIf you want, keep this version light and friendly so it reads like a teammate update instead of a formal report.`,
-    Educational: `What this means:\n${baseTitle} helps break a long recording into teachable parts people can actually apply.\n\nHow to use it:\n1) Start with the primary insight.\n2) Add one concrete example.\n3) End with one action the reader can try this week.\n\nReference point:\n${baseBody.split("\n")[0]}`,
-    Storytelling: `Scene:\nThe conversation opens with a familiar problem and then pivots to a concrete turning point.\n\nArc:\nSetup -> friction -> framework -> outcome.\n\nNarrative line:\n${baseBody.split("\n")[0]}\n\nEnding:\nClose with what changed and why that shift matters to the audience now.`,
-    Witty: `Hot take:\nMost teams overcomplicate this. ${baseTitle} works because it cuts straight to signal.\n\nSharp line:\n${baseBody.split("\n")[0]}\n\nUse this version when you want the message to be memorable, skimmable, and a little more opinionated without losing clarity.`,
-    Inspirational: `Momentum angle:\n${baseTitle} is positioned as progress, not just output.\n\nCore message:\n${baseBody.split("\n")[0]}\n\nClosing energy:\nFrame the outcome as achievable this week, then invite the audience to take one concrete step today.`,
-    Bold: `Point of view:\nStop treating this as optional polish. ${baseTitle} directly improves downstream quality.\n\nClaim:\n${baseBody.split("\n")[0]}\n\nPositioning:\nLead with conviction, trim qualifiers, and make the call-to-action explicit and immediate.`,
-    Actionable: `Implementation brief:\n${baseTitle}\n\nAction steps:\n1) Extract the strongest signal from this output.\n2) Convert it into one channel-ready draft.\n3) Ship, measure response, and iterate.\n\nStarting line:\n${baseBody.split("\n")[0]}`,
-    Authentic: `Real-world version:\n${baseTitle} is presented in plain language with zero over-polish.\n\nHonest framing:\n${baseBody.split("\n")[0]}\n\nVoice note:\nKeep this grounded, acknowledge tradeoffs, and write like a person who actually ran the workflow.`,
-    "Thought Leader": `Category view:\n${baseTitle} is framed as a strategic advantage, not a feature checklist.\n\nThesis:\n${baseBody.split("\n")[0]}\n\nPerspective:\nConnect this output to a broader shift in how modern teams turn conversations into distribution assets.`,
-    "Data-Driven": `Performance framing:\n${baseTitle}\n\nMetrics lens:\n- Primary quality signal: attribution consistency\n- Secondary signal: edit-time reduction\n- Output signal: publish velocity\n\nEvidence line:\n${baseBody.split("\n")[0]}`,
-    Contrarian: `Counterpoint:\nThe common approach focuses on raw transcription volume. That misses the actual leverage.\n\nAlternative:\n${baseTitle} should optimize clarity and reuse, not just word capture.\n\nProof point:\n${baseBody.split("\n")[0]}`,
-  };
-
-  const fallback = `${baseTitle}\n\n${baseBody}\n\nTone applied: ${tone}.`;
-  const selected = snippets[tone] || fallback;
-  return isAddon
-    ? `${selected}\n\nAdd-on impact: better source context makes every downstream output easier to finalize.`
-    : `${selected}\n\nContent impact: this draft is structured to reduce editing time before publish.`;
-}
-
-type HowItWorksStep = {
-  id: string;
-  n: string;
-  title: string;
-  description: string;
-  eyebrow: string;
-  accent: string;
-  ring: string;
-  Icon: ElementType;
-};
-
-// How It Works steps
-const HOW_IT_WORKS_STEPS: HowItWorksStep[] = [
-  {
-    id: "upload",
-    n: "01",
-    title: "Upload Your Audio",
-    eyebrow: "Start with the source",
-    description:
-      "Drop in the episode, pick the import source, and start from a polished upload surface with automatic speaker recognition ready to run.",
-    accent: "bg-blue-500",
-    ring: "ring-blue-500/20",
-    Icon: Upload,
-  },
-  {
-    id: "process",
-    n: "02",
-    title: "Choose What Runs",
-    eyebrow: "Switch on the right workflow",
-    description:
-      "Turn on automatic speaker recognition, summaries, insights, chapters, and takeaways only when you need them, without cluttering the flow.",
-    accent: "bg-violet-500",
-    ring: "ring-violet-500/20",
-    Icon: Sparkles,
-  },
-  {
-    id: "outputs",
-    n: "03",
-    title: "Publish From One Workspace",
-    eyebrow: "Everything is ready downstream",
-    description:
-      "Move from transcript, automatic speaker recognition, and cleanup into finished content assets without leaving the same workspace.",
-    accent: "bg-indigo-500",
-    ring: "ring-indigo-500/20",
-    Icon: Zap,
-  },
-];
-
-const ADDON_ICON_MAP: Record<string, { iconKey: OutputIconKey; badgeBg: string }> = {
-  namedSpeakers: { iconKey: "podcast", badgeBg: "bg-sky-600" },
-  summary: { iconKey: "showNotes", badgeBg: "bg-violet-600" },
-  insights: { iconKey: "blog", badgeBg: "bg-amber-600" },
-  chapters: { iconKey: "showNotes", badgeBg: "bg-indigo-600" },
-  takeaways: { iconKey: "quote", badgeBg: "bg-emerald-600" },
-  quotes: { iconKey: "quote", badgeBg: "bg-rose-600" },
-};
-
-const CONTENT_ICON_MAP: Record<string, { iconKey: OutputIconKey; badgeBg: string }> = {
-  twitter_threads: { iconKey: "x", badgeBg: "bg-slate-900" },
-  linkedin_posts: { iconKey: "linkedin", badgeBg: "bg-blue-700" },
-  instagram_content: { iconKey: "instagram", badgeBg: "bg-gradient-to-br from-fuchsia-500 to-rose-500" },
-  facebook_post: { iconKey: "facebook", badgeBg: "bg-blue-600" },
-  blog_post: { iconKey: "blog", badgeBg: "bg-emerald-600" },
-  newsletter: { iconKey: "newsletter", badgeBg: "bg-orange-500" },
-  show_notes: { iconKey: "showNotes", badgeBg: "bg-violet-600" },
-  youtube_description: { iconKey: "youtube", badgeBg: "bg-red-600" },
-  podcast_episode_description: { iconKey: "podcast", badgeBg: "bg-amber-600" },
-  short_form_video_script: { iconKey: "tiktok", badgeBg: "bg-cyan-600" },
-  quote_graphics: { iconKey: "quote", badgeBg: "bg-rose-500" },
-};
-
-const ADDON_PREVIEW_MAP: Record<string, InteractivePreview> = {
-  namedSpeakers: {
-    eyebrow: "Add-on preview",
-    title: "Speaker timeline with named roles",
-    meta: [
-      { label: "Typical output", value: "Speaker roster + timestamps" },
-      { label: "Best for", value: "Interviews and panels" },
-      { label: "Tone", value: "Structured and factual" },
-    ],
-    body:
-      "00:00 Host (Maya): 'Today we're unpacking retention myths.'\n00:42 Guest (Arjun): 'Teams that win measure behavior, not vanity metrics.'\n08:15 Host (Maya): 'Let's break that framework down in three steps.'\n\nThis add-on keeps attribution stable across summaries, quotes, and downstream content so every point stays tied to the right speaker.",
-  },
-  summary: {
-    eyebrow: "Add-on preview",
-    title: "Concise episode summary",
-    meta: [
-      { label: "Typical output", value: "1-2 paragraphs" },
-      { label: "Best for", value: "Show pages and briefs" },
-      { label: "Tone", value: "Clear and executive" },
-    ],
-    body:
-      "This episode explains why retention improves when teams design for repeat value moments at days 1, 7, and 30. The guest outlines a practical scoring model, then walks through one rollout that increased activation by 22% without adding onboarding friction.",
-  },
-  insights: {
-    eyebrow: "Add-on preview",
-    title: "Concept and opportunity insights",
-    meta: [
-      { label: "Typical output", value: "Theme breakdown" },
-      { label: "Best for", value: "Editorial planning" },
-      { label: "Tone", value: "Analytical" },
-    ],
-    body:
-      "Insight: The strongest segment appears when the guest contrasts 'feature adoption' with 'habit adoption.'\nOpportunity: Expand the case-study section into a follow-up clip focused on the 30-day benchmark table.\nRisk: CTA section is late; moving it earlier would improve listener completion behavior.",
-  },
-  chapters: {
-    eyebrow: "Add-on preview",
-    title: "Timestamped chapter structure",
-    meta: [
-      { label: "Typical output", value: "6-10 chapter markers" },
-      { label: "Best for", value: "YouTube and podcast players" },
-      { label: "Tone", value: "Navigable" },
-    ],
-    body:
-      "00:00 Why retention fails in month one\n05:14 The 3-part behavior model\n12:36 Case study: reducing early churn\n21:03 Listener Q&A on onboarding\n31:20 Action plan for next sprint",
-  },
-  takeaways: {
-    eyebrow: "Add-on preview",
-    title: "Actionable key takeaways",
-    meta: [
-      { label: "Typical output", value: "3-7 bullet insights" },
-      { label: "Best for", value: "Team recap docs" },
-      { label: "Tone", value: "Practical" },
-    ],
-    body:
-      "1) Track behavior milestones, not raw activity.\n2) Map friction points by week, then prioritize one fix per cycle.\n3) Tie onboarding changes to one measurable habit metric.\n4) Use listener questions to choose next episode topics.",
-  },
-  quotes: {
-    eyebrow: "Add-on preview",
-    title: "Pull-ready quote selection",
-    meta: [
-      { label: "Typical output", value: "Speaker-attributed quotes" },
-      { label: "Best for", value: "Social snippets" },
-      { label: "Tone", value: "Memorable" },
-    ],
-    body:
-      "\"Retention isn't a dashboard number. It's a behavior you engineer.\"\n— Arjun Patel, Guest\n\n\"If users don't experience value in week one, they never build the habit.\"\n— Maya Lin, Host",
-  },
-};
-
-const CONTENT_PREVIEW_MAP: Record<string, InteractivePreview> = {
-  twitter_threads: {
-    eyebrow: "Content type preview",
-    title: "X thread draft",
-    meta: [
-      { label: "Typical output", value: "6-8 posts" },
-      { label: "Tone", value: "Punchy and teachable" },
-      { label: "Length", value: "Short-form series" },
-    ],
-    body:
-      "Post 1: Most teams call it churn. The real problem is missing week-one value.\nPost 2: In this episode, we broke retention into 3 measurable behaviors.\nPost 3: One team raised activation 22% by fixing only one onboarding step.\nPost 4: Here's the exact checklist they used...",
-  },
-  linkedin_posts: {
-    eyebrow: "Content type preview",
-    title: "LinkedIn post draft",
-    meta: [
-      { label: "Typical output", value: "1 long-form post" },
-      { label: "Tone", value: "Professional" },
-      { label: "Length", value: "1200-1500 characters" },
-    ],
-    body:
-      "If retention is flat, your onboarding probably teaches clicks, not outcomes.\n\nIn our latest conversation, we mapped three behavior checkpoints that predict long-term retention. The most surprising finding: one clarity change in week one outperformed multiple feature launches.\n\nQuestion for operators: which user behavior do you optimize first?",
-  },
-  instagram_content: {
-    eyebrow: "Content type preview",
-    title: "Instagram carousel concept",
-    meta: [
-      { label: "Typical output", value: "Slide outline + caption" },
-      { label: "Tone", value: "Visual and concise" },
-      { label: "Length", value: "Multi-slide" },
-    ],
-    body:
-      "Slide 1: Why users drop in week one\nSlide 2: The 3 retention checkpoints\nSlide 3: Mistake teams repeat\nSlide 4: One fix that changed outcomes\nSlide 5: Apply this in your next sprint\n\nCaption: Save this before your next growth review.",
-  },
-  facebook_post: {
-    eyebrow: "Content type preview",
-    title: "Facebook discussion post",
-    meta: [
-      { label: "Typical output", value: "1 conversational post" },
-      { label: "Tone", value: "Friendly" },
-      { label: "Length", value: "150-300 words" },
-    ],
-    body:
-      "We just recorded a great conversation on why retention plateaus. One takeaway really stood out: users stay when they feel progress early, not when they see more features.\n\nIf you run a product or content team, what signals tell you a new user is likely to come back?",
-  },
-  blog_post: {
-    eyebrow: "Content type preview",
-    title: "Blog post outline",
-    meta: [
-      { label: "Typical output", value: "1200-1800 words" },
-      { label: "Tone", value: "Educational" },
-      { label: "Length", value: "Long-form" },
-    ],
-    body:
-      "H1: The Week-One Retention Framework\nH2: Why activation metrics mislead teams\nH2: Three behavior checkpoints that predict repeat usage\nH2: Case study: from flat retention to measurable habit loops\nH2: Implementation checklist for your next 30 days",
-  },
-  newsletter: {
-    eyebrow: "Content type preview",
-    title: "Email newsletter draft",
-    meta: [
-      { label: "Typical output", value: "Subject + full issue" },
-      { label: "Tone", value: "Editorial" },
-      { label: "Length", value: "800-1200 words" },
-    ],
-    body:
-      "Subject: Why users leave in week one (and what to fix)\n\nThis week we unpacked a practical retention model with clear checkpoints your team can audit in one meeting. The core idea: design for early progress signals, then reinforce them across day 7 and day 30 touchpoints.",
-  },
-  show_notes: {
-    eyebrow: "Content type preview",
-    title: "Show notes draft",
-    meta: [
-      { label: "Typical output", value: "Summary + timestamps" },
-      { label: "Tone", value: "Reference-friendly" },
-      { label: "Length", value: "Structured notes" },
-    ],
-    body:
-      "In this episode: retention myths, practical measurement, and a rollout breakdown.\n\nTimestamps\n00:00 Intro\n05:14 Framework\n12:36 Case study\n21:03 Q&A\n31:20 Next actions",
-  },
-  youtube_description: {
-    eyebrow: "Content type preview",
-    title: "YouTube description draft",
-    meta: [
-      { label: "Typical output", value: "SEO summary + chapters" },
-      { label: "Tone", value: "Search-aware" },
-      { label: "Length", value: "Medium" },
-    ],
-    body:
-      "Learn the retention framework high-performing teams use to improve week-one user behavior.\n\nChapters\n00:00 Intro\n05:14 Framework\n12:36 Case study\n\n#SaaS #Retention #ProductGrowth",
-  },
-  podcast_episode_description: {
-    eyebrow: "Content type preview",
-    title: "Podcast episode description",
-    meta: [
-      { label: "Typical output", value: "Store-ready blurb" },
-      { label: "Tone", value: "Conversational" },
-      { label: "Length", value: "Short-medium" },
-    ],
-    body:
-      "Why do users disappear after the first week? In this episode, we break down a practical retention model, share a real team example, and outline the exact checkpoints you can apply before your next launch cycle.",
-  },
-  short_form_video_script: {
-    eyebrow: "Content type preview",
-    title: "Short-form video script",
-    meta: [
-      { label: "Typical output", value: "45-60 second script" },
-      { label: "Tone", value: "Fast-paced" },
-      { label: "Length", value: "Short-form" },
-    ],
-    body:
-      "Hook: Most users quit before they ever feel value.\nBuild: Here are 3 retention checkpoints top teams track in week one.\nCTA: Comment 'checklist' and I'll send the framework we use with clients.",
-  },
-  quote_graphics: {
-    eyebrow: "Content type preview",
-    title: "Quote graphics captions",
-    meta: [
-      { label: "Typical output", value: "Caption-ready quote set" },
-      { label: "Tone", value: "Memorable" },
-      { label: "Length", value: "Short snippets" },
-    ],
-    body:
-      "\"Retention is a behavior design problem, not a messaging problem.\"\n\"When week one feels confusing, month one never happens.\"\n\"Measure moments of progress, then engineer more of them.\"",
-  },
-};
-
-const HERO_ROTATING_PHRASES = [
-  "a clean transcript",
-  "speaker-attributed insights",
-  "publish-ready drafts",
-  "channel-ready content kits",
-  "assets you can ship today",
+const outputRows = [
+  { label: "LinkedIn post", icon: "in", tone: "blue", checked: true },
+  { label: "X thread", icon: "X", tone: "black", checked: true },
+  { label: "Newsletter draft", icon: Mail, tone: "purple", checked: true },
+  { label: "Blog outline", icon: FileText, tone: "green", checked: false },
+  { label: "Show notes", icon: Mic, tone: "amber", checked: false },
+  { label: "Short-form script", icon: PlayCircle, tone: "pink", checked: false },
+  { label: "Quote captions", icon: "“”", tone: "blue", checked: false },
 ] as const;
 
-const ANALYSIS_METRICS = [
+const pricingPlans = [
   {
-    label: "Coaching gaps",
-    value: "2 gaps",
-    note: "High-priority issues to fix in this or the next episode",
-  },
-  {
-    label: "Missed opportunities",
-    value: "3",
-    note: "Moments where the episode could have been clearer, deeper, or stronger",
-  },
-  {
-    label: "Strengths",
-    value: "4",
-    note: "Choices worth repeating because they clearly worked for listeners",
-  },
-];
-
-const ANALYSIS_OPPORTUNITIES = [
-  {
-    title: "The opening takes too long to reveal the real tension",
-    type: "Hook",
-    severity: "High",
-    action:
-      "Lead with the strongest question or disagreement in the first 30 seconds.",
-  },
-  {
-    title: "The guest hints at a stronger example that never gets explored",
-    type: "Follow-up",
-    severity: "Medium",
-    action:
-      "Ask one more concrete follow-up so the audience gets the full story.",
-  },
-  {
-    title: "The personal story sections are the most memorable moments",
-    type: "Strength",
-    severity: "Low",
-    action:
-      "Use more specific examples like this in future episodes and clips.",
-  },
-];
-
-const ANALYSIS_CONTENT_BREAKDOWN = [
-  { label: "Short-form video", value: 28, color: "#38bdf8" },
-  { label: "Social posts", value: 24, color: "#818cf8" },
-  { label: "Long-form", value: 18, color: "#34d399" },
-  { label: "Episode assets", value: 16, color: "#f59e0b" },
-  { label: "Quote pulls", value: 14, color: "#f472b6" },
-];
-
-const CONSTELLATION_STARS = [
-  { x: "10%", y: "16%", size: 3, delay: 0.1, duration: 2.8 },
-  { x: "16%", y: "34%", size: 2, delay: 0.5, duration: 3.4 },
-  { x: "22%", y: "58%", size: 2, delay: 0.2, duration: 2.6 },
-  { x: "28%", y: "22%", size: 4, delay: 0.8, duration: 4.2 },
-  { x: "34%", y: "48%", size: 2, delay: 0.3, duration: 3.1 },
-  { x: "40%", y: "74%", size: 3, delay: 0.6, duration: 2.9 },
-  { x: "48%", y: "14%", size: 2, delay: 0.4, duration: 3.8 },
-  { x: "54%", y: "36%", size: 3, delay: 0.2, duration: 2.7 },
-  { x: "60%", y: "62%", size: 2, delay: 0.9, duration: 3.5 },
-  { x: "68%", y: "22%", size: 4, delay: 0.3, duration: 4.4 },
-  { x: "74%", y: "46%", size: 2, delay: 0.7, duration: 2.5 },
-  { x: "80%", y: "18%", size: 3, delay: 0.1, duration: 3.2 },
-  { x: "86%", y: "64%", size: 2, delay: 0.6, duration: 3.7 },
-  { x: "90%", y: "30%", size: 4, delay: 0.4, duration: 4.1 },
-  { x: "94%", y: "54%", size: 2, delay: 0.2, duration: 2.8 },
-];
-
-const CONSTELLATION_LINES = [
-  { left: "15%", top: "33%", width: "14%", rotate: "-20deg", delay: 0.2 },
-  { left: "28%", top: "21%", width: "20%", rotate: "-12deg", delay: 0.5 },
-  { left: "48%", top: "14%", width: "20%", rotate: "12deg", delay: 0.9 },
-  { left: "34%", top: "48%", width: "22%", rotate: "-16deg", delay: 0.4 },
-  { left: "54%", top: "35%", width: "21%", rotate: "12deg", delay: 0.7 },
-  { left: "40%", top: "73%", width: "21%", rotate: "-10deg", delay: 0.6 },
-  { left: "60%", top: "61%", width: "26%", rotate: "5deg", delay: 1.1 },
-];
-
-const SUBTLE_CONSTELLATION_GROUPS = [
-  {
-    id: "cassiopeia",
-    stars: [
-      { x: "81%", y: "12%", size: 2.5 },
-      { x: "84.5%", y: "17%", size: 2 },
-      { x: "88%", y: "11.5%", size: 2.5 },
-      { x: "91.5%", y: "17.5%", size: 2 },
-      { x: "95%", y: "12.5%", size: 2.5 },
-    ],
-    lines: [
-      { left: "81%", top: "12%", width: "4.4%", rotate: "55deg" },
-      { left: "84.5%", top: "17%", width: "4.6%", rotate: "-54deg" },
-      { left: "88%", top: "11.5%", width: "4.4%", rotate: "56deg" },
-      { left: "91.5%", top: "17.5%", width: "4.3%", rotate: "-52deg" },
+    name: "Free",
+    description: "Try the full workflow\nwithout a card.",
+    price: "$0",
+    suffix: "forever",
+    icon: PlayCircle,
+    cta: "Start generating",
+    href: SIGNUP_HREF,
+    featured: false,
+    features: [
+      "300 credits/month",
+      "Up to 1 full 60-minute Repurpose Pack",
+      "Transcript, speaker labels, and summary",
+      "60-minute max upload",
     ],
   },
   {
-    id: "delphinus",
-    stars: [
-      { x: "10%", y: "80%", size: 2 },
-      { x: "14%", y: "74%", size: 2.5 },
-      { x: "18%", y: "79%", size: 2 },
-      { x: "14%", y: "84%", size: 1.75 },
-      { x: "22%", y: "72%", size: 2.25 },
+    name: "Standard",
+    description: "For solo founders and\nsmall B2B workflows.",
+    price: "$49.99",
+    suffix: "/mo",
+    icon: TrendingUp,
+    cta: "Start Standard",
+    href: SIGNUP_HREF,
+    featured: false,
+    features: [
+      "3,000 credits/month",
+      "About 10 Repurpose Pack hours",
+      "$42.49/mo when billed annually",
+      "Content Kit, Repurpose Pack, and 2 brand voices",
     ],
-    lines: [
-      { left: "10%", top: "80%", width: "5.2%", rotate: "-50deg" },
-      { left: "14%", top: "74%", width: "5.1%", rotate: "50deg" },
-      { left: "14%", top: "84%", width: "5.1%", rotate: "-50deg" },
-      { left: "18%", top: "79%", width: "5.4%", rotate: "-34deg" },
+  },
+  {
+    name: "Pro",
+    description: "For teams producing\nrecurring content.",
+    price: "$149",
+    suffix: "/mo",
+    icon: Sparkles,
+    cta: "Start Pro",
+    href: SIGNUP_HREF,
+    featured: true,
+    badge: "Most Popular",
+    features: [
+      "10,000 credits/month",
+      "About 33 Repurpose Pack hours",
+      "$126.65/mo when billed annually",
+      "3 seats, campaign calendar, templates, and intelligence",
     ],
   },
-];
-
-const AMBIENT_STARS = [
-  { x: "4%", y: "12%", size: 1, opacity: 0.48, duration: 5.4, delay: 0.1 },
-  { x: "7%", y: "44%", size: 1.5, opacity: 0.42, duration: 4.8, delay: 0.6 },
-  { x: "12%", y: "72%", size: 1, opacity: 0.38, duration: 6.1, delay: 0.9 },
-  { x: "18%", y: "9%", size: 1, opacity: 0.44, duration: 5.9, delay: 0.3 },
-  { x: "24%", y: "42%", size: 1.5, opacity: 0.35, duration: 5.3, delay: 1.1 },
-  { x: "31%", y: "9%", size: 1, opacity: 0.3, duration: 6.8, delay: 0.5 },
-  { x: "38%", y: "28%", size: 1, opacity: 0.4, duration: 5.7, delay: 0.2 },
-  { x: "43%", y: "86%", size: 1.5, opacity: 0.3, duration: 6.4, delay: 0.8 },
-  { x: "50%", y: "8%", size: 1, opacity: 0.42, duration: 5.6, delay: 0.1 },
-  { x: "58%", y: "28%", size: 1.5, opacity: 0.38, duration: 6.2, delay: 0.4 },
-  { x: "63%", y: "82%", size: 1, opacity: 0.36, duration: 5.1, delay: 1.2 },
-  { x: "71%", y: "8%", size: 1, opacity: 0.48, duration: 6.7, delay: 0.7 },
-  { x: "78%", y: "40%", size: 1.5, opacity: 0.34, duration: 5.4, delay: 0.5 },
-  { x: "83%", y: "78%", size: 1, opacity: 0.28, duration: 6.3, delay: 0.9 },
-  { x: "97%", y: "22%", size: 1, opacity: 0.44, duration: 5.8, delay: 0.2 },
-  { x: "95%", y: "70%", size: 1.5, opacity: 0.32, duration: 6.6, delay: 0.6 },
-];
-
-const SHOOTING_STARS = [
   {
-    left: "-12%",
-    top: "12%",
-    width: "10rem",
-    rotate: "16deg",
-    duration: 1.55,
-    repeatDelay: 12.5,
-    delay: 0.8,
-    tone: "via-white",
+    name: "Teams",
+    description: "For shared B2B content\noperations.",
+    price: "$399",
+    suffix: "/mo",
+    icon: Building2,
+    cta: "Contact sales",
+    href: CONTACT_HREF,
+    featured: false,
+    features: [
+      "35,000 pooled credits/month",
+      "About 117 Repurpose Pack hours",
+      "$339.15/mo when billed annually",
+      "5 seats, approvals, analytics, and centralized billing",
+    ],
   },
-  {
-    left: "58%",
-    top: "6%",
-    width: "8rem",
-    rotate: "20deg",
-    duration: 1.2,
-    repeatDelay: 15.5,
-    delay: 4.6,
-    tone: "via-sky-100",
-  },
-  {
-    left: "-10%",
-    top: "78%",
-    width: "7rem",
-    rotate: "10deg",
-    duration: 1.25,
-    repeatDelay: 16.8,
-    delay: 7.2,
-    tone: "via-cyan-100",
-  },
-  {
-    left: "82%",
-    top: "70%",
-    width: "7.5rem",
-    rotate: "-18deg",
-    duration: 1.35,
-    repeatDelay: 18.2,
-    delay: 10.5,
-    tone: "via-white",
-  },
-];
+] as const;
 
-const PRICING_DARK_STARS = [
-  { x: "8%", y: "14%", size: 7, opacity: 0.48, duration: 7.2, delay: 0.2 },
-  { x: "16%", y: "28%", size: 6, opacity: 0.5, duration: 6.1, delay: 0.9 },
-  { x: "24%", y: "70%", size: 7, opacity: 0.44, duration: 7.8, delay: 0.5 },
-  { x: "32%", y: "21%", size: 6, opacity: 0.48, duration: 6.8, delay: 1.1 },
-  { x: "40%", y: "49%", size: 7, opacity: 0.42, duration: 7.5, delay: 0.7 },
-  { x: "48%", y: "35%", size: 6, opacity: 0.5, duration: 6.4, delay: 0.3 },
-  { x: "56%", y: "77%", size: 7, opacity: 0.48, duration: 7.1, delay: 1.2 },
-  { x: "64%", y: "14%", size: 6, opacity: 0.48, duration: 6.9, delay: 0.4 },
-  { x: "72%", y: "42%", size: 7, opacity: 0.44, duration: 7.3, delay: 0.8 },
-  { x: "80%", y: "28%", size: 6, opacity: 0.5, duration: 6.2, delay: 1.3 },
-  { x: "88%", y: "56%", size: 7, opacity: 0.48, duration: 7.7, delay: 0.6 },
-  { x: "96%", y: "35%", size: 6, opacity: 0.48, duration: 6.7, delay: 0.2 },
-  { x: "96%", y: "77%", size: 7, opacity: 0.44, duration: 7.4, delay: 1.0 },
-];
+function getInitialTheme(): ThemeName {
+  if (typeof window === "undefined") return "light";
 
-// Utilities
-function useIsMobileLayout(maxWidth = 767) {
-  const [isMobile, setIsMobile] = useState(false);
+  const stored = window.localStorage.getItem("audiorepurpose-theme");
+  if (stored === "light" || stored === "dark") return stored;
 
-  useEffect(() => {
-    const mediaQuery = window.matchMedia(`(max-width: ${maxWidth}px)`);
-    const update = () => setIsMobile(mediaQuery.matches);
-
-    update();
-    mediaQuery.addEventListener("change", update);
-    return () => mediaQuery.removeEventListener("change", update);
-  }, [maxWidth]);
-
-  return isMobile;
+  return window.matchMedia("(prefers-color-scheme: dark)").matches ? "dark" : "light";
 }
 
-function ScrollProgressBar() {
-  const { scrollYProgress } = useScroll();
-  const scaleX = useSpring(scrollYProgress, {
-    stiffness: 140,
-    damping: 24,
-    mass: 0.25,
-  });
-  return (
-    <motion.div
-      className="fixed top-0 left-0 right-0 h-[3px] origin-left bg-gradient-to-r from-blue-500 via-indigo-500 to-violet-500 z-[60]"
-      style={{ scaleX }}
-    />
-  );
+function applyDocumentTheme(theme: ThemeName) {
+  document.documentElement.dataset.theme = theme;
+  document.documentElement.classList.toggle("dark", theme === "dark");
+  window.localStorage.setItem("audiorepurpose-theme", theme);
 }
 
-function CountUp({
-  to,
-  suffix = "",
-  duration = 1.1,
-}: {
-  to: number;
-  suffix?: string;
-  duration?: number;
-}) {
-  const ref = useRef<HTMLSpanElement | null>(null);
-  const isInView = useInView(ref, { once: true, amount: 0.85 });
-  const reduceMotion = useReducedMotion();
-  const [value, setValue] = useState(0);
+function useLandingTheme() {
+  const [theme, setTheme] = useState<ThemeName>("light");
+  const [mounted, setMounted] = useState(false);
 
   useEffect(() => {
-    if (!isInView) return;
-    if (reduceMotion) {
-      setValue(to);
-      return;
-    }
-    const controls = animate(0, to, {
-      duration,
-      ease: "easeOut",
-      onUpdate: (latest) => setValue(Math.round(latest)),
+    const nextTheme = getInitialTheme();
+    setTheme(nextTheme);
+    applyDocumentTheme(nextTheme);
+    setMounted(true);
+  }, []);
+
+  function toggleTheme() {
+    setTheme((current) => {
+      const nextTheme = current === "dark" ? "light" : "dark";
+      applyDocumentTheme(nextTheme);
+      return nextTheme;
     });
-    return () => controls.stop();
-  }, [duration, isInView, reduceMotion, to]);
+  }
 
+  return { theme, mounted, toggleTheme };
+}
+
+function useActiveSection() {
+  const [activeId, setActiveId] = useState("");
+
+  useEffect(() => {
+    const targets = NAV_LINKS.map((link) => link.id)
+      .map((id) => document.getElementById(id))
+      .filter(Boolean) as HTMLElement[];
+
+    if (!targets.length) return undefined;
+
+    const updateActiveSection = () => {
+      if (window.scrollY < 120) {
+        setActiveId("");
+        return;
+      }
+
+      const marker = window.innerHeight * 0.38;
+      const current = targets.find((target) => {
+        const rect = target.getBoundingClientRect();
+        return rect.top <= marker && rect.bottom >= marker;
+      });
+
+      setActiveId(current?.id ?? "");
+    };
+
+    const observer = new IntersectionObserver(
+      () => updateActiveSection(),
+      {
+        rootMargin: "-35% 0px -55% 0px",
+        threshold: 0,
+      },
+    );
+
+    targets.forEach((target) => observer.observe(target));
+    window.addEventListener("scroll", updateActiveSection, { passive: true });
+    window.addEventListener("resize", updateActiveSection);
+    updateActiveSection();
+
+    return () => {
+      observer.disconnect();
+      window.removeEventListener("scroll", updateActiveSection);
+      window.removeEventListener("resize", updateActiveSection);
+    };
+  }, []);
+
+  return activeId;
+}
+
+function useSectionFocus() {
+  useEffect(() => {
+    const sections = Array.from(
+      document.querySelectorAll<HTMLElement>("[data-focus-section]"),
+    );
+
+    if (!sections.length) return undefined;
+
+    document.documentElement.classList.add("landing-scroll-page");
+    sections[0]?.classList.add("is-active");
+
+    const ratios = new Map<HTMLElement, number>();
+    const activateSection = (activeSection: HTMLElement) => {
+      sections.forEach((section) => {
+        section.classList.toggle("is-active", section === activeSection);
+      });
+    };
+
+    const observer = new IntersectionObserver(
+      (entries) => {
+        entries.forEach((entry) => {
+          ratios.set(entry.target as HTMLElement, entry.isIntersecting ? entry.intersectionRatio : 0);
+        });
+
+        const activeSection = sections.reduce<HTMLElement | null>((best, section) => {
+          if (!best) return section;
+
+          const ratio = ratios.get(section) ?? 0;
+          const bestRatio = ratios.get(best) ?? 0;
+
+          if (ratio === bestRatio) {
+            const sectionDistance = Math.abs(
+              section.getBoundingClientRect().top - window.innerHeight * 0.18,
+            );
+            const bestDistance = Math.abs(
+              best.getBoundingClientRect().top - window.innerHeight * 0.18,
+            );
+
+            return sectionDistance < bestDistance ? section : best;
+          }
+
+          return ratio > bestRatio ? section : best;
+        }, null);
+
+        if (activeSection) activateSection(activeSection);
+      },
+      {
+        rootMargin: "-18% 0px -28% 0px",
+        threshold: [0, 0.25, 0.4, 0.55, 0.7],
+      },
+    );
+
+    sections.forEach((section) => observer.observe(section));
+
+    return () => {
+      observer.disconnect();
+      document.documentElement.classList.remove("landing-scroll-page");
+      sections.forEach((section) => section.classList.remove("is-active"));
+    };
+  }, []);
+}
+
+function GradientText({ children }: { children: React.ReactNode }) {
   return (
-    <span ref={ref}>
-      {value}
-      {suffix}
+    <span className="bg-gradient-to-r from-[var(--blue)] via-[#4F6FFF] to-[var(--purple)] bg-clip-text text-transparent">
+      {children}
     </span>
   );
 }
 
-function AnalysisConstellationBackground() {
-  const reduceMotion = useReducedMotion();
+function PageShell({
+  children,
+  theme,
+}: {
+  children: React.ReactNode;
+  theme: ThemeName;
+}) {
+  return (
+    <main
+      data-theme={theme}
+      style={themeTokens[theme]}
+      className="landing-scroll-root relative bg-[var(--bg-home)] text-[var(--text-main)] transition-colors duration-300"
+    >
+      <div className="relative z-10">{children}</div>
+    </main>
+  );
+}
+
+function SectionFrame({
+  id,
+  compact = false,
+  band = "a",
+  grid = false,
+  hero = false,
+  className,
+  children,
+}: {
+  id?: string;
+  compact?: boolean;
+  band?: "home" | "a" | "b" | "warm";
+  grid?: boolean;
+  hero?: boolean;
+  className?: string;
+  children: React.ReactNode;
+}) {
+  const background = {
+    home: "var(--bg-home)",
+    a: "var(--bg-a)",
+    b: "var(--bg-b)",
+    warm: "var(--bg-warm)",
+  }[band];
+
+  const sectionStyle: CSSProperties = {
+    ...(grid ? gridStyle : {}),
+    backgroundColor: background,
+  };
 
   return (
-    <div className="absolute inset-0 overflow-hidden pointer-events-none">
-      <motion.div className="absolute inset-0 bg-[radial-gradient(circle_at_16%_18%,rgba(148,163,184,0.16),transparent_24%),radial-gradient(circle_at_50%_0%,rgba(59,130,246,0.16),transparent_34%),radial-gradient(circle_at_88%_28%,rgba(125,211,252,0.12),transparent_24%),linear-gradient(180deg,#020617_0%,#040b18_42%,#020617_100%)]" />
-      <div className="absolute inset-0 bg-[radial-gradient(circle_at_center,rgba(255,255,255,0.05),transparent_62%)]" />
-      <div className="absolute inset-0 bg-[linear-gradient(to_bottom,rgba(255,255,255,0.02),transparent_18%,transparent_82%,rgba(255,255,255,0.03))]" />
-
-      {AMBIENT_STARS.map((star, index) => (
-        <motion.div
-          key={`ambient-${star.x}-${star.y}`}
-          className="absolute rounded-full bg-white"
-          style={{
-            left: star.x,
-            top: star.y,
-            width: star.size,
-            height: star.size,
-          }}
-          animate={
-            reduceMotion
-              ? { opacity: star.opacity }
-              : {
-                opacity: [
-                  star.opacity * 0.55,
-                  star.opacity,
-                  star.opacity * 0.7,
-                ],
-              }
-          }
-          transition={{
-            duration: star.duration + (index % 4) * 0.35,
-            delay: star.delay,
-            repeat: Infinity,
-            ease: "easeInOut",
-          }}
-        />
-      ))}
-
-      {CONSTELLATION_LINES.map((line) => (
-        <motion.div
-          key={`line-${line.left}-${line.top}`}
-          className="absolute h-px origin-left bg-gradient-to-r from-transparent via-sky-100/85 to-transparent"
-          style={{
-            left: line.left,
-            top: line.top,
-            width: line.width,
-            rotate: line.rotate,
-          }}
-          animate={
-            reduceMotion
-              ? { opacity: 0.24 }
-              : { opacity: [0.1, 0.34, 0.16], scaleX: [0.98, 1.02, 1] }
-          }
-          transition={{
-            duration: 6.8,
-            delay: line.delay,
-            repeat: Infinity,
-            ease: "easeInOut",
-          }}
-        />
-      ))}
-
-      {SUBTLE_CONSTELLATION_GROUPS.map((group, groupIndex) => (
-        <div key={group.id}>
-          {group.lines.map((line, lineIndex) => (
-            <motion.div
-              key={`${group.id}-line-${lineIndex}`}
-              className="absolute h-px origin-left bg-gradient-to-r from-transparent via-white/45 to-transparent"
-              style={{
-                left: line.left,
-                top: line.top,
-                width: line.width,
-                rotate: line.rotate,
-              }}
-              animate={
-                reduceMotion
-                  ? { opacity: 0.14 }
-                  : { opacity: [0.04, 0.16, 0.08], scaleX: [0.98, 1.01, 1] }
-              }
-              transition={{
-                duration: 7.4,
-                delay: groupIndex * 0.9 + lineIndex * 0.22,
-                repeat: Infinity,
-                ease: "easeInOut",
-              }}
-            />
-          ))}
-          {group.stars.map((star, starIndex) => (
-            <motion.div
-              key={`${group.id}-star-${starIndex}`}
-              className="absolute rounded-full bg-white shadow-[0_0_12px_rgba(255,255,255,0.4)]"
-              style={{
-                left: star.x,
-                top: star.y,
-                width: star.size,
-                height: star.size,
-              }}
-              animate={
-                reduceMotion
-                  ? { opacity: 0.42, scale: 1 }
-                  : { opacity: [0.16, 0.5, 0.24], scale: [1, 1.35, 1] }
-              }
-              transition={{
-                duration: 5.8 + starIndex * 0.35,
-                delay: groupIndex * 0.8 + starIndex * 0.18,
-                repeat: Infinity,
-                ease: "easeInOut",
-              }}
-            />
-          ))}
-        </div>
-      ))}
-
-      {CONSTELLATION_STARS.map((star) => (
-        <motion.div
-          key={`${star.x}-${star.y}`}
-          className="absolute rounded-full bg-white shadow-[0_0_20px_rgba(255,255,255,0.95)]"
-          style={{
-            left: star.x,
-            top: star.y,
-            width: star.size,
-            height: star.size,
-          }}
-          animate={
-            reduceMotion
-              ? { opacity: 0.92, scale: 1 }
-              : { opacity: [0.45, 1, 0.58], scale: [1, 1.85, 1] }
-          }
-          transition={{
-            duration: star.duration,
-            delay: star.delay,
-            repeat: Infinity,
-            ease: "easeInOut",
-          }}
-        />
-      ))}
-
-      <motion.div
-        className="absolute left-[6%] top-[20%] h-16 w-16 rounded-full bg-[radial-gradient(circle_at_35%_35%,#f8fafc_0%,#cbd5e1_18%,#475569_54%,#0f172a_100%)] opacity-90 shadow-[0_0_42px_rgba(148,163,184,0.32)]"
-        animate={reduceMotion ? { y: 0 } : { y: [0, -10, 0], x: [0, 7, 0] }}
-        transition={{ duration: 14, repeat: Infinity, ease: "easeInOut" }}
-      />
-
-      <motion.div
-        className="absolute right-[8%] bottom-[14%] h-24 w-24 rounded-full bg-[radial-gradient(circle_at_32%_28%,#fde68a_0%,#f59e0b_30%,#7c2d12_68%,#1f2937_100%)] opacity-95 shadow-[0_0_54px_rgba(245,158,11,0.24)]"
-        animate={reduceMotion ? { y: 0 } : { y: [0, 10, 0], x: [0, -8, 0] }}
-        transition={{ duration: 20, repeat: Infinity, ease: "easeInOut" }}
-      >
-        <div className="absolute inset-[-9%] rounded-full border border-amber-200/20" />
-        <div className="absolute -left-6 top-6 h-[1px] w-10 rotate-[-24deg] bg-white/15" />
-      </motion.div>
-
-      <motion.div
-        className="absolute left-[70%] top-[18%] h-10 w-10"
-        animate={
-          reduceMotion
-            ? { x: 0, y: 0, rotate: 0 }
-            : { x: [0, 24, 0], y: [0, -12, 0], rotate: [0, 7, 0] }
-        }
-        transition={{ duration: 16, repeat: Infinity, ease: "easeInOut" }}
-      >
-        <div className="absolute left-1/2 top-1/2 h-2 w-2 -translate-x-1/2 -translate-y-1/2 rounded-full bg-slate-200 shadow-[0_0_12px_rgba(255,255,255,0.5)]" />
-        <div className="absolute left-[10%] top-1/2 h-px w-[80%] -translate-y-1/2 bg-slate-300/80" />
-        <div className="absolute left-1/2 top-[10%] h-[80%] w-px -translate-x-1/2 bg-slate-300/80" />
-        <div className="absolute left-0 top-[24%] h-3 w-3 rounded-sm border border-slate-300/80 bg-slate-100/10" />
-        <div className="absolute right-0 top-[24%] h-3 w-3 rounded-sm border border-slate-300/80 bg-slate-100/10" />
-      </motion.div>
-
-      {!reduceMotion && (
-        <>
-          {SHOOTING_STARS.map((star) => (
-            <motion.div
-              key={`${star.left}-${star.top}-${star.rotate}`}
-              className={`absolute h-px bg-gradient-to-r from-transparent ${star.tone} to-transparent opacity-0`}
-              style={{
-                left: star.left,
-                top: star.top,
-                width: star.width,
-                rotate: star.rotate,
-              }}
-              animate={{ x: ["0%", "145%"], opacity: [0, 0.95, 0] }}
-              transition={{
-                duration: star.duration,
-                repeat: Infinity,
-                repeatDelay: star.repeatDelay,
-                ease: "easeOut",
-                delay: star.delay,
-              }}
-            />
-          ))}
-        </>
+    <section
+      id={id}
+      data-focus-section={id ?? undefined}
+      className={cn(
+        "page-section",
+        hero && "hero-section",
+        compact ? "" : "",
+        className,
       )}
+      style={sectionStyle}
+    >
+      <div className="section-container">
+        <div className="section-inner">{children}</div>
+      </div>
+    </section>
+  );
+}
+
+function PillBadge({
+  children,
+  icon: Icon,
+  className,
+}: {
+  children: React.ReactNode;
+  icon?: LucideIcon;
+  className?: string;
+}) {
+  return (
+    <span
+      className={cn(
+        "inline-flex items-center gap-2 rounded-full border border-[var(--border)] bg-[color-mix(in_srgb,var(--surface)_82%,transparent)] px-4 py-2 text-xs font-semibold uppercase tracking-[0.16em] text-[var(--blue)] shadow-[0_10px_30px_rgba(15,23,42,0.05)] backdrop-blur",
+        className,
+      )}
+    >
+      {Icon ? <Icon aria-hidden="true" className="h-3.5 w-3.5" /> : null}
+      {children}
+    </span>
+  );
+}
+
+function PrimaryButton({
+  href = SIGNUP_HREF,
+  children,
+  className,
+}: {
+  href?: string;
+  children: React.ReactNode;
+  className?: string;
+}) {
+  return (
+    <Link
+      href={href}
+      className={cn(
+        "group inline-flex h-11 items-center justify-center gap-2.5 rounded-[12px] bg-[linear-gradient(135deg,var(--blue),var(--purple))] px-5 text-sm font-semibold text-white shadow-[0_14px_32px_rgba(20,99,255,0.22)] transition duration-200 hover:-translate-y-px hover:shadow-[0_18px_42px_rgba(20,99,255,0.28)] active:translate-y-0 focus:outline-none focus-visible:ring-2 focus-visible:ring-[var(--blue)] focus-visible:ring-offset-2 focus-visible:ring-offset-[var(--bg)]",
+        className,
+      )}
+    >
+      <span>{children}</span>
+      <ArrowRight
+        aria-hidden="true"
+        className="h-4 w-4 transition-transform duration-300 group-hover:translate-x-0.5"
+      />
+    </Link>
+  );
+}
+
+function SecondaryButton({
+  href,
+  children,
+  className,
+}: {
+  href: string;
+  children: React.ReactNode;
+  className?: string;
+}) {
+  return (
+    <Link
+      href={href}
+      className={cn(
+        "inline-flex h-11 items-center justify-center gap-2 rounded-[12px] border border-[var(--border)] bg-[var(--surface)] px-5 text-sm font-semibold text-[var(--text)] shadow-[0_10px_24px_rgba(15,23,42,0.04)] transition duration-200 hover:-translate-y-px hover:bg-[var(--surface-soft)] active:translate-y-0 focus:outline-none focus-visible:ring-2 focus-visible:ring-[var(--blue)] focus-visible:ring-offset-2 focus-visible:ring-offset-[var(--bg)]",
+        className,
+      )}
+    >
+      {children}
+    </Link>
+  );
+}
+
+function Surface({
+  children,
+  className,
+}: {
+  children: React.ReactNode;
+  className?: string;
+}) {
+  return (
+    <div
+      className={cn(
+        "fluid-card border border-[var(--border)] bg-[var(--surface)] shadow-[var(--shadow-card)] ring-1 ring-white/20 transition duration-200 hover:-translate-y-0.5 hover:shadow-[var(--shadow-card-hover)]",
+        className,
+      )}
+    >
+      {children}
     </div>
   );
 }
 
-function AnalysisContentPieChart() {
-  const gradientStops = ANALYSIS_CONTENT_BREAKDOWN.reduce(
-    (acc, slice) => {
-      const start = acc.offset;
-      const end = start + slice.value;
-      acc.stops.push(`${slice.color} ${start}% ${end}%`);
-      acc.offset = end;
-      return acc;
-    },
-    { offset: 0, stops: [] as string[] },
-  );
+function IconTile({
+  Icon,
+  tone = "blue",
+  className,
+}: {
+  Icon: LucideIcon;
+  tone?: "blue" | "purple" | "green" | "amber";
+  className?: string;
+}) {
+  const toneClass = {
+    blue: "bg-[color-mix(in_srgb,var(--blue)_10%,var(--surface))] text-[var(--blue)]",
+    purple: "bg-[color-mix(in_srgb,var(--purple)_12%,var(--surface))] text-[var(--purple)]",
+    green: "bg-[color-mix(in_srgb,var(--success)_12%,var(--surface))] text-[var(--success)]",
+    amber: "bg-[color-mix(in_srgb,var(--warning)_14%,var(--surface))] text-[var(--warning)]",
+  }[tone];
 
   return (
-    <div className="grid gap-5 md:grid-cols-[0.9fr_1.1fr] md:items-center">
-      <div className="relative mx-auto h-48 w-48">
-        <div className="absolute inset-0 rounded-full border border-white/10 bg-[radial-gradient(circle_at_center,rgba(255,255,255,0.05),transparent_58%)]" />
-        <div
-          className="absolute inset-3 rounded-full border border-white/15 shadow-[0_0_40px_rgba(56,189,248,0.08)]"
-          style={{
-            background: `conic-gradient(${gradientStops.stops.join(", ")})`,
-          }}
-        />
-        <div className="absolute inset-[28%] rounded-full border border-white/12 bg-slate-950/35 backdrop-blur-[1px]" />
-        <div className="absolute inset-0 rounded-full border border-dashed border-white/8" />
-        <div className="absolute left-1/2 top-4 h-[calc(50%-1rem)] w-px -translate-x-1/2 bg-white/10" />
-        <div className="absolute left-4 top-1/2 h-px w-[calc(50%-1rem)] -translate-y-1/2 bg-white/10" />
-      </div>
+    <span
+      className={cn(
+        "card-icon inline-flex shrink-0 items-center justify-center rounded-xl",
+        toneClass,
+        className,
+      )}
+    >
+      <Icon aria-hidden="true" className="h-5 w-5" />
+    </span>
+  );
+}
 
-      <div className="space-y-3">
-        {ANALYSIS_CONTENT_BREAKDOWN.map((slice, index) => (
-          <motion.div
-            key={slice.label}
-            initial={{ opacity: 0, x: -8 }}
-            whileInView={{ opacity: 1, x: 0 }}
-            viewport={SECTION_VIEWPORT}
-            transition={{
-              duration: 0.35,
-              delay: 0.06 * index,
-              ease: "easeOut",
-            }}
-            className="flex items-center justify-between gap-4 border-b border-white/8 pb-2 last:border-b-0 last:pb-0"
+function BrandLockup({ className }: { className?: string; theme?: ThemeName }) {
+  return (
+    <span className={cn("inline-flex items-center gap-2.5", className)}>
+      <span className="brand-mark" aria-hidden="true">
+        <span />
+        <span />
+        <span />
+      </span>
+      <span className="brand-name">
+        Audio <strong>Repurpose</strong>
+      </span>
+    </span>
+  );
+}
+
+function CheckLine({ children }: { children: React.ReactNode }) {
+  return (
+    <span className="inline-flex items-center gap-2 text-sm font-medium text-[var(--muted)]">
+      <span className="inline-flex h-5 w-5 items-center justify-center rounded-full border border-[#AFC2E8] text-[var(--blue)]">
+        <Check aria-hidden="true" className="h-3 w-3" />
+      </span>
+      {children}
+    </span>
+  );
+}
+
+function NumberBadge({ children }: { children: React.ReactNode }) {
+  return (
+    <span className="step-badge inline-flex shrink-0 items-center justify-center rounded-full bg-[#F2F6FF] text-sm font-bold text-[var(--blue)] shadow-inner">
+      {children}
+    </span>
+  );
+}
+
+function Waveform({ className }: { className?: string }) {
+  const bars = [10, 17, 12, 23, 14, 20, 9, 26, 15, 28, 11, 21, 13, 25, 16, 19, 10, 26, 14, 22, 10, 18, 12, 24, 14, 20, 9, 17];
+
+  return (
+    <div className={cn("flex h-7 items-center gap-1", className)} aria-hidden="true">
+      {bars.map((height, index) => (
+        <span
+          key={`${height}-${index}`}
+          className="w-1 rounded-full bg-[linear-gradient(180deg,#1463FF,#8B5CF6)]"
+          style={{ height }}
+        />
+      ))}
+    </div>
+  );
+}
+
+function OutputIcon({
+  icon,
+  tone,
+}: {
+  icon: string | LucideIcon;
+  tone: "blue" | "black" | "purple" | "green" | "amber" | "pink";
+}) {
+  const toneClass = {
+    blue: "bg-[#0A66C2] text-white",
+    black: "bg-black text-white",
+    purple: "bg-[#7C3AED] text-white",
+    green: "bg-[#20B26B] text-white",
+    amber: "bg-[#F59E0B] text-white",
+    pink: "bg-[#EC4899] text-white",
+  }[tone];
+
+  const Icon = typeof icon === "string" ? null : icon;
+
+  return (
+    <span
+      className={cn(
+        "output-icon inline-flex shrink-0 items-center justify-center rounded-lg text-xs font-bold",
+        toneClass,
+      )}
+      aria-hidden="true"
+    >
+      {Icon ? <Icon className="h-4 w-4" /> : typeof icon === "string" ? icon : null}
+    </span>
+  );
+}
+
+function ConnectorPath({
+  d,
+  className,
+}: {
+  d: string;
+  className?: string;
+}) {
+  return (
+    <path
+      d={d}
+      fill="none"
+      stroke="currentColor"
+      strokeDasharray="4 7"
+      strokeLinecap="round"
+      strokeWidth="2"
+      className={cn("text-[#B8C7EA] opacity-80", className)}
+    />
+  );
+}
+
+function ThemeToggle({
+  theme,
+  mounted,
+  onToggleTheme,
+}: {
+  theme: ThemeName;
+  mounted: boolean;
+  onToggleTheme: () => void;
+}) {
+  const isDark = mounted && theme === "dark";
+  const Icon = isDark ? Sun : Moon;
+
+  return (
+    <button
+      type="button"
+      aria-label="Toggle color theme"
+      onClick={onToggleTheme}
+      className="inline-flex h-9 w-9 shrink-0 items-center justify-center rounded-full text-[var(--text-main)] transition duration-200 hover:bg-[color-mix(in_srgb,var(--text-main)_7%,transparent)] hover:text-[var(--blue)] focus:outline-none focus-visible:ring-2 focus-visible:ring-[var(--blue)] focus-visible:ring-offset-2 focus-visible:ring-offset-[var(--bg-home)] active:translate-y-0"
+    >
+      <Icon aria-hidden="true" className="h-4 w-4" />
+    </button>
+  );
+}
+
+function HeaderNav({
+  theme,
+  mounted,
+  onToggleTheme,
+}: {
+  theme: ThemeName;
+  mounted: boolean;
+  onToggleTheme: () => void;
+}) {
+  const [open, setOpen] = useState(false);
+  const activeId = useActiveSection();
+
+  return (
+    <motion.header
+      variants={fadeDown}
+      initial="show"
+      animate="show"
+      className="site-nav sticky top-0 z-50 h-[var(--nav-h)]"
+    >
+      <nav
+        aria-label="Primary"
+        className="nav-inner"
+      >
+        <Link
+          href="#home"
+          className="brand-lockup shrink-0 rounded-full"
+          onClick={() => setOpen(false)}
+        >
+          <BrandLockup theme={theme} />
+        </Link>
+
+        <div className="ml-auto hidden items-center justify-end gap-[clamp(14px,1.8vw,26px)] min-[900px]:flex">
+          <div className="flex items-center justify-end gap-[clamp(12px,1.4vw,24px)]">
+            {NAV_LINKS.map((link) => {
+              const isActive = activeId === link.id;
+              return (
+                <Link
+                  key={link.label}
+                  href={link.href}
+                  aria-current={isActive ? "page" : undefined}
+                  className={cn(
+                    "nav-link relative py-2 text-sm font-semibold transition duration-200 hover:text-[var(--blue)]",
+                    isActive
+                      ? "text-[var(--blue)]"
+                      : "text-[color-mix(in_srgb,var(--text-main)_78%,var(--text-muted))]",
+                  )}
+                >
+                  {link.label}
+                  {isActive ? (
+                    <span
+                      aria-hidden="true"
+                      className="absolute inset-x-0 bottom-0 h-0.5 rounded-full bg-[linear-gradient(90deg,var(--blue),var(--purple))]"
+                    />
+                  ) : null}
+                </Link>
+              );
+            })}
+          </div>
+          <div className="flex items-center gap-3">
+            <Link
+              href={LOGIN_HREF}
+              className="nav-login"
+            >
+              Log in
+            </Link>
+            <PrimaryButton href={SIGNUP_HREF} className="nav-primary h-10 px-4">
+              Start free
+            </PrimaryButton>
+          </div>
+          <ThemeToggle theme={theme} mounted={mounted} onToggleTheme={onToggleTheme} />
+        </div>
+
+        <div className="ml-auto flex items-center gap-2 min-[900px]:hidden">
+          <PrimaryButton href={SIGNUP_HREF} className="hidden h-9 rounded-lg px-3 text-xs min-[460px]:inline-flex">
+            Start free
+          </PrimaryButton>
+          <button
+            type="button"
+            onClick={() => setOpen((value) => !value)}
+            aria-label={open ? "Close navigation menu" : "Open navigation menu"}
+            aria-expanded={open}
+            className="inline-flex h-9 w-9 items-center justify-center rounded-lg text-[var(--text)] transition hover:bg-[color-mix(in_srgb,var(--blue)_9%,transparent)] hover:text-[var(--blue)] focus:outline-none focus-visible:ring-2 focus-visible:ring-[var(--blue)] focus-visible:ring-offset-2 focus-visible:ring-offset-[var(--bg)]"
           >
-            <div className="flex items-center gap-3">
-              <span
-                className="h-2.5 w-2.5 rounded-full shadow-[0_0_14px_rgba(255,255,255,0.18)]"
-                style={{ backgroundColor: slice.color }}
-              />
-              <span className="text-sm text-blue-50/78">{slice.label}</span>
+            {open ? <X aria-hidden="true" className="h-5 w-5" /> : <span className="space-y-1.5" aria-hidden="true"><span className="block h-0.5 w-5 rounded bg-current" /><span className="block h-0.5 w-5 rounded bg-current" /><span className="block h-0.5 w-5 rounded bg-current" /></span>}
+          </button>
+          <ThemeToggle theme={theme} mounted={mounted} onToggleTheme={onToggleTheme} />
+        </div>
+      </nav>
+
+      {open ? (
+        <div className="absolute inset-x-0 top-[var(--nav-h)] px-[var(--container-x)] min-[900px]:hidden">
+          <div className="mx-auto grid w-full max-w-[var(--container-max)] box-border gap-1 rounded-[18px] border border-[var(--border)] bg-[color-mix(in_srgb,var(--surface)_96%,transparent)] p-3 shadow-[0_18px_55px_rgba(15,23,42,0.10)]">
+            {NAV_LINKS.map((link) => (
+              <Link
+                key={link.label}
+                href={link.href}
+                aria-current={activeId === link.id ? "page" : undefined}
+                onClick={() => setOpen(false)}
+                className={cn(
+                  "nav-link relative rounded-xl px-4 py-3 text-sm font-semibold transition",
+                  activeId === link.id
+                    ? "text-[var(--blue)]"
+                    : "text-[var(--text)] hover:bg-[var(--surface-soft)]",
+                )}
+              >
+                {link.label}
+              </Link>
+            ))}
+            <div className="mt-2 grid grid-cols-2 gap-2">
+              <SecondaryButton href={LOGIN_HREF} className="h-10 px-4">
+                Log in
+              </SecondaryButton>
+              <PrimaryButton href={SIGNUP_HREF} className="h-10 px-4">
+                Start free
+              </PrimaryButton>
             </div>
-            <span className="text-[11px] font-semibold uppercase tracking-[0.14em] text-blue-100/50">
-              {slice.value}%
+          </div>
+        </div>
+      ) : null}
+    </motion.header>
+  );
+}
+
+function HeroSection() {
+  return (
+    <SectionFrame id="home" compact band="home" hero>
+      <div className="hero-layout">
+        <motion.div variants={stagger} initial="show" animate="show" className="hero-content min-w-0">
+          <motion.h1
+            variants={fadeUp}
+            className="hero-title font-serif text-[var(--text)]"
+          >
+            <span className="hero-title-main">Upload once.</span>
+            <span className="hero-title-accent">Repurpose everywhere.</span>
+          </motion.h1>
+          <motion.p
+            variants={fadeUp}
+            className="hero-subtitle"
+          >
+            Turn calls, demos, webinars, and updates into transcripts, summaries, insights, quotes, and publish-ready drafts.
+          </motion.p>
+          <motion.div variants={fadeUp} className="hero-actions">
+            <PrimaryButton href={SIGNUP_HREF} className="hero-primary">
+              Start free
+            </PrimaryButton>
+            <SecondaryButton href={CONTACT_HREF} className="hero-secondary">
+              Book a demo
+            </SecondaryButton>
+          </motion.div>
+        </motion.div>
+      </div>
+    </SectionFrame>
+  );
+}
+
+function OneSourceSection() {
+  return (
+    <SectionFrame id="legacy-product-preview" compact band="b" grid>
+      <motion.div
+        variants={stagger}
+        initial="show"
+        whileInView="show"
+        viewport={{ once: true, amount: 0.22 }}
+        className="text-center"
+      >
+        <motion.div variants={fadeUp}>
+          <PillBadge icon={Sparkles}>ONE SOURCE. ENDLESS POSSIBILITIES.</PillBadge>
+        </motion.div>
+        <motion.h2
+          variants={fadeUp}
+          className="section-title mx-auto mt-3 font-serif font-semibold"
+        >
+          One source. Many <GradientText>review-ready assets.</GradientText>
+        </motion.h2>
+        <motion.p variants={fadeUp} className="section-copy mx-auto mt-3 max-w-2xl text-[var(--muted)]">
+          Upload once. We turn your conversations into polished drafts{" "}
+          <br className="hidden sm:block" />
+          across every channel. You choose only the outputs you need.
+        </motion.p>
+      </motion.div>
+
+      <motion.div
+        variants={slowStagger}
+        initial="show"
+        whileInView="show"
+        viewport={{ once: true, amount: 0.18 }}
+        className="mt-7 grid items-start gap-[var(--card-gap)] xl:grid-cols-[0.9fr_1.35fr_0.95fr]"
+      >
+        <motion.div variants={fadeUp} className="relative order-1">
+          <Surface className="p-[var(--card-padding)]">
+            <h3 className="text-lg font-bold">Source</h3>
+            <div className="mt-3 rounded-2xl border border-[#9EB7EA] bg-[var(--surface-soft)] p-[calc(var(--card-padding)*0.72)] shadow-[0_10px_30px_rgba(20,99,255,0.08)]">
+              <div className="flex items-center gap-4">
+                <IconTile Icon={AudioLines} className="h-11 w-11" />
+                <div className="min-w-0 flex-1">
+                  <p className="font-bold">Customer interview</p>
+                  <p className="mt-1 text-sm text-[var(--muted)]">ACME Inc.</p>
+                  <p className="mt-2 inline-flex items-center gap-2 text-sm text-[var(--muted)]">
+                    <Clock aria-hidden="true" className="h-4 w-4" />
+                    45:21 · MP4
+                  </p>
+                </div>
+                <span className="inline-flex h-9 w-9 items-center justify-center rounded-full border border-[#BBD0F3] bg-[var(--surface)] text-[var(--blue)]">
+                  <Check aria-hidden="true" className="h-4 w-4" />
+                </span>
+              </div>
+            </div>
+
+            <div className="mt-4">
+              <p className="text-sm font-semibold text-[var(--muted)]">Recent sources</p>
+              <div className="mt-2.5 overflow-hidden rounded-2xl border border-[var(--border)]">
+                {[
+                  ["Founder update", "32:18 · MP3"],
+                  ["Webinar: Q2 roadmap", "58:42 · MP4"],
+                  ["Podcast episode", "47:10 · MP3"],
+                ].map(([title, meta]) => (
+                  <div key={title} className="flex items-center gap-3 border-b border-[var(--border)] bg-[var(--surface)] px-3 py-2.5 last:border-b-0">
+                    <AudioLines aria-hidden="true" className="h-5 w-5 text-[var(--blue)]" />
+                    <div>
+                      <p className="text-sm font-bold">{title}</p>
+                      <p className="mt-1 text-xs text-[var(--muted)]">{meta}</p>
+                    </div>
+                  </div>
+                ))}
+              </div>
+            </div>
+            <SecondaryButton href={SIGNUP_HREF} className="mt-3 h-10 w-full gap-2">
+              <CloudUpload aria-hidden="true" className="h-4 w-4" />
+              Upload new source
+            </SecondaryButton>
+          </Surface>
+
+          <svg
+            aria-hidden="true"
+            viewBox="0 0 120 120"
+            className="absolute -right-24 top-28 hidden h-32 w-32 overflow-visible xl:block"
+          >
+            <ConnectorPath d="M5 10 C70 10 52 98 112 70" />
+            <circle cx="112" cy="70" r="16" fill="white" stroke="#E3E8F3" />
+            <path d="M106 70h11m-4-4 4 4-4 4" stroke="#1463FF" strokeWidth="2" fill="none" strokeLinecap="round" strokeLinejoin="round" />
+          </svg>
+        </motion.div>
+
+        <motion.div variants={fadeUp} className="relative z-10 order-3 xl:order-2">
+          <Surface className="overflow-hidden p-0">
+            <div className="flex items-center justify-between border-b border-[var(--border)] p-4">
+              <div className="flex items-center gap-4">
+                <OutputIcon icon="in" tone="blue" />
+                <h3 className="text-lg font-bold">LinkedIn post</h3>
+              </div>
+              <span className="inline-flex items-center gap-2 rounded-lg bg-[#F1F6FF] px-3 py-2 text-sm font-semibold text-[var(--blue)]">
+                <Eye aria-hidden="true" className="h-4 w-4" />
+                Preview
+              </span>
+            </div>
+            <article className="space-y-2 p-4 text-sm leading-[1.55] text-[var(--text)]">
+              <p>We asked 50 enterprise teams what slows them down.</p>
+              <p>The answer wasn’t more tools—it was context.</p>
+              <div>
+                <p>Here are 3 patterns that stood out:</p>
+                <ul className="mt-1.5 space-y-1 pl-5">
+                  <li className="list-disc marker:text-[var(--blue)]">Knowledge lives in calls, not docs</li>
+                  <li className="list-disc marker:text-[var(--blue)]">Teams repeat the same questions</li>
+                  <li className="list-disc marker:text-[var(--blue)]">Great insights never make it public</li>
+                </ul>
+              </div>
+              <p>The fix isn’t more content.</p>
+              <p>It’s making the right content repeatable.</p>
+              <p>(Full breakdown in the comments 👇)</p>
+            </article>
+            <div className="flex flex-col gap-3 border-t border-[var(--border)] bg-[var(--surface-soft)] p-[calc(var(--card-padding)*0.72)] sm:flex-row sm:items-center sm:justify-between">
+              <span className="inline-flex items-center gap-2 text-sm text-[var(--muted)]">
+                <CheckCircle2 aria-hidden="true" className="h-5 w-5 text-[var(--success)]" />
+                220 words · Ready to review
+              </span>
+              <SecondaryButton href={SIGNUP_HREF} className="h-10 px-4 text-sm">
+                <ArrowUpRight aria-hidden="true" className="h-4 w-4" />
+                Open full preview
+              </SecondaryButton>
+            </div>
+          </Surface>
+        </motion.div>
+
+        <motion.div variants={fadeUp} className="relative z-10 order-2 xl:order-3">
+          <Surface className="p-[var(--card-padding)]">
+            <h3 className="text-lg font-bold">Choose outputs</h3>
+            <div className="mt-3 space-y-1.5">
+              {outputRows.map((row) => (
+                <button
+                  type="button"
+                  key={row.label}
+                  className="flex w-full items-center gap-3 rounded-xl border border-[var(--border)] bg-[var(--surface)] px-3 py-2 text-left transition duration-300 hover:-translate-y-0.5 hover:border-[color-mix(in_srgb,var(--blue)_26%,var(--border))] hover:shadow-[var(--shadow-card)] focus:outline-none focus-visible:ring-2 focus-visible:ring-[var(--blue)]"
+                >
+                  <OutputIcon icon={row.icon} tone={row.tone} />
+                  <span className="min-w-0 flex-1 text-sm font-bold">{row.label}</span>
+                  <span
+                    className={cn(
+                      "inline-flex h-5 w-5 items-center justify-center rounded-md border",
+                      row.checked
+                        ? "border-[#1463FF] bg-[#1463FF] text-white"
+                        : "border-[#D8E0EF] bg-[var(--surface)]",
+                    )}
+                    aria-hidden="true"
+                  >
+                    {row.checked ? <Check className="h-3.5 w-3.5" /> : null}
+                  </span>
+                </button>
+              ))}
+            </div>
+            <PrimaryButton href={SIGNUP_HREF} className="mt-3 h-10 w-full">
+              Preview selected outputs
+            </PrimaryButton>
+            <p className="mt-3 flex items-center justify-center gap-2 text-xs font-medium text-[var(--muted)]">
+              <Lock aria-hidden="true" className="h-4 w-4" />
+              You’re in control. Choose only what you need.
+            </p>
+          </Surface>
+        </motion.div>
+      </motion.div>
+    </SectionFrame>
+  );
+}
+
+function AboutSection() {
+  const aboutOutputs = [
+    ["LinkedIn post", "Ready to review", "blue", "in"],
+    ["X thread", "Draft generated", "black", "X"],
+    ["Newsletter section", "Needs your voice", "purple", Mail],
+    ["Blog outline", "Ready to review", "green", FileText],
+    ["Show notes", "Draft generated", "amber", Mic],
+    ["Quote captions", "Ready to review", "blue", "“”"],
+    ["Short-form script", "Needs your voice", "pink", PlayCircle],
+  ] as const;
+
+  const benefits = [
+    ["Save hours every week", Clock],
+    ["Stop starting from blank pages", FileText],
+    ["Keep your message consistent", CheckCircle2],
+  ] as const;
+
+  return (
+    <SectionFrame id="about" compact band="warm" className="about-section">
+      <div className="section-grid items-center xl:grid-cols-[0.95fr_1.05fr]">
+        <motion.div
+          variants={stagger}
+          initial="show"
+          whileInView="show"
+          viewport={{ once: true, amount: 0.18 }}
+          className="max-w-[660px]"
+        >
+          <motion.div variants={fadeUp}>
+            <PillBadge icon={Sparkles}>
+              ABOUT AUDIOREPURPOSE
+            </PillBadge>
+          </motion.div>
+          <motion.h2
+            variants={fadeUp}
+            className="section-title mt-3 font-serif font-semibold"
+          >
+            You already made the content.
+            <br />
+            Now make it <GradientText>work everywhere.</GradientText>
+          </motion.h2>
+          <motion.p variants={fadeUp} className="section-copy mt-4 max-w-[620px] text-[var(--muted)]">
+            Your best ideas are already living inside calls, demos, webinars, podcasts, founder updates, and customer conversations. The problem is not creating more from scratch. The problem is turning what you already have into posts, newsletters, scripts, summaries, quotes, and campaign assets without losing your week to copy-paste work.
+          </motion.p>
+          <motion.p variants={fadeUp} className="section-copy mt-3 max-w-[580px] font-semibold text-[var(--text)]">
+            AudioRepurpose helps teams save time by turning one useful recording into a repeatable content system.
+          </motion.p>
+          <motion.div variants={fadeUp} className="mt-5 flex flex-col gap-3 sm:flex-row sm:items-center">
+            <PrimaryButton>Start free</PrimaryButton>
+            <span className="text-sm font-medium text-[var(--muted)]">
+              Upload once. Review before publishing. Use the drafts everywhere.
             </span>
           </motion.div>
+        </motion.div>
+
+        <motion.div
+          variants={slowStagger}
+          initial="show"
+          whileInView="show"
+          viewport={{ once: true, amount: 0.16 }}
+          className="grid gap-[var(--card-gap)]"
+        >
+          <motion.div variants={fadeUp}>
+            <Surface className="p-[var(--card-padding)]">
+              <div className="flex flex-col gap-4 sm:flex-row sm:items-start sm:justify-between">
+                <div>
+                  <p className="text-xs font-bold uppercase tracking-[0.16em] text-[var(--blue)]">
+                    One recording. A week of content.
+                  </p>
+                  <h3 className="mt-2 text-2xl font-bold">Customer call · 45:21</h3>
+                  <p className="mt-1 text-sm text-[var(--muted)]">Product feedback with ACME Inc.</p>
+                </div>
+                <IconTile Icon={AudioLines} tone="blue" className="h-12 w-12" />
+              </div>
+
+              <div className="mt-4 grid gap-2 sm:grid-cols-2">
+                {aboutOutputs.map(([label, status, tone, icon]) => (
+                  <div
+                    key={label}
+                    className="flex items-center gap-3 rounded-2xl border border-[var(--border)] bg-[var(--surface)] px-3 py-2"
+                  >
+                    <OutputIcon icon={icon} tone={tone} />
+                    <div className="min-w-0 flex-1">
+                      <p className="truncate text-sm font-bold">{label}</p>
+                      <p className="mt-0.5 text-[11px] font-semibold text-[var(--muted)]">{status}</p>
+                    </div>
+                  </div>
+                ))}
+              </div>
+
+              <div className="mt-4 rounded-2xl border border-[color-mix(in_srgb,var(--blue)_18%,var(--border))] bg-[color-mix(in_srgb,var(--blue)_7%,var(--surface))] px-4 py-3 text-sm font-semibold text-[var(--text)]">
+                Built from the source you already had.
+              </div>
+            </Surface>
+          </motion.div>
+
+          <motion.div variants={fadeUp} className="grid gap-[var(--card-gap)] md:grid-cols-3">
+            {benefits.map(([label, Icon]) => (
+              <div key={label} className="rounded-2xl border border-[var(--border)] bg-[var(--surface)] p-[calc(var(--card-padding)*0.6)] shadow-[0_12px_30px_rgba(15,23,42,0.045)]">
+                <Icon aria-hidden="true" className="h-4 w-4 text-[var(--blue)]" />
+                <p className="mt-2 text-sm font-bold">{label}</p>
+              </div>
+            ))}
+          </motion.div>
+        </motion.div>
+      </div>
+    </SectionFrame>
+  );
+}
+
+function SpeakerSection() {
+  const speakerFeatures = [
+    { title: "Detect speakers from context", icon: AudioLines, tone: "blue" },
+    { title: "Infer names and roles", icon: User, tone: "purple" },
+    { title: "Flag uncertain moments", icon: CheckCircle2, tone: "amber" },
+    { title: "Carry corrections everywhere", icon: Sparkles, tone: "green" },
+  ] as const;
+
+  const suggestedMatches = [
+    ["Mark", "Head of Sales", "72%", "M"],
+    ["Sarah", "Customer Success", "18%", "S"],
+    ["Unknown speaker", "", "10%", "?"],
+  ] as const;
+
+  return (
+    <SectionFrame id="speaker-intelligence" compact band="a" className="speaker-section">
+      <div className="speaker-grid section-grid items-center xl:grid-cols-[minmax(0,1.04fr)_minmax(380px,0.78fr)]">
+        <motion.div
+          variants={stagger}
+          initial="show"
+          whileInView="show"
+          viewport={{ once: true, amount: 0.18 }}
+          className="speaker-copy"
+        >
+          <motion.div variants={fadeUp}>
+            <PillBadge icon={AudioLines} className="normal-case tracking-normal">
+              Speaker Intelligence
+            </PillBadge>
+          </motion.div>
+          <motion.h2
+            variants={fadeUp}
+            className="section-title mt-4 max-w-3xl font-serif font-semibold text-[var(--text)]"
+          >
+            <span className="block">Speaker accuracy</span>
+            <span className="block">that protects every</span>
+            <span className="block"><GradientText>downstream draft.</GradientText></span>
+          </motion.h2>
+          <motion.p variants={fadeUp} className="section-copy mt-4 max-w-xl text-[var(--muted)]">
+            AudioRepurpose keeps every quote, summary, and post tied to the right speaker, so teams can publish with confidence instead of cleaning up attribution mistakes later.
+          </motion.p>
+          <motion.div variants={slowStagger} className="mt-6 grid gap-[var(--card-gap)] sm:grid-cols-2">
+            {speakerFeatures.map((feature) => (
+              <motion.div key={feature.title} variants={fadeUp}>
+                <div className="flex h-full items-center gap-3 rounded-2xl border border-[var(--border)] bg-[var(--surface)] p-[calc(var(--card-padding)*0.72)] shadow-[0_12px_32px_rgba(15,23,42,0.045)]">
+                  <IconTile Icon={feature.icon} tone={feature.tone} className="h-9 w-9 rounded-xl" />
+                  <p className="text-sm font-bold leading-5 text-[var(--text)]">{feature.title}</p>
+                </div>
+              </motion.div>
+            ))}
+          </motion.div>
+        </motion.div>
+
+        <motion.div
+          variants={fadeUp}
+          initial="show"
+          whileInView="show"
+          viewport={{ once: true, amount: 0.28 }}
+          className="speaker-card-wrap"
+        >
+          <Surface className="ml-auto w-full max-w-[460px] p-[var(--card-padding)]">
+            <div className="flex items-center justify-between gap-4">
+              <div className="flex items-center gap-3">
+                <IconTile Icon={AudioLines} className="h-10 w-10" />
+                <h3 className="text-lg font-bold text-[var(--text)]">Review speaker match</h3>
+              </div>
+              <span className="rounded-full bg-[color-mix(in_srgb,var(--warning)_16%,var(--surface))] px-3 py-1 text-[11px] font-bold text-[#B7791F]">
+                Low confidence
+              </span>
+            </div>
+
+            <div className="mt-4 rounded-2xl border border-[var(--border)] bg-[var(--surface-soft)] p-4">
+              <div className="flex flex-wrap items-center gap-x-4 gap-y-2">
+                <p className="text-xs font-bold uppercase tracking-[0.12em] text-[var(--muted)]">00:47</p>
+                <p className="text-sm font-bold text-[var(--text)]">Speaker unclear</p>
+              </div>
+              <p className="mt-3 text-sm leading-6 text-[var(--text)]">
+                “I think the biggest lift is getting this into the hands of more reps, faster.”
+              </p>
+            </div>
+
+            <div className="mt-4">
+              <p className="text-sm font-bold text-[var(--text)]">Suggested matches</p>
+              <div className="mt-3 grid gap-2">
+                {suggestedMatches.map(([name, role, percent, avatar], index) => (
+                  <button
+                    type="button"
+                    key={name}
+                    className={cn(
+                      "flex min-h-12 w-full items-center gap-3 rounded-xl border px-3 py-2.5 text-left transition hover:-translate-y-px focus:outline-none focus-visible:ring-2 focus-visible:ring-[var(--blue)]",
+                      index === 0
+                        ? "border-[color-mix(in_srgb,var(--blue)_42%,var(--border))] bg-[color-mix(in_srgb,var(--blue)_8%,var(--surface))]"
+                        : "border-[var(--border)] bg-[var(--surface)]",
+                    )}
+                  >
+                    <span
+                      aria-hidden="true"
+                      className={cn(
+                        "inline-flex h-8 w-8 shrink-0 items-center justify-center rounded-full text-xs font-bold text-white",
+                        index === 0 ? "bg-[var(--blue)]" : "bg-[color-mix(in_srgb,var(--muted)_55%,var(--surface))]",
+                      )}
+                    >
+                      {avatar}
+                    </span>
+                    <span className="min-w-0 flex-1">
+                      <span className="block text-sm font-bold text-[var(--text)]">{name}</span>
+                      {role ? <span className="block text-xs text-[var(--muted)]">{role}</span> : null}
+                    </span>
+                    <span className="text-sm font-bold text-[var(--muted)]">{percent}</span>
+                  </button>
+                ))}
+              </div>
+            </div>
+
+            <button
+              type="button"
+              className="mt-4 inline-flex h-11 w-full items-center justify-center rounded-xl bg-[linear-gradient(135deg,var(--blue),var(--purple))] text-sm font-bold text-white shadow-[0_14px_32px_rgba(20,99,255,0.22)] transition duration-200 hover:-translate-y-px hover:shadow-[0_18px_42px_rgba(20,99,255,0.28)] focus:outline-none focus-visible:ring-2 focus-visible:ring-[var(--blue)] focus-visible:ring-offset-2 focus-visible:ring-offset-[var(--bg)] active:translate-y-0"
+            >
+              Confirm speaker
+            </button>
+          </Surface>
+        </motion.div>
+      </div>
+    </SectionFrame>
+  );
+}
+
+function FeaturesSection() {
+  const featureOutputs = [
+    ["LinkedIn post", "in", "blue", true],
+    ["X thread", "X", "black", true],
+    ["Newsletter draft", Mail, "purple", true],
+    ["Blog outline", FileText, "green", true],
+    ["Show notes", Mic, "amber", true],
+    ["Short-form script", PlayCircle, "pink", false],
+    ["Quote captions", "“”", "blue", false],
+    ["Campaign assets", Sparkles, "purple", false],
+  ] as const;
+
+  const featureModules = [
+    {
+      title: "Speaker-labeled transcripts",
+      body: "Know who said what without cleaning the whole file.",
+      icon: AudioLines,
+      tone: "blue",
+    },
+    {
+      title: "Summaries",
+      body: "Turn long recordings into concise briefs.",
+      icon: FileText,
+      tone: "purple",
+    },
+    {
+      title: "Insights",
+      body: "Pull out themes, pain points, opportunities, and useful talking points.",
+      icon: Sparkles,
+      tone: "blue",
+    },
+    {
+      title: "Quotes",
+      body: "Find reusable lines for posts, decks, and campaigns.",
+      icon: CheckCircle2,
+      tone: "green",
+    },
+    {
+      title: "Tone controls",
+      body: "Generate drafts in Professional, Casual, Educational, Storytelling, Witty, Bold, or Thought Leader styles.",
+      icon: SlidersHorizontal,
+      tone: "purple",
+    },
+    {
+      title: "Review-ready drafts",
+      body: "Keep humans in control before anything gets published.",
+      icon: CircleCheck,
+      tone: "green",
+    },
+  ] as const;
+
+  return (
+    <SectionFrame id="features" compact band="a" className="features-section">
+      <motion.div
+        variants={stagger}
+        initial="show"
+        whileInView="show"
+        viewport={{ once: true, amount: 0.2 }}
+        className="text-center"
+      >
+        <motion.div variants={fadeUp}>
+          <PillBadge icon={Sparkles}>FEATURES</PillBadge>
+        </motion.div>
+        <motion.h2
+          variants={fadeUp}
+          className="section-title mx-auto mt-3 font-serif font-semibold"
+        >
+          One source becomes <GradientText>every asset</GradientText> your team needs.
+        </motion.h2>
+        <motion.p variants={fadeUp} className="section-copy mx-auto mt-2.5 max-w-2xl text-[var(--muted)]">
+          Choose the outputs you need, adjust the tone, and review every draft before it goes live.
+        </motion.p>
+      </motion.div>
+
+      <motion.div
+        variants={slowStagger}
+        initial="show"
+        whileInView="show"
+        viewport={{ once: true, amount: 0.14 }}
+        className="features-layout mt-8 grid items-start gap-[var(--section-gap)]"
+      >
+        <motion.div variants={fadeUp}>
+          <Surface className="p-[var(--card-padding)]">
+            <h3 className="text-lg font-bold">Choose your outputs</h3>
+            <div className="mt-3 grid gap-1.5 sm:grid-cols-2">
+              {featureOutputs.map(([label, icon, tone, checked]) => (
+                <button
+                  key={label}
+                  type="button"
+                  className="flex w-full items-center gap-2.5 rounded-xl border border-[var(--border)] bg-[var(--surface)] px-3 py-2 text-left transition duration-200 hover:-translate-y-0.5 hover:border-[color-mix(in_srgb,var(--blue)_26%,var(--border))] focus:outline-none focus-visible:ring-2 focus-visible:ring-[var(--blue)]"
+                >
+                  <OutputIcon icon={icon} tone={tone} />
+                  <span className="min-w-0 flex-1 text-sm font-bold">{label}</span>
+                  <span
+                    aria-hidden="true"
+                    className={cn(
+                      "inline-flex h-5 w-5 items-center justify-center rounded-md border",
+                      checked
+                        ? "border-[#1463FF] bg-[#1463FF] text-white"
+                        : "border-[#D8E0EF] bg-[var(--surface)]",
+                    )}
+                  >
+                    {checked ? <Check className="h-3.5 w-3.5" /> : null}
+                  </span>
+                </button>
+              ))}
+            </div>
+            <PrimaryButton href={SIGNUP_HREF} className="mt-3 h-10 w-full">
+              Preview selected drafts
+            </PrimaryButton>
+          </Surface>
+        </motion.div>
+
+        <motion.div variants={fadeUp} className="grid gap-[var(--card-gap)] sm:grid-cols-2 xl:grid-cols-3">
+          {featureModules.map(({ title, body, icon, tone }) => (
+            <Surface key={title} className="p-[var(--card-padding)]">
+              <IconTile Icon={icon} tone={tone} />
+              <h3 className="mt-3 font-bold">{title}</h3>
+              <p className="mt-1.5 text-[var(--muted)]">{body}</p>
+            </Surface>
+          ))}
+        </motion.div>
+      </motion.div>
+    </SectionFrame>
+  );
+}
+
+function HowItWorksSection() {
+  return (
+    <SectionFrame id="how-it-works" compact band="b" className="how-section">
+      <motion.div
+        variants={stagger}
+        initial="show"
+        whileInView="show"
+        viewport={{ once: true, amount: 0.22 }}
+        className="section-header"
+      >
+        <motion.div variants={fadeUp}>
+          <PillBadge>HOW IT WORKS</PillBadge>
+        </motion.div>
+        <motion.h2
+          variants={fadeUp}
+          className="section-title mx-auto mt-3 font-serif font-semibold"
+        >
+          From source to finished
+          <br />
+          content in <GradientText>3 steps.</GradientText>
+        </motion.h2>
+        <motion.p variants={fadeUp} className="section-subtitle">
+          AudioRepurpose turns any conversation into content your team can use everywhere.
+        </motion.p>
+      </motion.div>
+
+      <motion.div
+        variants={slowStagger}
+        initial="show"
+        whileInView="show"
+        viewport={{ once: true, amount: 0.15 }}
+        className="workflow-showcase"
+      >
+        <motion.div variants={fadeUp} className="workflow-step">
+          <ProcessAddSource />
+        </motion.div>
+        <ProcessArrow />
+        <motion.div variants={fadeUp} className="workflow-step">
+          <ProcessRunSystem />
+        </motion.div>
+        <ProcessArrow />
+        <motion.div variants={fadeUp} className="workflow-step">
+          <ProcessPublishOutputs />
+        </motion.div>
+      </motion.div>
+      <motion.div
+        variants={fadeUp}
+        initial="show"
+        whileInView="show"
+        viewport={{ once: true, amount: 0.3 }}
+        className="workflow-proof-line"
+      >
+        <Sparkles aria-hidden="true" className="h-5 w-5 text-[var(--blue)]" />
+        One source. Endless content. Always on brand.
+      </motion.div>
+    </SectionFrame>
+  );
+}
+
+function ProcessArrow() {
+  return (
+    <div className="workflow-arrow" aria-hidden="true">
+      <ArrowRight />
+    </div>
+  );
+}
+
+function ProcessAddSource() {
+  const sourceInputs = [
+    { label: "Customer call", mark: Phone, tone: "blue" },
+    { label: "Webinar", mark: Video, tone: "blue" },
+    { label: "Demo", mark: Monitor, tone: "blue" },
+    { label: "Founder update", mark: User, tone: "purple" },
+    { label: "YouTube", mark: PlayCircle, tone: "red" },
+    { label: "Teams", mark: Building2, tone: "purple" },
+    { label: "Granola AI", mark: "G", tone: "green" },
+    { label: "Slack", mark: Zap, tone: "amber" },
+  ] as const;
+
+  return (
+    <div className="workflow-card workflow-card-source">
+      <div className="workflow-card-header">
+        <NumberBadge>1</NumberBadge>
+        <h3 className="workflow-card-title">Add the source</h3>
+      </div>
+      <p className="workflow-card-copy">
+        Upload a call, meeting, webinar, demo, or podcast — or capture from integrations.
+      </p>
+
+      <div className="source-picker">
+        <p className="source-label">Upload directly or capture from integrations</p>
+        <div className="source-grid">
+          {sourceInputs.map(({ label, mark, tone }) => {
+            const Mark = mark;
+            const toneClass = {
+              blue: "source-chip-icon-blue",
+              purple: "source-chip-icon-purple",
+              red: "source-chip-icon-red",
+              green: "source-chip-icon-green",
+              amber: "source-chip-icon-amber",
+            }[tone];
+
+            return (
+              <div key={label} className="source-chip">
+                <span className={cn("source-chip-icon", toneClass)}>
+                  {typeof Mark === "string" ? (
+                    <span className="font-bold">{Mark}</span>
+                  ) : (
+                    <Mark aria-hidden="true" className="h-4 w-4" />
+                  )}
+                </span>
+                <span className="source-chip-label">{label}</span>
+              </div>
+            );
+          })}
+        </div>
+      </div>
+
+      <div className="upload-dropzone">
+        <CloudUpload aria-hidden="true" className="h-5 w-5 text-[var(--blue)]" />
+        <div>
+          <p>Or drag &amp; drop a file here</p>
+          <span>MP4, MOV, MP3, WAV, M4A</span>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+function WorkflowTranscriptEntry({
+  time,
+  speaker,
+  children,
+}: {
+  time: string;
+  speaker: string;
+  children: React.ReactNode;
+}) {
+  return (
+    <div className="transcript-entry">
+      <p>
+        <span className="transcript-time">{time}</span>
+        <span className="transcript-speaker">{speaker}</span>
+      </p>
+      <p className="transcript-copy">{children}</p>
+    </div>
+  );
+}
+
+function ProcessRunSystem() {
+  const insights = [
+    "One source of truth",
+    "Automated repurposing",
+    "Faster publishing",
+    "Scalable content engine",
+  ] as const;
+
+  const topics = [
+    "Product updates",
+    "Workflow automation",
+    "Team efficiency",
+    "Announcements",
+  ] as const;
+
+  return (
+    <div className="workflow-card workflow-card-system workflow-card--center">
+      <div className="workflow-card-header">
+        <NumberBadge>2</NumberBadge>
+        <h3 className="workflow-card-title">Run the content system</h3>
+      </div>
+
+      <div className="content-system-panel">
+        <div className="product-panel transcript-panel">
+          <div className="product-panel-header">
+            <p>Transcript</p>
+            <span>AI</span>
+          </div>
+          <WorkflowTranscriptEntry time="00:12" speaker="Speaker 1">
+            Thanks for joining today. Let&apos;s dive into the product update.
+          </WorkflowTranscriptEntry>
+          <WorkflowTranscriptEntry time="00:28" speaker="Speaker 2">
+            The new workflow saves time and keeps everything in one place.
+          </WorkflowTranscriptEntry>
+          <WorkflowTranscriptEntry time="00:45" speaker="Speaker 1">
+            Great. Let&apos;s walk through how teams can use this.
+          </WorkflowTranscriptEntry>
+
+          <div className="workflow-waveform-row">
+            <span className="workflow-play-button">
+              <PlayCircle aria-hidden="true" className="h-4 w-4" />
+            </span>
+            <Waveform className="workflow-waveform" />
+            <span className="workflow-time">12:05</span>
+          </div>
+        </div>
+
+        <div className="product-panel summary-panel">
+          <div className="product-panel-header">
+            <p>Summary</p>
+          </div>
+          <p className="summary-copy">
+            Productivity updates, workflow automation, and key announcements to help teams move faster.
+          </p>
+          <div className="summary-divider" />
+          <p className="insights-title">Key insights</p>
+          <div className="insight-list">
+            {insights.map((insight) => (
+              <p key={insight}>
+                <CheckCircle2 aria-hidden="true" className="h-4 w-4 text-[var(--blue)]" />
+                {insight}
+              </p>
+            ))}
+          </div>
+        </div>
+      </div>
+
+      <div className="detected-topics">
+        <p>
+          <Sparkles aria-hidden="true" className="h-4 w-4 text-[#7C3AED]" />
+          Detected topics
+        </p>
+        <div>
+          {topics.map((topic) => (
+            <span key={topic}>{topic}</span>
+          ))}
+        </div>
+      </div>
+    </div>
+  );
+}
+
+function WorkflowOutputTile({
+  label,
+  icon,
+  tone,
+  tileColor,
+}: {
+  label: string;
+  icon: string | LucideIcon;
+  tone: "blue" | "black" | "purple" | "green" | "amber" | "pink";
+  tileColor: string;
+}) {
+  return (
+    <div
+      className="output-tile"
+      style={{ "--tile-color": tileColor } as CSSProperties}
+    >
+      <OutputIcon icon={icon} tone={tone} />
+      <p className="output-tile-label">{label}</p>
+      <span className="output-status">Ready</span>
+    </div>
+  );
+}
+
+function ProcessPublishOutputs() {
+  const outputs = [
+    { label: "LinkedIn post", icon: "in", tone: "blue", tileColor: "#0A66C2" },
+    { label: "X thread", icon: "X", tone: "black", tileColor: "#050505" },
+    { label: "Newsletter draft", icon: Mail, tone: "purple", tileColor: "#7C3AED" },
+    { label: "Show notes", icon: Mic, tone: "purple", tileColor: "#4F63FF" },
+    { label: "Blog draft", icon: FileText, tone: "green", tileColor: "#22B573" },
+    { label: "Quote captions", icon: Sparkles, tone: "amber", tileColor: "#F59E0B" },
+  ] as const;
+
+  return (
+    <div className="workflow-card workflow-card-outputs workflow-card--outputs">
+      <div className="workflow-card-header">
+        <NumberBadge>3</NumberBadge>
+        <h3 className="workflow-card-title">Publish the outputs</h3>
+      </div>
+      <p className="workflow-card-copy">
+        Multiple formats. Every channel. Ready to go.
+      </p>
+      <div className="output-grid">
+        {outputs.map((output) => (
+          <WorkflowOutputTile
+            key={output.label}
+            label={output.label}
+            icon={output.icon}
+            tone={output.tone}
+            tileColor={output.tileColor}
+          />
         ))}
       </div>
     </div>
   );
 }
 
-function PricingSubtleStars() {
-  const reduceMotion = useReducedMotion();
-
+function PricingSection() {
   return (
-    <div className="absolute inset-0 overflow-hidden pointer-events-none">
-      <div className="absolute inset-0 bg-[linear-gradient(to_right,rgba(59,130,246,0.06)_1px,transparent_1px),linear-gradient(to_bottom,rgba(59,130,246,0.06)_1px,transparent_1px)] bg-[size:28px_28px,28px_28px] dark:bg-[linear-gradient(to_right,rgba(148,163,184,0.08)_1px,transparent_1px),linear-gradient(to_bottom,rgba(148,163,184,0.08)_1px,transparent_1px)]" />
-      <div className="absolute inset-0 bg-[linear-gradient(to_right,rgba(15,23,42,0.06)_1px,transparent_1px),linear-gradient(to_bottom,rgba(15,23,42,0.06)_1px,transparent_1px)] bg-[size:140px_140px,140px_140px] dark:bg-[linear-gradient(to_right,rgba(148,163,184,0.12)_1px,transparent_1px),linear-gradient(to_bottom,rgba(148,163,184,0.12)_1px,transparent_1px)]" />
-      <div className="absolute inset-0 bg-[radial-gradient(circle_at_top,rgba(59,130,246,0.14),transparent_38%),radial-gradient(circle_at_bottom,rgba(14,165,233,0.08),transparent_32%)] dark:bg-[radial-gradient(circle_at_top,rgba(59,130,246,0.16),transparent_38%),radial-gradient(circle_at_bottom,rgba(15,23,42,0.22),transparent_32%)]" />
+    <SectionFrame id="pricing" compact band="b" grid className="pricing-section">
+      <motion.div
+        variants={stagger}
+        initial="show"
+        whileInView="show"
+        viewport={{ once: true, amount: 0.22 }}
+        className="text-center"
+      >
+        <motion.div variants={fadeUp}>
+          <PillBadge className="normal-case tracking-normal">Simple, transparent pricing</PillBadge>
+        </motion.div>
+        <motion.h2
+          variants={fadeUp}
+          className="section-title mx-auto mt-3 font-serif font-semibold"
+        >
+          Plans for <GradientText>recurring content operations</GradientText>
+        </motion.h2>
+        <motion.p variants={fadeUp} className="section-copy mx-auto mt-2 text-[var(--muted)]">
+          Choose the plan that fits your team’s content engine.
+        </motion.p>
+      </motion.div>
 
-      {PRICING_DARK_STARS.map((star) => (
-        <motion.div
-          key={`${star.x}-${star.y}`}
-          className="absolute rounded-full bg-sky-500/85 shadow-[0_0_0_1px_rgba(37,99,235,0.28),0_0_20px_rgba(59,130,246,0.16)] dark:bg-slate-200/85 dark:shadow-[0_0_0_1px_rgba(148,163,184,0.16),0_0_22px_rgba(96,165,250,0.12)]"
-          animate={
-            reduceMotion
-              ? { opacity: star.opacity }
-              : {
-                opacity: [
-                  star.opacity * 0.5,
-                  star.opacity,
-                  star.opacity * 0.82,
-                ],
-              }
-          }
-          transition={{
-            duration: star.duration,
-            delay: star.delay,
-            repeat: Infinity,
-            ease: "easeInOut",
-          }}
-          style={{
-            left: star.x,
-            top: star.y,
-            width: star.size,
-            height: star.size,
-          }}
-        />
-      ))}
-    </div>
+      <motion.div
+        variants={slowStagger}
+        initial="show"
+        whileInView="show"
+        viewport={{ once: true, amount: 0.15 }}
+        className="pricing-grid mx-auto mt-8 grid gap-[var(--card-gap)] md:grid-cols-2 xl:grid-cols-4"
+      >
+        {pricingPlans.map((plan) => (
+          <motion.div
+            key={plan.name}
+            variants={fadeUp}
+            className={cn("relative", plan.featured && "order-first xl:order-none")}
+          >
+            {plan.featured ? (
+              <div className="absolute left-1/2 top-0 z-10 -translate-x-1/2 -translate-y-1/2 rounded-full bg-[#07112F] px-5 py-2 text-xs font-bold text-white shadow-[0_14px_30px_rgba(7,17,47,0.20)]">
+                <span className="inline-flex items-center gap-2">
+                  <Sparkles aria-hidden="true" className="h-3.5 w-3.5" />
+                  {"badge" in plan ? plan.badge : "Recommended"}
+                </span>
+              </div>
+            ) : null}
+            <Surface
+              className={cn(
+                "flex h-full flex-col p-[var(--card-padding)]",
+                plan.featured && "border-[#AEBBFF] shadow-[0_24px_80px_rgba(124,58,237,0.13)] ring-1 ring-[#CBD8FF]",
+              )}
+            >
+              <IconTile Icon={plan.icon} tone={plan.featured ? "purple" : "blue"} className="h-10 w-10" />
+              <h3 className="mt-4 text-2xl font-bold">{plan.name}</h3>
+              <p className="mt-2 min-h-[44px] whitespace-pre-line text-sm leading-6 text-[var(--muted)]">
+                {plan.description}
+              </p>
+              <div className="my-4 h-px bg-[#E7EDF7]" />
+              <div>
+                <span className="text-3xl font-extrabold">{plan.price}</span>
+                {"suffix" in plan && typeof plan.suffix === "string" ? <span className="ml-1 text-lg font-medium text-[var(--muted)]">{plan.suffix}</span> : null}
+                {"subtitle" in plan && typeof plan.subtitle === "string" ? <p className="mt-1 text-sm text-[var(--muted)]">{plan.subtitle}</p> : null}
+              </div>
+              <div className="mt-4 grid gap-2.5">
+                {plan.features.map((feature) => (
+                  <p key={feature} className="flex items-start gap-3 text-sm font-medium text-[var(--muted)]">
+                    <CheckCircle2 aria-hidden="true" className="mt-0.5 h-4 w-4 shrink-0 text-[var(--blue)]" />
+                    {feature}
+                  </p>
+                ))}
+              </div>
+              <div className="mt-auto pt-4">
+                {plan.featured ? (
+                  <PrimaryButton href={plan.href} className="h-11 w-full">
+                    {plan.cta}
+                  </PrimaryButton>
+                ) : (
+                  <SecondaryButton href={plan.href} className="h-11 w-full">
+                    {plan.cta}
+                    <ArrowRight aria-hidden="true" className="h-4 w-4" />
+                  </SecondaryButton>
+                )}
+              </div>
+            </Surface>
+          </motion.div>
+        ))}
+      </motion.div>
+
+      <motion.div
+        variants={fadeUp}
+        initial="show"
+        whileInView="show"
+        viewport={{ once: true, amount: 0.3 }}
+        className="mx-auto mt-4 flex max-w-4xl flex-col items-center justify-center gap-3 rounded-2xl border border-[var(--border)] bg-[color-mix(in_srgb,var(--surface)_84%,transparent)] px-[var(--card-padding)] py-3 text-center text-sm font-medium text-[var(--muted)] shadow-[0_14px_38px_rgba(15,23,42,0.05)] sm:flex-row sm:gap-4"
+      >
+        <span className="inline-flex h-8 w-8 shrink-0 items-center justify-center rounded-full bg-[#F0F5FF] text-[var(--blue)]">
+          <Zap aria-hidden="true" className="h-4 w-4" />
+        </span>
+        Credits are monthly processing capacity, not cash value. Paid plans can add 12-month top-ups when production spikes.
+      </motion.div>
+
+    </SectionFrame>
   );
 }
 
-function SocialProofStrip({ className = "" }: { className?: string }) {
-  const reduceMotion = useReducedMotion();
-  const { resolvedTheme } = useTheme();
-  const [mounted, setMounted] = useState(false);
-  const [laneWidth, setLaneWidth] = useState(0);
-  const laneRef = useRef<HTMLDivElement | null>(null);
-  const isLight = mounted && resolvedTheme === "light";
+function FinalConversionSection({ theme }: { theme: ThemeName }) {
+  return (
+    <SectionFrame id="final-cta" compact band="b" grid className="final-cta-section">
+      <div className="grid gap-[var(--card-gap)]">
+        <motion.div
+          variants={stagger}
+          initial="show"
+          whileInView="show"
+          viewport={{ once: true, amount: 0.16 }}
+        >
+          <motion.div variants={fadeUp}>
+            <Surface className="grid overflow-hidden p-0 xl:grid-cols-[0.48fr_0.52fr]">
+              <div className="p-[var(--card-padding)]">
+                <h2 className="section-title font-serif font-semibold">
+                  Turn company
+                  <br />
+                  knowledge into content
+                  <br />
+                  <GradientText>that compounds.</GradientText>
+                </h2>
+                <p className="section-copy mt-4 max-w-[480px] text-[var(--muted)]">
+                  Upload a conversation and AudioRepurpose turns it into speaker-attributed transcripts and multi-channel drafts—so you can build a repeatable content engine.
+                </p>
+                <div className="mt-5 flex flex-col gap-3 sm:flex-row">
+                  <PrimaryButton>Start free</PrimaryButton>
+                  <SecondaryButton href={CONTACT_HREF}>Book a demo</SecondaryButton>
+                </div>
+                <div className="mt-3 flex flex-wrap gap-x-7 gap-y-2.5">
+                  <CheckLine>No credit card required</CheckLine>
+                  <CheckLine>Cancel anytime</CheckLine>
+                </div>
+              </div>
+              <div className="relative min-h-[260px] overflow-hidden xl:min-h-[360px]">
+                <Image
+                  src="/launch/final-team-photo.jpg"
+                  alt="A professional team reviewing content on a laptop in a bright office."
+                  fill
+                  loading="eager"
+                  sizes="(min-width: 1024px) 55vw, 100vw"
+                  className="object-cover object-[center_42%]"
+                />
+                <div
+                  aria-hidden="true"
+                  className="absolute inset-y-0 left-0 hidden w-1/3 bg-gradient-to-r from-[var(--surface)] to-transparent xl:block"
+                />
+                <div
+                  aria-hidden="true"
+                  className="absolute inset-x-0 top-0 h-24 bg-gradient-to-b from-white/35 to-transparent dark:from-black/25"
+                />
+              </div>
+            </Surface>
+          </motion.div>
 
-  useEffect(() => {
-    setMounted(true);
-  }, []);
+          <motion.div variants={fadeUp} className="mt-4">
+            <Surface className="grid gap-0 overflow-hidden p-0 md:grid-cols-3">
+              <FeatureStripItem
+                Icon={AudioLines}
+                title="Speaker-attributed transcripts"
+                body="Clear, accurate, and easy to scan."
+              />
+              <FeatureStripItem
+                Icon={Sparkles}
+                title="Multi-channel drafts"
+                body="LinkedIn, X, newsletters, and more."
+                tone="purple"
+              />
+              <FeatureStripItem
+                Icon={CircleCheck}
+                title="Review before publishing"
+                body="You stay in control of what goes live."
+                tone="purple"
+                last
+              />
+            </Surface>
+          </motion.div>
+        </motion.div>
 
-  useEffect(() => {
-    if (!laneRef.current) return;
-    const laneEl = laneRef.current;
-    const syncWidth = () => setLaneWidth(laneEl.offsetWidth);
-    syncWidth();
-    const observer = new ResizeObserver(syncWidth);
-    observer.observe(laneEl);
-    return () => observer.disconnect();
-  }, []);
+        <motion.footer
+          variants={fadeUp}
+          initial="show"
+          whileInView="show"
+          viewport={{ once: true, amount: 0.16 }}
+        >
+          <Surface className="overflow-hidden p-0">
+            <div className="grid gap-[var(--card-gap)] p-[var(--card-padding)] xl:grid-cols-[1.35fr_0.8fr_0.8fr_0.8fr_0.85fr]">
+              <div className="xl:border-r xl:border-[var(--border)] xl:pr-10">
+                <BrandLockup theme={theme} />
+                <p className="mt-3 max-w-xs text-sm leading-6 text-[var(--muted)]">
+                  AI-powered content repurposing for teams
+                  <br />
+                  that turn conversations into impact.
+                </p>
+                <Link
+                  href="https://www.linkedin.com"
+                  className="mt-3 inline-flex h-9 w-9 items-center justify-center rounded-full border border-[var(--border)] bg-[var(--surface)] text-sm font-bold text-[var(--text)] transition hover:-translate-y-0.5 hover:text-[var(--blue)]"
+                  aria-label="LinkedIn"
+                >
+                  in
+                </Link>
+              </div>
+              <FooterColumn
+                title="Product"
+                links={[
+                  ["Home", "#home"],
+                  ["About Us", "#about"],
+                  ["How it works", "#how-it-works"],
+                  ["Features", "#features"],
+                  ["Pricing", "#pricing"],
+                ]}
+              />
+              <FooterColumn
+                title="Resources"
+                links={[
+                  ["Blog", CONTACT_HREF],
+                  ["Webinars", CONTACT_HREF],
+                  ["Help center", CONTACT_HREF],
+                ]}
+              />
+              <FooterColumn
+                title="Company"
+                links={[
+                  ["About us", "#about"],
+                  ["Privacy policy", "/privacy"],
+                  ["Terms of service", "/terms"],
+                ]}
+              />
+              <div className="xl:border-l xl:border-[var(--border)] xl:pl-10">
+                <h3 className="text-sm font-bold">Connect</h3>
+                <div className="mt-4 flex gap-3">
+                  <SocialIcon href="https://www.linkedin.com" label="LinkedIn" className="bg-[#0A66C2] text-white">
+                    in
+                  </SocialIcon>
+                  <SocialIcon href="https://x.com" label="X" className="bg-black text-white">
+                    X
+                  </SocialIcon>
+                  <SocialIcon href="mailto:support@audiorepurpose.com" label="Email" className="bg-[#7C3AED] text-white">
+                    <Mail aria-hidden="true" className="h-4 w-4" />
+                  </SocialIcon>
+                </div>
+              </div>
+            </div>
+            <div className="border-t border-[var(--border)] px-[var(--card-padding)] py-3 text-sm text-[var(--muted)]">
+              © 2025 AudioRepurpose. All rights reserved.
+            </div>
+          </Surface>
+        </motion.footer>
+      </div>
+    </SectionFrame>
+  );
+}
 
+function FeatureStripItem({
+  Icon,
+  title,
+  body,
+  tone = "blue",
+  last,
+}: {
+  Icon: LucideIcon;
+  title: string;
+  body: string;
+  tone?: "blue" | "purple";
+  last?: boolean;
+}) {
   return (
     <div
-      className={`relative overflow-hidden py-5 ${isLight ? "border-y border-slate-200/80 bg-[linear-gradient(180deg,#f8fbff_0%,#edf4ff_45%,#f8fafc_100%)]" : "border-y border-white/10 bg-slate-950"} ${className}`}
-    >
-      <div
-        className={`pointer-events-none absolute inset-0 ${isLight
-            ? "bg-[radial-gradient(circle_at_16%_18%,rgba(148,163,184,0.10),transparent_24%),radial-gradient(circle_at_52%_0%,rgba(59,130,246,0.10),transparent_34%),radial-gradient(circle_at_86%_28%,rgba(125,211,252,0.08),transparent_24%),linear-gradient(180deg,#f8fbff_0%,#edf4ff_42%,#f8fafc_100%)]"
-            : "bg-[radial-gradient(circle_at_16%_18%,rgba(148,163,184,0.14),transparent_24%),radial-gradient(circle_at_52%_0%,rgba(59,130,246,0.14),transparent_34%),radial-gradient(circle_at_86%_28%,rgba(125,211,252,0.1),transparent_24%),linear-gradient(180deg,#020617_0%,#040b18_42%,#020617_100%)]"
-          }`}
-      />
-      <div
-        className={`pointer-events-none absolute inset-0 bg-[linear-gradient(to_right,rgba(255,255,255,0.04)_1px,transparent_1px),linear-gradient(to_bottom,rgba(255,255,255,0.04)_1px,transparent_1px)] bg-[size:28px_28px,28px_28px] ${isLight ? "opacity-30" : "opacity-40"}`}
-      />
-      <div
-        className={`pointer-events-none absolute inset-0 ${isLight ? "bg-[radial-gradient(circle_at_center,rgba(255,255,255,0.55),transparent_62%)]" : "bg-[radial-gradient(circle_at_center,rgba(255,255,255,0.05),transparent_62%)]"}`}
-      />
-      <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 mb-3 relative z-10">
-        <p
-          className={`text-center text-[11px] font-semibold uppercase tracking-[0.18em] ${isLight ? "text-blue-700/75" : "text-blue-100/70"}`}
-        >
-          Built For Real-World Audio
-        </p>
-        <p
-          className={`mt-2 text-center text-xs ${isLight ? "text-slate-600" : "text-blue-100/70"}`}
-        >
-          Choose what runs, review before publishing, and pay only for what you
-          process.
-        </p>
-      </div>
-      <div
-        className={`pointer-events-none absolute inset-y-0 left-0 z-20 w-24 ${isLight ? "bg-gradient-to-r from-[#f8fbff] to-transparent" : "bg-gradient-to-r from-slate-950 to-transparent"}`}
-      />
-      <div
-        className={`pointer-events-none absolute inset-y-0 right-0 z-20 w-24 ${isLight ? "bg-gradient-to-l from-[#f8fafc] to-transparent" : "bg-gradient-to-l from-slate-950 to-transparent"}`}
-      />
-      {reduceMotion ? (
-        <div className="max-w-6xl mx-auto px-4 sm:px-6 lg:px-8 flex flex-wrap items-center justify-center gap-2 relative z-10">
-          {SOCIAL_TAGS.map((tag) => (
-            <span
-              key={tag}
-              className={`rounded-full px-3.5 py-1.5 text-xs font-medium backdrop-blur-sm ${isLight ? "border border-slate-200/90 bg-white/88 text-slate-700 shadow-[0_10px_30px_-18px_rgba(37,99,235,0.18)]" : "border border-white/10 bg-white/8 text-blue-50/90 shadow-[0_10px_30px_-18px_rgba(59,130,246,0.55)]"}`}
-            >
-              {tag}
-            </span>
-          ))}
-        </div>
-      ) : (
-        <motion.div
-          className="relative z-10 flex w-max"
-          initial={{ x: 0 }}
-          animate={laneWidth > 0 ? { x: [0, -laneWidth] } : undefined}
-          transition={
-            laneWidth > 0
-              ? {
-                duration: Math.max(16, laneWidth / 42),
-                ease: "linear",
-                repeat: Infinity,
-                repeatType: "loop",
-              }
-              : undefined
-          }
-        >
-          <div ref={laneRef} className="flex items-center gap-3 pr-3">
-            {SOCIAL_TAGS.map((tag) => (
-              <span
-                key={`a-${tag}`}
-                className={`whitespace-nowrap rounded-full px-3.5 py-1.5 text-xs font-medium backdrop-blur-sm ${isLight ? "border border-slate-200/90 bg-white/88 text-slate-700 shadow-[0_10px_30px_-18px_rgba(37,99,235,0.18)]" : "border border-white/10 bg-white/8 text-blue-50/90 shadow-[0_10px_30px_-18px_rgba(59,130,246,0.55)]"}`}
-              >
-                {tag}
-              </span>
-            ))}
-          </div>
-          {[...Array(8)].map((_, i) => (
-            <div
-              key={`dup-${i}`}
-              aria-hidden
-              className="flex items-center gap-3 pr-3"
-            >
-              {SOCIAL_TAGS.map((tag) => (
-                <span
-                  key={`b-${i}-${tag}`}
-                  className={`whitespace-nowrap rounded-full px-3.5 py-1.5 text-xs font-medium backdrop-blur-sm ${isLight ? "border border-slate-200/90 bg-white/88 text-slate-700 shadow-[0_10px_30px_-18px_rgba(37,99,235,0.18)]" : "border border-white/10 bg-white/8 text-blue-50/90 shadow-[0_10px_30px_-18px_rgba(59,130,246,0.55)]"}`}
-                >
-                  {tag}
-                </span>
-              ))}
-            </div>
-          ))}
-        </motion.div>
+      className={cn(
+        "flex gap-3 p-[var(--card-padding)]",
+        !last && "border-b border-[var(--border)] md:border-b-0 md:border-r",
       )}
-    </div>
-  );
-}
-
-function LaunchThemeToggle() {
-  const { resolvedTheme, setTheme } = useTheme();
-  const [mounted, setMounted] = useState(false);
-
-  useEffect(() => setMounted(true), []);
-
-  if (!mounted) {
-    return <div className="h-10 w-10 rounded-lg" />;
-  }
-
-  const isDark = resolvedTheme === "dark";
-
-  return (
-    <button
-      type="button"
-      onClick={() => setTheme(isDark ? "light" : "dark")}
-      className="group inline-flex h-10 w-10 items-center justify-center rounded-lg text-slate-600 transition-colors hover:text-slate-900 dark:text-slate-300 dark:hover:text-white"
-      title={isDark ? "Switch to light mode" : "Switch to dark mode"}
-      aria-label={isDark ? "Switch to light mode" : "Switch to dark mode"}
     >
-      {isDark ? (
-        <Sun className="h-4 w-4 fill-transparent transition-[fill,color] duration-200 group-hover:fill-current" />
-      ) : (
-        <Moon className="h-4 w-4 fill-transparent transition-[fill,color] duration-200 group-hover:fill-current" />
-      )}
-    </button>
-  );
-}
-
-function HeroWordPill({ phrase }: { phrase: string }) {
-  const reduceMotion = useReducedMotion();
-
-  return (
-    <span className="relative mx-auto block w-full max-w-[17ch] text-center font-bold tracking-[-0.02em] sm:max-w-[24ch]">
-      <AnimatePresence mode="wait">
-        <motion.span
-          key={phrase}
-          initial={
-            reduceMotion
-              ? { opacity: 1 }
-              : { opacity: 0, y: 16, filter: "blur(6px)", scale: 0.985 }
-          }
-          animate={
-            reduceMotion
-              ? { opacity: 1 }
-              : { opacity: 1, y: 0, filter: "blur(0px)", scale: 1 }
-          }
-          exit={
-            reduceMotion
-              ? { opacity: 1 }
-              : { opacity: 0, y: -16, filter: "blur(6px)", scale: 1.01 }
-          }
-          transition={{ duration: 0.42, ease: [0.22, 1, 0.36, 1] }}
-          className="inline-block whitespace-normal leading-tight bg-gradient-to-r from-blue-600 to-indigo-600 bg-clip-text text-transparent dark:from-cyan-400 dark:to-blue-500"
-        >
-          Get {phrase}
-        </motion.span>
-      </AnimatePresence>
-    </span>
-  );
-}
-
-function HowItWorksGraphic({ step }: { step: HowItWorksStep }) {
-  const baseSurface =
-    "rounded-[1.9rem] border border-white/55 bg-white/75 shadow-[0_35px_90px_-50px_rgba(15,23,42,0.55)] backdrop-blur dark:border-white/10 dark:bg-slate-950/60";
-
-  if (step.id === "upload") {
-    return (
-      <div className="relative min-h-[20rem] overflow-hidden rounded-[2rem] border border-slate-200/70 bg-[linear-gradient(135deg,#eff6ff_0%,#eef2ff_52%,#f8fafc_100%)] p-3 shadow-[0_40px_120px_-60px_rgba(37,99,235,0.45)] sm:min-h-[24rem] sm:p-5 md:h-[26rem] dark:border-white/10 dark:bg-[linear-gradient(140deg,#020617_0%,#0f172a_45%,#172554_100%)]">
-        <div className="absolute -left-8 top-12 h-36 w-36 rounded-full bg-blue-400/20 blur-3xl dark:bg-blue-500/20" />
-        <div className="absolute bottom-6 right-2 h-44 w-44 rounded-full bg-indigo-400/20 blur-3xl dark:bg-indigo-500/20" />
-        <div className={`${baseSurface} relative flex h-full flex-col gap-4 p-3 sm:p-5`}>
-          <div className="flex items-center gap-2">
-            <div className="h-3 w-3 rounded-full bg-rose-400/70" />
-            <div className="h-3 w-3 rounded-full bg-amber-400/70" />
-            <div className="h-3 w-3 rounded-full bg-emerald-400/70" />
-            <div className="ml-2 flex h-9 min-w-0 flex-1 items-center rounded-xl border border-slate-200/80 bg-white/80 px-3 text-[11px] font-medium text-slate-500 sm:ml-3 sm:px-4 sm:text-xs dark:border-white/10 dark:bg-white/5 dark:text-slate-300">
-              audiorepurpose.com/dashboard/upload
-            </div>
-          </div>
-          <div className="grid flex-1 gap-4 md:grid-cols-[1.25fr_0.68fr]">
-            <div className="rounded-[1.5rem] border border-dashed border-blue-300/70 bg-white/82 p-6 dark:border-blue-300/20 dark:bg-slate-900/75">
-              <div className="mb-4 flex items-center justify-between">
-                <span className="rounded-full bg-blue-50 px-3 py-1 text-[11px] font-semibold uppercase tracking-[0.14em] text-blue-700 dark:bg-blue-500/12 dark:text-blue-300">
-                  Local upload
-                </span>
-                <span className="rounded-full bg-slate-100 px-3 py-1 text-[11px] font-medium text-slate-500 dark:bg-white/10 dark:text-slate-300">
-                  MP3, WAV, M4A
-                </span>
-              </div>
-              <div className="mx-auto mb-6 flex h-16 w-16 items-center justify-center rounded-2xl bg-blue-100 text-blue-600 dark:bg-blue-500/15 dark:text-blue-300">
-                <Upload className="h-7 w-7" />
-              </div>
-              <div className="space-y-3 text-center">
-                <div className="text-base font-semibold text-slate-900 dark:text-white">
-                  Drop audio or video here
-                </div>
-                <div className="mx-auto h-2.5 w-2/3 rounded-full bg-slate-200 dark:bg-white/10" />
-                <div className="mx-auto h-2.5 w-1/2 rounded-full bg-slate-200/80 dark:bg-white/10" />
-                <div className="mx-auto mt-5 flex h-10 w-44 items-center justify-center rounded-2xl bg-blue-600/90 text-sm font-semibold text-white shadow-lg shadow-blue-600/30">
-                  Start processing
-                </div>
-              </div>
-              <div className="mt-5 rounded-[1rem] border border-slate-200/80 bg-slate-50/90 p-3 dark:border-white/10 dark:bg-slate-900/70">
-                <div className="mb-2 flex items-center justify-between text-[11px] font-medium text-slate-500 dark:text-slate-300">
-                  <span>Episode file</span>
-                  <span>42 min</span>
-                </div>
-                <div className="h-2 rounded-full bg-blue-100 dark:bg-blue-500/15">
-                  <div className="h-2 w-[68%] rounded-full bg-blue-500" />
-                </div>
-              </div>
-            </div>
-            <div className="space-y-4">
-              {[
-                ["Speaker Count", "Auto-detect host and guests"],
-                ["Naming", "Use conversation context for names"],
-                ["Audio Quality", "Flag noisy or overlapping sections"],
-              ].map(([label, note], index) => (
-                <div
-                  key={label}
-                  className="rounded-[1.3rem] border border-slate-200/80 bg-white/78 p-4 dark:border-white/10 dark:bg-white/[0.05]"
-                >
-                  <div className="mb-3 flex items-center gap-3">
-                    <div
-                      className={`h-9 w-9 rounded-xl ${index === 0 ? "bg-sky-100 text-sky-600 dark:bg-sky-500/15 dark:text-sky-300" : index === 1 ? "bg-violet-100 text-violet-600 dark:bg-violet-500/15 dark:text-violet-300" : "bg-emerald-100 text-emerald-600 dark:bg-emerald-500/15 dark:text-emerald-300"}`}
-                    />
-                    <div className="min-w-0 flex-1">
-                      <div className="text-sm font-semibold text-slate-800 dark:text-slate-100">
-                        {label}
-                      </div>
-                      <div className="mt-1 text-[11px] leading-5 text-slate-500 dark:text-slate-300">
-                        {note}
-                      </div>
-                    </div>
-                  </div>
-                  <div className="h-2 rounded-full bg-slate-200/80 dark:bg-white/10" />
-                  <div className="mt-2 h-2 w-5/6 rounded-full bg-slate-200/70 dark:bg-white/10" />
-                </div>
-              ))}
-            </div>
-          </div>
-        </div>
-      </div>
-    );
-  }
-
-  if (step.id === "process") {
-    return (
-      <div className="relative min-h-[20rem] overflow-hidden rounded-[2rem] border border-slate-200/70 bg-[linear-gradient(145deg,#f8fafc_0%,#eef2ff_55%,#ecfeff_100%)] p-3 shadow-[0_40px_120px_-60px_rgba(99,102,241,0.42)] sm:min-h-[24rem] sm:p-5 md:h-[26rem] dark:border-white/10 dark:bg-[linear-gradient(145deg,#020617_0%,#111827_48%,#1e1b4b_100%)]">
-        <div className="absolute left-10 top-8 h-36 w-36 rounded-full bg-violet-400/18 blur-3xl dark:bg-violet-500/18" />
-        <div className="absolute bottom-4 right-10 h-40 w-40 rounded-full bg-cyan-400/16 blur-3xl dark:bg-cyan-500/18" />
-        <div className={`${baseSurface} relative flex h-full flex-col gap-5 p-3 sm:p-5`}>
-          <div className="flex items-center justify-between">
-            <div>
-              <div className="text-sm font-semibold text-slate-900 dark:text-white">
-                Choose what runs
-              </div>
-              <div className="mt-1 text-[11px] text-slate-500 dark:text-slate-300">
-                Turn on only the analysis you want on this upload.
-              </div>
-            </div>
-            <div className="flex h-9 items-center rounded-full bg-violet-600/90 px-4 text-xs font-semibold text-white shadow-lg shadow-violet-600/30">
-              Content Kit
-            </div>
-          </div>
-          <div className="grid flex-1 gap-4 sm:grid-cols-2">
-            {[
-              {
-                label: "Named speakers",
-                tone: "bg-sky-500/12 text-sky-600 dark:text-sky-300",
-                note: "Classify host, guest, and speaker turns.",
-                active: true,
-              },
-              {
-                label: "Summary",
-                tone: "bg-violet-500/12 text-violet-600 dark:text-violet-300",
-                note: "Generate an episode summary.",
-                active: true,
-              },
-              {
-                label: "Insights",
-                tone: "bg-amber-500/12 text-amber-600 dark:text-amber-300",
-                note: "Extract concepts and talking points.",
-                active: false,
-              },
-              {
-                label: "Chapters",
-                tone: "bg-indigo-500/12 text-indigo-600 dark:text-indigo-300",
-                note: "Break the episode into timed sections.",
-                active: true,
-              },
-            ].map(({ label, tone, note, active }) => (
-              <div
-                key={label}
-                className={`rounded-[1.35rem] border p-4 dark:border-white/10 ${active ? "border-blue-200/80 bg-white/90 shadow-[0_18px_45px_-35px_rgba(37,99,235,0.35)] dark:bg-white/[0.06]" : "border-slate-200/80 bg-white/80 dark:bg-white/[0.04]"}`}
-              >
-                <div className="mb-4 flex items-center justify-between">
-                  <div
-                    className={`inline-flex rounded-full px-3 py-1 text-xs font-semibold ${tone}`}
-                  >
-                    {label}
-                  </div>
-                  <div
-                    className={`h-5 w-9 rounded-full ${active ? "bg-blue-500/20" : "bg-slate-200 dark:bg-white/10"}`}
-                  >
-                    <div
-                      className={`mt-0.5 h-4 w-4 rounded-full ${active ? "translate-x-4 bg-blue-500" : "translate-x-0.5 bg-slate-400"} transition-transform`}
-                    />
-                  </div>
-                </div>
-                <div className="text-[11px] leading-5 text-slate-500 dark:text-slate-300">
-                  {note}
-                </div>
-                <div className="mt-4 h-2 rounded-full bg-slate-200 dark:bg-white/10" />
-                <div className="mt-3 h-2 w-4/5 rounded-full bg-slate-200/80 dark:bg-white/10" />
-                <div className="mt-6 flex h-10 items-center rounded-2xl bg-slate-100 px-4 text-xs font-medium text-slate-500 dark:bg-slate-900/70 dark:text-slate-300">
-                  {active
-                    ? "Will run during processing"
-                    : "Leave off for transcript-only"}
-                </div>
-              </div>
-            ))}
-          </div>
-          <div className="grid gap-4 md:grid-cols-[1.2fr_0.8fr]">
-            <div className="rounded-[1.3rem] border border-slate-200/80 bg-white/80 p-4 dark:border-white/10 dark:bg-white/[0.05]">
-              <div className="mb-2 text-sm font-semibold text-slate-800 dark:text-slate-100">
-                Processing plan
-              </div>
-              <div className="mb-3 text-[11px] text-slate-500 dark:text-slate-300">
-                Transcription first, then selected modules in sequence.
-              </div>
-              <div className="space-y-2">
-                <div className="flex items-center gap-2 rounded-xl bg-slate-50 px-3 py-2 text-[11px] font-medium text-slate-600 dark:bg-slate-900/70 dark:text-slate-300">
-                  <span className="h-2 w-2 rounded-full bg-blue-500" />{" "}
-                  Transcribe audio
-                </div>
-                <div className="flex items-center gap-2 rounded-xl bg-slate-50 px-3 py-2 text-[11px] font-medium text-slate-600 dark:bg-slate-900/70 dark:text-slate-300">
-                  <span className="h-2 w-2 rounded-full bg-sky-500" /> Named
-                  speakers
-                </div>
-                <div className="flex items-center gap-2 rounded-xl bg-slate-50 px-3 py-2 text-[11px] font-medium text-slate-600 dark:bg-slate-900/70 dark:text-slate-300">
-                  <span className="h-2 w-2 rounded-full bg-violet-500" />{" "}
-                  Summary + chapters
-                </div>
-              </div>
-            </div>
-            <div className="rounded-[1.3rem] border border-violet-300/40 bg-violet-500/10 p-4 dark:border-violet-400/15 dark:bg-violet-500/12">
-              <div className="mb-3 flex items-center gap-2">
-                <Sparkles className="h-4 w-4 text-violet-600 dark:text-violet-300" />
-                <div className="text-sm font-semibold text-violet-700 dark:text-violet-200">
-                  Recommended for interviews
-                </div>
-              </div>
-              <div className="text-[11px] leading-5 text-violet-700/80 dark:text-violet-200/80">
-                Run named speakers, summary, and chapters together when you want
-                publish-ready assets without extra manual setup.
-              </div>
-            </div>
-          </div>
-        </div>
-      </div>
-    );
-  }
-
-  return (
-    <div className="relative min-h-[20rem] overflow-hidden rounded-[2rem] border border-slate-200/70 bg-[linear-gradient(145deg,#eef2ff_0%,#f8fafc_52%,#ecfeff_100%)] p-3 shadow-[0_40px_120px_-60px_rgba(79,70,229,0.4)] sm:min-h-[24rem] sm:p-5 md:h-[26rem] dark:border-white/10 dark:bg-[linear-gradient(145deg,#020617_0%,#0f172a_45%,#172554_100%)]">
-      <div className="absolute -left-4 top-10 h-40 w-40 rounded-full bg-indigo-400/18 blur-3xl dark:bg-indigo-500/20" />
-      <div className="absolute bottom-8 right-8 h-44 w-44 rounded-full bg-cyan-400/16 blur-3xl dark:bg-cyan-500/18" />
-      <div className={`${baseSurface} relative flex h-full flex-col gap-5 p-3 sm:p-5`}>
-        <div className="grid gap-4 md:grid-cols-[0.78fr_1.22fr]">
-          <div className="rounded-[1.35rem] border border-slate-200/80 bg-white/82 p-4 dark:border-white/10 dark:bg-white/[0.05]">
-            <div className="mb-4 text-sm font-semibold text-slate-900 dark:text-white">
-              Project workspace
-            </div>
-            <div className="space-y-3">
-              {["Transcript", "Speakers", "Outputs", "Insights"].map(
-                (item, index) => (
-                  <div
-                    key={item}
-                    className={`flex items-center gap-3 rounded-xl px-3 py-2 ${index === 2 ? "bg-indigo-50 dark:bg-indigo-500/12" : "bg-slate-50 dark:bg-slate-900/65"}`}
-                  >
-                    <div
-                      className={`h-8 w-8 rounded-lg ${index === 2 ? "bg-indigo-500/18" : "bg-slate-200 dark:bg-white/10"}`}
-                    />
-                    <div className="min-w-0 flex-1">
-                      <div className="text-[11px] font-medium text-slate-600 dark:text-slate-300">
-                        {item}
-                      </div>
-                      <div className="mt-1 h-1.5 w-4/5 rounded-full bg-slate-200 dark:bg-white/10" />
-                    </div>
-                  </div>
-                ),
-              )}
-            </div>
-          </div>
-          <div className="rounded-[1.35rem] border border-slate-200/80 bg-white/84 p-4 dark:border-white/10 dark:bg-white/[0.05]">
-            <div className="mb-4 flex items-center justify-between">
-              <div>
-                <div className="text-sm font-semibold text-slate-900 dark:text-white">
-                  Generated outputs
-                </div>
-                <div className="mt-1 text-[11px] text-slate-500 dark:text-slate-300">
-                  Built from the same cleaned project.
-                </div>
-              </div>
-              <div className="flex h-8 items-center rounded-full bg-emerald-500/85 px-3 text-[11px] font-semibold text-white shadow-lg shadow-emerald-500/25">
-                Ready to publish
-              </div>
-            </div>
-            <div className="grid gap-3">
-              {["Show notes", "LinkedIn post", "X thread"].map(
-                (label, index) => (
-                  <div
-                    key={label}
-                    className="rounded-[1.15rem] border border-slate-200/80 bg-slate-50/90 p-4 dark:border-white/10 dark:bg-slate-900/72"
-                  >
-                    <div className="mb-3 flex items-center justify-between">
-                      <div
-                        className={`rounded-full px-3 py-1 text-xs font-semibold ${index === 0 ? "bg-blue-100 text-blue-600 dark:bg-blue-500/15 dark:text-blue-300" : index === 1 ? "bg-indigo-100 text-indigo-600 dark:bg-indigo-500/15 dark:text-indigo-300" : "bg-slate-200 text-slate-700 dark:bg-white/10 dark:text-slate-200"}`}
-                      >
-                        {label}
-                      </div>
-                      <div className="h-2.5 w-2.5 rounded-full bg-emerald-400" />
-                    </div>
-                    <div className="h-2 rounded-full bg-slate-200 dark:bg-white/10" />
-                    <div className="mt-2 h-2 w-5/6 rounded-full bg-slate-200/80 dark:bg-white/10" />
-                    <div className="mt-3 text-[11px] text-slate-500 dark:text-slate-300">
-                      {index === 0
-                        ? "Speaker-attributed summary with timestamps."
-                        : index === 1
-                          ? "Post draft based on the episode's core insight."
-                          : "Thread built from key discussion points."}
-                    </div>
-                  </div>
-                ),
-              )}
-            </div>
-          </div>
-        </div>
-        <div className="grid grid-cols-3 gap-4">
-          {["TikTok script", "Newsletter", "Blog post"].map((label) => (
-            <div
-              key={label}
-              className="rounded-[1.15rem] border border-slate-200/80 bg-white/82 p-3 dark:border-white/10 dark:bg-white/[0.05]"
-            >
-              <div className="mb-2 text-[11px] font-semibold text-slate-700 dark:text-slate-200">
-                {label}
-              </div>
-              <div className="h-2 rounded-full bg-slate-200/90 dark:bg-white/10" />
-              <div className="mt-2 h-2 w-3/4 rounded-full bg-slate-200/80 dark:bg-white/10" />
-              <div className="mt-2 text-[10px] text-slate-500 dark:text-slate-300">
-                Generated from the same transcript.
-              </div>
-            </div>
-          ))}
-        </div>
+      <IconTile Icon={Icon} tone={tone} />
+      <div>
+        <h3 className="font-bold">{title}</h3>
+        <p className="mt-1 text-sm text-[var(--muted)]">{body}</p>
       </div>
     </div>
   );
 }
 
-const SPEAKER_SPOTLIGHT_STATES = [
-  {
-    id: "detect",
-    label: "Speaker detection",
-    title: "Detect speakers from context",
-    description: "Names and roles are inferred from the real conversation.",
-    proof: "Names + roles matched",
-  },
-  {
-    id: "review",
-    label: "Review workflow",
-    title: "Review the uncertain moments",
-    description: "Only the messy segments need your attention.",
-    proof: "Focused review queue",
-  },
-  {
-    id: "propagate",
-    label: "Clean outputs",
-    title: "Push clean names into outputs",
-    description:
-      "Corrections flow into summaries, quotes, and posts automatically.",
-    proof: "Outputs stay accurate",
-  },
-] as const;
-
-function SpeakerWorkflowSpotlight({
-  activeState = 1,
+function FooterColumn({
+  title,
+  links,
 }: {
-  activeState?: number;
+  title: string;
+  links: [string, string][];
 }) {
-  const speakerRows = [
-    {
-      id: "r1",
-      name: "Jordan Mills",
-      role: "Host",
-      line: "Welcome back. Today Kevin and Marcus are joining me to unpack how distributed teams actually collaborate.",
-      status: activeState === 0 ? "Analyzing" : "Matched",
-      flagged: false,
-    },
-    {
-      id: "r2",
-      name: "Dr. Kevin Park",
-      role: activeState === 0 ? "Unknown" : "Guest",
-      line: "The biggest mistake is assuming output alone tells you how well a team is working together.",
-      status: activeState === 0 ? "Analyzing" : "Stable",
-      flagged: false,
-    },
-    {
-      id: "r3",
-      name: activeState < 2 ? "Speaker 3" : "Marcus Webb",
-      role: activeState < 2 ? "Unknown" : "Guest",
-      line: "That is where identity cleanup matters, because one wrong speaker label breaks every downstream asset.",
-      status:
-        activeState === 0
-          ? "Analyzing"
-          : activeState === 1
-            ? "Needs review"
-            : "Resolved",
-      flagged: activeState === 1,
-    },
-  ];
-
   return (
-    <div className="rounded-[1.5rem] border border-slate-200/80 bg-white p-4 shadow-[0_20px_60px_-45px_rgba(15,23,42,0.35)] dark:border-white/10 dark:bg-slate-950/70 sm:p-5">
-      <div className="mb-4 flex items-center justify-between gap-3 px-1">
-        <div>
-          <h3 className="text-sm font-semibold text-slate-900 dark:text-white">
-            Transcript mockup
-          </h3>
-          <p className="text-[11px] text-slate-500 dark:text-slate-400">
-            Speaker mapping & review
-          </p>
-        </div>
-        <div
-          className={`inline-flex transition-colors items-center gap-1.5 rounded-full border px-2.5 py-1 text-[10px] font-medium uppercase tracking-wider ${activeState === 1
-              ? "border-amber-200 bg-amber-50 text-amber-700 dark:border-amber-500/30 dark:bg-amber-500/10 dark:text-amber-300"
-              : "border-slate-200 bg-slate-50 text-slate-600 dark:border-white/10 dark:bg-white/[0.04] dark:text-slate-300"
-            }`}
-        >
-          <span
-            className={`h-1.5 w-1.5 rounded-full ${activeState === 1 ? "bg-amber-400" : "bg-green-500"}`}
-          />
-          {activeState === 1 ? "1 review" : "All clear"}
-        </div>
-      </div>
-
-      <div className="space-y-3">
-        {speakerRows.map((row) => {
-          return (
-            <div
-              key={row.id}
-              className={`rounded-[1rem] border px-4 py-3.5 transition-colors duration-500 ${row.flagged
-                  ? "border-amber-300 bg-amber-50 dark:border-amber-400/30 dark:bg-amber-500/10"
-                  : "border-slate-200/80 bg-slate-50/50 dark:border-white/10 dark:bg-slate-950/40"
-                }`}
-            >
-              <div className="flex items-start justify-between gap-3">
-                <div className="min-w-0">
-                  <div className="flex flex-wrap items-center gap-2">
-                    <AnimatePresence mode="popLayout">
-                      <motion.span
-                        key={row.name}
-                        initial={{ opacity: 0, filter: "blur(4px)" }}
-                        animate={{ opacity: 1, filter: "blur(0px)" }}
-                        transition={{ duration: 0.3 }}
-                        className="text-sm font-semibold text-slate-900 dark:text-white"
-                      >
-                        {row.name}
-                      </motion.span>
-                    </AnimatePresence>
-                    <AnimatePresence mode="popLayout">
-                      <motion.span
-                        key={row.role}
-                        initial={{ opacity: 0, scale: 0.8 }}
-                        animate={{ opacity: 1, scale: 1 }}
-                        className="rounded-full bg-slate-200 px-2 py-0.5 text-[10px] font-semibold uppercase tracking-[0.12em] text-slate-500 dark:bg-white/10 dark:text-slate-300"
-                      >
-                        {row.role}
-                      </motion.span>
-                    </AnimatePresence>
-                  </div>
-                  <p className="mt-2 text-[12px] leading-relaxed text-slate-500 dark:text-slate-300">
-                    {row.line}
-                  </p>
-                </div>
-                <AnimatePresence mode="popLayout">
-                  <motion.span
-                    key={row.status}
-                    initial={{ opacity: 0, scale: 0.8 }}
-                    animate={{ opacity: 1, scale: 1 }}
-                    className={`flex-shrink-0 rounded-full px-2 py-1 text-[10px] font-semibold uppercase tracking-[0.12em] ${row.status === "Needs review"
-                        ? "bg-amber-100 text-amber-700 dark:bg-amber-500/15 dark:text-amber-300"
-                        : row.status === "Resolved" || row.status === "Matched"
-                          ? "bg-blue-100 text-blue-700 dark:bg-blue-500/15 dark:text-blue-300"
-                          : row.status === "Analyzing"
-                            ? "bg-indigo-50 text-indigo-500 dark:bg-indigo-500/10 dark:text-indigo-300 animate-pulse"
-                            : "bg-slate-100 text-slate-500 dark:bg-white/10 dark:text-slate-300"
-                      }`}
-                  >
-                    {row.status}
-                  </motion.span>
-                </AnimatePresence>
-              </div>
-            </div>
-          );
-        })}
+    <div>
+      <h3 className="text-sm font-bold">{title}</h3>
+      <div className="mt-3 grid gap-2.5">
+        {links.map(([label, href]) => (
+          <Link key={label} href={href} className="text-sm text-[var(--muted)] transition hover:text-[var(--blue)]">
+            {label}
+          </Link>
+        ))}
       </div>
     </div>
   );
 }
 
-// Navbar
-function Navbar({
-  open,
-  setOpen,
+function SocialIcon({
+  href,
+  label,
+  className,
+  children,
 }: {
-  open: boolean;
-  setOpen: (v: boolean) => void;
+  href: string;
+  label: string;
+  className?: string;
+  children: React.ReactNode;
 }) {
-  const { resolvedTheme } = useTheme();
-  const [mounted, setMounted] = useState(false);
-
-  useEffect(() => setMounted(true), []);
-  const links = [
-    { label: "Speaker AI", href: "#speaker-intelligence" },
-    { label: "How it Works", href: "#how-it-works" },
-    { label: "Outputs", href: "#outputs" },
-    { label: "Analysis", href: "#analysis" },
-    { label: "Pricing", href: "#pricing" },
-    { label: "Privacy", href: "/privacy" },
-  ];
-  const logoTheme = mounted && resolvedTheme === "light" ? "light" : "dark";
-
   return (
-    <header className="sticky top-0 z-50 border-b border-gray-100 bg-white/90 backdrop-blur-xl dark:border-white/10 dark:bg-slate-950/85">
-      <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8">
-        <div className="grid h-16 grid-cols-[1fr_auto] items-center md:grid-cols-[164px_1fr_220px]">
-          <a
-            href="#top"
-            className="hidden h-12 items-center justify-center md:flex md:justify-start md:pl-6"
-          >
-            <BrandLogo
-              showText={false}
-              size="md"
-              theme={logoTheme}
-              className="-translate-y-px"
-            />
-          </a>
-
-          <nav className="hidden md:flex items-center justify-center gap-7">
-            {links.map(({ label, href }) => (
-              <a
-                key={label}
-                href={href}
-                className="text-sm font-medium text-gray-600 transition-colors hover:text-gray-900 dark:text-slate-300 dark:hover:text-white"
-              >
-                {label}
-              </a>
-            ))}
-          </nav>
-
-          <div className="hidden items-center justify-end gap-3 md:flex">
-            <Link
-              href="/auth/login"
-              className="whitespace-nowrap rounded-lg px-4 py-2 text-sm font-medium text-gray-700 transition-colors hover:bg-gray-100 dark:text-slate-200 dark:hover:bg-slate-800"
-            >
-              Log In
-            </Link>
-            <Link
-              href="/auth/signup"
-              className="whitespace-nowrap rounded-lg bg-blue-600 px-4 py-2 text-sm font-semibold text-white shadow-sm transition-colors hover:bg-blue-700"
-            >
-              Get Started Free
-            </Link>
-            <LaunchThemeToggle />
-          </div>
-
-          <a
-            href="#top"
-            className="flex h-11 items-center justify-start md:hidden"
-          >
-            <BrandLogo
-              showText={false}
-              size="sm"
-              theme={logoTheme}
-              className="-translate-y-px"
-            />
-          </a>
-
-          <div className="flex items-center justify-end gap-2 md:hidden">
-            <LaunchThemeToggle />
-            <button
-              onClick={() => setOpen(!open)}
-              className="rounded-lg p-2 text-gray-500 transition-colors hover:bg-gray-100 dark:text-slate-300 dark:hover:bg-slate-800"
-            >
-              {open ? (
-                <CloseIcon className="h-5 w-5" />
-              ) : (
-                <Menu className="h-5 w-5" />
-              )}
-            </button>
-          </div>
-        </div>
-      </div>
-
-      {open && (
-        <div className="space-y-1 border-t border-gray-100 bg-white px-4 py-4 dark:border-white/10 dark:bg-slate-950 md:hidden">
-          {links.map(({ label, href }) => (
-            <a
-              key={label}
-              href={href}
-              onClick={() => setOpen(false)}
-              className="block rounded-lg px-3 py-2.5 text-sm font-medium text-gray-700 hover:bg-gray-50 dark:text-slate-200 dark:hover:bg-slate-900"
-            >
-              {label}
-            </a>
-          ))}
-          <div className="space-y-2 border-t border-gray-100 pt-3 dark:border-white/10">
-            <Link
-              href="/auth/login"
-              onClick={() => setOpen(false)}
-              className="block rounded-xl border border-gray-200 py-2.5 text-center text-sm font-medium text-gray-700 hover:bg-gray-50 dark:border-slate-800 dark:text-slate-200 dark:hover:bg-slate-900"
-            >
-              Log In
-            </Link>
-            <Link
-              href="/auth/signup"
-              onClick={() => setOpen(false)}
-              className="block text-center py-2.5 text-sm font-semibold text-white bg-blue-600 rounded-xl hover:bg-blue-700"
-            >
-              Get Started Free
-            </Link>
-          </div>
-        </div>
+    <Link
+      href={href}
+      aria-label={label}
+      className={cn(
+        "inline-flex h-9 w-9 items-center justify-center rounded-full text-sm font-bold transition hover:-translate-y-0.5 hover:brightness-110",
+        className,
       )}
-    </header>
-  );
-}
-
-// Hero
-function Hero() {
-  const [activePhrase, setActivePhrase] = useState(0);
-
-  useEffect(() => {
-    const interval = window.setInterval(() => {
-      setActivePhrase(
-        (current) => (current + 1) % HERO_ROTATING_PHRASES.length,
-      );
-    }, 2800);
-
-    return () => window.clearInterval(interval);
-  }, []);
-
-  return (
-    <section className="relative overflow-hidden bg-[linear-gradient(180deg,#f8fbff_0%,#eef4ff_42%,#f7f9fc_100%)] dark:bg-[linear-gradient(180deg,#020617_0%,#0b1120_48%,#111827_100%)]">
-      <div className="pointer-events-none absolute inset-0 bg-[linear-gradient(to_right,rgba(37,99,235,0.05)_1px,transparent_1px),linear-gradient(to_bottom,rgba(37,99,235,0.05)_1px,transparent_1px)] bg-[size:32px_32px,32px_32px] dark:bg-[linear-gradient(to_right,rgba(148,163,184,0.08)_1px,transparent_1px),linear-gradient(to_bottom,rgba(148,163,184,0.08)_1px,transparent_1px)]" />
-      <div className="pointer-events-none absolute left-1/2 top-24 h-56 w-[38rem] -translate-x-1/2 rounded-full bg-blue-500/18 blur-3xl dark:bg-blue-500/22" />
-      <div className="pointer-events-none absolute left-[18%] top-12 h-56 w-56 rounded-full bg-cyan-400/12 blur-3xl dark:bg-cyan-500/14" />
-      <div className="pointer-events-none absolute bottom-10 right-[15%] h-64 w-64 rounded-full bg-indigo-400/12 blur-3xl dark:bg-indigo-500/16" />
-
-      <div className="relative z-10 flex min-h-[calc(100svh-4rem)] flex-col justify-between">
-        <div className="mx-auto flex w-full max-w-5xl flex-1 items-center px-4 py-16 text-center sm:px-6 lg:px-8">
-          <div className="w-full">
-            <motion.div
-              className="mb-5 inline-flex items-center gap-2 rounded-full border border-blue-200/70 bg-white/80 px-4 py-2 text-[11px] font-semibold uppercase tracking-[0.18em] text-blue-700 shadow-[0_20px_60px_-40px_rgba(37,99,235,0.5)] backdrop-blur dark:border-white/10 dark:bg-white/[0.05] dark:text-blue-200"
-              initial={{ opacity: 0, y: 14 }}
-              animate={{ opacity: 1, y: 0 }}
-              transition={{ duration: 0.45, ease: "easeOut" }}
-            >
-              <span className="h-2 w-2 rounded-full bg-blue-500 dark:bg-cyan-300" />
-              One workflow for transcript, analysis, and content
-            </motion.div>
-            <motion.h1
-              className="mb-6 text-[2.2rem] font-bold leading-[1.12] tracking-tight text-slate-900 dark:text-white sm:text-5xl sm:leading-tight md:text-6xl"
-              initial={{ opacity: 0, y: 18 }}
-              animate={{ opacity: 1, y: 0 }}
-              transition={{ duration: 0.55, delay: 0.08, ease: "easeOut" }}
-            >
-              <div className="flex flex-col items-center justify-center gap-y-1 sm:gap-y-2">
-                <span>Upload once.</span>
-                <HeroWordPill phrase={HERO_ROTATING_PHRASES[activePhrase]} />
-              </div>
-              <div className="mt-2 sm:mt-3 text-[0.8em]">
-                Analyze clearly. Publish faster.
-              </div>
-            </motion.h1>
-
-            <motion.p
-              className="mx-auto mb-6 max-w-2xl text-base leading-relaxed text-slate-600 dark:text-blue-100/75 md:text-lg"
-              initial={{ opacity: 0, y: 16 }}
-              animate={{ opacity: 1, y: 0 }}
-              transition={{ duration: 0.55, delay: 0.16, ease: "easeOut" }}
-            >
-              AudioRepurpose turns one uploaded recording into a speaker-labeled
-              transcript and channel-ready content outputs, including summaries,
-              show notes, and social drafts.
-            </motion.p>
-            <motion.p
-              className="mx-auto mb-10 max-w-2xl text-sm text-slate-600 dark:text-blue-100/80"
-              initial={{ opacity: 0, y: 12 }}
-              animate={{ opacity: 1, y: 0 }}
-              transition={{ duration: 0.5, delay: 0.2, ease: "easeOut" }}
-            >
-              Review our{" "}
-              <Link href="/privacy" className="underline underline-offset-4 hover:text-slate-900 dark:hover:text-white">
-                Privacy Policy
-              </Link>{" "}
-              and{" "}
-              <Link href="/terms" className="underline underline-offset-4 hover:text-slate-900 dark:hover:text-white">
-                Terms of Service
-              </Link>
-              .
-            </motion.p>
-
-            <motion.div
-              className="flex flex-col sm:flex-row items-center justify-center gap-4 mb-16"
-              initial={{ opacity: 0, y: 14 }}
-              animate={{ opacity: 1, y: 0 }}
-              transition={{ duration: 0.5, delay: 0.24, ease: "easeOut" }}
-            >
-              <Link
-                href="/auth/signup"
-                className="inline-flex items-center gap-2 bg-blue-600 hover:bg-blue-500 text-white font-semibold px-7 py-3.5 rounded-xl transition-colors shadow-lg shadow-blue-900/50"
-              >
-                Try it with one recording
-                <ArrowRight className="h-4 w-4" />
-              </Link>
-              <Link
-                href="/auth/login"
-                className="inline-flex items-center gap-2 rounded-xl border border-slate-300 px-6 py-3.5 font-medium text-slate-700 transition-colors hover:border-slate-400 hover:bg-white/70 dark:border-white/25 dark:text-white/80 dark:hover:border-white/50 dark:hover:bg-white/5 dark:hover:text-white"
-              >
-                Log In
-              </Link>
-            </motion.div>
-            <motion.p
-              className="mx-auto mb-10 max-w-2xl text-sm text-slate-600 dark:text-blue-100/75"
-              initial={{ opacity: 0, y: 12 }}
-              animate={{ opacity: 1, y: 0 }}
-              transition={{ duration: 0.5, delay: 0.28, ease: "easeOut" }}
-            >
-              No subscription required. Choose analysis per upload. Review
-              before export.
-            </motion.p>
-
-            <motion.div
-              className="mx-auto flex w-full max-w-5xl items-center justify-center overflow-x-auto pb-1"
-              initial={{ opacity: 0, y: 14 }}
-              animate={{ opacity: 1, y: 0 }}
-              transition={{ duration: 0.55, delay: 0.32, ease: "easeOut" }}
-            >
-              <div className="flex flex-nowrap items-center justify-center gap-2 px-1">
-                {[
-                  "Speaker-attributed transcript",
-                  "Automatic speaker recognition",
-                  "Insights + chapters",
-                  "Show notes",
-                  "LinkedIn draft",
-                  "Quote pulls",
-                ].map((tag, index) => (
-                  <motion.span
-                    key={tag}
-                    className="whitespace-nowrap rounded-full border border-white/70 bg-white/80 px-2.5 py-1.5 text-[13px] font-medium text-slate-600 shadow-[0_20px_50px_-30px_rgba(15,23,42,0.4)] backdrop-blur dark:border-white/10 dark:bg-white/[0.05] dark:text-slate-200"
-                    initial={{ opacity: 0, y: 10 }}
-                    animate={{ opacity: 1, y: 0 }}
-                    transition={{
-                      delay: 0.42 + index * 0.05,
-                      duration: 0.4,
-                      ease: "easeOut",
-                    }}
-                  >
-                    {tag}
-                  </motion.span>
-                ))}
-              </div>
-            </motion.div>
-          </div>
-        </div>
-        <SocialProofStrip className="mt-auto border-b-0" />
-      </div>
-    </section>
-  );
-}
-
-// Speaker Intelligence Section
-function SpeakerIntelligenceSection() {
-  const [activeStep, setActiveStep] = useState(1);
-
-  return (
-    <section
-      id="speaker-intelligence"
-      className="overflow-hidden bg-white py-24 dark:bg-slate-950"
     >
-      <div className="mx-auto max-w-[92rem] px-4 sm:px-6 lg:px-8">
-        <motion.div
-          className="mb-16 text-center"
-          initial="hidden"
-          whileInView="show"
-          viewport={SECTION_VIEWPORT}
-          variants={sectionContainer}
-        >
-          <span className="text-sm font-semibold text-blue-600 uppercase tracking-widest">
-            Speaker Intelligence
-          </span>
-          <h2 className="text-3xl md:text-4xl font-bold text-gray-900 mt-2 dark:text-white">
-            Multi-speaker accuracy that improves every downstream output
-          </h2>
-          <p className="text-gray-500 mt-4 max-w-xl mx-auto text-base dark:text-slate-300">
-            Detect speakers, review uncertain moments, and keep transcripts,
-            summaries, and generated content correctly attributed.
-          </p>
-        </motion.div>
-
-        <div className="grid items-center gap-10 lg:mx-auto lg:max-w-[78rem] lg:grid-cols-[minmax(0,32rem)_minmax(0,40rem)] lg:justify-center lg:gap-8">
-          <motion.div
-            initial={{ opacity: 0, x: -18 }}
-            whileInView={{ opacity: 1, x: 0 }}
-            viewport={SECTION_VIEWPORT}
-            transition={{ duration: 0.6, ease: "easeOut" }}
-            className="order-2 max-w-xl lg:order-1 lg:justify-self-end"
-          >
-            <div>
-              <h3 className="text-2xl font-semibold tracking-tight text-slate-900 dark:text-white">
-                Most of the transcript is already clean.
-              </h3>
-              <p className="mt-3 max-w-lg text-base leading-7 text-slate-500 dark:text-slate-300">
-                The product identifies speakers automatically, isolates the few
-                uncertain lines, and carries your correction into every
-                downstream asset.
-              </p>
-            </div>
-            <div className="mt-6 space-y-3">
-              {SPEAKER_SPOTLIGHT_STATES.map((item, index) => {
-                const active = index === activeStep;
-                return (
-                  <button
-                    key={item.id}
-                    type="button"
-                    onClick={() => setActiveStep(index)}
-                    className={`w-full rounded-[1.25rem] border px-4 py-3 text-left transition-all ${active
-                        ? "border-blue-300 bg-white shadow-[0_26px_70px_-42px_rgba(37,99,235,0.42)] dark:border-blue-400/30 dark:bg-white/[0.04]"
-                        : "border-slate-200/80 bg-slate-50/70 dark:border-white/10 dark:bg-white/[0.02]"
-                      }`}
-                  >
-                    <div className="flex items-start gap-3">
-                      <div
-                        className={`mt-0.5 flex h-8 w-8 flex-shrink-0 items-center justify-center rounded-full text-xs font-bold ${active ? "bg-blue-600 text-white" : "bg-blue-50 text-blue-600 dark:bg-blue-500/12 dark:text-blue-300"}`}
-                      >
-                        <span>{index + 1}</span>
-                      </div>
-                      <div className="min-w-0">
-                        <div className="flex flex-wrap items-center gap-x-3 gap-y-1">
-                          <p
-                            className={`text-[11px] font-semibold uppercase tracking-[0.16em] ${active ? "text-blue-600 dark:text-blue-300" : "text-slate-400 dark:text-slate-500"}`}
-                          >
-                            {item.label}
-                          </p>
-                          <span className="text-sm font-medium text-slate-900 dark:text-white">
-                            {item.title}
-                          </span>
-                        </div>
-                        <p className="mt-1 text-sm leading-6 text-slate-500 dark:text-slate-300">
-                          {item.description}
-                        </p>
-                      </div>
-                    </div>
-                  </button>
-                );
-              })}
-            </div>
-          </motion.div>
-
-          <motion.div
-            initial={{ opacity: 0, x: 18 }}
-            whileInView={{ opacity: 1, x: 0 }}
-            viewport={SECTION_VIEWPORT}
-            transition={{ duration: 0.6, ease: "easeOut", delay: 0.1 }}
-            className="order-1 w-full lg:order-2 lg:max-w-[40rem] lg:justify-self-start"
-          >
-            <SpeakerWorkflowSpotlight activeState={activeStep} />
-          </motion.div>
-        </div>
-      </div>
-    </section>
+      {children}
+    </Link>
   );
 }
 
-// How It Works
-function HowItWorks() {
-  const isMobileLayout = useIsMobileLayout();
-  const reduceMotion = useReducedMotion();
-  const [activeStep, setActiveStep] = useState(0);
-
-  useEffect(() => {
-    if (reduceMotion || isMobileLayout) return;
-
-    const interval = window.setInterval(() => {
-      setActiveStep((current) => (current + 1) % HOW_IT_WORKS_STEPS.length);
-    }, 3600);
-
-    return () => window.clearInterval(interval);
-  }, [isMobileLayout, reduceMotion]);
-
-  const step = HOW_IT_WORKS_STEPS[activeStep] ?? HOW_IT_WORKS_STEPS[0];
-
-  return (
-    <section
-      id="how-it-works"
-      className="relative overflow-hidden bg-gray-50 py-24 dark:bg-slate-950"
-    >
-      <div className="pointer-events-none absolute inset-0 bg-[linear-gradient(to_right,rgba(15,23,42,0.05)_1px,transparent_1px),linear-gradient(to_bottom,rgba(15,23,42,0.05)_1px,transparent_1px)] bg-[size:28px_28px,28px_28px] dark:bg-[linear-gradient(to_right,rgba(148,163,184,0.08)_1px,transparent_1px),linear-gradient(to_bottom,rgba(148,163,184,0.08)_1px,transparent_1px)]" />
-      <div className="pointer-events-none absolute inset-0 bg-[linear-gradient(to_right,rgba(15,23,42,0.08)_1px,transparent_1px),linear-gradient(to_bottom,rgba(15,23,42,0.08)_1px,transparent_1px)] bg-[size:140px_140px,140px_140px] dark:bg-[linear-gradient(to_right,rgba(148,163,184,0.12)_1px,transparent_1px),linear-gradient(to_bottom,rgba(148,163,184,0.12)_1px,transparent_1px)]" />
-      <div className="pointer-events-none absolute inset-0 bg-[radial-gradient(circle_at_top,rgba(15,23,42,0.04),transparent_38%),radial-gradient(circle_at_bottom,rgba(15,23,42,0.03),transparent_32%)] dark:bg-[radial-gradient(circle_at_top,rgba(59,130,246,0.16),transparent_38%),radial-gradient(circle_at_bottom,rgba(15,23,42,0.22),transparent_32%)]" />
-      <div className="relative max-w-7xl mx-auto px-4 sm:px-6 lg:px-8">
-        <motion.div
-          className="text-center mb-16"
-          initial="hidden"
-          whileInView="show"
-          viewport={SECTION_VIEWPORT}
-          variants={sectionContainer}
-        >
-          <span className="text-sm font-semibold text-blue-600 uppercase tracking-widest">
-            How it Works
-          </span>
-          <h2 className="text-3xl md:text-4xl font-bold text-gray-900 mt-2 dark:text-white">
-            From recording to content in minutes
-          </h2>
-          <p className="text-gray-500 mt-4 max-w-xl mx-auto text-base dark:text-slate-300">
-            Pick your processing level once, then generate whichever content
-            types you need.
-          </p>
-        </motion.div>
-
-        <div className="grid items-center gap-12 lg:grid-cols-[0.9fr_1.1fr] lg:gap-16">
-          <motion.div
-            initial={{ opacity: 0, x: -18 }}
-            whileInView={{ opacity: 1, x: 0 }}
-            viewport={SECTION_VIEWPORT}
-            transition={{ duration: 0.6, ease: "easeOut" }}
-            className="space-y-4"
-          >
-            {HOW_IT_WORKS_STEPS.map((item, index) => {
-              const active = index === activeStep;
-              return (
-                <button
-                  key={item.id}
-                  type="button"
-                  onClick={() => setActiveStep(index)}
-                  className={`group w-full rounded-[1.45rem] border p-4 text-left transition-all sm:rounded-[1.6rem] sm:p-5 ${active
-                      ? "border-blue-300 bg-white shadow-[0_28px_70px_-38px_rgba(37,99,235,0.42)] dark:border-blue-400/30 dark:bg-white/[0.04]"
-                      : "border-slate-200/80 bg-white/60 hover:border-slate-300 hover:bg-white dark:border-white/10 dark:bg-white/[0.02] dark:hover:bg-white/[0.04]"
-                    }`}
-                >
-                  <div className="flex items-start gap-4">
-                    <div
-                      className={`relative flex h-14 w-14 flex-shrink-0 items-center justify-center rounded-2xl ${item.accent} shadow-lg ring-4 ${item.ring}`}
-                    >
-                      <item.Icon className="h-6 w-6 text-white" />
-                      <span className="absolute -right-2 -top-2 flex h-6 w-6 items-center justify-center rounded-full border border-slate-100 bg-white text-[10px] font-bold text-slate-700 dark:border-white/10 dark:bg-slate-900 dark:text-slate-200">
-                        {item.n}
-                      </span>
-                    </div>
-                    <div className="min-w-0 flex-1">
-                      <p
-                        className={`text-[11px] font-semibold uppercase tracking-[0.16em] ${active ? "text-blue-600 dark:text-blue-300" : "text-slate-400 dark:text-slate-500"}`}
-                      >
-                        {item.eyebrow}
-                      </p>
-                      <h3 className="mt-2 text-lg font-bold text-slate-900 sm:text-xl dark:text-white">
-                        {item.title}
-                      </h3>
-                      <p className="mt-2 text-[13px] leading-5 text-slate-500 sm:text-sm sm:leading-6 dark:text-slate-300">
-                        {item.description}
-                      </p>
-                    </div>
-                  </div>
-                </button>
-              );
-            })}
-          </motion.div>
-
-          <motion.div
-            initial={{ opacity: 0, x: 18 }}
-            whileInView={{ opacity: 1, x: 0 }}
-            viewport={SECTION_VIEWPORT}
-            transition={{ duration: 0.6, ease: "easeOut", delay: 0.08 }}
-            className="relative mx-auto w-full max-w-[22rem] sm:max-w-none"
-          >
-            <div className="pointer-events-none absolute inset-x-8 bottom-5 h-20 rounded-full bg-blue-500/18 blur-3xl dark:bg-blue-500/22" />
-            <AnimatePresence mode="wait">
-              <motion.div
-                key={step.id}
-                initial={
-                  reduceMotion
-                    ? { opacity: 1 }
-                    : { opacity: 0, y: 24, scale: 0.985 }
-                }
-                animate={
-                  reduceMotion ? { opacity: 1 } : { opacity: 1, y: 0, scale: 1 }
-                }
-                exit={
-                  reduceMotion
-                    ? { opacity: 1 }
-                    : { opacity: 0, y: -20, scale: 1.015 }
-                }
-                transition={{
-                  duration: reduceMotion ? 0 : 0.52,
-                  ease: [0.22, 1, 0.36, 1],
-                }}
-              >
-                <HowItWorksGraphic step={step} />
-              </motion.div>
-            </AnimatePresence>
-          </motion.div>
-        </div>
-      </div>
-    </section>
-  );
-}
-
-// Content Outputs Section
-function ContentOutputsSection() {
-  const reduceMotion = useReducedMotion();
-  const interactiveItems = useMemo<InteractiveItem[]>(() => {
-    const addonItems: InteractiveItem[] = ANALYSIS_OPTION_CONFIG.map((option) => {
-      const iconConfig = ADDON_ICON_MAP[option.key] || {
-        iconKey: "showNotes" as OutputIconKey,
-        badgeBg: "bg-slate-600",
-      };
-      return {
-        id: option.key,
-        group: "addons",
-        label: option.label,
-        helpText: option.description,
-        iconKey: iconConfig.iconKey,
-        badgeBg: iconConfig.badgeBg,
-        preview: ADDON_PREVIEW_MAP[option.key] || {
-          eyebrow: "Add-on preview",
-          title: option.label,
-          meta: [{ label: "Typical output", value: "Generated analysis" }],
-          body: "Preview content for this add-on appears here.",
-        },
-      };
-    });
-
-    const contentItems: InteractiveItem[] = CONTENT_TYPES.filter(
-      (contentType) => contentType.enabled,
-    ).map((contentType) => {
-      const iconConfig = CONTENT_ICON_MAP[contentType.id] || {
-        iconKey: "showNotes" as OutputIconKey,
-        badgeBg: "bg-slate-600",
-      };
-      return {
-        id: contentType.id,
-        group: "content",
-        label: contentType.name,
-        helpText: contentType.description,
-        iconKey: iconConfig.iconKey,
-        badgeBg: iconConfig.badgeBg,
-        preview: CONTENT_PREVIEW_MAP[contentType.id] || {
-          eyebrow: "Content type preview",
-          title: contentType.name,
-          meta: [{ label: "Typical output", value: "Generated draft" }],
-          body: "Preview content for this content type appears here.",
-        },
-      };
-    });
-
-    return [...addonItems, ...contentItems];
-  }, []);
-
-  const [activeItemId, setActiveItemId] = useState<string>("namedSpeakers");
-  const [toneByItem, setToneByItem] = useState<Record<string, string>>({});
-
-  const activeItem =
-    interactiveItems.find((item) => item.id === activeItemId) ||
-    interactiveItems[0];
-  const addonItems = interactiveItems.filter((item) => item.group === "addons");
-  const contentItems = interactiveItems.filter(
-    (item) => item.group === "content",
-  );
-  const activeTone = activeItem
-    ? (toneByItem[activeItem.id] ?? DEFAULT_CONTENT_ENGINE_TONE)
-    : DEFAULT_CONTENT_ENGINE_TONE;
-  const toneDetail =
-    TONE_GUIDANCE[activeTone] ?? "Tone adjusts voice, pacing, and structure.";
-  const activePreviewBody =
-    activeItem?.group === "content"
-      ? renderToneVariantPreview(activeItem, activeTone)
-      : (activeItem?.preview.body ?? "");
-
-  return (
-    <section
-      id="outputs"
-      className="relative overflow-hidden bg-[linear-gradient(180deg,#f8fbff_0%,#eef4ff_40%,#f8fafc_100%)] py-20 dark:bg-[linear-gradient(180deg,#020617_0%,#0b1120_48%,#111827_100%)]"
-    >
-      <div className="pointer-events-none absolute inset-0 bg-[linear-gradient(to_right,rgba(37,99,235,0.05)_1px,transparent_1px),linear-gradient(to_bottom,rgba(37,99,235,0.05)_1px,transparent_1px)] bg-[size:28px_28px,28px_28px] dark:bg-[linear-gradient(to_right,rgba(148,163,184,0.08)_1px,transparent_1px),linear-gradient(to_bottom,rgba(148,163,184,0.08)_1px,transparent_1px)]" />
-      <div className="pointer-events-none absolute inset-0 bg-[linear-gradient(to_right,rgba(15,23,42,0.06)_1px,transparent_1px),linear-gradient(to_bottom,rgba(15,23,42,0.06)_1px,transparent_1px)] bg-[size:140px_140px,140px_140px] dark:bg-[linear-gradient(to_right,rgba(148,163,184,0.12)_1px,transparent_1px),linear-gradient(to_bottom,rgba(148,163,184,0.12)_1px,transparent_1px)]" />
-      <div className="pointer-events-none absolute left-1/2 top-24 h-56 w-[42rem] -translate-x-1/2 rounded-full bg-blue-500/16 blur-3xl dark:bg-cyan-500/12" />
-      <div className="pointer-events-none absolute right-[12%] top-1/2 h-44 w-44 rounded-full bg-cyan-400/12 blur-3xl dark:bg-indigo-500/16" />
-
-      <div className="relative max-w-[90rem] mx-auto px-4 sm:px-6 lg:px-8">
-        <motion.div
-          className="mb-10 text-center"
-          initial="hidden"
-          whileInView="show"
-          viewport={SECTION_VIEWPORT}
-          variants={sectionContainer}
-        >
-          <span className="text-sm font-semibold text-blue-600 uppercase tracking-widest">
-            Content Engine
-          </span>
-          <h2 className="text-3xl md:text-4xl font-bold text-gray-900 mt-2 dark:text-white">
-            One recording, shaped for every channel.
-          </h2>
-          <p className="text-gray-500 mt-4 max-w-2xl mx-auto text-base dark:text-slate-300">
-            Select any add-on or content type to preview exactly how one
-            recording can turn into production-ready assets.
-          </p>
-        </motion.div>
-
-        <div className="mx-auto max-w-6xl rounded-[1.9rem] border border-slate-200/85 bg-white/80 p-4 shadow-[0_40px_100px_-70px_rgba(37,99,235,0.35)] backdrop-blur-sm dark:border-white/10 dark:bg-slate-950/55 dark:shadow-[0_45px_120px_-70px_rgba(56,189,248,0.35)] sm:p-5">
-          <div className="grid items-stretch gap-5 lg:grid-cols-[minmax(0,26rem)_minmax(0,1fr)]">
-          <motion.div
-            initial={{ opacity: 0, y: 20 }}
-            whileInView={{ opacity: 1, y: 0 }}
-            viewport={SECTION_VIEWPORT}
-            transition={{ duration: 0.6, ease: "easeOut" }}
-            className="relative overflow-hidden rounded-[1.35rem] border border-slate-200/85 bg-[linear-gradient(180deg,#f8fbff_0%,#f5f9ff_100%)] p-4 shadow-[0_20px_50px_-38px_rgba(37,99,235,0.28)] dark:border-white/10 dark:bg-[linear-gradient(180deg,#091128_0%,#0b1734_100%)]"
-          >
-            <div className="pointer-events-none absolute inset-0 bg-[radial-gradient(circle_at_top,rgba(59,130,246,0.08),transparent_45%)] dark:bg-[radial-gradient(circle_at_top,rgba(34,211,238,0.14),transparent_45%)]" />
-            <div className="relative space-y-5">
-              <div>
-                <h3 className="text-[11px] font-semibold uppercase tracking-[0.18em] text-slate-500 dark:text-blue-100/72">
-                  Add-ons
-                </h3>
-                <div className="mt-3 grid gap-2 sm:grid-cols-2 lg:grid-cols-2">
-                  {addonItems.map((item) => {
-                    const Icon = OUTPUT_ICONS[item.iconKey];
-                    const isActive = activeItem?.id === item.id;
-                    return (
-                      <div key={item.id} className="relative">
-                        <button
-                          type="button"
-                          onClick={() => setActiveItemId(item.id)}
-                          aria-pressed={isActive}
-                          className={`group relative w-full rounded-xl border px-3 py-3 text-left transition-all focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-blue-500/40 focus-visible:ring-offset-2 focus-visible:ring-offset-white dark:focus-visible:ring-cyan-400/50 dark:focus-visible:ring-offset-slate-950 ${isActive
-                            ? "border-blue-300/90 bg-[linear-gradient(135deg,#eef5ff_0%,#f7faff_100%)] shadow-[0_18px_40px_-30px_rgba(37,99,235,0.42)] dark:border-cyan-400/35 dark:bg-[linear-gradient(135deg,rgba(34,211,238,0.16)_0%,rgba(59,130,246,0.10)_100%)]"
-                            : "border-slate-200/85 bg-white/90 hover:border-slate-300 hover:bg-white dark:border-white/10 dark:bg-white/[0.03] dark:hover:border-white/20 dark:hover:bg-white/[0.06]"
-                            }`}
-                        >
-                          <div className="flex items-start gap-3">
-                            <div
-                              className={`flex h-8 w-8 flex-shrink-0 items-center justify-center rounded-[0.65rem] ${item.badgeBg} text-white shadow-[0_10px_24px_-14px_rgba(15,23,42,0.7)]`}
-                            >
-                              <Icon className="h-4 w-4" />
-                            </div>
-                            <div className="min-w-0 flex-1">
-                              <p className="text-sm font-semibold text-slate-900 dark:text-white">
-                                {item.label}
-                              </p>
-                            </div>
-                          </div>
-                          <span className={`absolute left-0 top-0 h-full w-[2px] rounded-r ${isActive ? "bg-blue-500 dark:bg-cyan-300" : "bg-transparent"}`} />
-                        </button>
-                      </div>
-                    );
-                  })}
-                </div>
-              </div>
-
-              <div className="border-t border-slate-200 pt-4 dark:border-white/10">
-                <h3 className="text-[11px] font-semibold uppercase tracking-[0.18em] text-slate-500 dark:text-blue-100/72">
-                  Content Types
-                </h3>
-                <div className="mt-3 grid gap-2 sm:grid-cols-2 lg:grid-cols-2">
-                  {contentItems.map((item) => {
-                    const Icon = OUTPUT_ICONS[item.iconKey];
-                    const isActive = activeItem?.id === item.id;
-                    return (
-                      <div key={item.id} className="relative">
-                        <button
-                          type="button"
-                          onClick={() => setActiveItemId(item.id)}
-                          aria-pressed={isActive}
-                          className={`group relative w-full rounded-xl border px-3 py-3 text-left transition-all focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-blue-500/40 focus-visible:ring-offset-2 focus-visible:ring-offset-white dark:focus-visible:ring-cyan-400/50 dark:focus-visible:ring-offset-slate-950 ${isActive
-                            ? "border-blue-300/90 bg-[linear-gradient(135deg,#eef5ff_0%,#f7faff_100%)] shadow-[0_18px_40px_-30px_rgba(37,99,235,0.42)] dark:border-cyan-400/35 dark:bg-[linear-gradient(135deg,rgba(34,211,238,0.16)_0%,rgba(59,130,246,0.10)_100%)]"
-                            : "border-slate-200/85 bg-white/90 hover:border-slate-300 hover:bg-white dark:border-white/10 dark:bg-white/[0.03] dark:hover:border-white/20 dark:hover:bg-white/[0.06]"
-                            }`}
-                        >
-                          <div className="flex items-start gap-3">
-                            <div
-                              className={`flex h-8 w-8 flex-shrink-0 items-center justify-center rounded-[0.65rem] ${item.badgeBg} text-white shadow-[0_10px_24px_-14px_rgba(15,23,42,0.7)]`}
-                            >
-                              <Icon className="h-4 w-4" />
-                            </div>
-                            <div className="min-w-0 flex-1">
-                              <p className="text-sm font-semibold text-slate-900 dark:text-white">
-                                {item.label}
-                              </p>
-                            </div>
-                          </div>
-                          <span className={`absolute left-0 top-0 h-full w-[2px] rounded-r ${isActive ? "bg-blue-500 dark:bg-cyan-300" : "bg-transparent"}`} />
-                        </button>
-                      </div>
-                    );
-                  })}
-                </div>
-              </div>
-            </div>
-          </motion.div>
-
-          <motion.div
-            initial={{ opacity: 0, y: 20 }}
-            whileInView={{ opacity: 1, y: 0 }}
-            viewport={SECTION_VIEWPORT}
-            transition={{ duration: 0.6, ease: "easeOut", delay: 0.08 }}
-            className="relative flex h-full flex-col overflow-hidden rounded-[1.35rem] border border-slate-200/85 bg-[linear-gradient(180deg,#ffffff_0%,#f8fbff_100%)] p-5 shadow-[0_26px_60px_-45px_rgba(37,99,235,0.45)] dark:border-white/10 dark:bg-[linear-gradient(180deg,#09142e_0%,#0a1730_100%)] dark:shadow-[0_30px_70px_-48px_rgba(34,211,238,0.45)]"
-          >
-            <div className="pointer-events-none absolute inset-0 bg-[linear-gradient(to_right,rgba(15,23,42,0.04)_1px,transparent_1px),linear-gradient(to_bottom,rgba(15,23,42,0.04)_1px,transparent_1px)] bg-[size:24px_24px,24px_24px] dark:bg-[linear-gradient(to_right,rgba(148,163,184,0.08)_1px,transparent_1px),linear-gradient(to_bottom,rgba(148,163,184,0.08)_1px,transparent_1px)]" />
-            <div className="pointer-events-none absolute -top-14 right-0 h-36 w-36 rounded-full bg-blue-500/12 blur-3xl dark:bg-cyan-400/12" />
-            <div className="relative flex-1">
-            <AnimatePresence mode="wait">
-              <motion.div
-                key={activeItem?.id || "none"}
-                initial={reduceMotion ? { opacity: 1 } : { opacity: 0, y: 10 }}
-                animate={reduceMotion ? { opacity: 1 } : { opacity: 1, y: 0 }}
-                exit={reduceMotion ? { opacity: 1 } : { opacity: 0, y: -8 }}
-                transition={{ duration: reduceMotion ? 0 : 0.24, ease: "easeOut" }}
-                className="flex h-full flex-col"
-              >
-                <div className="flex items-center justify-between gap-3 border-b border-slate-200/85 pb-4 dark:border-white/10">
-                  <div>
-                    <p className="text-[11px] font-semibold uppercase tracking-[0.18em] text-slate-500 dark:text-blue-100/70">
-                      {activeItem?.preview.eyebrow}
-                    </p>
-                    <h3 className="mt-1 text-xl font-bold text-slate-900 dark:text-white">
-                      {activeItem?.preview.title}
-                    </h3>
-                  </div>
-                  <span className="rounded-full border border-blue-200/75 bg-blue-50 px-2.5 py-1 text-[11px] font-semibold uppercase tracking-[0.14em] text-blue-700 dark:border-cyan-300/25 dark:bg-cyan-500/10 dark:text-cyan-200">
-                    {activeItem?.group === "addons" ? "Add-on" : "Content"}
-                  </span>
-                </div>
-
-                <div className="mt-4 grid gap-2 sm:grid-cols-3">
-                  {activeItem?.preview.meta.map((item) => (
-                    <div
-                      key={item.label}
-                      className="rounded-lg border border-slate-200/80 bg-white/75 px-3 py-2 shadow-[0_10px_25px_-24px_rgba(15,23,42,0.6)] dark:border-white/10 dark:bg-white/[0.04]"
-                    >
-                      <p className="text-[10px] font-semibold uppercase tracking-[0.14em] text-slate-500 dark:text-blue-100/55">
-                        {item.label}
-                      </p>
-                      <p className="mt-1 text-xs font-medium text-slate-800 dark:text-slate-200">
-                        {item.value}
-                      </p>
-                    </div>
-                  ))}
-                </div>
-
-                {activeItem?.group === "content" && (
-                  <div className="mt-4 rounded-xl border border-slate-200/85 bg-white/70 p-4 dark:border-white/10 dark:bg-white/[0.03]">
-                    <div className="flex flex-wrap items-center gap-2">
-                      <p className="mr-1 text-[10px] font-semibold uppercase tracking-[0.16em] text-slate-500 dark:text-blue-100/55">
-                        Tone
-                      </p>
-                      {CONTENT_ENGINE_TONES.map((tone) => {
-                        const selected = tone === activeTone;
-                        return (
-                          <button
-                            key={tone}
-                            type="button"
-                            onClick={() =>
-                              activeItem &&
-                              setToneByItem((prev) => ({
-                                ...prev,
-                                [activeItem.id]: tone,
-                              }))
-                            }
-                            className={`rounded-full border px-2.5 py-1 text-[11px] font-semibold transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-blue-500/45 dark:focus-visible:ring-cyan-400/45 ${selected
-                              ? "border-blue-300 bg-blue-50 text-blue-700 dark:border-cyan-300/35 dark:bg-cyan-500/12 dark:text-cyan-200"
-                              : "border-slate-200 bg-white text-slate-600 hover:border-slate-300 dark:border-white/10 dark:bg-white/[0.03] dark:text-slate-300 dark:hover:border-white/20"
-                              }`}
-                          >
-                            {tone}
-                          </button>
-                        );
-                      })}
-                    </div>
-                    <p className="mt-2 text-xs text-slate-600 dark:text-slate-300">
-                      {toneDetail}
-                    </p>
-                  </div>
-                )}
-
-                <div className="relative mt-5 overflow-hidden rounded-xl border border-slate-200/85 bg-[linear-gradient(180deg,#f8fbff_0%,#f6f9ff_100%)] p-5 dark:border-white/10 dark:bg-[linear-gradient(180deg,rgba(10,23,48,0.82)_0%,rgba(9,18,38,0.82)_100%)]">
-                  <div className="pointer-events-none absolute inset-0 bg-[radial-gradient(circle_at_top_right,rgba(59,130,246,0.12),transparent_42%)] dark:bg-[radial-gradient(circle_at_top_right,rgba(34,211,238,0.12),transparent_42%)]" />
-                  <p className="relative mb-2 text-[10px] font-semibold uppercase tracking-[0.16em] text-slate-500 dark:text-blue-100/60">
-                    Generated Preview
-                  </p>
-                  {activeItem?.group === "content" && (
-                    <p className="relative mb-3 text-xs text-slate-500 dark:text-slate-400">
-                      Variant: <span className="font-semibold text-slate-700 dark:text-slate-200">{activeTone}</span>
-                    </p>
-                  )}
-                  <p className="relative whitespace-pre-line text-sm leading-7 text-slate-700 dark:text-slate-300">
-                    {activePreviewBody}
-                  </p>
-                </div>
-              </motion.div>
-            </AnimatePresence>
-            </div>
-
-            <div className="relative mt-5 border-t border-slate-200/85 pt-4 dark:border-white/10">
-              <Link
-                href="/auth/signup"
-                className="group inline-flex items-center gap-2 rounded-lg px-1 text-sm font-semibold text-blue-700 transition-colors hover:text-blue-800 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-blue-500/45 dark:text-cyan-300 dark:hover:text-cyan-200 dark:focus-visible:ring-cyan-400/45"
-              >
-                Generate your first batch here{" "}
-                <ArrowRight className="h-4 w-4 transition-transform group-hover:translate-x-0.5" />
-              </Link>
-            </div>
-          </motion.div>
-        </div>
-        </div>
-      </div>
-    </section>
-  );
-}
-
-function AnalysisSection() {
-  const isMobileLayout = useIsMobileLayout();
-  const analysisViewport = isMobileLayout
-    ? MOBILE_SECTION_VIEWPORT
-    : SECTION_VIEWPORT;
-
-  return (
-    <section
-      id="analysis"
-      className="relative overflow-hidden bg-[linear-gradient(180deg,#f1f5f9_0%,#dbeafe_18%,#0b1220_100%)] py-20 dark:bg-slate-950"
-    >
-      <AnalysisConstellationBackground />
-      <div className="relative max-w-[90rem] mx-auto px-4 sm:px-6 lg:px-8">
-        <motion.div
-          className="text-center mb-12"
-          initial={isMobileLayout ? false : "hidden"}
-          whileInView="show"
-          viewport={analysisViewport}
-          variants={sectionContainer}
-        >
-          <span className="text-sm font-semibold uppercase tracking-widest text-blue-300">
-            Analysis
-          </span>
-          <h2 className="mt-2 text-3xl font-bold text-white md:text-4xl">
-            Review the conversation before you turn it into more content.
-          </h2>
-          <p className="mx-auto mt-4 max-w-2xl text-base text-blue-100/82">
-            AudioRepurpose reads the transcript like an editor would: where the
-            hook landed, where the follow-up missed, and which moments deserve
-            to become assets.
-          </p>
-        </motion.div>
-
-        <motion.div
-          className="grid gap-8 xl:grid-cols-5 xl:items-stretch"
-          initial={isMobileLayout ? false : "hidden"}
-          whileInView="show"
-          viewport={analysisViewport}
-          variants={sectionContainer}
-        >
-          <motion.div variants={sectionItem} className="xl:col-span-2 h-full">
-            <div className="flex h-full flex-col">
-              <motion.div
-                variants={sectionItem}
-                className="flex items-center gap-2 text-[11px] font-semibold uppercase tracking-[0.18em] text-blue-200/55"
-              >
-                <BarChart3 className="h-4 w-4 text-blue-300" />
-                Creator coaching
-              </motion.div>
-              <motion.h3
-                variants={sectionItem}
-                className="mt-4 text-4xl font-bold tracking-tight text-white"
-              >
-                Analytics that connect transcript quality to what you publish
-                next.
-              </motion.h3>
-              <motion.p
-                variants={sectionItem}
-                className="mt-5 max-w-xl text-sm leading-7 text-blue-100/82"
-              >
-                Instead of just counting outputs, AudioRepurpose shows where the
-                conversation created usable material, where it lost momentum,
-                and what to tighten before the next draft or recording.
-              </motion.p>
-
-              <motion.div variants={sectionItem} className="mt-8 xl:mt-8">
-                <div className="relative overflow-hidden rounded-[1.5rem] border border-white/10 bg-transparent p-5">
-                  <div className="pointer-events-none absolute inset-0 bg-[linear-gradient(to_right,rgba(255,255,255,0.04)_1px,transparent_1px),linear-gradient(to_bottom,rgba(255,255,255,0.04)_1px,transparent_1px)] bg-[size:24px_24px,24px_24px] opacity-60" />
-                  <div className="relative">
-                    <p className="text-[11px] font-semibold uppercase tracking-[0.16em] text-blue-100/50">
-                      Content mix
-                    </p>
-                    <h4 className="mt-1 text-lg font-semibold tracking-tight text-white">
-                      What this upload produced across formats
-                    </h4>
-                    <div className="mt-6">
-                      <AnalysisContentPieChart />
-                    </div>
-                  </div>
-                </div>
-              </motion.div>
-
-              <motion.div variants={sectionItem} className="mt-6 space-y-4">
-                {[
-                  {
-                    Icon: Target,
-                    text: "Catch weak openings, soft CTAs, and missed audience payoff before you publish.",
-                  },
-                  {
-                    Icon: Lightbulb,
-                    text: "Spot where the host should have gone deeper, clarified, or followed up.",
-                  },
-                  {
-                    Icon: BarChart3,
-                    text: "See which moments actually landed so you can repeat what works next episode.",
-                  },
-                ].map(({ Icon, text }) => (
-                  <motion.div
-                    key={text}
-                    variants={sectionItem}
-                    className="flex items-start gap-3 border-l border-slate-200 pl-4 dark:border-white/10"
-                  >
-                    <div className="mt-0.5 flex h-9 w-9 items-center justify-center rounded-xl bg-white text-blue-600 shadow-sm dark:bg-white/8 dark:text-blue-200">
-                      <Icon className="h-4 w-4" />
-                    </div>
-                    <p className="text-sm leading-6 text-blue-100/84">{text}</p>
-                  </motion.div>
-                ))}
-              </motion.div>
-            </div>
-          </motion.div>
-
-          <motion.div variants={sectionItem} className="xl:col-span-3 h-full">
-            <div className="relative h-full rounded-[2rem] border border-white/10 bg-white/9 px-5 py-6 shadow-[0_30px_90px_-55px_rgba(15,23,42,0.85)] backdrop-blur-md sm:px-7">
-              <div className="pointer-events-none absolute inset-0 rounded-[2rem] bg-[radial-gradient(circle_at_top_right,rgba(96,165,250,0.12),transparent_30%),linear-gradient(to_right,rgba(255,255,255,0.06)_1px,transparent_1px),linear-gradient(to_bottom,rgba(255,255,255,0.06)_1px,transparent_1px)] bg-[size:auto,28px_28px,28px_28px]" />
-              <div className="relative">
-                <div className="flex flex-col gap-4 border-b border-white/10 pb-5 sm:flex-row sm:items-end sm:justify-between">
-                  <div>
-                    <p className="text-[11px] font-semibold uppercase tracking-[0.18em] text-blue-100/50">
-                      Coaching snapshot
-                    </p>
-                    <h3 className="mt-2 text-2xl font-bold tracking-tight text-white">
-                      What to fix, keep, or improve next
-                    </h3>
-                  </div>
-                  <div className="flex flex-wrap gap-2">
-                    {["Gaps", "Strengths", "Next actions"].map((pill) => (
-                      <span
-                        key={pill}
-                        className="rounded-md border border-white/10 bg-white/8 px-2.5 py-1.5 text-[11px] font-semibold uppercase tracking-[0.14em] text-blue-50/75"
-                      >
-                        {pill}
-                      </span>
-                    ))}
-                  </div>
-                </div>
-
-                <div className="mt-6 grid gap-4 md:grid-cols-3">
-                  {ANALYSIS_METRICS.map((metric, index) => (
-                    <motion.div
-                      key={metric.label}
-                      initial={{ opacity: 0, y: 12 }}
-                      whileInView={{ opacity: 1, y: 0 }}
-                      viewport={SECTION_VIEWPORT}
-                      transition={{
-                        duration: 0.45,
-                        delay: 0.06 * index,
-                        ease: "easeOut",
-                      }}
-                      className="rounded-[1.5rem] border border-white/10 bg-white/8 p-4"
-                    >
-                      <div className="text-[11px] font-semibold uppercase tracking-[0.16em] text-blue-100/50">
-                        {metric.label}
-                      </div>
-                      <div className="mt-3 text-3xl font-bold tracking-tight text-white">
-                        {metric.value}
-                      </div>
-                      <p className="mt-2 text-sm leading-6 text-blue-100/82">
-                        {metric.note}
-                      </p>
-                    </motion.div>
-                  ))}
-                </div>
-
-                <div className="mt-5">
-                  <div className="rounded-[1.5rem] border border-white/10 bg-white/8 p-5">
-                    <div className="flex items-center justify-between">
-                      <div>
-                        <p className="text-[11px] font-semibold uppercase tracking-[0.16em] text-blue-100/50">
-                          Topic intensity
-                        </p>
-                        <h4 className="mt-1 text-lg font-semibold tracking-tight text-white">
-                          Where the conversation spends its energy
-                        </h4>
-                      </div>
-                    </div>
-                    <div className="mt-6 space-y-4">
-                      {[
-                        {
-                          name: "AI safety",
-                          width: "84%",
-                          tone: "from-blue-600 to-cyan-400",
-                        },
-                        {
-                          name: "Future of work",
-                          width: "68%",
-                          tone: "from-violet-600 to-indigo-400",
-                        },
-                        {
-                          name: "Sponsor CTA",
-                          width: "38%",
-                          tone: "from-amber-500 to-orange-400",
-                        },
-                        {
-                          name: "Founder story",
-                          width: "56%",
-                          tone: "from-emerald-500 to-lime-400",
-                        },
-                      ].map((item, index) => (
-                        <motion.div
-                          key={item.name}
-                          initial={{ opacity: 0, x: -10 }}
-                          whileInView={{ opacity: 1, x: 0 }}
-                          viewport={SECTION_VIEWPORT}
-                          transition={{
-                            duration: 0.4,
-                            delay: 0.08 * index,
-                            ease: "easeOut",
-                          }}
-                        >
-                          <div className="flex items-center justify-between text-sm text-blue-100/88">
-                            <span>{item.name}</span>
-                            <span className="text-xs font-semibold uppercase tracking-[0.14em] text-blue-100/45">
-                              {item.width}
-                            </span>
-                          </div>
-                          <div className="mt-2 h-2.5 overflow-hidden rounded-full bg-white/10">
-                            <motion.div
-                              className={`h-full rounded-full bg-gradient-to-r ${item.tone}`}
-                              initial={{ width: 0 }}
-                              whileInView={{ width: item.width }}
-                              viewport={SECTION_VIEWPORT}
-                              transition={{
-                                duration: 0.8,
-                                delay: 0.12 + index * 0.08,
-                                ease: "easeOut",
-                              }}
-                            />
-                          </div>
-                        </motion.div>
-                      ))}
-                    </div>
-                  </div>
-                </div>
-
-                <div className="mt-5 rounded-[1.5rem] border border-white/10 bg-white/8 p-5">
-                  <div className="flex items-center justify-between">
-                    <div>
-                      <p className="text-[11px] font-semibold uppercase tracking-[0.16em] text-blue-100/50">
-                        Creator coaching
-                      </p>
-                      <h4 className="mt-1 text-lg font-semibold tracking-tight text-white">
-                        What to fix or lean into next
-                      </h4>
-                    </div>
-                  </div>
-                  <div className="mt-5 grid gap-3 lg:grid-cols-3">
-                    {ANALYSIS_OPPORTUNITIES.map((item, index) => (
-                      <motion.div
-                        key={item.title}
-                        initial={{ opacity: 0, y: 10 }}
-                        whileInView={{ opacity: 1, y: 0 }}
-                        viewport={SECTION_VIEWPORT}
-                        transition={{
-                          duration: 0.4,
-                          delay: 0.08 * index,
-                          ease: "easeOut",
-                        }}
-                        className="rounded-2xl border border-white/10 bg-white/8 p-4"
-                      >
-                        <div className="flex items-center justify-between gap-3">
-                          <span className="text-[11px] font-semibold uppercase tracking-[0.14em] text-blue-100/48">
-                            {item.type}
-                          </span>
-                          <span
-                            className={`rounded-md px-2 py-1 text-[10px] font-semibold uppercase tracking-[0.14em] ${item.severity === "High"
-                                ? "bg-rose-500/10 text-rose-200"
-                                : item.severity === "Medium"
-                                  ? "bg-amber-500/10 text-amber-200"
-                                  : "bg-emerald-500/10 text-emerald-200"
-                              }`}
-                          >
-                            {item.severity}
-                          </span>
-                        </div>
-                        <h5 className="mt-2 text-sm font-semibold leading-6 text-white">
-                          {item.title}
-                        </h5>
-                        <p className="mt-2 text-sm leading-6 text-blue-100/82">
-                          {item.action}
-                        </p>
-                      </motion.div>
-                    ))}
-                  </div>
-                </div>
-              </div>
-            </div>
-          </motion.div>
-        </motion.div>
-      </div>
-    </section>
-  );
-}
-
-// Pricing
-function Pricing() {
-  return (
-    <section
-      id="pricing"
-      className="relative overflow-hidden py-24 bg-gray-50 dark:bg-slate-950"
-    >
-      <PricingSubtleStars />
-      <div className="relative max-w-7xl mx-auto px-4 sm:px-6 lg:px-8">
-        <div className="text-center mb-16">
-          <span className="text-sm font-semibold text-blue-600 uppercase tracking-widest">
-            Pricing
-          </span>
-          <h2 className="text-3xl md:text-4xl font-bold text-slate-900 mt-2 dark:text-white">
-            Pay only for what you process
-          </h2>
-          <p className="text-slate-600 mt-4 max-w-xl mx-auto text-base dark:text-slate-300">
-            One pay-as-you-go workflow: base transcript, optional analysis, and
-            per-output content generation.
-          </p>
-        </div>
-
-        <div className="max-w-6xl mx-auto rounded-[2rem] border-2 border-slate-200 bg-white/90 p-6 shadow-sm dark:border-white/10 dark:bg-slate-900/80">
-          <div className="grid gap-6 lg:grid-cols-3">
-            {PAYG_SECTIONS.map(
-              ({ name, price, description, features }, idx) => (
-                <div
-                  key={name}
-                  className={`rounded-2xl border border-slate-200/80 bg-slate-50/80 p-5 dark:border-white/10 dark:bg-slate-950/50 motion-safe:animate-fade-up${idx === 1 ? "-200" : idx === 2 ? "-400" : ""}`}
-                >
-                  <div className="mb-4">
-                    <h3 className="text-lg font-bold text-gray-900 dark:text-white">
-                      {name}
-                    </h3>
-                    <div className="mt-1 text-3xl font-bold text-gray-900 dark:text-white">
-                      {price}
-                    </div>
-                    <p className="mt-2 text-sm leading-relaxed text-gray-500 dark:text-slate-400">
-                      {description}
-                    </p>
-                  </div>
-                  <ul className="space-y-2.5">
-                    {features.map((feature) => (
-                      <li key={feature} className="flex items-start gap-2.5">
-                        <Check className="mt-0.5 h-4 w-4 flex-shrink-0 text-emerald-500" />
-                        <span className="text-sm text-gray-700 dark:text-slate-300">
-                          {feature}
-                        </span>
-                      </li>
-                    ))}
-                  </ul>
-                </div>
-              ),
-            )}
-          </div>
-
-          <div className="mt-6 flex justify-center">
-            <Link
-              href="/auth/signup"
-              className="inline-flex min-w-[220px] items-center justify-center rounded-xl bg-blue-600 px-6 py-3 text-sm font-semibold text-white transition-colors hover:bg-blue-700"
-            >
-              Process your first recording
-            </Link>
-          </div>
-        </div>
-
-        <p className="mt-8 text-center text-sm text-slate-500 dark:text-slate-400">
-          No subscriptions. Buy credits, upload when you need to, and trigger
-          analysis or content generation only when it adds value.
-        </p>
-        <p className="mt-3 text-center text-sm text-slate-500 dark:text-slate-400">
-          {PRICING_MODEL_SUMMARY}
-        </p>
-      </div>
-    </section>
-  );
-}
-
-// Final CTA
-function FinalCTA() {
-  const { resolvedTheme } = useTheme();
-  const [mounted, setMounted] = useState(false);
-
-  useEffect(() => setMounted(true), []);
-
-  const stats = [
-    { value: 11, suffix: "", label: "Content types" },
-    { value: 5, suffix: " min", label: "Per episode" },
-    { value: 0, suffix: "", label: "Subscriptions required" },
-  ] as const;
-  const logoTheme = mounted && resolvedTheme === "dark" ? "dark" : "light";
-
-  return (
-    <section className="relative overflow-hidden bg-gradient-to-br from-slate-100 via-blue-50 to-indigo-100 py-24 dark:from-slate-900 dark:via-blue-950 dark:to-indigo-950">
-      <div className="absolute inset-0 pointer-events-none">
-        <div className="absolute top-0 left-1/3 w-72 h-72 bg-blue-600/15 rounded-full blur-3xl" />
-        <div className="absolute bottom-0 right-1/3 w-72 h-72 bg-violet-600/15 rounded-full blur-3xl" />
-      </div>
-
-      <div className="relative z-10 max-w-3xl mx-auto px-4 sm:px-6 lg:px-8 text-center">
-        <BrandLogo
-          showText={false}
-          size="lg"
-          theme={logoTheme}
-          className="mb-6 motion-safe:animate-fade-up"
-        />
-        <h2 className="mb-4 text-3xl font-bold leading-tight text-slate-900 motion-safe:animate-fade-up-200 dark:text-white md:text-4xl">
-          Start Repurposing Today
-        </h2>
-        <p className="mb-10 text-lg leading-relaxed text-slate-600 motion-safe:animate-fade-up-400 dark:text-blue-200/70">
-          Turn one recording into transcripts, insights, and 11 publish-ready
-          content types.
-        </p>
-
-        <div className="flex flex-col sm:flex-row items-center justify-center gap-4 motion-safe:animate-fade-up-600">
-          <Link
-            href="/auth/signup"
-            className="inline-flex items-center gap-2 bg-white text-blue-900 hover:bg-blue-50 font-bold px-8 py-4 rounded-xl transition-colors shadow-xl text-base"
-          >
-            Get Started Free
-            <ArrowRight className="h-5 w-5" />
-          </Link>
-          <Link
-            href="/auth/login"
-            className="inline-flex items-center gap-2 rounded-xl border border-slate-300 px-6 py-4 text-sm font-medium text-slate-700 transition-colors hover:border-slate-400 hover:bg-white/70 dark:border-white/15 dark:text-white/70 dark:hover:border-white/30 dark:hover:text-white"
-          >
-            Already have an account? Log in
-          </Link>
-        </div>
-
-        <div className="mt-12 flex items-center justify-center gap-6 sm:gap-10 text-sm">
-          {stats.map((stat, idx) => (
-            <div
-              key={stat.label}
-              className={`text-center motion-safe:animate-fade-in${idx === 1 ? "-200" : idx === 2 ? "-400" : ""}`}
-            >
-              <div className="text-base font-bold text-slate-900 dark:text-white">
-                <CountUp to={stat.value} suffix={stat.suffix} />
-              </div>
-              <div className="mt-0.5 text-xs text-slate-500 dark:text-blue-300/60">
-                {stat.label}
-              </div>
-            </div>
-          ))}
-        </div>
-      </div>
-    </section>
-  );
-}
-
-// Footer
-function Footer() {
-  const { resolvedTheme } = useTheme();
-  const [mounted, setMounted] = useState(false);
-
-  useEffect(() => setMounted(true), []);
-  const logoTheme = mounted && resolvedTheme === "dark" ? "dark" : "light";
-
-  return (
-    <footer className="border-t border-slate-200 bg-slate-100 py-14 text-slate-500 motion-safe:animate-fade-in dark:border-gray-900 dark:bg-gray-950 dark:text-gray-400">
-      <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8">
-        <div className="grid gap-10 md:grid-cols-4">
-          <div className="md:col-span-2">
-            <a href="#top" className="inline-flex">
-              <BrandLogo theme={logoTheme} />
-            </a>
-            <p className="mt-4 max-w-md text-sm text-slate-500 dark:text-gray-500">
-              Turn one recording into a full content suite with accurate
-              speakers, clean summaries, and platform-ready outputs.
-            </p>
-          </div>
-          <div>
-            <p className="text-xs font-semibold uppercase tracking-widest text-slate-500 dark:text-gray-500">
-              Product
-            </p>
-            <div className="mt-4 space-y-2 text-sm">
-              <a
-                href="#speaker-intelligence"
-                className="block transition-colors hover:text-slate-900 dark:hover:text-gray-200"
-              >
-                Speaker Intelligence
-              </a>
-              <a
-                href="#how-it-works"
-                className="block transition-colors hover:text-slate-900 dark:hover:text-gray-200"
-              >
-                How it works
-              </a>
-              <a
-                href="#outputs"
-                className="block transition-colors hover:text-slate-900 dark:hover:text-gray-200"
-              >
-                Content outputs
-              </a>
-              <a
-                href="#analysis"
-                className="block transition-colors hover:text-slate-900 dark:hover:text-gray-200"
-              >
-                Analysis
-              </a>
-              <a
-                href="#pricing"
-                className="block transition-colors hover:text-slate-900 dark:hover:text-gray-200"
-              >
-                Pricing
-              </a>
-            </div>
-          </div>
-          <div>
-            <p className="text-xs font-semibold uppercase tracking-widest text-slate-500 dark:text-gray-500">
-              Account
-            </p>
-            <div className="mt-4 space-y-2 text-sm">
-              <Link
-                href="/auth/login"
-                className="block transition-colors hover:text-slate-900 dark:hover:text-gray-200"
-              >
-                Log In
-              </Link>
-              <Link
-                href="/auth/signup"
-                className="block transition-colors hover:text-slate-900 dark:hover:text-gray-200"
-              >
-                Get Started Free
-              </Link>
-            </div>
-          </div>
-        </div>
-        <div className="mt-10 flex flex-col items-center justify-between gap-4 text-xs text-slate-500 dark:text-gray-600 sm:flex-row">
-          <p>
-            &copy; {new Date().getFullYear()} AudioRepurpose. All rights
-            reserved.
-          </p>
-          <div className="flex items-center gap-4">
-            <a
-              href="#pricing"
-              className="transition-colors hover:text-slate-700 dark:hover:text-gray-300"
-            >
-              Pricing
-            </a>
-            <Link
-              href="/privacy"
-              className="transition-colors hover:text-slate-700 dark:hover:text-gray-300"
-            >
-              Privacy
-            </Link>
-            <Link
-              href="/terms"
-              className="transition-colors hover:text-slate-700 dark:hover:text-gray-300"
-            >
-              Terms
-            </Link>
-          </div>
-        </div>
-      </div>
-    </footer>
-  );
-}
-
-// Page
-export default function LandingPage() {
-  const [mobileOpen, setMobileOpen] = useState(false);
+export default function AudioRepurposeLandingPage() {
+  const { theme, mounted, toggleTheme } = useLandingTheme();
+  useSectionFocus();
 
   return (
     <MotionConfig reducedMotion="user">
-      <ScrollProgressBar />
-      <div id="top" className="min-h-screen bg-white">
-        <Navbar open={mobileOpen} setOpen={setMobileOpen} />
-        <main>
-          <Hero />
-          <SpeakerIntelligenceSection />
-          <HowItWorks />
-          <ContentOutputsSection />
-          <AnalysisSection />
-          <Pricing />
-          <FinalCTA />
-        </main>
-        <Footer />
-      </div>
+      <PageShell theme={theme}>
+        <HeaderNav theme={theme} mounted={mounted} onToggleTheme={toggleTheme} />
+        <HeroSection />
+        <AboutSection />
+        <HowItWorksSection />
+        {SHOW_LEGACY_ONE_SOURCE_SECTION ? <OneSourceSection /> : null}
+        <FeaturesSection />
+        {SHOW_STANDALONE_SPEAKER_SECTION ? <SpeakerSection /> : null}
+        <PricingSection />
+        <FinalConversionSection theme={theme} />
+      </PageShell>
     </MotionConfig>
   );
 }

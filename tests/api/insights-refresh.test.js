@@ -31,7 +31,7 @@ describe('/api/insights/[projectId]/refresh', () => {
     }));
 
     jest.doMock('../../lib/billing/cost-map', () => ({
-      estimateAnalysisJobCost: jest.fn(() => 0.1),
+      estimateAnalysisJobCostAsync: jest.fn().mockResolvedValue(0.1),
     }));
 
     jest.doMock('../../lib/billing/reserve-amount', () => ({

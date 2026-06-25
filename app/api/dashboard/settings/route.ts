@@ -1,4 +1,5 @@
 import { NextRequest, NextResponse } from 'next/server';
+import { getBillingOrganizationContext } from '@/lib/api/billing-org-context';
 import { requireAuthenticatedUser, RouteAccessError } from '@/lib/api/route-auth';
 import { supabaseAdmin } from '@/lib/supabase/server';
 import { getDisplayBalance, getUsageHistory } from '@/lib/billing/credit';
@@ -15,6 +16,7 @@ export async function GET(request: NextRequest) {
     const transactionLimit = Math.max(1, Math.min(100, Number(searchParams.get('transactionLimit') || '10')));
     const transactionOffset = Math.max(0, Number(searchParams.get('transactionOffset') || '0'));
     const usageLimit = Math.max(1, Math.min(500, Number(searchParams.get('usageLimit') || '200')));
+    const { organizationId } = await getBillingOrganizationContext(request, user.id);
 
     const [profileResult, integrationsResult, balanceResult, transactionsResult, usageResult] = await Promise.all([
       supabaseAdmin
@@ -27,8 +29,8 @@ export async function GET(request: NextRequest) {
         .select('provider,status,metadata,created_at,updated_at,external_account_id')
         .eq('user_id', user.id),
       getDisplayBalance(user.id),
-      getGroupedTransactions(user.id, transactionLimit, transactionOffset),
-      getUsageHistory(user.id, { limit: usageLimit, offset: 0 }),
+      getGroupedTransactions(user.id, transactionLimit, transactionOffset, { organizationId }),
+      getUsageHistory(user.id, { organizationId, limit: usageLimit, offset: 0 }),
     ]);
 
     if (profileResult.error) {

@@ -5,15 +5,12 @@
  */
 
 import { NextRequest, NextResponse } from 'next/server';
-import Stripe from 'stripe';
 import { supabaseAdmin } from '@/lib/supabase/server';
 import { isDemoUser } from '@/lib/demo-mode';
-import { addCredit } from '@/lib/billing/credit';
+import { addStripePurchaseCredit } from '@/lib/billing/credit';
 import { getTotalCredits, resolveCreditPackage } from '@/lib/billing/credit-packages';
-
-const stripe = new Stripe(process.env.STRIPE_SECRET_KEY!, {
-  apiVersion: '2025-10-29.clover',
-});
+import { grantTopUpCredits } from '@/lib/billing/plan-credits';
+import { getStripeClient } from '@/lib/billing/stripe-runtime';
 
 export async function POST(request: NextRequest) {
   try {
@@ -46,6 +43,7 @@ export async function POST(request: NextRequest) {
     }
 
     // Retrieve session from Stripe
+    const stripe = getStripeClient('top-up verification');
     const session = await stripe.checkout.sessions.retrieve(sessionId);
 
     // Verify session belongs to this user
@@ -65,7 +63,9 @@ export async function POST(request: NextRequest) {
     }
 
     // Dedup: check if this payment_intent was already processed (by webhook or prior verify call)
-    const paymentIntentId = session.payment_intent as string;
+    const paymentIntentId = typeof session.payment_intent === 'string'
+      ? session.payment_intent
+      : session.payment_intent?.id;
     if (paymentIntentId) {
       const { data: existingTransaction } = await supabaseAdmin
         .from('credit_transactions')
@@ -81,16 +81,16 @@ export async function POST(request: NextRequest) {
           success: true,
           alreadyProcessed: true,
           message: 'Credits already added',
+          creditUnit: session.metadata?.creditUnit === 'plan_credit' || session.metadata?.organizationId
+            ? 'plan_credit'
+            : 'legacy_usd',
         });
       }
     }
 
     // Add credits
     const packageId = session.metadata?.packageId;
-    const pkg = resolveCreditPackage(
-      packageId || '',
-      session.metadata?.customAmount ? Number(session.metadata.customAmount) : undefined
-    );
+    const pkg = resolveCreditPackage(packageId || '');
 
     if (!pkg) {
       return NextResponse.json(
@@ -109,7 +109,7 @@ export async function POST(request: NextRequest) {
 
     const creditsAmount = getTotalCredits(pkg);
 
-    console.log(`Processing payment verification for user ${user.id}: $${creditsAmount} credits`);
+    console.log(`Processing payment verification for user ${user.id}: ${creditsAmount} product credits`);
 
     let invoiceNumber: string | undefined;
     if (session.invoice) {
@@ -122,32 +122,71 @@ export async function POST(request: NextRequest) {
       }
     }
 
-    const result = await addCredit(user.id, creditsAmount, 'purchase', {
-      paymentId: session.payment_intent as string,
-      invoiceNumber,
-      reason: `Stripe purchase: ${packageId} package (verified on success page)`,
-      metadata: {
-        sessionId: session.id,
-        packageId,
-        baseAmount: pkg.amount,
-        bonusAmount: pkg.bonus,
-        amountPaid: (session.amount_total || 0) / 100,
-        customerEmail: session.customer_email,
-        verifiedViaSuccessPage: true,
-      },
-    });
+    const organizationId = session.metadata?.organizationId;
+    if (organizationId) {
+      const grant = await grantTopUpCredits({
+        organizationId,
+        userId: user.id,
+        credits: creditsAmount,
+        paymentId: paymentIntentId,
+        invoiceNumber,
+        idempotencyKey: `top_up:${paymentIntentId || session.id}`,
+        metadata: {
+          sessionId: session.id,
+          packageId,
+          amountPaid: (session.amount_total || 0) / 100,
+          customerEmail: session.customer_email,
+          verifiedViaSuccessPage: true,
+        },
+      });
 
-    if (result.success) {
-      console.log(`Successfully added ${creditsAmount} credits to user ${user.id}. New balance: $${result.newBalance}`);
+      console.log(`Successfully granted ${creditsAmount} top-up credits to organization ${organizationId}. Grant: ${grant.id}`);
       return NextResponse.json({
         success: true,
         alreadyProcessed: false,
         creditsAdded: creditsAmount,
-        newBalance: result.newBalance,
+        grantId: grant.id,
+        creditUnit: 'plan_credit',
       });
-    } else {
-      throw new Error('Failed to add credits');
     }
+
+    const result = await addStripePurchaseCredit({
+      userId: user.id,
+      amount: creditsAmount,
+      paymentId: paymentIntentId,
+      sessionId: session.id,
+      invoiceNumber,
+      reason: `Legacy Stripe purchase: ${packageId} package (verified on success page)`,
+      metadata: {
+        packageId,
+        credits: pkg.credits,
+        expiresAfterMonths: pkg.expiresAfterMonths,
+        amountPaid: (session.amount_total || 0) / 100,
+        customerEmail: session.customer_email,
+        verifiedViaSuccessPage: true,
+        legacyCreditUnit: 'account_credit',
+      },
+    });
+
+    if (result.alreadyProcessed) {
+      console.log(`Credits already added for payment ${paymentIntentId || session.id} (session ${sessionId})`);
+      return NextResponse.json({
+        success: true,
+        alreadyProcessed: true,
+        message: 'Credits already added',
+        newBalance: result.newBalance,
+        creditUnit: 'legacy_usd',
+      });
+    }
+
+    console.log(`Successfully added ${creditsAmount} legacy credits to user ${user.id}. New balance: $${result.newBalance}`);
+    return NextResponse.json({
+      success: true,
+      alreadyProcessed: false,
+      creditsAdded: creditsAmount,
+      newBalance: result.newBalance,
+      creditUnit: 'legacy_usd',
+    });
   } catch (error) {
     console.error('Error verifying session:', error);
     return NextResponse.json(

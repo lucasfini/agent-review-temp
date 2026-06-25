@@ -18,6 +18,7 @@ import { failReservation, settleReservation } from '@/lib/billing/credit';
 import { getOpenAIApiKeyForUser } from '@/lib/openai/consent';
 import { aiRatelimit } from '@/lib/rate-limit';
 import { isAuthorizedMaintenanceRequest } from '@/lib/maintenance-auth';
+import { RouteAccessError, requireProjectOwner } from '@/lib/api/route-auth';
 
 export const dynamic = 'force-dynamic';
 export const maxDuration = 300;
@@ -98,39 +99,37 @@ export async function POST(
 
     const isInternal = isAuthorizedMaintenanceRequest(request);
     let userIdForRateLimit: string | null = null;
-    let authenticatedUserId: string | null = null;
+    const projectSelect =
+      'id, status, performance_level, project_type, title, metadata, transcription_text, transcription_segments, speaker_data, preset_speakers, user_id, ai_summary, chapters, key_takeaways, social_quotes';
+    let project: any = null;
 
     if (!isInternal) {
       const authHeader = request.headers.get('Authorization');
       if (!authHeader) {
         return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
       }
-      const token = authHeader.replace('Bearer ', '');
-      const { data: { user }, error: authError } = await supabaseAdmin.auth.getUser(token);
-      if (authError || !user) {
-        return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
+      try {
+        const ownership = await requireProjectOwner(request, projectId, projectSelect);
+        project = ownership.project;
+        userIdForRateLimit = ownership.user.id;
+      } catch (error) {
+        if (error instanceof RouteAccessError) {
+          return NextResponse.json({ error: error.message }, { status: error.status });
+        }
+        throw error;
       }
-      authenticatedUserId = user.id;
-      userIdForRateLimit = user.id;
+    } else {
+      // Fetch project with all relevant content fields
+      const { data, error } = await (supabaseAdmin as any)
+        .from('projects')
+        .select(projectSelect)
+        .eq('id', projectId)
+        .single();
 
-    }
-
-    // Fetch project with all relevant content fields
-    const { data: project, error } = await (supabaseAdmin as any)
-      .from('projects')
-      .select(
-        'id, status, performance_level, project_type, title, metadata, transcription_text, transcription_segments, speaker_data, preset_speakers, user_id, ai_summary, chapters, key_takeaways, social_quotes'
-      )
-      .eq('id', projectId)
-      .single();
-
-    if (error || !project) {
-      return NextResponse.json({ error: 'Project not found' }, { status: 404 });
-    }
-
-    // Ownership check
-    if (!isInternal && project.user_id !== authenticatedUserId) {
-      return NextResponse.json({ error: 'Forbidden' }, { status: 403 });
+      if (error || !data) {
+        return NextResponse.json({ error: 'Project not found' }, { status: 404 });
+      }
+      project = data;
     }
 
     if (!userIdForRateLimit) {

@@ -1,19 +1,28 @@
 import { NextRequest, NextResponse } from 'next/server';
+import { RouteAccessError, requireAuthenticatedUser } from '@/lib/api/route-auth';
 import { supabaseAdmin } from '@/lib/supabase/server';
 
 interface DeletePayload {
-  userId: string;
+  // Deprecated: ignored for security; server-side auth user is always used.
+  userId?: string;
   snapshotIds: string[];
 }
 
 export async function POST(request: NextRequest) {
   try {
-    const payload = (await request.json()) as DeletePayload;
-    const { userId, snapshotIds } = payload;
-
-    if (!userId) {
-      return NextResponse.json({ error: 'userId is required' }, { status: 400 });
+    let authenticatedUserId: string;
+    try {
+      const user = await requireAuthenticatedUser(request);
+      authenticatedUserId = user.id;
+    } catch (authError) {
+      if (authError instanceof RouteAccessError) {
+        return NextResponse.json({ error: authError.message }, { status: authError.status });
+      }
+      throw authError;
     }
+
+    const payload = (await request.json()) as DeletePayload;
+    const snapshotIds = payload.snapshotIds;
 
     if (!snapshotIds || !Array.isArray(snapshotIds) || snapshotIds.length === 0) {
       return NextResponse.json(
@@ -27,7 +36,7 @@ export async function POST(request: NextRequest) {
       .from('narrative_coverage_snapshots')
       .select('id, user_id, ai_cost_usd')
       .in('id', snapshotIds)
-      .eq('user_id', userId) as { data: Array<{ id: string; user_id: string; ai_cost_usd: number }> | null; error: any };
+      .eq('user_id', authenticatedUserId) as { data: Array<{ id: string; user_id: string; ai_cost_usd: number }> | null; error: any };
 
     if (fetchError || !snapshots || snapshots.length === 0) {
       return NextResponse.json(
@@ -37,7 +46,7 @@ export async function POST(request: NextRequest) {
     }
 
     // Security: verify all belong to user
-    const unauthorized = snapshots.filter(s => s.user_id !== userId);
+    const unauthorized = snapshots.filter(s => s.user_id !== authenticatedUserId);
     if (unauthorized.length > 0) {
       return NextResponse.json(
         { error: 'Permission denied for some snapshots' },
@@ -50,12 +59,12 @@ export async function POST(request: NextRequest) {
       0
     );
 
-    // Delete (RLS enforces user_id check)
+    // Delete with explicit server-side user scoping.
     const { error: deleteError } = await supabaseAdmin
       .from('narrative_coverage_snapshots')
       .delete()
       .in('id', snapshotIds)
-      .eq('user_id', userId);
+      .eq('user_id', authenticatedUserId);
 
     if (deleteError) {
       console.error('[DELETE SNAPSHOTS] Error:', deleteError);

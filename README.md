@@ -4,7 +4,7 @@ AudioRepurpose turns long-form audio into transcripts, structured speaker data, 
 
 ## Current Branch Context
 
-GitHub `main` is currently older than the active local development branch, `codex-agency-style-pr`, which contains newer workspace, organization, subscription, and private internal-operations work.
+Local `main` is the target branch for the newer workspace, organization, subscription, Studio, content library, and private internal-operations work. `codex-agency-style-pr` was the migration source branch for that work.
 
 Use [docs/CURRENT_REPO_STATE.md](docs/CURRENT_REPO_STATE.md) before relying on older phase docs or Codex handoffs. The public agency marketing site has been removed from this repo; internal agency routes may still exist as private operations surfaces.
 
@@ -25,8 +25,10 @@ Use [docs/CURRENT_REPO_STATE.md](docs/CURRENT_REPO_STATE.md) before relying on o
 - Transcribe audio and organize speaker segments
 - Review projects in the dashboard
 - Generate summaries, quotes, chapters, takeaways, and social content
-- Track usage and billing inside the product
+- Manage workspace profile, brand voice, plans, content library, and campaign context on the current branch
+- Track usage, subscriptions, product credits, and billing inside the product on the current branch
 - Support admin, maintenance, and cleanup flows through internal routes
+- Support private internal agency operations when an internal agency organization is configured
 
 ## Project Structure
 
@@ -98,7 +100,7 @@ R2_SECRET_ACCESS_KEY=
 R2_BUCKET_NAME=
 ```
 
-Only set agency and Slack variables on branches that intentionally include private internal agency operations or paused legacy lead-capture APIs:
+Only set agency and Slack variables when intentionally testing private internal agency operations or paused legacy lead-capture APIs:
 
 ```env
 AGENCY_LEAD_FROM_EMAIL=
@@ -146,7 +148,7 @@ Primary production docs:
 - [docker-compose.prod.yml](docker-compose.prod.yml)
 - [deploy/cron/audiorepurpose.cron.example](deploy/cron/audiorepurpose.cron.example)
 
-Older root-level phase docs are implementation history, not the default product roadmap.
+Archived phase docs under `docs/archive/phase-handoffs/` are implementation history, not the default product roadmap.
 
 ## Notes On OpenAI Keys
 

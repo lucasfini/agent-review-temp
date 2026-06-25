@@ -23,8 +23,7 @@ Use these first:
 
 These can still be useful for context, but they are not the production source of truth:
 
-- root-level `PHASE_*.md` files, when present
-- historical pivot specs and Codex runbooks, when present
+- phase handoffs under [archive/phase-handoffs/](./archive/phase-handoffs/)
 - implementation summaries
 - migration writeups
 - prompt/design explorations

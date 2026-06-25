@@ -6,10 +6,11 @@ This document is the first stop for orientation before using older phase notes o
 
 ## Branch Reality
 
-- Active local development branch: `codex-agency-style-pr`.
-- Active remote development branch: `origin/codex-agency-style-pr`.
-- GitHub `main` is older than that branch and does not fully represent the local workspace/subscription/internal-operations code.
-- PR #5, `Stabilize billing and finance flows`, targets GitHub `main` and intentionally works against that older legacy user-credit billing surface.
+- Local working branch target: `main`.
+- Migration source branch: `codex-agency-style-pr`.
+- Local `main` now carries the workspace, organization, subscription, Studio, content library, and private internal-operations work from `codex-agency-style-pr`.
+- Remote `origin/main` may lag until the local merge is pushed.
+- PR #5, `Stabilize billing and finance flows`, was written against the older legacy user-credit billing surface; its fixes have been ported into the migrated branch surface.
 
 Before reviewing, patching, or merging work, confirm which branch is the target. Do not assume `main`, this local branch, and existing handoff notes describe the same product state.
 
@@ -42,7 +43,7 @@ Use docs in this order:
 5. Current deployment docs under `docs/DEPLOYMENT.md` and `docs/guides/`
 6. Runtime code and tests
 
-Root-level `PHASE_*.md` files, `B2B_AGENCY_PIVOT_PRODUCT_SPEC.md`, and `CODEX_PHASE_RUNBOOK.md`, when present on a branch, are historical implementation context unless Lucas explicitly says to resume that phase plan.
+Archived phase docs under `docs/archive/phase-handoffs/` are historical implementation context unless Lucas explicitly says to resume that phase plan.
 
 ## Practical Rules
 

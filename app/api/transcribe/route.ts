@@ -19,15 +19,15 @@ import { updateProcessingProgress, markProcessingFailed } from '@/lib/progress-t
 import { ProcessingStage } from '@/lib/tier-progress-config';
 import type { SpeakerSegment, TranscriptionSegment } from '@/lib/types';
 import { estimateTranscriptionCostAsync } from '@/lib/billing/cost-map';
-import { trackAssemblyAIUsage, requireSufficientCredit } from '@/lib/billing/track-usage';
+import { trackAssemblyAIUsage } from '@/lib/billing/track-usage';
 import { InsufficientCreditError, failReservation, settleReservation } from '@/lib/billing/credit';
+import { billingErrorResponse } from '@/lib/billing/middleware';
 import { aiRatelimit } from '@/lib/rate-limit';
 import { autoCorrectSpeakers, applySpeakerCorrections } from '@/lib/utils/autoCorrectSpeakers';
 import { classifyProjectTypeWithAI, type ProjectType } from '@/lib/utils/classifyProjectType';
 import { correctDebateSpeakers, applyDebateCorrectionToSpeakerData, summarizeDebateCorrections } from '@/lib/utils/correctDebateSpeakers';
 import { getOpenAIApiKeyForUser } from '@/lib/openai/consent';
 import { r2Client, BUCKET_NAME } from '@/lib/r2';
-import { isAuthorizedMaintenanceRequest } from '@/lib/maintenance-auth';
 import { acquireGlobalJobLock, releaseGlobalJobLock, heartbeatGlobalJobLock } from '@/lib/concurrency';
 import {
   applyNeighborSmoothing,
@@ -46,6 +46,16 @@ import {
   type ShowRosterEntry,
 } from '@/lib/show-speaker-memory';
 import { runControlledSpeakerVerification } from '@/lib/speaker-verification';
+import { RouteAccessError } from '@/lib/api/route-auth';
+import { resolveTranscribeRequestAuthContext, type TranscribeProjectRecord } from '@/lib/api/transcribe-auth';
+import {
+  runEntitlementGuard,
+  shouldEnforceSubscriptionEntitlements,
+} from '@/lib/billing/entitlement-guards';
+import { recordSubscriptionUsage } from '@/lib/billing/subscription-usage-counters';
+import { resolveOrganizationIdForWrite } from '@/lib/authz/organization-context';
+import { assertPlanUploadDuration, createPlanCreditReservation } from '@/lib/billing/plan-credits';
+import { estimateAudioProductCredits } from '@/lib/billing/product-credits';
 
 const sleep = (ms: number) => new Promise<void>(resolve => setTimeout(resolve, ms));
 const TRANSCRIPTION_PREPARING_MESSAGE = 'Preparing your audio for processing...';
@@ -414,32 +424,6 @@ export async function POST(request: NextRequest) {
   let transcriptionHeartbeat: ReturnType<typeof setInterval> | null = null;
 
   try {
-    // Auth: accept internal job token (from finalize route) OR user bearer token
-    const isMaintenance = isAuthorizedMaintenanceRequest(request);
-    let callerUserId: string | null = null;
-
-    if (!isMaintenance) {
-      const authHeader = request.headers.get('authorization');
-      if (!authHeader) {
-        return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
-      }
-      const { data: { user } } = await supabaseAdmin.auth.getUser(
-        authHeader.replace('Bearer ', '')
-      );
-      if (!user) {
-        return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
-      }
-      callerUserId = user.id;
-
-      const { success } = await aiRatelimit.limit(user.id);
-      if (!success) {
-        return NextResponse.json(
-          { error: 'Rate limit exceeded for AI operations. Please wait a moment.' },
-          { status: 429 }
-        );
-      }
-    }
-
     // Parse request
     const payload = await request.json().catch(() => null);
     if (!payload) {
@@ -466,6 +450,7 @@ export async function POST(request: NextRequest) {
     }
 
     parsedProjectId = projectId;
+    let callerUserId: string | null = null;
 
     console.log(`\n========================================`);
     console.log(`[TRANSCRIPTION] 🚀 Starting upload processing`);
@@ -475,35 +460,26 @@ export async function POST(request: NextRequest) {
     if (speakerCount) console.log(`[TRANSCRIPTION] Expected speakers: ${speakerCount}`);
     console.log(`========================================\n`);
 
-    // Check if project already has cached transcription
-    const { data: existingProject, error: projectError } = await supabaseAdmin
-      .from('projects')
-      .select('transcription_text, transcription_segments, speaker_data, audio_duration, audio_file_size, user_id, title, preset_speakers, metadata, performance_level')
-      .eq('id', projectId)
-      .single() as {
-        data: {
-          transcription_text: string | null;
-          transcription_segments: any;
-          speaker_data: any;
-          audio_duration: number | null;
-          audio_file_size: number | null;
-          user_id: string;
-          title: string;
-          preset_speakers: any[] | null;
-          metadata?: any;
-          performance_level?: string | null;
-        } | null;
-        error: any
-      };
-
-    // Project must exist before any provider work begins
-    if (projectError || !existingProject) {
-      return NextResponse.json({ error: 'Project not found' }, { status: 404 });
+    let existingProject: TranscribeProjectRecord;
+    try {
+      const authContext = await resolveTranscribeRequestAuthContext(request, projectId);
+      callerUserId = authContext.callerUserId;
+      existingProject = authContext.existingProject;
+    } catch (error) {
+      if (error instanceof RouteAccessError) {
+        return NextResponse.json({ error: error.message }, { status: error.status });
+      }
+      throw error;
     }
 
-    // Non-internal callers must own the project
-    if (callerUserId && existingProject.user_id !== callerUserId) {
-      return NextResponse.json({ error: 'Forbidden' }, { status: 403 });
+    if (callerUserId) {
+      const { success } = await aiRatelimit.limit(callerUserId);
+      if (!success) {
+        return NextResponse.json(
+          { error: 'Rate limit exceeded for AI operations. Please wait a moment.' },
+          { status: 429 }
+        );
+      }
     }
 
     const normalizedProjectAnalysisOptions = existingProject
@@ -517,7 +493,7 @@ export async function POST(request: NextRequest) {
           namedSpeakers: true,
         }
       : normalizedProjectAnalysisOptions;
-    const uploadReservationId: string | undefined = existingProject?.metadata?.billing?.uploadReservationId;
+    let uploadReservationId: string | undefined = existingProject?.metadata?.billing?.uploadReservationId;
     const tier: TierLevel = getProcessingTierForAnalysis(analysisOptions);
     const features = getFeaturesFromAnalysisOptions(analysisOptions);
 
@@ -528,6 +504,32 @@ export async function POST(request: NextRequest) {
     if (features.chapterDetection) selectedContentBlocks.push('chapters');
     if (features.keyTakeaways) selectedContentBlocks.push('takeaways');
     if (features.quotesExtraction) selectedContentBlocks.push('quotes');
+
+    const entitlementOrganizationId = existingProject.organization_id
+      || (callerUserId && shouldEnforceSubscriptionEntitlements()
+        ? await resolveOrganizationIdForWrite(existingProject.user_id)
+        : null);
+    const entitlementGuard = await runEntitlementGuard({
+      organizationId: entitlementOrganizationId,
+      legacyUserId: existingProject.user_id,
+      action: 'transcription',
+      durationSeconds: existingProject.audio_duration || undefined,
+      allowHardBlock: callerUserId !== null,
+      logContext: {
+        route: 'app/api/transcribe',
+        userId: callerUserId || existingProject.user_id,
+        projectId,
+        metadata: {
+          isInternal: callerUserId === null,
+          diarizationProvider,
+          selectedContentBlocks,
+          tier,
+        },
+      },
+    });
+    if (entitlementGuard.response) {
+      return entitlementGuard.response;
+    }
 
     const queuePayload: TranscriptionQueuePayload = {
       projectId,
@@ -687,9 +689,52 @@ export async function POST(request: NextRequest) {
 
           console.log(`[BILLING] 💰 Estimated cost: $${estimatedCost.total.toFixed(4)} for ~${(estimatedDurationSeconds / 60).toFixed(1)} minutes`);
 
-          // Check if user has sufficient credits
-          await requireSufficientCredit(userId, estimatedCost.total);
-          console.log(`[BILLING] ✅ User has sufficient credits`);
+          const organizationId = existingProject.organization_id || await resolveOrganizationIdForWrite(userId);
+          const subscription = await assertPlanUploadDuration({
+            organizationId,
+            userId,
+            durationSeconds: estimatedDurationSeconds,
+          });
+          const estimatedProductCredits = estimateAudioProductCredits({
+            durationSeconds: estimatedDurationSeconds,
+            tier,
+          });
+          const reservation = await createPlanCreditReservation({
+            userId,
+            organizationId,
+            projectId,
+            workflowType: 'upload_processing',
+            amount: estimatedProductCredits,
+            subscription,
+            metadata: {
+              source: 'transcription_fallback',
+              estimatedCost: estimatedCost.total,
+              estimatedProviderCost: estimatedCost.total,
+              productCreditAmount: estimatedProductCredits,
+              productCreditWorkflow: tier,
+              analysisOptions,
+              estimatedDurationSeconds,
+            },
+            expiresAt: new Date(Date.now() + (2 * 60 * 60 * 1000)).toISOString(),
+          });
+          uploadReservationId = reservation.id;
+          await (supabaseAdmin as any)
+            .from('projects')
+            .update({
+              metadata: {
+                ...(existingProject.metadata || {}),
+                billing: {
+                  ...(existingProject.metadata?.billing || {}),
+                  uploadReservationId,
+                  uploadEstimatedHold: estimatedProductCredits,
+                  uploadEstimatedHoldUnit: 'plan_credit',
+                  uploadEstimatedCost: estimatedCost.total,
+                  uploadEstimatedProviderCost: estimatedCost.total,
+                },
+              },
+            })
+            .eq('id', projectId);
+          console.log(`[BILLING] ✅ Reserved ${estimatedProductCredits} plan credits`);
         } catch (error) {
           if (error instanceof InsufficientCreditError) {
             console.error(`[BILLING] ❌ Insufficient credits: need $${error.required.toFixed(4)}, have $${error.available.toFixed(4)}`);
@@ -711,7 +756,15 @@ export async function POST(request: NextRequest) {
               { status: 402 } // Payment Required
             );
           }
-          console.error('[BILLING] ⚠️ Credit check failed, continuing anyway:', error);
+          if (transcriptionHeartbeat) {
+            clearInterval(transcriptionHeartbeat);
+            transcriptionHeartbeat = null;
+          }
+          if (transcriptionLockHeld && transcriptionLockId) {
+            await releaseGlobalJobLock(transcriptionLockId);
+            transcriptionLockHeld = false;
+          }
+          return billingErrorResponse(error);
         }
       }
 
@@ -799,6 +852,26 @@ export async function POST(request: NextRequest) {
         } catch (error) {
           console.error('[BILLING] ⚠️ Failed to track usage:', error);
         }
+
+        await recordSubscriptionUsage({
+          organizationId: existingProject.organization_id || null,
+          userId,
+          counterKey: 'transcription_minutes',
+          quantity: totalDuration / 60,
+          idempotencyKey: `transcription:${projectId}`,
+          metadata: {
+            source: 'transcribe_provider',
+            provider: diarizationProvider,
+            durationSeconds: totalDuration,
+            reservationId: uploadReservationId || null,
+          },
+          logContext: {
+            route: 'app/api/transcribe',
+            userId: callerUserId || userId,
+            projectId,
+            source: 'transcription',
+          },
+        });
       }
 
       // Update progress: Transcription completed

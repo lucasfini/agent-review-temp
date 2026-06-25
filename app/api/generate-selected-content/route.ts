@@ -9,10 +9,28 @@ import { scheduleBackgroundTask } from '@/lib/background-task';
 import { calculateBlocksCost, getContentTypeById } from '@/lib/content-types';
 import { requireSufficientCredit } from '@/lib/billing/track-usage';
 import { InsufficientCreditError } from '@/lib/billing/credit';
+import { RouteAccessError, requireProjectOwner } from '@/lib/api/route-auth';
+import { can } from '@/lib/authz/permissions';
+import { getActiveOrganizationForUser } from '@/lib/authz/organization-context';
+import {
+  runEntitlementGuard,
+  shouldEnforceSubscriptionEntitlements,
+} from '@/lib/billing/entitlement-guards';
+import { resolveOrganizationIdForWrite } from '@/lib/authz/organization-context';
+import {
+  GenerationContextValidationError,
+  type GenerationContextIds,
+  hasGenerationContextIds,
+  readGenerationContextIds,
+  resolveGenerationContext,
+} from '@/lib/generation-context';
 
 export async function POST(request: NextRequest) {
   try {
-    const { projectId, blocks, estimatedCost, selectedModelId } = await request.json();
+    const payload = await request.json();
+    const { projectId, blocks, estimatedCost, selectedModelId } = payload;
+    const payloadContextIds = readGenerationContextIds(payload);
+    const payloadHasGenerationContext = hasGenerationContextIds(payloadContextIds);
 
     if (!projectId || !blocks || !Array.isArray(blocks) || blocks.length === 0) {
       return NextResponse.json(
@@ -28,23 +46,30 @@ export async function POST(request: NextRequest) {
       return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
     }
     const token = authHeader.replace('Bearer ', '');
-    const { data: { user }, error: authError } = await supabaseAdmin.auth.getUser(token);
-    if (authError || !user) {
-      return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
-    }
-
-    // Get the project with transcription
-    const { data: project, error: projectError } = await supabaseAdmin
-      .from('projects')
-      .select('transcription_text, status, user_id')
-      .eq('id', projectId)
-      .single() as { data: { transcription_text: string; status: string; user_id: string } | null; error: any };
-
-    if (projectError || !project) {
-      return NextResponse.json(
-        { error: 'Project not found' },
-        { status: 404 }
-      );
+    let user: { id: string; email?: string | null };
+    let project: {
+      id: string;
+      user_id: string;
+      transcription_text: string;
+      status: string;
+      organization_id: string | null;
+    };
+    try {
+      const ownership = await requireProjectOwner<{
+        transcription_text: string;
+        status: string;
+        organization_id: string | null;
+      }>(request, projectId, 'id, user_id, transcription_text, status, organization_id');
+      user = ownership.user;
+      project = ownership.project;
+    } catch (error) {
+      if (error instanceof RouteAccessError) {
+        return NextResponse.json(
+          { error: error.message },
+          { status: error.status }
+        );
+      }
+      throw error;
     }
 
     if (!project.transcription_text) {
@@ -53,10 +78,24 @@ export async function POST(request: NextRequest) {
         { status: 400 }
       );
     }
-
-    // Ownership check
-    if (project.user_id !== user.id) {
-      return NextResponse.json({ error: 'Forbidden' }, { status: 403 });
+    if (project.organization_id) {
+      const { membership, organization } = await getActiveOrganizationForUser(
+        supabaseAdmin,
+        user.id,
+        project.organization_id
+      );
+      if (!can(
+        {
+          userId: user.id,
+          organizationId: organization.id,
+          organizationType: organization.type,
+          role: membership.role,
+        },
+        'generation.run',
+        { organizationId: organization.id }
+      )) {
+        return NextResponse.json({ error: 'You do not have permission to generate content in this workspace' }, { status: 403 });
+      }
     }
 
     // Validate all blocks reference known content types
@@ -65,6 +104,60 @@ export async function POST(request: NextRequest) {
       if (!contentType) {
         return NextResponse.json({ error: `Unknown content type: ${block.contentTypeId}` }, { status: 400 });
       }
+    }
+
+    const contextKeyFor = (ids: GenerationContextIds) => JSON.stringify([
+      ids.creatorProfileId || null,
+      ids.brandVoiceId || null,
+      ids.campaignId || null,
+      ids.libraryId || null,
+    ]);
+    const contextIdsByKey = new Map<string, GenerationContextIds>();
+    for (const block of blocks as ContentBlock[]) {
+      const blockContextIds = payloadHasGenerationContext
+        ? payloadContextIds
+        : readGenerationContextIds(block);
+      if (hasGenerationContextIds(blockContextIds)) {
+        contextIdsByKey.set(contextKeyFor(blockContextIds), blockContextIds);
+      }
+    }
+
+    if (contextIdsByKey.size > 0) {
+      const generationOrganizationId = project.organization_id || await resolveOrganizationIdForWrite(project.user_id);
+      try {
+        for (const contextIds of contextIdsByKey.values()) {
+          await resolveGenerationContext(supabaseAdmin, generationOrganizationId, contextIds, {
+            userId: project.user_id,
+          });
+        }
+      } catch (error) {
+        if (error instanceof GenerationContextValidationError) {
+          return NextResponse.json({ error: error.message }, { status: error.status });
+        }
+        throw error;
+      }
+    }
+
+    const entitlementOrganizationId = project.organization_id
+      || (shouldEnforceSubscriptionEntitlements()
+        ? await resolveOrganizationIdForWrite(project.user_id)
+        : null);
+    const entitlementGuard = await runEntitlementGuard({
+      organizationId: entitlementOrganizationId,
+      legacyUserId: project.user_id,
+      action: 'content_generation',
+      requestedAmount: blocks.filter((block: ContentBlock) => block.enabled !== false).length || blocks.length,
+      logContext: {
+        route: 'app/api/generate-selected-content',
+        userId: user.id,
+        projectId,
+        metadata: {
+          blockCount: blocks.length,
+        },
+      },
+    });
+    if (entitlementGuard.response) {
+      return entitlementGuard.response;
     }
 
     try {
@@ -134,7 +227,13 @@ export async function POST(request: NextRequest) {
           transcription: project.transcription_text,
           blocks, // Send blocks instead of selectedContentTypes
           segments: [],
-          modelId: selectedModelId
+          modelId: selectedModelId,
+          ...(payloadHasGenerationContext ? {
+            creator_profile_id: payloadContextIds.creatorProfileId || undefined,
+            brand_voice_id: payloadContextIds.brandVoiceId || undefined,
+            campaign_id: payloadContextIds.campaignId || undefined,
+            library_id: payloadContextIds.libraryId || undefined,
+          } : {}),
         })
       }).catch(error => {
         const timeoutCode = (error as any)?.cause?.code;
@@ -156,6 +255,9 @@ export async function POST(request: NextRequest) {
     });
 
   } catch (error) {
+    if (error instanceof GenerationContextValidationError) {
+      return NextResponse.json({ error: error.message }, { status: error.status });
+    }
     console.error('[GENERATE-SELECTED] Error:', error);
     return NextResponse.json(
       { error: 'Failed to start content generation' },

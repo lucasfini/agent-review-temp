@@ -25,26 +25,28 @@ Set these values at minimum:
 - Supabase URL, anon key, and service role key
 - Stripe secret, publishable key, and webhook secret
 - Resend API key plus product contact from/to emails
+- Agency lead envs only if intentionally keeping paused legacy lead-capture APIs active
+- Slack OAuth client ID, client secret, redirect URI, and `INTEGRATIONS_ENCRYPTION_KEY` only if testing private internal agency Slack workflows
 - R2 account, key pair, and bucket name
+- Upstash Redis REST URL and token for durable public rate limiting
 - `CRON_SECRET`
 - `INTERNAL_JOB_SECRET`
 - `UPLOAD_TOKEN_SECRET`
+- `SUBSCRIPTION_ENFORCEMENT_MODE=dry_run`
 - `OPENAI_API_KEY`
 - `ASSEMBLYAI_API_KEY` or `ASSEMBLYAI_ACCESS_KEY`
 
 `ANTHROPIC_API_KEY` is optional and can be left blank if the app is OpenAI-only.
 
-Leave Zoom/Microsoft envs blank if those integrations are not launching today.
+Leave Zoom/Microsoft/YouTube envs blank if those integrations are not launching today.
+Stripe subscription price IDs live in `plans.stripe_price_id`; verify those after the app can reach Supabase.
 
 ## 2. Validate The Env File
 
-The validator reads from exported shell variables, so load the file first:
+Run the read-only validator against the file. It reports variable names only and does not print secret values:
 
 ```bash
-set -a
-source .env.production
-set +a
-npm run validate:production-env
+npm run validate:production-env -- --env-file .env.production
 ```
 
 ## 3. Configure Cloudflare

@@ -4,6 +4,11 @@
  */
 
 import { NextRequest, NextResponse } from 'next/server';
+import {
+  buildBillingOrgScopedLegacyFallbackFilter,
+  getBillingOrganizationContext,
+} from '@/lib/api/billing-org-context';
+import { requireAuthenticatedUser, RouteAccessError } from '@/lib/api/route-auth';
 import { supabaseAdmin } from '@/lib/supabase/server';
 
 export interface CostBreakdown {
@@ -72,21 +77,9 @@ function getDateRange(timeframe: Timeframe): { start: Date; end: Date; previousS
 
 export async function GET(request: NextRequest) {
   try {
-    // Get authenticated user from Authorization header
-    const authHeader = request.headers.get('Authorization');
-    if (!authHeader || !authHeader.startsWith('Bearer ')) {
-      return NextResponse.json({ error: 'Unauthorized - Missing token' }, { status: 401 });
-    }
-
-    const token = authHeader.replace('Bearer ', '');
-    const {
-      data: { user },
-      error: authError,
-    } = await supabaseAdmin.auth.getUser(token);
-
-    if (authError || !user) {
-      return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
-    }
+    const user = await requireAuthenticatedUser(request);
+    const { organizationId } = await getBillingOrganizationContext(request, user.id);
+    const scopeFilter = buildBillingOrgScopedLegacyFallbackFilter(organizationId, user.id);
 
     // Parse query parameters
     const { searchParams } = new URL(request.url);
@@ -100,7 +93,7 @@ export async function GET(request: NextRequest) {
     const { data: currentEvents, error: currentError } = await supabaseAdmin
       .from('usage_events')
       .select('service_name, provider, billed_cost, created_at')
-      .eq('user_id', user.id)
+      .or(scopeFilter)
       .gte('created_at', start.toISOString())
       .lte('created_at', end.toISOString()) as { data: UsageEvent[] | null; error: any };
 
@@ -112,7 +105,7 @@ export async function GET(request: NextRequest) {
     const { data: previousEvents, error: previousError } = await supabaseAdmin
       .from('usage_events')
       .select('service_name, provider, billed_cost, created_at')
-      .eq('user_id', user.id)
+      .or(scopeFilter)
       .gte('created_at', previousStart.toISOString())
       .lte('created_at', previousEnd.toISOString()) as { data: UsageEvent[] | null; error: any };
 
@@ -255,6 +248,10 @@ export async function GET(request: NextRequest) {
       groupBy,
     });
   } catch (error) {
+    if (error instanceof RouteAccessError) {
+      return NextResponse.json({ error: error.message }, { status: error.status });
+    }
+
     console.error('[BILLING COSTS API] Error:', error);
     return NextResponse.json(
       {

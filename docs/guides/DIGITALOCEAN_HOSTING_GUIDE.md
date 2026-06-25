@@ -74,17 +74,20 @@ Fill in real values for:
 - `R2_ACCESS_KEY_ID`
 - `R2_SECRET_ACCESS_KEY`
 - `R2_BUCKET_NAME`
+- `UPSTASH_REDIS_REST_URL`
+- `UPSTASH_REDIS_REST_TOKEN`
 - `CRON_SECRET`
 - `INTERNAL_JOB_SECRET`
 - `UPLOAD_TOKEN_SECRET`
+- `SUBSCRIPTION_ENFORCEMENT_MODE=dry_run`
 
 Optional but recommended:
 
-- `UPSTASH_REDIS_REST_URL`
-- `UPSTASH_REDIS_REST_TOKEN`
 - `ADMIN_EMAILS`
 - `CONTACT_FROM_EMAIL`
 - `CONTACT_TO_EMAIL`
+- `AGENCY_LEAD_FROM_EMAIL`, `AGENCY_LEAD_NOTIFICATION_EMAIL`, and `AGENCY_LEAD_ORGANIZATION_ID` only if paused legacy lead-capture APIs are intentionally active
+- `SLACK_CLIENT_ID`, `SLACK_CLIENT_SECRET`, `SLACK_REDIRECT_URI`, and `INTEGRATIONS_ENCRYPTION_KEY` only if private internal agency Slack imports will be live
 - Stripe checkout/portal return URL overrides
 - Zoom / Microsoft / YouTube OAuth credentials if those imports will be live
 
@@ -93,6 +96,14 @@ Notes:
 - Runtime OpenAI-backed features use `OPENAI_API_KEY`.
 - `OPENAI_API_KEY_OPTIN` is still accepted only for backward compatibility.
 - `ANTHROPIC_API_KEY` is optional if Anthropic-backed features are not in use.
+- Subscription Stripe price IDs are stored in `plans.stripe_price_id`, not env vars. Run `npm run validate:subscription-launch` after the database is reachable.
+- `SLACK_SIGNING_SECRET` is not required unless a Slack event or interactivity endpoint is added.
+
+Validate the file before starting the stack:
+
+```bash
+npm run validate:production-env -- --env-file .env.production
+```
 
 ## 4. DNS And App URL Alignment
 

@@ -2,7 +2,7 @@ import { NextRequest, NextResponse } from 'next/server';
 import { supabaseAdmin } from '@/lib/supabase/server';
 import { isAuthorizedMaintenanceRequest } from '@/lib/maintenance-auth';
 import { getInternalAppBaseUrl } from '@/lib/app-url';
-import { createReservation, failReservation, InsufficientCreditError } from '@/lib/billing/credit';
+import { failReservation, InsufficientCreditError } from '@/lib/billing/credit';
 import { estimateAnalysisJobCostAsync, estimateContentGenerationCostAsync } from '@/lib/billing/cost-map';
 import { isDemoUser } from '@/lib/demo-mode';
 import { estimateReservationAmount } from '@/lib/billing/reserve-amount';
@@ -13,6 +13,15 @@ import {
   type ProjectGenerationJob,
 } from '@/lib/project-generation-jobs';
 import { acquireGlobalJobLock, releaseGlobalJobLock, heartbeatGlobalJobLock } from '@/lib/concurrency';
+import { RouteAccessError, requireProjectOwner } from '@/lib/api/route-auth';
+import { recordSubscriptionUsage } from '@/lib/billing/subscription-usage-counters';
+import {
+  runEntitlementGuard,
+  shouldEnforceSubscriptionEntitlements,
+} from '@/lib/billing/entitlement-guards';
+import { resolveOrganizationIdForWrite } from '@/lib/authz/organization-context';
+import { createPlanCreditReservation, InsufficientPlanCreditsError } from '@/lib/billing/plan-credits';
+import { estimateDraftProductCredits } from '@/lib/billing/product-credits';
 
 function isMissingFailureNotifiedAtColumn(error: any): boolean {
   return error?.code === 'PGRST204'
@@ -30,7 +39,8 @@ async function updateJob(jobId: string, payload: Record<string, unknown>) {
     return primaryResult;
   }
 
-  const { failure_notified_at, ...fallbackPayload } = payload;
+  const fallbackPayload = { ...payload };
+  delete fallbackPayload.failure_notified_at;
   return (supabaseAdmin as any)
     .from('project_generation_jobs')
     .update(fallbackPayload)
@@ -84,14 +94,13 @@ export async function POST(
 
     // Non-maintenance callers must own the project
     if (callerUserId) {
-      const { data: projectOwner } = await supabaseAdmin
-        .from('projects')
-        .select('user_id')
-        .eq('id', projectId)
-        .single() as { data: { user_id: string } | null };
-
-      if (!projectOwner || projectOwner.user_id !== callerUserId) {
-        return NextResponse.json({ error: 'Forbidden' }, { status: 403 });
+      try {
+        await requireProjectOwner(request, projectId, 'id');
+      } catch (error) {
+        if (error instanceof RouteAccessError) {
+          return NextResponse.json({ error: error.message }, { status: error.status });
+        }
+        throw error;
       }
     }
     const runningCheck = await (supabaseAdmin as any)
@@ -103,6 +112,54 @@ export async function POST(
 
     if ((runningCheck.data || []).length > 0) {
       return NextResponse.json({ success: true, skipped: 'already-running' });
+    }
+
+    if (callerUserId) {
+      const { data: projectForEntitlement, error: entitlementProjectError } = await (supabaseAdmin as any)
+        .from('projects')
+        .select('id, user_id, organization_id')
+        .eq('id', projectId)
+        .single();
+
+      if (entitlementProjectError || !projectForEntitlement) {
+        return NextResponse.json({ error: 'Project not found' }, { status: 404 });
+      }
+
+      const { count: queuedJobCount, error: queuedJobCountError } = await (supabaseAdmin as any)
+        .from('project_generation_jobs')
+        .select('id', { count: 'exact', head: true })
+        .eq('project_id', projectId)
+        .eq('status', 'queued');
+
+      if (queuedJobCountError) {
+        throw new Error(queuedJobCountError.message || 'Failed to load queued generation jobs');
+      }
+
+      if ((queuedJobCount || 0) > 0) {
+        const entitlementOrganizationId = projectForEntitlement.organization_id
+          || (shouldEnforceSubscriptionEntitlements()
+            ? await resolveOrganizationIdForWrite(projectForEntitlement.user_id)
+            : null);
+        const entitlementGuard = await runEntitlementGuard({
+          organizationId: entitlementOrganizationId,
+          legacyUserId: projectForEntitlement.user_id,
+          action: 'content_generation',
+          requestedAmount: queuedJobCount || 1,
+          allowHardBlock: true,
+          logContext: {
+            route: 'app/api/projects/[id]/generate/process',
+            userId: callerUserId,
+            projectId,
+            metadata: {
+              queuedJobCount,
+              isMaintenance,
+            },
+          },
+        });
+        if (entitlementGuard.response) {
+          return entitlementGuard.response;
+        }
+      }
     }
 
     const baseUrl = getInternalAppBaseUrl();
@@ -181,7 +238,7 @@ export async function POST(
       try {
         const { data: project, error: projectError } = await (supabaseAdmin as any)
           .from('projects')
-          .select('id, user_id, transcription_text, transcription_segments, speaker_data, metadata')
+          .select('id, user_id, organization_id, transcription_text, transcription_segments, speaker_data, metadata')
           .eq('id', projectId)
           .single();
 
@@ -210,15 +267,23 @@ export async function POST(
           }
 
           const reconcileTarget = mapAnalysisJobKeyToReconcileTarget(job.target_key);
+          const legacyEstimatedHold = estimateReservationAmount(estimatedCost, 'analysis_job');
+          const productCreditAmount = estimateDraftProductCredits(1);
           const reservation = estimatedCost > 0
-            ? await createReservation({
+            ? await createPlanCreditReservation({
                 userId: project.user_id,
+                organizationId: project.organization_id || await resolveOrganizationIdForWrite(project.user_id),
                 projectId,
                 workflowType: 'analysis_job',
-                amount: estimateReservationAmount(estimatedCost, 'analysis_job'),
+                amount: productCreditAmount,
                 metadata: {
                   targetKey: job.target_key,
                   queuedJobId: job.id,
+                  estimatedCost,
+                  estimatedProviderCost: estimatedCost,
+                  legacyEstimatedHold,
+                  productCreditAmount,
+                  productCreditWorkflow: 'extra_draft_or_regeneration',
                 },
                 expiresAt: new Date(Date.now() + (60 * 60 * 1000)).toISOString(),
               })
@@ -277,6 +342,29 @@ export async function POST(
           if (!completedTargets.has(reconcileTarget) && reconcileResult?.message !== 'All features present') {
             throw new Error(`Reconcile did not complete ${job.target_key}`);
           }
+
+          if (completedTargets.has(reconcileTarget)) {
+            await recordSubscriptionUsage({
+              organizationId: project.organization_id || null,
+              userId: project.user_id,
+              counterKey: 'content_generation',
+              quantity: 1,
+              idempotencyKey: `project_generation_job:${job.id}`,
+              metadata: {
+                source: 'analysis_job',
+                jobId: job.id,
+                targetKey: job.target_key,
+                reconcileTarget,
+                reservationId: reservation?.id || null,
+              },
+              logContext: {
+                route: 'app/api/projects/[id]/generate/process',
+                userId: project.user_id,
+                projectId,
+                source: 'analysis_job',
+              },
+            });
+          }
         } else {
           const block = buildContentBlockForJob(
             job.target_key,
@@ -303,6 +391,10 @@ export async function POST(
               segments: project.transcription_segments || [],
               speakerData: project.speaker_data || {},
               blocks: [block],
+              creator_profile_id: job.creator_profile_id || undefined,
+              brand_voice_id: job.brand_voice_id || undefined,
+              campaign_id: job.campaign_id || undefined,
+              library_id: job.library_id || undefined,
             }),
           });
 
@@ -317,6 +409,8 @@ export async function POST(
         console.error('[PROJECT-GENERATE-PROCESS] Job failed:', error);
         const message = error instanceof InsufficientCreditError
           ? `Insufficient credits: need $${error.required.toFixed(4)}, have $${error.available.toFixed(4)}`
+          : error instanceof InsufficientPlanCreditsError
+            ? `Insufficient credits: need ${error.required.toFixed(4)}, have ${error.available.toFixed(4)}`
           : (error?.message || 'Generation failed');
         await failJob(job.id, message);
       } finally {

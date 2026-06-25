@@ -1,5 +1,5 @@
 import type { Metadata } from "next";
-import { Geist, Geist_Mono } from "next/font/google";
+import type { CSSProperties } from "react";
 import { AuthProvider } from "@/lib/auth/context";
 import CompactFooter from "@/components/site/CompactFooter";
 import { ThemeProvider } from "@/components/theme-provider";
@@ -7,15 +7,10 @@ import { ThemeAwareToaster } from "@/components/theme-aware-toaster";
 import { SITE_DESCRIPTION, SITE_NAME, getSiteUrl } from "@/lib/site-config";
 import "./globals.css";
 
-const geistSans = Geist({
-  variable: "--font-geist-sans",
-  subsets: ["latin"],
-});
-
-const geistMono = Geist_Mono({
-  variable: "--font-geist-mono",
-  subsets: ["latin"],
-});
+const fontVariables = {
+  "--font-geist-sans": "Inter, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, Segoe UI, sans-serif",
+  "--font-geist-mono": "SFMono-Regular, Consolas, Liberation Mono, Menlo, monospace",
+} as CSSProperties;
 
 export const metadata: Metadata = {
   metadataBase: new URL(getSiteUrl()),
@@ -68,7 +63,8 @@ export default function RootLayout({
   return (
     <html lang="en" suppressHydrationWarning>
       <body
-        className={`${geistSans.variable} ${geistMono.variable} antialiased`}
+        className="antialiased"
+        style={fontVariables}
         suppressHydrationWarning
       >
         <ThemeProvider attribute="class" defaultTheme="dark" enableSystem={false} disableTransitionOnChange>

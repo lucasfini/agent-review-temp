@@ -59,29 +59,79 @@ export async function requireAuthenticatedUser(request: NextRequest) {
   return getUserFromCookies(request);
 }
 
+function ensureProjectSelect(select: string): string {
+  if (select.trim() === '*') return select;
+
+  const lowerSelect = select.toLowerCase();
+  const requiredColumns = ['id', 'user_id', 'organization_id'];
+  const missingColumns = requiredColumns.filter((column) => !lowerSelect.includes(column));
+
+  if (missingColumns.length === 0) return select;
+  return `${select}, ${missingColumns.join(', ')}`;
+}
+
+async function userHasActiveOrganizationMembership(
+  userId: string,
+  organizationId: string
+): Promise<boolean> {
+  const { data, error } = await supabaseAdmin
+    .from('organization_members')
+    .select('id')
+    .eq('user_id', userId)
+    .eq('organization_id', organizationId)
+    .eq('status', 'active')
+    .maybeSingle() as { data: { id: string } | null; error: any };
+
+  if (error) {
+    throw new RouteAccessError(500, 'Failed to validate organization membership');
+  }
+
+  return Boolean(data?.id);
+}
+
 export async function requireProjectOwner<TProject = any>(
   request: NextRequest,
   projectId: string,
   select: string = 'id, user_id'
-): Promise<{ user: { id: string; email?: string | null }; project: TProject & { user_id: string } }> {
+): Promise<{
+  user: { id: string; email?: string | null };
+  project: TProject & { id: string; user_id: string; organization_id: string | null };
+  accessMode: 'legacy_owner' | 'organization_member';
+}> {
   const user = await requireAuthenticatedUser(request);
-  const normalizedSelect = select.includes('user_id') || select.trim() === '*'
-    ? select
-    : `${select}, user_id`;
+  const normalizedSelect = ensureProjectSelect(select);
 
   const { data: project, error } = await supabaseAdmin
     .from('projects')
     .select(normalizedSelect)
     .eq('id', projectId)
-    .single() as { data: (TProject & { user_id: string }) | null; error: any };
+    .single() as {
+      data: (TProject & { id: string; user_id: string; organization_id: string | null }) | null;
+      error: any;
+    };
 
   if (error || !project) {
     throw new RouteAccessError(404, 'Project not found');
   }
 
-  if (project.user_id !== user.id) {
-    throw new RouteAccessError(403, 'Forbidden');
+  if (project.user_id === user.id) {
+    return {
+      user,
+      project,
+      accessMode: 'legacy_owner',
+    };
   }
 
-  return { user, project };
+  if (project.organization_id) {
+    const hasActiveMembership = await userHasActiveOrganizationMembership(user.id, project.organization_id);
+    if (hasActiveMembership) {
+      return {
+        user,
+        project,
+        accessMode: 'organization_member',
+      };
+    }
+  }
+
+  throw new RouteAccessError(403, 'Forbidden');
 }

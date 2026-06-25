@@ -1,5 +1,5 @@
 import { NextRequest, NextResponse } from 'next/server';
-import { deleteUserAccountData } from '@/lib/account-lifecycle';
+import { AccountDeletionError, assertOwnerDeletionAllowed, deleteUserAccountData } from '@/lib/account-lifecycle';
 import { supabaseAdmin } from '@/lib/supabase/server';
 import { isDemoUser } from '@/lib/demo-mode';
 
@@ -21,6 +21,7 @@ export async function DELETE(request: NextRequest) {
       return NextResponse.json({ error: 'System accounts cannot be deleted' }, { status: 403 });
     }
 
+    await assertOwnerDeletionAllowed(user.id);
     const result = await deleteUserAccountData(user);
 
     return NextResponse.json({
@@ -29,6 +30,9 @@ export async function DELETE(request: NextRequest) {
       result,
     });
   } catch (error: any) {
+    if (error instanceof AccountDeletionError) {
+      return NextResponse.json({ error: error.message }, { status: error.status });
+    }
     console.error('Account deletion final error:', error);
     return NextResponse.json({ error: error.message || 'Failed to fully delete account' }, { status: 500 });
   }

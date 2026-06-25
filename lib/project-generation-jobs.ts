@@ -16,10 +16,15 @@ export interface ProjectGenerationJob {
   id: string;
   project_id: string;
   user_id: string;
+  organization_id?: string | null;
   kind: ProjectGenerationJobKind;
   target_key: string;
   theme_id?: string | null;
   custom_guidance?: string | null;
+  creator_profile_id?: string | null;
+  brand_voice_id?: string | null;
+  campaign_id?: string | null;
+  library_id?: string | null;
   status: ProjectGenerationJobStatus;
   error_message?: string | null;
   failure_notified_at?: string | null;
