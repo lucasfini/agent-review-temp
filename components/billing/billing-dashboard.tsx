@@ -9,12 +9,12 @@ import {
   CheckCircle2,
   ChevronLeft,
   ChevronRight,
+  Copy,
   CreditCard,
   Download,
   ExternalLink,
   Loader2,
   LockKeyhole,
-  MoreHorizontal,
   RefreshCw,
   Rocket,
   Search,
@@ -799,6 +799,53 @@ function formatTransactionAmount(transaction: GroupedTransaction) {
   return formatBillingAmount(transaction.amount, transaction.creditUnit);
 }
 
+async function copyTextToClipboard(text: string) {
+  if (navigator.clipboard?.writeText) {
+    await navigator.clipboard.writeText(text);
+    return;
+  }
+
+  const textarea = document.createElement('textarea');
+  textarea.value = text;
+  textarea.setAttribute('readonly', '');
+  textarea.style.position = 'fixed';
+  textarea.style.left = '-9999px';
+  document.body.appendChild(textarea);
+  textarea.select();
+  const copied = document.execCommand('copy');
+  document.body.removeChild(textarea);
+
+  if (!copied) {
+    throw new Error('Copy command failed');
+  }
+}
+
+async function copyTransactionDetails(transaction: GroupedTransaction) {
+  const date = new Date(transaction.createdAt);
+  const details = [
+    `Date: ${Number.isNaN(date.getTime()) ? '-' : date.toISOString()}`,
+    `Type: ${transactionTypeLabel(transaction.transactionType)}`,
+    `Description: ${transaction.reason || '-'}`,
+    `Project: ${transaction.projectTitle || '-'}`,
+    `Invoice: ${transaction.invoiceNumber || '-'}`,
+    `Amount: ${formatTransactionAmount(transaction)}`,
+    `Balance after: ${formatBillingAmount(transaction.balanceAfter, transaction.creditUnit)}`,
+    transaction.children?.length
+      ? `Line items:\n${transaction.children.map((child) => {
+        const childDate = new Date(child.createdAt);
+        return `- ${Number.isNaN(childDate.getTime()) ? '-' : childDate.toISOString()} | ${child.kind || 'usage'} | ${formatBillingAmount(child.amount, child.creditUnit || transaction.creditUnit)} | ${child.reason}`;
+      }).join('\n')}`
+      : null,
+  ].filter(Boolean).join('\n');
+
+  try {
+    await copyTextToClipboard(details);
+    toast.success('Transaction details copied.');
+  } catch {
+    toast.error('Could not copy transaction details.');
+  }
+}
+
 function TransactionRow({ transaction }: { transaction: GroupedTransaction }) {
   const amount = formatTransactionAmount(transaction);
   const isPositive = transaction.amount > 0;
@@ -833,10 +880,12 @@ function TransactionRow({ transaction }: { transaction: GroupedTransaction }) {
       <td className="px-4 py-3 text-right">
         <button
           type="button"
+          onClick={() => void copyTransactionDetails(transaction)}
           className="inline-flex h-8 w-8 items-center justify-center rounded-lg text-slate-400 transition-colors hover:bg-slate-100 hover:text-slate-700 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-blue-500"
-          aria-label={`More actions for ${transaction.reason || 'transaction'}`}
+          aria-label={`Copy details for ${transaction.reason || 'transaction'}`}
+          title="Copy transaction details"
         >
-          <MoreHorizontal className="h-4 w-4" />
+          <Copy className="h-4 w-4" />
         </button>
       </td>
     </tr>

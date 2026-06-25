@@ -996,10 +996,9 @@ function OneSourceSection() {
             <h3 className="text-lg font-bold">Choose outputs</h3>
             <div className="mt-3 space-y-1.5">
               {outputRows.map((row) => (
-                <button
-                  type="button"
+                <div
                   key={row.label}
-                  className="flex w-full items-center gap-3 rounded-xl border border-[var(--border)] bg-[var(--surface)] px-3 py-2 text-left transition duration-300 hover:-translate-y-0.5 hover:border-[color-mix(in_srgb,var(--blue)_26%,var(--border))] hover:shadow-[var(--shadow-card)] focus:outline-none focus-visible:ring-2 focus-visible:ring-[var(--blue)]"
+                  className="flex w-full items-center gap-3 rounded-xl border border-[var(--border)] bg-[var(--surface)] px-3 py-2 text-left"
                 >
                   <OutputIcon icon={row.icon} tone={row.tone} />
                   <span className="min-w-0 flex-1 text-sm font-bold">{row.label}</span>
@@ -1014,7 +1013,7 @@ function OneSourceSection() {
                   >
                     {row.checked ? <Check className="h-3.5 w-3.5" /> : null}
                   </span>
-                </button>
+                </div>
               ))}
             </div>
             <PrimaryButton href={SIGNUP_HREF} className="mt-3 h-10 w-full">
@@ -1224,11 +1223,10 @@ function SpeakerSection() {
               <p className="text-sm font-bold text-[var(--text)]">Suggested matches</p>
               <div className="mt-3 grid gap-2">
                 {suggestedMatches.map(([name, role, percent, avatar], index) => (
-                  <button
-                    type="button"
+                  <div
                     key={name}
                     className={cn(
-                      "flex min-h-12 w-full items-center gap-3 rounded-xl border px-3 py-2.5 text-left transition hover:-translate-y-px focus:outline-none focus-visible:ring-2 focus-visible:ring-[var(--blue)]",
+                      "flex min-h-12 w-full items-center gap-3 rounded-xl border px-3 py-2.5 text-left",
                       index === 0
                         ? "border-[color-mix(in_srgb,var(--blue)_42%,var(--border))] bg-[color-mix(in_srgb,var(--blue)_8%,var(--surface))]"
                         : "border-[var(--border)] bg-[var(--surface)]",
@@ -1248,17 +1246,16 @@ function SpeakerSection() {
                       {role ? <span className="block text-xs text-[var(--muted)]">{role}</span> : null}
                     </span>
                     <span className="text-sm font-bold text-[var(--muted)]">{percent}</span>
-                  </button>
+                  </div>
                 ))}
               </div>
             </div>
 
-            <button
-              type="button"
-              className="mt-4 inline-flex h-11 w-full items-center justify-center rounded-xl bg-[linear-gradient(135deg,var(--blue),var(--purple))] text-sm font-bold text-white shadow-[0_14px_32px_rgba(20,99,255,0.22)] transition duration-200 hover:-translate-y-px hover:shadow-[0_18px_42px_rgba(20,99,255,0.28)] focus:outline-none focus-visible:ring-2 focus-visible:ring-[var(--blue)] focus-visible:ring-offset-2 focus-visible:ring-offset-[var(--bg)] active:translate-y-0"
+            <div
+              className="mt-4 inline-flex h-11 w-full items-center justify-center rounded-xl bg-[linear-gradient(135deg,var(--blue),var(--purple))] text-sm font-bold text-white shadow-[0_14px_32px_rgba(20,99,255,0.22)]"
             >
-              Confirm speaker
-            </button>
+              Speaker confirmed
+            </div>
           </Surface>
         </motion.div>
       </div>
@@ -1352,10 +1349,9 @@ function FeaturesSection() {
             <h3 className="text-lg font-bold">Choose your outputs</h3>
             <div className="mt-3 grid gap-1.5 sm:grid-cols-2">
               {featureOutputs.map(([label, icon, tone, checked]) => (
-                <button
+                <div
                   key={label}
-                  type="button"
-                  className="flex w-full items-center gap-2.5 rounded-xl border border-[var(--border)] bg-[var(--surface)] px-3 py-2 text-left transition duration-200 hover:-translate-y-0.5 hover:border-[color-mix(in_srgb,var(--blue)_26%,var(--border))] focus:outline-none focus-visible:ring-2 focus-visible:ring-[var(--blue)]"
+                  className="flex w-full items-center gap-2.5 rounded-xl border border-[var(--border)] bg-[var(--surface)] px-3 py-2 text-left"
                 >
                   <OutputIcon icon={icon} tone={tone} />
                   <span className="min-w-0 flex-1 text-sm font-bold">{label}</span>
@@ -1370,7 +1366,7 @@ function FeaturesSection() {
                   >
                     {checked ? <Check className="h-3.5 w-3.5" /> : null}
                   </span>
-                </button>
+                </div>
               ))}
             </div>
             <PrimaryButton href={SIGNUP_HREF} className="mt-3 h-10 w-full">
