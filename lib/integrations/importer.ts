@@ -9,6 +9,10 @@ import { getInternalAppBaseUrl } from '@/lib/app-url';
 import { scheduleBackgroundTask } from '@/lib/background-task';
 import { getProcessingTierForAnalysis, normalizeAnalysisOptions, type AnalysisOptions } from '@/lib/analysis-options';
 import { resolveOrganizationIdForWrite } from '@/lib/authz/organization-context';
+import {
+  notifyImportComplete,
+  notifyImportFailed,
+} from '@/lib/notifications/notification-events';
 
 type PerformanceLevel = 'transcript' | 'content_kit';
 
@@ -45,6 +49,7 @@ export async function importRecording(params: {
   reservationId?: string;
   reservationHoldAmount?: number;
   reservationEstimatedCost?: number;
+  estimatedDurationSeconds?: number;
   speakerCount?: number;
   externalSource?: { provider: string; recordingId: string };
 }) {
@@ -60,6 +65,7 @@ export async function importRecording(params: {
     reservationId,
     reservationHoldAmount,
     reservationEstimatedCost,
+    estimatedDurationSeconds,
     speakerCount,
     externalSource
   } = params;
@@ -74,7 +80,9 @@ export async function importRecording(params: {
   }
 
   const sanitizedBaseName = sanitizeFileName(fileName);
-  const estimatedDuration = Math.round(size / (128000 / 8));
+  const estimatedDuration = estimatedDurationSeconds
+    ? Math.max(1, Math.round(estimatedDurationSeconds))
+    : Math.round(size / (128000 / 8));
   const fingerprint = computeAudioFingerprint(Buffer.from(buffer));
   const resolvedOrganizationId = await resolveOrganizationIdForWrite(userId, organizationId || null);
 
@@ -98,6 +106,7 @@ export async function importRecording(params: {
       billing: reservationId ? {
         uploadReservationId: reservationId,
         uploadEstimatedHold: reservationHoldAmount ?? null,
+        uploadEstimatedHoldUnit: 'plan_credit',
         uploadEstimatedCost: reservationEstimatedCost ?? null,
       } : undefined,
     }
@@ -137,6 +146,20 @@ export async function importRecording(params: {
     }));
   } catch (uploadError: any) {
     await supabaseAdmin.from('projects').delete().eq('id', project.id);
+    await notifyImportFailed({
+      organizationId: resolvedOrganizationId,
+      actorUserId: userId,
+      sourceName: externalSource?.provider || 'import',
+      idempotencyKey: externalSource
+        ? `import_failed:${externalSource.provider}:${externalSource.recordingId}`
+        : `import_failed:${project.id}`,
+      metadata: {
+        source: 'integration_importer',
+        provider: externalSource?.provider || null,
+        recordingId: externalSource?.recordingId || null,
+        error: uploadError?.message || 'Failed to upload audio file to R2',
+      },
+    });
     throw new Error(uploadError?.message || 'Failed to upload audio file to R2');
   }
 
@@ -176,6 +199,22 @@ export async function importRecording(params: {
       })
     }).catch((e) => console.error('Background transcription fetch failed:', e))
   );
+
+  await notifyImportComplete({
+    organizationId: resolvedOrganizationId,
+    actorUserId: userId,
+    projectId: project.id,
+    projectTitle: project.title || title,
+    sourceName: externalSource?.provider || 'import',
+    idempotencyKey: externalSource
+      ? `import_complete:${externalSource.provider}:${externalSource.recordingId}`
+      : `import_complete:${project.id}`,
+    metadata: {
+      source: 'integration_importer',
+      provider: externalSource?.provider || null,
+      recordingId: externalSource?.recordingId || null,
+    },
+  });
 
   return {
     projectId: project.id,

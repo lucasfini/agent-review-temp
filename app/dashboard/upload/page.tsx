@@ -1,7 +1,8 @@
 "use client";
 
 import { useState, useCallback, useEffect, useRef, useMemo } from 'react';
-import { Upload, FileAudio, X, AlertCircle, CheckCircle, Clock, History, Trash2, Eye, FileVideo, Loader2, ChevronDown, ChevronUp, Lightbulb, Users, Mic, Pencil, MoreHorizontal, Video, MessageSquare, Globe2, Link2, Cloud, FileText, List, Quote, Star, Sparkles, Info, Network, Download } from 'lucide-react';
+import { useSearchParams } from 'next/navigation';
+import { Upload, FileAudio, X, AlertCircle, CheckCircle, Clock, History, Trash2, Eye, FileVideo, Loader2, ChevronDown, ChevronUp, Lightbulb, Users, Mic, Pencil, MoreHorizontal, Video, MessageSquare, Cloud, FileText, List, Quote, Star, Sparkles, Info, Download, FolderOpen, Bot, Youtube } from 'lucide-react';
 import { supabase } from '@/lib/supabase/client';
 import { useAuth } from '@/lib/auth/context';
 import { useCurrentOrganization } from '@/lib/hooks/useCurrentOrganization';
@@ -16,58 +17,34 @@ import { useUploadProgressSync, type UploadedFile, type QueuedRosterSpeaker } fr
 import { toast } from 'sonner';
 import { isIntegrationEnabled } from '@/lib/integrations/availability';
 import { withOrganizationId } from '@/lib/organizations/current-organization';
-import { DashboardPageShell, DashboardPanel } from '@/components/dashboard/shell';
+import { DashboardPageHeader, DashboardPageShell, DashboardPanel } from '@/components/dashboard/shell';
+import { formatProductCredits } from '@/lib/billing/product-credits';
 
 const HISTORY_PAGE_SIZE = 10;
 const UPLOAD_METHOD_TABS = [
   { id: 'local', label: 'Local', labelFull: 'Local upload', soon: false },
-  { id: 'url', label: 'URL', labelFull: 'URL import', soon: false },
   { id: 'integrations', label: 'Apps', labelFull: 'Integrations', soon: false },
+  { id: 'url', label: 'URL', labelFull: 'URL import', soon: false },
 ] as const;
 
 type UploadMethodTab = typeof UPLOAD_METHOD_TABS[number]['id'];
 
-const COMING_SOON_INTEGRATIONS = [
-  {
-    name: 'Zoom',
-    detail: 'Meeting recordings',
-    Icon: Video,
-    accent: 'text-blue-600 dark:text-blue-300',
-    bg: 'bg-blue-50 dark:bg-blue-500/10',
-    border: 'border-blue-100 dark:border-blue-400/20',
-  },
-  {
-    name: 'Google Drive',
-    detail: 'Shared audio and video files',
-    Icon: Cloud,
-    accent: 'text-indigo-600 dark:text-indigo-300',
-    bg: 'bg-indigo-50 dark:bg-indigo-500/10',
-    border: 'border-indigo-100 dark:border-indigo-400/20',
-  },
-  {
-    name: 'Slack',
-    detail: 'Huddles and clips',
-    Icon: MessageSquare,
-    accent: 'text-emerald-600 dark:text-emerald-300',
-    bg: 'bg-emerald-50 dark:bg-emerald-500/10',
-    border: 'border-emerald-100 dark:border-emerald-400/20',
-  },
-  {
-    name: 'Granola',
-    detail: 'Meeting notes and recordings',
-    Icon: Network,
-    accent: 'text-violet-600 dark:text-violet-300',
-    bg: 'bg-violet-50 dark:bg-violet-500/10',
-    border: 'border-violet-100 dark:border-violet-400/20',
-  },
-];
-
-type IntegrationProvider = 'zoom' | 'microsoft' | 'youtube';
+type IntegrationProvider = 'zoom' | 'microsoft' | 'youtube' | 'notion' | 'onedrive' | 'google_drive' | 'granola' | 'slack';
 
 type IntegrationProviderStatus = {
   provider: IntegrationProvider;
   connected: boolean;
-  metadata?: Record<string, unknown> | null;
+  healthStatus?: 'connected' | 'review' | 'disconnected';
+  needsReview?: boolean;
+  issue?: string | null;
+  metadata?: {
+    email?: string;
+    name?: string;
+    channelTitle?: string;
+    workspaceName?: string;
+    teamName?: string;
+    [key: string]: unknown;
+  } | null;
   updatedAt?: string | null;
 };
 
@@ -76,11 +53,78 @@ type YouTubeUploadItem = {
   title: string;
   channelTitle?: string | null;
   publishedAt?: string | null;
+  privacyStatus?: 'public' | 'unlisted' | 'private' | null;
   thumbnailUrl?: string | null;
   durationSeconds?: number | null;
 };
 
-const LIVE_INTEGRATIONS: Array<{
+type ZoomRecordingFile = {
+  fileId: string;
+  fileType?: string | null;
+  fileExtension?: string | null;
+  fileSize?: number | null;
+  downloadUrl?: string | null;
+};
+
+type ZoomRecordingItem = {
+  meetingId: string;
+  topic?: string | null;
+  startTime?: string | null;
+  duration?: number | null;
+  files?: ZoomRecordingFile[];
+};
+
+type MicrosoftRecordingItem = {
+  id: string;
+  name: string;
+  size?: number | null;
+  createdAt?: string | null;
+  mimeType?: string | null;
+  downloadUrl?: string | null;
+};
+
+type GoogleDriveFileItem = {
+  id: string;
+  name: string;
+  size?: number | null;
+  createdAt?: string | null;
+  modifiedAt?: string | null;
+  mimeType?: string | null;
+  webViewLink?: string | null;
+  thumbnailUrl?: string | null;
+  durationSeconds?: number | null;
+};
+
+type OneDriveFileItem = {
+  id: string;
+  name: string;
+  size?: number | null;
+  createdAt?: string | null;
+  modifiedAt?: string | null;
+  mimeType?: string | null;
+  webUrl?: string | null;
+  downloadUrl?: string | null;
+};
+
+type SlackFileItem = {
+  id: string;
+  name: string;
+  size?: number | null;
+  createdAt?: string | null;
+  mimeType?: string | null;
+  fileType?: string | null;
+  downloadUrl?: string | null;
+};
+
+type NotionPageItem = {
+  id: string;
+  title: string;
+  url?: string | null;
+  createdAt?: string | null;
+  editedAt?: string | null;
+};
+
+const UPLOAD_INTEGRATIONS: Array<{
   provider: IntegrationProvider;
   name: string;
   detail: string;
@@ -90,33 +134,101 @@ const LIVE_INTEGRATIONS: Array<{
   border: string;
 }> = [
   {
+    provider: 'zoom',
+    name: 'Zoom',
+    detail: 'Meeting recordings',
+    Icon: Video,
+    accent: 'text-blue-600 dark:text-blue-300',
+    bg: 'bg-blue-50 dark:bg-blue-500/10',
+    border: 'border-blue-100 dark:border-blue-400/20',
+  },
+  {
+    provider: 'microsoft',
+    name: 'Microsoft Teams',
+    detail: 'Call recordings',
+    Icon: Users,
+    accent: 'text-indigo-600 dark:text-indigo-300',
+    bg: 'bg-indigo-50 dark:bg-indigo-500/10',
+    border: 'border-indigo-100 dark:border-indigo-400/20',
+  },
+  {
     provider: 'youtube',
     name: 'YouTube',
     detail: 'Your channel uploads',
-    Icon: Video,
+    Icon: Youtube,
     accent: 'text-rose-600 dark:text-rose-300',
     bg: 'bg-rose-50 dark:bg-rose-500/10',
     border: 'border-rose-100 dark:border-rose-400/20',
   },
+  {
+    provider: 'notion',
+    name: 'Notion',
+    detail: 'Pages, notes, and transcripts',
+    Icon: FileText,
+    accent: 'text-slate-700 dark:text-slate-200',
+    bg: 'bg-slate-50 dark:bg-slate-500/10',
+    border: 'border-slate-200 dark:border-slate-400/20',
+  },
+  {
+    provider: 'onedrive',
+    name: 'OneDrive',
+    detail: 'Cloud recording imports',
+    Icon: FolderOpen,
+    accent: 'text-sky-600 dark:text-sky-300',
+    bg: 'bg-sky-50 dark:bg-sky-500/10',
+    border: 'border-sky-100 dark:border-sky-400/20',
+  },
+  {
+    provider: 'google_drive',
+    name: 'Google Drive',
+    detail: 'Drive files and folders',
+    Icon: Cloud,
+    accent: 'text-emerald-600 dark:text-emerald-300',
+    bg: 'bg-emerald-50 dark:bg-emerald-500/10',
+    border: 'border-emerald-100 dark:border-emerald-400/20',
+  },
+  {
+    provider: 'granola',
+    name: 'Granola AI',
+    detail: 'Paste notes or transcripts',
+    Icon: Bot,
+    accent: 'text-amber-600 dark:text-amber-300',
+    bg: 'bg-amber-50 dark:bg-amber-500/10',
+    border: 'border-amber-100 dark:border-amber-400/20',
+  },
+  {
+    provider: 'slack',
+    name: 'Slack',
+    detail: 'Huddles and clips',
+    Icon: MessageSquare,
+    accent: 'text-emerald-600 dark:text-emerald-300',
+    bg: 'bg-emerald-50 dark:bg-emerald-500/10',
+    border: 'border-emerald-100 dark:border-emerald-400/20',
+  },
 ];
 
-const FEATURE_STRIP_ITEMS = [
-  {
-    title: 'Smart imports',
-    description: 'Local files, URLs, and app integrations.',
-    Icon: Globe2,
-  },
-  {
-    title: 'Speaker controls',
-    description: 'Set names, roles, and expected counts.',
-    Icon: Users,
-  },
-  {
-    title: 'Always saved',
-    description: 'Your upload history is always available.',
-    Icon: Clock,
-  },
-];
+const COMING_SOON_INTEGRATIONS = UPLOAD_INTEGRATIONS.filter(({ provider }) => !isIntegrationEnabled(provider));
+
+const LIVE_INTEGRATIONS = UPLOAD_INTEGRATIONS.filter(({ provider }) => isIntegrationEnabled(provider));
+
+const ACTIVE_UPLOAD_INTEGRATIONS = [...LIVE_INTEGRATIONS, ...COMING_SOON_INTEGRATIONS];
+
+const integrationLabel = (provider: IntegrationProvider) => {
+  if (provider === 'zoom') return 'Zoom';
+  if (provider === 'microsoft') return 'Microsoft Teams';
+  if (provider === 'youtube') return 'YouTube';
+  if (provider === 'notion') return 'Notion';
+  if (provider === 'onedrive') return 'OneDrive';
+  if (provider === 'google_drive') return 'Google Drive';
+  if (provider === 'granola') return 'Granola AI';
+  return 'Slack';
+};
+
+const youtubePrivacyLabel = (privacyStatus?: string | null) => {
+  if (privacyStatus === 'private') return 'Private';
+  if (privacyStatus === 'unlisted') return 'Unlisted';
+  return 'Public';
+};
 
 const HELPFUL_TIPS = [
   {
@@ -168,14 +280,52 @@ interface UploadHistory {
   processing_completed_at?: string;
 }
 
-async function readErrorMessage(response: Response, fallback: string) {
+async function readErrorPayload(response: Response, fallback: string) {
   try {
     const data = await response.json();
-    if (typeof data?.error === 'string' && data.error.trim()) return data.error;
+    const message = typeof data?.message === 'string' && data.message.trim()
+      ? data.message
+      : typeof data?.error === 'string' && data.error.trim()
+        ? data.error
+        : fallback;
+    return { ...data, message };
   } catch {
-    // Fall back to generic copy.
+    return { message: fallback };
   }
-  return fallback;
+}
+
+async function readErrorMessage(response: Response, fallback: string) {
+  const payload = await readErrorPayload(response, fallback);
+  return payload.message;
+}
+
+function IntegrationErrorNotice({
+  message,
+  onReconnect,
+}: {
+  message: string;
+  onReconnect?: () => void;
+}) {
+  return (
+    <div className="rounded-lg border border-amber-200 bg-amber-50 px-3 py-2.5 text-amber-900 shadow-sm dark:border-amber-500/30 dark:bg-amber-500/10 dark:text-amber-100">
+      <div className="flex items-start gap-2.5">
+        <AlertCircle className="mt-0.5 h-4 w-4 shrink-0 text-amber-600 dark:text-amber-300" />
+        <div className="min-w-0 flex-1">
+          <p className="text-xs font-semibold">Integration issue</p>
+          <p className="mt-0.5 text-xs leading-5 text-amber-800 dark:text-amber-100/90">{message}</p>
+          {onReconnect && (
+            <button
+              type="button"
+              onClick={onReconnect}
+              className="mt-2 inline-flex rounded-md border border-amber-300 bg-white/70 px-2.5 py-1 text-xs font-semibold text-amber-900 transition-colors hover:bg-white dark:border-amber-400/30 dark:bg-amber-400/10 dark:text-amber-50 dark:hover:bg-amber-400/15"
+            >
+              Reconnect
+            </button>
+          )}
+        </div>
+      </div>
+    </div>
+  );
 }
 
 function formatAnalysisSummary(options: AnalysisOptions): string {
@@ -280,6 +430,16 @@ function UploadActivitySection({
                         ? formatFileSize(fileSize)
                         : uploadedFile.sourceType === 'youtube'
                           ? 'YouTube import'
+                          : uploadedFile.sourceType === 'google_drive'
+                            ? 'Google Drive import'
+                            : uploadedFile.sourceType === 'onedrive'
+                              ? 'OneDrive import'
+                              : uploadedFile.sourceType === 'slack'
+                                ? 'Slack import'
+                                : uploadedFile.sourceType === 'granola'
+                                  ? 'Granola import'
+                            : uploadedFile.sourceType === 'notion'
+                              ? 'Notion import'
                           : uploadedFile.sourceType === 'direct'
                             ? 'URL import'
                             : 'Processing'}
@@ -368,6 +528,18 @@ function UploadActivitySection({
                     {formatAnalysisSummary(uploadedFile.analysisOptions)}
                   </span>
 
+                  {typeof uploadedFile.estimatedCredits === 'number' && (
+                    <span className="text-[10px] uppercase tracking-wide text-slate-600 dark:text-slate-300 border border-slate-300 dark:border-slate-700/70 bg-slate-100 dark:bg-slate-800/60 px-2 py-0.5 rounded">
+                      ~{formatProductCredits(uploadedFile.estimatedCredits)} credits
+                    </span>
+                  )}
+
+                  {typeof uploadedFile.remainingCreditsAfterUpload === 'number' && (
+                    <span className="text-[10px] uppercase tracking-wide text-emerald-700 dark:text-emerald-300 border border-emerald-200 dark:border-emerald-800/60 bg-emerald-50 dark:bg-emerald-900/20 px-2 py-0.5 rounded">
+                      {formatProductCredits(uploadedFile.remainingCreditsAfterUpload)} credits left
+                    </span>
+                  )}
+
                   {uploadedFile.status === 'completed' && uploadedFile.projectId && (
                     <a
                       href={`/dashboard/projects?id=${uploadedFile.projectId}`}
@@ -420,8 +592,22 @@ function UploadActivitySection({
                 )}
 
                 {uploadedFile.status === 'error' && uploadedFile.error && (
-                  <div className="mt-3 p-3 bg-red-900/20 border border-red-800/30 rounded-md">
-                    <p className="text-xs text-red-300 break-words">{uploadedFile.error}</p>
+                  <div className="mt-3 rounded-lg border border-red-200 bg-red-50 p-3 text-red-900 shadow-sm dark:border-red-900/50 dark:bg-red-950/30 dark:text-red-100">
+                    <div className="flex items-start gap-2.5">
+                      <AlertCircle className="mt-0.5 h-4 w-4 shrink-0 text-red-600 dark:text-red-300" />
+                      <div className="min-w-0">
+                        <p className="text-xs font-semibold">We could not finish this item</p>
+                        <p className="mt-0.5 text-xs leading-5 break-words text-red-800 dark:text-red-100/90">{uploadedFile.error}</p>
+                      </div>
+                    </div>
+                    {uploadedFile.billingErrorCode === 'INSUFFICIENT_PLAN_CREDITS' && uploadedFile.topUpsEnabled && uploadedFile.topUpPath && (
+                      <a
+                        href={uploadedFile.topUpPath}
+                        className="mt-2 inline-flex items-center rounded-md border border-red-700/50 px-2.5 py-1 text-xs font-semibold text-red-100 transition-colors hover:bg-red-900/40"
+                      >
+                        Add credits
+                      </a>
+                    )}
                   </div>
                 )}
               </div>
@@ -576,15 +762,45 @@ export default function UploadPage() {
   const [urlInput, setUrlInput] = useState('');
   const [urlTitle, setUrlTitle] = useState('');
   const [urlError, setUrlError] = useState<string | null>(null);
+  const [urlTopUpPath, setUrlTopUpPath] = useState<string | null>(null);
   const [isUrlSubmitting, setIsUrlSubmitting] = useState(false);
+  const [granolaTitle, setGranolaTitle] = useState('');
+  const [granolaText, setGranolaText] = useState('');
+  const [granolaError, setGranolaError] = useState<string | null>(null);
   const [integrationsLoading, setIntegrationsLoading] = useState(false);
   const [integrationsError, setIntegrationsError] = useState<string | null>(null);
   const [integrationStatuses, setIntegrationStatuses] = useState<IntegrationProviderStatus[]>([]);
   const [connectingProvider, setConnectingProvider] = useState<IntegrationProvider | null>(null);
+  const [disconnectingProvider, setDisconnectingProvider] = useState<IntegrationProvider | null>(null);
+  const [openIntegrationProvider, setOpenIntegrationProvider] = useState<IntegrationProvider | null>(null);
   const [youtubeUploads, setYouTubeUploads] = useState<YouTubeUploadItem[]>([]);
   const [youtubeUploadsLoading, setYouTubeUploadsLoading] = useState(false);
   const [youtubeUploadsError, setYouTubeUploadsError] = useState<string | null>(null);
   const [youtubeImportingVideoId, setYoutubeImportingVideoId] = useState<string | null>(null);
+  const [zoomRecordings, setZoomRecordings] = useState<ZoomRecordingItem[]>([]);
+  const [zoomRecordingsLoading, setZoomRecordingsLoading] = useState(false);
+  const [zoomRecordingsError, setZoomRecordingsError] = useState<string | null>(null);
+  const [zoomImportingFileId, setZoomImportingFileId] = useState<string | null>(null);
+  const [microsoftRecordings, setMicrosoftRecordings] = useState<MicrosoftRecordingItem[]>([]);
+  const [microsoftRecordingsLoading, setMicrosoftRecordingsLoading] = useState(false);
+  const [microsoftRecordingsError, setMicrosoftRecordingsError] = useState<string | null>(null);
+  const [microsoftImportingItemId, setMicrosoftImportingItemId] = useState<string | null>(null);
+  const [googleDriveFiles, setGoogleDriveFiles] = useState<GoogleDriveFileItem[]>([]);
+  const [googleDriveFilesLoading, setGoogleDriveFilesLoading] = useState(false);
+  const [googleDriveFilesError, setGoogleDriveFilesError] = useState<string | null>(null);
+  const [googleDriveImportingFileId, setGoogleDriveImportingFileId] = useState<string | null>(null);
+  const [oneDriveFiles, setOneDriveFiles] = useState<OneDriveFileItem[]>([]);
+  const [oneDriveFilesLoading, setOneDriveFilesLoading] = useState(false);
+  const [oneDriveFilesError, setOneDriveFilesError] = useState<string | null>(null);
+  const [oneDriveImportingFileId, setOneDriveImportingFileId] = useState<string | null>(null);
+  const [slackFiles, setSlackFiles] = useState<SlackFileItem[]>([]);
+  const [slackFilesLoading, setSlackFilesLoading] = useState(false);
+  const [slackFilesError, setSlackFilesError] = useState<string | null>(null);
+  const [slackImportingFileId, setSlackImportingFileId] = useState<string | null>(null);
+  const [notionPages, setNotionPages] = useState<NotionPageItem[]>([]);
+  const [notionPagesLoading, setNotionPagesLoading] = useState(false);
+  const [notionPagesError, setNotionPagesError] = useState<string | null>(null);
+  const [notionImportingPageId, setNotionImportingPageId] = useState<string | null>(null);
   const [selectedQueuedFileId, setSelectedQueuedFileId] = useState<string | null>(null);
   const lastActiveProjectCountRef = useRef<number | null>(null);
   const forceNamedSpeakersForRoster = useCallback((options: AnalysisOptions, roster: RosterSpeaker[] | QueuedRosterSpeaker[] | undefined | null): AnalysisOptions => {
@@ -597,6 +813,7 @@ export default function UploadPage() {
   const dragCounterRef = useRef(0);
 
   const { user, session } = useAuth();
+  const searchParams = useSearchParams();
   const { organizationId } = useCurrentOrganization();
   const {
     uploadedFiles,
@@ -957,6 +1174,153 @@ export default function UploadPage() {
     }
   }, [getAuthHeaders]);
 
+  const handleDisconnectIntegration = useCallback(async (provider: IntegrationProvider) => {
+    setDisconnectingProvider(provider);
+    try {
+      const headers = await getAuthHeaders('json');
+      const response = await fetch('/api/integrations/disconnect', {
+        method: 'POST',
+        headers,
+        body: JSON.stringify({ provider }),
+      });
+      if (!response.ok) {
+        throw new Error(await readErrorMessage(response, `Unable to disconnect ${integrationLabel(provider)} right now.`));
+      }
+      toast.success(`${integrationLabel(provider)} disconnected.`);
+      await fetchIntegrationStatuses();
+    } catch (error) {
+      toast.error(error instanceof Error ? error.message : 'Failed to disconnect integration');
+    } finally {
+      setDisconnectingProvider(null);
+    }
+  }, [fetchIntegrationStatuses, getAuthHeaders]);
+
+  const fetchZoomRecordings = useCallback(async () => {
+    if (!session?.access_token) return;
+    setZoomRecordingsLoading(true);
+    setZoomRecordingsError(null);
+    try {
+      const response = await fetch('/api/integrations/zoom/recordings', {
+        headers: { Authorization: `Bearer ${session.access_token}` },
+        cache: 'no-store',
+      });
+      if (!response.ok) {
+        throw new Error(await readErrorMessage(response, 'Failed to load Zoom recordings'));
+      }
+      const payload = await response.json() as { recordings?: ZoomRecordingItem[] };
+      setZoomRecordings(payload.recordings || []);
+    } catch (error) {
+      setZoomRecordingsError(error instanceof Error ? error.message : 'Failed to load Zoom recordings');
+    } finally {
+      setZoomRecordingsLoading(false);
+    }
+  }, [session?.access_token]);
+
+  const fetchMicrosoftRecordings = useCallback(async () => {
+    if (!session?.access_token) return;
+    setMicrosoftRecordingsLoading(true);
+    setMicrosoftRecordingsError(null);
+    try {
+      const response = await fetch('/api/integrations/microsoft/recordings', {
+        headers: { Authorization: `Bearer ${session.access_token}` },
+        cache: 'no-store',
+      });
+      if (!response.ok) {
+        throw new Error(await readErrorMessage(response, 'Failed to load Microsoft recordings'));
+      }
+      const payload = await response.json() as { recordings?: MicrosoftRecordingItem[] };
+      setMicrosoftRecordings(payload.recordings || []);
+    } catch (error) {
+      setMicrosoftRecordingsError(error instanceof Error ? error.message : 'Failed to load Microsoft recordings');
+    } finally {
+      setMicrosoftRecordingsLoading(false);
+    }
+  }, [session?.access_token]);
+
+  const fetchGoogleDriveFiles = useCallback(async () => {
+    if (!session?.access_token) return;
+    setGoogleDriveFilesLoading(true);
+    setGoogleDriveFilesError(null);
+    try {
+      const response = await fetch('/api/integrations/google_drive/files?limit=20', {
+        headers: { Authorization: `Bearer ${session.access_token}` },
+        cache: 'no-store',
+      });
+      if (!response.ok) {
+        throw new Error(await readErrorMessage(response, 'Failed to load Google Drive files'));
+      }
+      const payload = await response.json() as { files?: GoogleDriveFileItem[] };
+      setGoogleDriveFiles(payload.files || []);
+    } catch (error) {
+      setGoogleDriveFilesError(error instanceof Error ? error.message : 'Failed to load Google Drive files');
+    } finally {
+      setGoogleDriveFilesLoading(false);
+    }
+  }, [session?.access_token]);
+
+  const fetchOneDriveFiles = useCallback(async () => {
+    if (!session?.access_token) return;
+    setOneDriveFilesLoading(true);
+    setOneDriveFilesError(null);
+    try {
+      const response = await fetch('/api/integrations/onedrive/files?limit=20', {
+        headers: { Authorization: `Bearer ${session.access_token}` },
+        cache: 'no-store',
+      });
+      if (!response.ok) {
+        throw new Error(await readErrorMessage(response, 'Failed to load OneDrive files'));
+      }
+      const payload = await response.json() as { files?: OneDriveFileItem[] };
+      setOneDriveFiles(payload.files || []);
+    } catch (error) {
+      setOneDriveFilesError(error instanceof Error ? error.message : 'Failed to load OneDrive files');
+    } finally {
+      setOneDriveFilesLoading(false);
+    }
+  }, [session?.access_token]);
+
+  const fetchSlackFiles = useCallback(async () => {
+    if (!session?.access_token) return;
+    setSlackFilesLoading(true);
+    setSlackFilesError(null);
+    try {
+      const response = await fetch('/api/integrations/slack/files?limit=20', {
+        headers: { Authorization: `Bearer ${session.access_token}` },
+        cache: 'no-store',
+      });
+      if (!response.ok) {
+        throw new Error(await readErrorMessage(response, 'Failed to load Slack files'));
+      }
+      const payload = await response.json() as { files?: SlackFileItem[] };
+      setSlackFiles(payload.files || []);
+    } catch (error) {
+      setSlackFilesError(error instanceof Error ? error.message : 'Failed to load Slack files');
+    } finally {
+      setSlackFilesLoading(false);
+    }
+  }, [session?.access_token]);
+
+  const fetchNotionPages = useCallback(async () => {
+    if (!session?.access_token) return;
+    setNotionPagesLoading(true);
+    setNotionPagesError(null);
+    try {
+      const response = await fetch('/api/integrations/notion/pages?limit=20', {
+        headers: { Authorization: `Bearer ${session.access_token}` },
+        cache: 'no-store',
+      });
+      if (!response.ok) {
+        throw new Error(await readErrorMessage(response, 'Failed to load Notion pages'));
+      }
+      const payload = await response.json() as { pages?: NotionPageItem[] };
+      setNotionPages(payload.pages || []);
+    } catch (error) {
+      setNotionPagesError(error instanceof Error ? error.message : 'Failed to load Notion pages');
+    } finally {
+      setNotionPagesLoading(false);
+    }
+  }, [session?.access_token]);
+
   const fetchYouTubeUploads = useCallback(async () => {
     if (!session?.access_token) return;
     setYouTubeUploadsLoading(true);
@@ -1009,6 +1373,279 @@ export default function UploadPage() {
     startQueuedUploads();
   }, [analysisOptions, processingTier, setUploadedFiles, startQueuedUploads]);
 
+  const queueMicrosoftImport = useCallback((recording: MicrosoftRecordingItem) => {
+    const itemId = `microsoft-${recording.id}`;
+    setUploadedFiles((prev) => {
+      if (prev.some((queuedFile) => queuedFile.id === itemId || queuedFile.importPayload?.itemId === recording.id)) {
+        return prev;
+      }
+      return [
+        ...prev,
+        {
+          id: itemId,
+          status: 'queued',
+          progress: 0,
+          processingStage: 'pending',
+          stageProgress: 0,
+          processingMessage: 'Ready to import...',
+          processingTier,
+          analysisOptions,
+          displayName: recording.name || 'Teams recording',
+          sourceType: 'microsoft',
+          importPayload: {
+            itemId: recording.id,
+          },
+        }
+      ];
+    });
+    setSelectedQueuedFileId((current) => current || itemId);
+    startQueuedUploads();
+  }, [analysisOptions, processingTier, setUploadedFiles, startQueuedUploads]);
+
+  const handleImportMicrosoftRecording = useCallback(async (recording: MicrosoftRecordingItem) => {
+    setMicrosoftImportingItemId(recording.id);
+    try {
+      queueMicrosoftImport(recording);
+      toast.success('Microsoft recording added to queue.');
+    } finally {
+      setMicrosoftImportingItemId(null);
+    }
+  }, [queueMicrosoftImport]);
+
+  const queueGoogleDriveImport = useCallback((file: GoogleDriveFileItem) => {
+    const itemId = `google-drive-${file.id}`;
+    setUploadedFiles((prev) => {
+      if (prev.some((queuedFile) => queuedFile.id === itemId || queuedFile.importPayload?.fileId === file.id)) {
+        return prev;
+      }
+      return [
+        ...prev,
+        {
+          id: itemId,
+          status: 'queued',
+          progress: 0,
+          processingStage: 'pending',
+          stageProgress: 0,
+          processingMessage: 'Ready to import...',
+          processingTier,
+          analysisOptions,
+          displayName: file.name || 'Google Drive file',
+          sourceType: 'google_drive',
+          importPayload: {
+            fileId: file.id,
+            estimatedDurationSeconds: file.durationSeconds || undefined,
+          },
+          estimatedDurationSeconds: file.durationSeconds || undefined,
+        }
+      ];
+    });
+    setSelectedQueuedFileId((current) => current || itemId);
+    startQueuedUploads();
+  }, [analysisOptions, processingTier, setUploadedFiles, startQueuedUploads]);
+
+  const handleImportGoogleDriveFile = useCallback(async (file: GoogleDriveFileItem) => {
+    setGoogleDriveImportingFileId(file.id);
+    try {
+      queueGoogleDriveImport(file);
+      toast.success('Google Drive file added to queue.');
+    } finally {
+      setGoogleDriveImportingFileId(null);
+    }
+  }, [queueGoogleDriveImport]);
+
+  const queueOneDriveImport = useCallback((file: OneDriveFileItem) => {
+    const itemId = `onedrive-${file.id}`;
+    setUploadedFiles((prev) => {
+      if (prev.some((queuedFile) => queuedFile.id === itemId || queuedFile.importPayload?.itemId === file.id)) {
+        return prev;
+      }
+      return [
+        ...prev,
+        {
+          id: itemId,
+          status: 'queued',
+          progress: 0,
+          processingStage: 'pending',
+          stageProgress: 0,
+          processingMessage: 'Ready to import...',
+          processingTier,
+          analysisOptions,
+          displayName: file.name || 'OneDrive file',
+          sourceType: 'onedrive',
+          importPayload: {
+            itemId: file.id,
+          },
+        }
+      ];
+    });
+    setSelectedQueuedFileId((current) => current || itemId);
+    startQueuedUploads();
+  }, [analysisOptions, processingTier, setUploadedFiles, startQueuedUploads]);
+
+  const handleImportOneDriveFile = useCallback(async (file: OneDriveFileItem) => {
+    setOneDriveImportingFileId(file.id);
+    try {
+      queueOneDriveImport(file);
+      toast.success('OneDrive file added to queue.');
+    } finally {
+      setOneDriveImportingFileId(null);
+    }
+  }, [queueOneDriveImport]);
+
+  const queueSlackImport = useCallback((file: SlackFileItem) => {
+    const itemId = `slack-${file.id}`;
+    setUploadedFiles((prev) => {
+      if (prev.some((queuedFile) => queuedFile.id === itemId || queuedFile.importPayload?.fileId === file.id)) {
+        return prev;
+      }
+      return [
+        ...prev,
+        {
+          id: itemId,
+          status: 'queued',
+          progress: 0,
+          processingStage: 'pending',
+          stageProgress: 0,
+          processingMessage: 'Ready to import...',
+          processingTier,
+          analysisOptions,
+          displayName: file.name || 'Slack file',
+          sourceType: 'slack',
+          importPayload: {
+            fileId: file.id,
+          },
+        }
+      ];
+    });
+    setSelectedQueuedFileId((current) => current || itemId);
+    startQueuedUploads();
+  }, [analysisOptions, processingTier, setUploadedFiles, startQueuedUploads]);
+
+  const handleImportSlackFile = useCallback(async (file: SlackFileItem) => {
+    setSlackImportingFileId(file.id);
+    try {
+      queueSlackImport(file);
+      toast.success('Slack file added to queue.');
+    } finally {
+      setSlackImportingFileId(null);
+    }
+  }, [queueSlackImport]);
+
+  const handleImportGranolaNotes = useCallback(() => {
+    const text = granolaText.trim();
+    if (text.length < 20) {
+      setGranolaError('Paste at least 20 characters of Granola notes or transcript text.');
+      return;
+    }
+    setGranolaError(null);
+    const itemId = `granola-${Date.now()}`;
+    setUploadedFiles((prev) => [
+      ...prev,
+      {
+        id: itemId,
+        status: 'queued',
+        progress: 0,
+        processingStage: 'pending',
+        stageProgress: 0,
+        processingMessage: 'Ready to import...',
+        processingTier,
+        analysisOptions,
+        displayName: granolaTitle.trim() || 'Granola notes',
+        sourceType: 'granola',
+        importPayload: {
+          title: granolaTitle.trim() || 'Granola notes',
+          text,
+        },
+      }
+    ]);
+    setSelectedQueuedFileId((current) => current || itemId);
+    setGranolaTitle('');
+    setGranolaText('');
+    toast.success('Granola notes added to queue.');
+    startQueuedUploads();
+  }, [analysisOptions, granolaText, granolaTitle, processingTier, setUploadedFiles, startQueuedUploads]);
+
+  const queueNotionImport = useCallback((page: NotionPageItem) => {
+    const itemId = `notion-${page.id}`;
+    setUploadedFiles((prev) => {
+      if (prev.some((queuedFile) => queuedFile.id === itemId || queuedFile.importPayload?.pageId === page.id)) {
+        return prev;
+      }
+      return [
+        ...prev,
+        {
+          id: itemId,
+          status: 'queued',
+          progress: 0,
+          processingStage: 'pending',
+          stageProgress: 0,
+          processingMessage: 'Ready to import...',
+          processingTier,
+          analysisOptions,
+          displayName: page.title || 'Notion page',
+          sourceType: 'notion',
+          importPayload: {
+            pageId: page.id,
+          },
+        }
+      ];
+    });
+    setSelectedQueuedFileId((current) => current || itemId);
+    startQueuedUploads();
+  }, [analysisOptions, processingTier, setUploadedFiles, startQueuedUploads]);
+
+  const handleImportNotionPage = useCallback(async (page: NotionPageItem) => {
+    setNotionImportingPageId(page.id);
+    try {
+      queueNotionImport(page);
+      toast.success('Notion page added to queue.');
+    } finally {
+      setNotionImportingPageId(null);
+    }
+  }, [queueNotionImport]);
+
+  const queueZoomImport = useCallback((recording: ZoomRecordingItem, file: ZoomRecordingFile) => {
+    const itemId = `zoom-${file.fileId}`;
+    setUploadedFiles((prev) => {
+      if (prev.some((queuedFile) => queuedFile.id === itemId || queuedFile.importPayload?.fileId === file.fileId)) {
+        return prev;
+      }
+      return [
+        ...prev,
+        {
+          id: itemId,
+          status: 'queued',
+          progress: 0,
+          processingStage: 'pending',
+          stageProgress: 0,
+          processingMessage: 'Ready to import...',
+          processingTier,
+          analysisOptions,
+          displayName: recording.topic || 'Zoom recording',
+          sourceType: 'zoom',
+          importPayload: {
+            meetingId: recording.meetingId,
+            fileId: file.fileId,
+            estimatedDurationSeconds: recording.duration ? Math.max(1, Math.round(recording.duration * 60)) : undefined,
+          },
+          estimatedDurationSeconds: recording.duration ? Math.max(1, Math.round(recording.duration * 60)) : undefined,
+        }
+      ];
+    });
+    setSelectedQueuedFileId((current) => current || itemId);
+    startQueuedUploads();
+  }, [analysisOptions, processingTier, setUploadedFiles, startQueuedUploads]);
+
+  const handleImportZoomRecording = useCallback(async (recording: ZoomRecordingItem, file: ZoomRecordingFile) => {
+    setZoomImportingFileId(file.fileId);
+    try {
+      queueZoomImport(recording, file);
+      toast.success('Zoom recording added to queue.');
+    } finally {
+      setZoomImportingFileId(null);
+    }
+  }, [queueZoomImport]);
+
   const handleImportYouTubeUpload = useCallback(async (upload: YouTubeUploadItem) => {
     setYoutubeImportingVideoId(upload.videoId);
     try {
@@ -1025,15 +1662,78 @@ export default function UploadPage() {
   }, [activeTab, fetchIntegrationStatuses]);
 
   useEffect(() => {
+    if (searchParams.get('tab') === 'integrations') {
+      setActiveTab('integrations');
+    }
+  }, [searchParams]);
+
+  useEffect(() => {
     if (activeTab !== 'integrations') return;
-    const youtubeConnected = integrationStatuses.some((item) => item.provider === 'youtube' && item.connected);
+    const connectedProviders = ACTIVE_UPLOAD_INTEGRATIONS
+      .map((item) => item.provider)
+      .filter((provider) => provider === 'granola' || integrationStatuses.some((status) => status.provider === provider && status.connected && !status.needsReview));
+    if (openIntegrationProvider && connectedProviders.includes(openIntegrationProvider)) return;
+    setOpenIntegrationProvider(connectedProviders[0] || null);
+  }, [activeTab, integrationStatuses, openIntegrationProvider]);
+
+  useEffect(() => {
+    if (activeTab !== 'integrations') return;
+    const zoomConnected = integrationStatuses.some((item) => item.provider === 'zoom' && item.connected && !item.needsReview);
+    if (zoomConnected) {
+      void fetchZoomRecordings();
+    } else {
+      setZoomRecordings([]);
+      setZoomRecordingsError(null);
+    }
+
+    const microsoftConnected = integrationStatuses.some((item) => item.provider === 'microsoft' && item.connected && !item.needsReview);
+    if (microsoftConnected) {
+      void fetchMicrosoftRecordings();
+    } else {
+      setMicrosoftRecordings([]);
+      setMicrosoftRecordingsError(null);
+    }
+
+    const googleDriveConnected = integrationStatuses.some((item) => item.provider === 'google_drive' && item.connected && !item.needsReview);
+    if (googleDriveConnected) {
+      void fetchGoogleDriveFiles();
+    } else {
+      setGoogleDriveFiles([]);
+      setGoogleDriveFilesError(null);
+    }
+
+    const oneDriveConnected = integrationStatuses.some((item) => item.provider === 'onedrive' && item.connected && !item.needsReview);
+    if (oneDriveConnected) {
+      void fetchOneDriveFiles();
+    } else {
+      setOneDriveFiles([]);
+      setOneDriveFilesError(null);
+    }
+
+    const notionConnected = integrationStatuses.some((item) => item.provider === 'notion' && item.connected && !item.needsReview);
+    if (notionConnected) {
+      void fetchNotionPages();
+    } else {
+      setNotionPages([]);
+      setNotionPagesError(null);
+    }
+
+    const slackConnected = integrationStatuses.some((item) => item.provider === 'slack' && item.connected && !item.needsReview);
+    if (slackConnected) {
+      void fetchSlackFiles();
+    } else {
+      setSlackFiles([]);
+      setSlackFilesError(null);
+    }
+
+    const youtubeConnected = integrationStatuses.some((item) => item.provider === 'youtube' && item.connected && !item.needsReview);
     if (youtubeConnected) {
       void fetchYouTubeUploads();
     } else {
       setYouTubeUploads([]);
       setYouTubeUploadsError(null);
     }
-  }, [activeTab, fetchYouTubeUploads, integrationStatuses]);
+  }, [activeTab, fetchGoogleDriveFiles, fetchMicrosoftRecordings, fetchNotionPages, fetchOneDriveFiles, fetchSlackFiles, fetchYouTubeUploads, fetchZoomRecordings, integrationStatuses]);
 
   const cancelUploadOnServer = async (projectId: string) => {
     const headers = await getAuthHeaders();
@@ -1214,6 +1914,7 @@ export default function UploadPage() {
     }
 
     setUrlError(null);
+    setUrlTopUpPath(null);
     setIsUrlSubmitting(true);
 
     const enforcedAnalysisOptions = forceNamedSpeakersForRoster(
@@ -1239,7 +1940,14 @@ export default function UploadPage() {
       });
 
       if (!res.ok) {
-        throw new Error(await readErrorMessage(res, 'URL import failed.'));
+        const payload = await readErrorPayload(res, 'URL import failed.');
+        setUrlError(payload.message);
+        setUrlTopUpPath(
+          payload.code === 'INSUFFICIENT_PLAN_CREDITS' && payload.topUpsEnabled && typeof payload.topUpPath === 'string'
+            ? payload.topUpPath
+            : null
+        );
+        return;
       }
 
       const result = await res.json();
@@ -1264,11 +1972,13 @@ export default function UploadPage() {
       trackProcessingEntry(newEntry, result.projectId, processingTier);
       setUrlInput('');
       setUrlTitle('');
+      setUrlTopUpPath(null);
       await refreshActiveProjects();
       await fetchUploadHistory();
     } catch (error) {
       const message = error instanceof Error ? error.message : 'We could not import that URL. Check the link and try again.';
       setUrlError(message);
+      setUrlTopUpPath(null);
     } finally {
       setIsUrlSubmitting(false);
     }
@@ -1395,77 +2105,60 @@ export default function UploadPage() {
   const selectedAnalysisKeys = getSelectedAnalysisKeys(analysisOptions);
   const transcriptOnly = selectedAnalysisKeys.length === 0;
   const urlImportReady = urlInput.trim().length > 0;
+  const renderIntegrationErrorNotice = (message: string, provider?: IntegrationProvider) => (
+    <IntegrationErrorNotice
+      message={message}
+      onReconnect={provider && provider !== 'granola' && isIntegrationEnabled(provider)
+        ? () => void handleConnectIntegration(provider)
+        : undefined}
+    />
+  );
 
   return (
     <DashboardPageShell
       maxWidth="full"
       contentClassName="max-w-[1480px]"
-      className="bg-[#f7f9fd] text-[#07132d] dark:bg-slate-950 dark:text-slate-50"
     >
-        <header className="mb-6 motion-safe:animate-fade-up">
-          <p className="mb-2 text-xs font-bold uppercase text-blue-600 dark:text-blue-300">
-            UPLOAD
-          </p>
-          <h1 className="font-serif text-4xl font-semibold leading-tight text-[#07132d] dark:text-white sm:text-5xl">
-            Add Source Material
-          </h1>
-          <p className="mt-3 max-w-3xl text-base leading-7 text-slate-600 dark:text-slate-300">
-            Bring in a call, meeting, webinar, founder update, or podcast and turn it into accurate transcripts and content your team can use.
-          </p>
-        </header>
-
-        <section className="mb-5 rounded-xl border border-slate-200 bg-white/95 p-5 shadow-[0_18px_60px_rgba(15,23,42,0.06)] motion-safe:animate-fade-up-200 dark:border-slate-800 dark:bg-slate-900">
-          <div className="grid gap-4 text-sm md:grid-cols-3 md:divide-x md:divide-slate-200 md:dark:divide-slate-800">
-            {FEATURE_STRIP_ITEMS.map(({ title, description, Icon }) => (
-              <div key={title} className="flex items-center gap-4 md:px-6 md:first:pl-0 md:last:pr-0">
-                <span className="inline-flex h-12 w-12 shrink-0 items-center justify-center rounded-full bg-blue-50 text-blue-600 dark:bg-blue-500/10 dark:text-blue-300">
-                  <Icon className="h-6 w-6" />
-                </span>
-                <div>
-                  <p className="font-semibold text-slate-950 dark:text-slate-100">{title}</p>
-                  <p className="mt-1 text-sm leading-6 text-slate-600 dark:text-slate-400">{description}</p>
-                </div>
-              </div>
-            ))}
-          </div>
-        </section>
+        <DashboardPageHeader
+          icon={Upload}
+          title="Upload"
+          description="Upload audio, video, or source links to start a workflow."
+          actions={(
+            <div
+              role="tablist"
+              aria-label="Upload source"
+              className="flex flex-wrap items-center gap-1 rounded-lg border border-slate-200/80 bg-slate-50/90 p-1.5 shadow-sm dark:border-white/10 dark:bg-white/5"
+            >
+              {UPLOAD_METHOD_TABS.map((tab) => (
+                <button
+                  key={tab.id}
+                  type="button"
+                  role="tab"
+                  id={`upload-tab-${tab.id}`}
+                  aria-selected={activeTab === tab.id}
+                  aria-controls={`upload-panel-${tab.id}`}
+                  onClick={() => setActiveTab(tab.id)}
+                  className={`relative min-h-10 rounded-md px-3.5 py-2.5 text-sm font-semibold transition-colors focus:outline-none focus-visible:ring-2 focus-visible:ring-blue-300 ${
+                    activeTab === tab.id
+                      ? 'bg-blue-600 text-white shadow-[0_10px_24px_-18px_rgba(37,99,235,0.9)]'
+                      : 'text-slate-600 hover:bg-white hover:text-slate-950 dark:text-slate-300 dark:hover:bg-white/10 dark:hover:text-white'
+                  }`}
+                >
+                  <span className="relative inline-flex items-center justify-center gap-1.5">
+                    <span className="sm:hidden">{tab.label}</span>
+                    <span className="hidden sm:inline">{tab.labelFull}</span>
+                    {tab.soon && (
+                      <span className={`h-1.5 w-1.5 rounded-full ${activeTab === tab.id ? 'bg-cyan-200' : 'bg-cyan-400'} motion-safe:animate-pulse`} />
+                    )}
+                  </span>
+                </button>
+              ))}
+            </div>
+          )}
+        />
 
         <div className="grid gap-6 xl:grid-cols-[minmax(0,1fr)_320px] xl:items-start">
           <div className="flex-1 min-w-0">
-            {/* Upload methods */}
-            <div className="mb-6">
-              <div
-                role="tablist"
-                aria-label="Upload source"
-                className="flex w-full items-center rounded-lg border border-slate-200 bg-white shadow-sm dark:border-slate-800 dark:bg-slate-900"
-              >
-                {UPLOAD_METHOD_TABS.map((tab) => (
-                  <button
-                    key={tab.id}
-                    type="button"
-                    role="tab"
-                    id={`upload-tab-${tab.id}`}
-                    aria-selected={activeTab === tab.id}
-                    aria-controls={`upload-panel-${tab.id}`}
-                    onClick={() => setActiveTab(tab.id)}
-                    className={`relative flex-1 border-r border-slate-200 px-3 py-3 text-center text-sm font-semibold transition-colors last:border-r-0 focus:outline-none focus-visible:z-10 focus-visible:ring-2 focus-visible:ring-blue-500 dark:border-slate-800 ${
-                      activeTab === tab.id
-                        ? 'bg-blue-50 text-blue-700 shadow-[inset_0_-2px_0_#2563eb] dark:bg-blue-500/10 dark:text-blue-200'
-                        : 'text-slate-600 hover:bg-slate-50 hover:text-slate-950 dark:text-slate-400 dark:hover:bg-slate-800 dark:hover:text-slate-100'
-                    }`}
-                  >
-                    <span className="relative inline-flex items-center justify-center gap-1.5">
-                      <span className="sm:hidden">{tab.label}</span>
-                      <span className="hidden sm:inline">{tab.labelFull}</span>
-                      {tab.soon && (
-                        <span className={`h-1.5 w-1.5 rounded-full ${activeTab === tab.id ? 'bg-cyan-300' : 'bg-cyan-400'} motion-safe:animate-pulse`} />
-                      )}
-                    </span>
-                  </button>
-                ))}
-              </div>
-            </div>
-
             <DashboardPanel className="mb-6 overflow-hidden rounded-xl border-slate-200 bg-white shadow-[0_18px_60px_rgba(15,23,42,0.06)] motion-safe:animate-fade-up-400 dark:border-slate-800 dark:bg-slate-900">
               <div className="border-b border-slate-200 dark:border-slate-800 px-5 py-5">
                 {activeTab === 'local' && (
@@ -1539,37 +2232,6 @@ export default function UploadPage() {
                         />
                       </label>
                     </div>
-                    <div className="mt-4 flex flex-col gap-3 sm:flex-row sm:items-center">
-                      <p className="text-sm font-semibold text-slate-900 dark:text-slate-50">Add from</p>
-                      <div className="flex flex-wrap gap-2">
-                        <button
-                          type="button"
-                          disabled
-                          className="inline-flex items-center gap-2 rounded-lg border border-slate-200 bg-slate-50 px-4 py-2 text-sm font-semibold text-slate-400 disabled:cursor-not-allowed dark:border-slate-800 dark:bg-slate-950 dark:text-slate-600"
-                          title="Zoom import is coming soon"
-                        >
-                          <Video className="h-4 w-4" />
-                          Zoom
-                        </button>
-                        <button
-                          type="button"
-                          disabled
-                          className="inline-flex items-center gap-2 rounded-lg border border-slate-200 bg-slate-50 px-4 py-2 text-sm font-semibold text-slate-400 disabled:cursor-not-allowed dark:border-slate-800 dark:bg-slate-950 dark:text-slate-600"
-                          title="Google Drive import is coming soon"
-                        >
-                          <Cloud className="h-4 w-4" />
-                          Google Drive
-                        </button>
-                        <button
-                          type="button"
-                          onClick={() => setActiveTab('url')}
-                          className="inline-flex items-center gap-2 rounded-lg border border-slate-200 bg-white px-4 py-2 text-sm font-semibold text-slate-700 shadow-sm transition hover:-translate-y-px hover:border-blue-200 hover:text-blue-700 focus:outline-none focus-visible:ring-2 focus-visible:ring-blue-500 dark:border-slate-700 dark:bg-slate-900 dark:text-slate-200 dark:hover:text-blue-200"
-                        >
-                          <Link2 className="h-4 w-4" />
-                          RSS / URL
-                        </button>
-                      </div>
-                    </div>
                   </div>
                 )}
 
@@ -1585,7 +2247,8 @@ export default function UploadPage() {
                         />
                       </div>
                       <p className="mt-1 text-sm text-slate-500 dark:text-slate-400">
-                        Paste a public audio, video, RSS, or transcript URL.
+                        Best candidates are direct, stable links to audio/video files, podcast RSS feeds, or trusted transcript pages.
+                        Avoid dynamic share links and private or single-use URLs.
                       </p>
                     </div>
                     <div className="grid gap-3">
@@ -1616,18 +2279,25 @@ export default function UploadPage() {
                         />
                       </div>
                       {urlError && (
-                        <div className="text-sm text-amber-700 dark:text-amber-300">{urlError}</div>
+                        <div className="space-y-2 text-sm text-amber-700 dark:text-amber-300">
+                          <div>{urlError}</div>
+                          {urlTopUpPath && (
+                            <a
+                              href={urlTopUpPath}
+                              className="inline-flex rounded-md border border-amber-300 px-2.5 py-1 text-xs font-semibold text-amber-800 transition-colors hover:bg-amber-100 dark:border-amber-500/30 dark:text-amber-100 dark:hover:bg-amber-500/10"
+                            >
+                              Add credits
+                            </a>
+                          )}
+                        </div>
                       )}
                       <div className="rounded-md border border-amber-200 bg-amber-50 px-3 py-2 text-xs text-amber-800 dark:border-amber-500/20 dark:bg-amber-500/10 dark:text-amber-200">
                         YouTube import is best effort for public videos. Some links may still be blocked by YouTube&apos;s anti-bot checks even if they open normally in a browser. If that happens, download the audio or video file and upload it directly instead.
                       </div>
-                      <p className="text-xs text-slate-500 dark:text-slate-400">
-                        Supports public audio, video, podcast RSS feeds, and transcript links when available.
-                      </p>
                       <div className="flex flex-wrap gap-2 text-xs text-slate-600 dark:text-slate-400">
-                        <span className="rounded-full bg-slate-100 px-3 py-1 dark:bg-slate-800">Podcast RSS</span>
-                        <span className="rounded-full bg-slate-100 px-3 py-1 dark:bg-slate-800">Webinar recording link</span>
-                        <span className="rounded-full bg-slate-100 px-3 py-1 dark:bg-slate-800">Public MP3 / MP4</span>
+                        <span className="rounded-full bg-slate-100 px-3 py-1 dark:bg-slate-800">Direct MP3 / WAV / MP4 links</span>
+                        <span className="rounded-full bg-slate-100 px-3 py-1 dark:bg-slate-800">Podcast RSS feeds</span>
+                        <span className="rounded-full bg-slate-100 px-3 py-1 dark:bg-slate-800">Transcript endpoints</span>
                       </div>
                     </div>
                   </div>
@@ -1643,54 +2313,497 @@ export default function UploadPage() {
                       </p>
                     </div>
 
-                    <div className="mt-5">
-                      <h3 className="text-xs font-semibold uppercase tracking-wide text-slate-500 dark:text-slate-400">Live now</h3>
-                    </div>
-                    <div className="mt-2 grid gap-2 sm:grid-cols-2">
-                      {LIVE_INTEGRATIONS.filter(({ provider }) => isIntegrationEnabled(provider)).map(({ provider, name, detail, Icon, accent, bg, border }) => {
-                        const status = integrationStatuses.find((item) => item.provider === provider);
-                        const connected = Boolean(status?.connected);
-                        const loadingThis = connectingProvider === provider;
-                        return (
-                          <div
-                            key={name}
-                            className={`rounded-lg border ${border} ${bg} p-3`}
-                          >
-                            <div className="flex items-center justify-between gap-3">
-                              <div className="flex items-center gap-2 min-w-0">
-                                <span className="inline-flex h-8 w-8 items-center justify-center rounded-md bg-white/80 shadow-sm dark:bg-slate-900/80">
-                                  <Icon className={`h-4 w-4 ${accent}`} />
-                                </span>
+	                    <div className="mt-5">
+	                      <h3 className="text-xs font-semibold uppercase tracking-wide text-slate-500 dark:text-slate-400">Available integrations</h3>
+	                    </div>
+	                    <div className="mt-2 grid gap-2 sm:grid-cols-2">
+	                      {ACTIVE_UPLOAD_INTEGRATIONS.map(({ provider, name, detail, Icon, accent, bg, border }) => {
+	                        const status = integrationStatuses.find((item) => item.provider === provider);
+	                        const needsReview = provider !== 'granola' && Boolean(status?.needsReview || status?.healthStatus === 'review');
+	                        const connected = provider === 'granola' || (Boolean(status?.connected) && !needsReview);
+	                        const loadingThis = connectingProvider === provider;
+	                        const disconnectingThis = disconnectingProvider === provider;
+	                        const connectedLabel = status?.metadata?.channelTitle || status?.metadata?.workspaceName || status?.metadata?.teamName || status?.metadata?.email || status?.metadata?.name;
+	                        const providerEnabled = isIntegrationEnabled(provider);
+	                        const isOpen = openIntegrationProvider === provider;
+	                        return (
+	                          <div
+	                            key={name}
+	                            className={`rounded-lg border ${isOpen ? 'ring-2 ring-blue-400/60 dark:ring-blue-300/40' : ''} ${border} ${bg} p-3 transition`}
+	                          >
+	                            <button
+	                              type="button"
+	                              onClick={() => {
+	                                if (connected) setOpenIntegrationProvider(provider);
+	                              }}
+	                              disabled={!connected}
+	                              className="flex w-full items-center justify-between gap-3 text-left disabled:cursor-default"
+	                            >
+	                              <div className="flex min-w-0 items-center gap-2">
+	                                <span className="inline-flex h-8 w-8 items-center justify-center rounded-md bg-white/80 shadow-sm dark:bg-slate-900/80">
+	                                  <Icon className={`h-4 w-4 ${accent}`} />
+	                                </span>
                                 <div className="min-w-0">
                                   <p className="text-sm font-semibold text-slate-900 dark:text-slate-50">{name}</p>
-                                  <p className="truncate text-xs text-slate-500 dark:text-slate-400">{detail}</p>
-                                </div>
-                              </div>
-                              <button
-                                type="button"
-                                onClick={() => void handleConnectIntegration(provider)}
-                                disabled={connected || loadingThis}
-                                className="inline-flex shrink-0 items-center justify-center rounded-md border border-slate-300 bg-white px-2.5 py-1 text-xs font-medium text-slate-700 transition-colors hover:bg-slate-100 disabled:cursor-not-allowed disabled:opacity-60 dark:border-slate-600 dark:bg-slate-800 dark:text-slate-200 dark:hover:bg-slate-700"
-                              >
-                                {connected ? 'Connected' : loadingThis ? 'Connecting...' : 'Connect'}
-                              </button>
-                            </div>
-                          </div>
-                        );
-                      })}
-                    </div>
+                                  <p className="truncate text-xs text-slate-500 dark:text-slate-400">
+                                    {needsReview
+                                      ? connectedLabel ? `Review - ${connectedLabel}` : 'Review connection'
+                                      : connected && connectedLabel ? `Connected - ${connectedLabel}` : detail}
+	                                  </p>
+	                                </div>
+	                              </div>
+	                              <div className="flex shrink-0 items-center gap-2">
+	                                {needsReview ? (
+	                                  <span className="rounded-full bg-amber-100 px-2 py-0.5 text-xs font-medium text-amber-800 dark:bg-amber-400/10 dark:text-amber-200">
+	                                    Review
+	                                  </span>
+	                                ) : connected && (
+	                                  <span className="rounded-full bg-emerald-100 px-2 py-0.5 text-xs font-medium text-emerald-700 dark:bg-emerald-400/10 dark:text-emerald-300">
+	                                    {isOpen ? 'Open' : 'Connected'}
+	                                  </span>
+	                                )}
+	                                {connected && (
+	                                  <ChevronDown className={`h-4 w-4 text-slate-500 transition-transform ${isOpen ? 'rotate-180' : ''}`} />
+	                                )}
+	                              </div>
+	                            </button>
+	                              <button
+	                                type="button"
+	                                onClick={() => void (connected ? handleDisconnectIntegration(provider) : handleConnectIntegration(provider))}
+	                                disabled={!providerEnabled || loadingThis || disconnectingThis || provider === 'granola'}
+	                                className="inline-flex shrink-0 items-center justify-center rounded-md border border-slate-300 bg-white px-2.5 py-1 text-xs font-medium text-slate-700 transition-colors hover:bg-slate-100 disabled:cursor-not-allowed disabled:opacity-60 dark:border-slate-600 dark:bg-slate-800 dark:text-slate-200 dark:hover:bg-slate-700"
+	                              >
+                              {provider === 'granola' && !connected
+                                ? 'Manual import'
+                                : connected
+                                  ? (disconnectingThis ? 'Disconnecting...' : 'Disconnect')
+                                  : needsReview
+                                    ? (loadingThis ? 'Reconnecting...' : 'Reconnect')
+                                  : loadingThis
+                                    ? 'Connecting...'
+                                    : 'Connect'}
+	                              </button>
+	                          </div>
+	                        );
+	                      })}
+	                    </div>
 
                     {integrationsLoading && (
                       <p className="mt-3 text-xs text-slate-500 dark:text-slate-400">Loading integration status...</p>
                     )}
                     {integrationsError && !integrationsLoading && (
-                      <p className="mt-3 text-xs text-amber-700 dark:text-amber-300">{integrationsError}</p>
+                      <div className="mt-3">{renderIntegrationErrorNotice(integrationsError)}</div>
                     )}
 
-                    {integrationStatuses.some((item) => item.provider === 'youtube' && item.connected) && (
+	                    {openIntegrationProvider === 'zoom' && integrationStatuses.some((item) => item.provider === 'zoom' && item.connected) && (
                       <div className="mt-4 rounded-lg border border-slate-200 bg-white p-3 dark:border-slate-700 dark:bg-slate-900">
                         <div className="mb-2 flex items-center justify-between gap-3">
-                          <h4 className="text-sm font-semibold text-slate-900 dark:text-slate-50">YouTube uploads</h4>
+                          <div>
+                            <h4 className="text-sm font-semibold text-slate-900 dark:text-slate-50">Zoom recordings</h4>
+                            <p className="mt-0.5 text-xs text-slate-500 dark:text-slate-400">
+                              Recent cloud recordings from the connected Zoom account.
+                            </p>
+                          </div>
+                          <button
+                            type="button"
+                            onClick={() => void fetchZoomRecordings()}
+                            disabled={zoomRecordingsLoading}
+                            className="inline-flex items-center justify-center rounded-md border border-slate-300 bg-white px-2.5 py-1 text-xs font-medium text-slate-700 transition-colors hover:bg-slate-100 disabled:cursor-not-allowed disabled:opacity-60 dark:border-slate-600 dark:bg-slate-800 dark:text-slate-200 dark:hover:bg-slate-700"
+                          >
+                            {zoomRecordingsLoading ? 'Refreshing...' : 'Refresh'}
+                          </button>
+                        </div>
+                        {zoomRecordingsLoading && (
+                          <p className="text-xs text-slate-500 dark:text-slate-400">Loading recordings...</p>
+                        )}
+                        {zoomRecordingsError && !zoomRecordingsLoading && (
+                          renderIntegrationErrorNotice(zoomRecordingsError, 'zoom')
+                        )}
+                        {!zoomRecordingsLoading && !zoomRecordingsError && zoomRecordings.length === 0 && (
+                          <p className="text-xs text-slate-500 dark:text-slate-400">No cloud recordings found from the last 30 days.</p>
+                        )}
+                        {!zoomRecordingsLoading && zoomRecordings.length > 0 && (
+                          <div className="space-y-2">
+                            {zoomRecordings.slice(0, 10).map((recording) => {
+                              const importableFiles = (recording.files || []).filter((file) => file.fileId);
+                              const primaryFile = importableFiles.find((file) => file.fileType === 'MP4') || importableFiles[0];
+                              return (
+                                <div key={recording.meetingId} className="flex items-center gap-3 rounded-md border border-slate-200 bg-slate-50 p-2 dark:border-slate-700 dark:bg-slate-800/60">
+                                  <span className="inline-flex h-12 w-12 shrink-0 items-center justify-center rounded bg-blue-50 text-blue-600 dark:bg-blue-500/10 dark:text-blue-300">
+                                    <Video className="h-5 w-5" />
+                                  </span>
+                                  <div className="min-w-0 flex-1">
+                                    <p className="truncate text-sm font-medium text-slate-900 dark:text-slate-50">{recording.topic || 'Zoom recording'}</p>
+                                    <p className="truncate text-xs text-slate-500 dark:text-slate-400">
+                                      {recording.startTime ? new Date(recording.startTime).toLocaleDateString() : 'Zoom'}
+                                      {recording.duration ? ` · ${recording.duration} min` : ''}
+                                      {primaryFile?.fileType ? ` · ${primaryFile.fileType}` : ''}
+                                    </p>
+                                  </div>
+                                  <button
+                                    type="button"
+                                    onClick={() => primaryFile && void handleImportZoomRecording(recording, primaryFile)}
+                                    disabled={!primaryFile || zoomImportingFileId === primaryFile.fileId}
+                                    className="inline-flex shrink-0 items-center justify-center rounded-md border border-slate-300 bg-white px-2.5 py-1 text-xs font-medium text-slate-700 transition-colors hover:bg-slate-100 disabled:cursor-not-allowed disabled:opacity-60 dark:border-slate-600 dark:bg-slate-800 dark:text-slate-200 dark:hover:bg-slate-700"
+                                  >
+                                    {primaryFile && zoomImportingFileId === primaryFile.fileId ? 'Queueing...' : 'Import'}
+                                  </button>
+                                </div>
+                              );
+                            })}
+                          </div>
+                        )}
+                      </div>
+                    )}
+
+	                    {openIntegrationProvider === 'microsoft' && integrationStatuses.some((item) => item.provider === 'microsoft' && item.connected) && (
+                      <div className="mt-4 rounded-lg border border-slate-200 bg-white p-3 dark:border-slate-700 dark:bg-slate-900">
+                        <div className="mb-2 flex items-center justify-between gap-3">
+                          <div>
+                            <h4 className="text-sm font-semibold text-slate-900 dark:text-slate-50">Microsoft recordings</h4>
+                            <p className="mt-0.5 text-xs text-slate-500 dark:text-slate-400">
+                              Teams recordings found in your OneDrive Recordings folder.
+                            </p>
+                          </div>
+                          <button
+                            type="button"
+                            onClick={() => void fetchMicrosoftRecordings()}
+                            disabled={microsoftRecordingsLoading}
+                            className="inline-flex items-center justify-center rounded-md border border-slate-300 bg-white px-2.5 py-1 text-xs font-medium text-slate-700 transition-colors hover:bg-slate-100 disabled:cursor-not-allowed disabled:opacity-60 dark:border-slate-600 dark:bg-slate-800 dark:text-slate-200 dark:hover:bg-slate-700"
+                          >
+                            {microsoftRecordingsLoading ? 'Refreshing...' : 'Refresh'}
+                          </button>
+                        </div>
+                        {microsoftRecordingsLoading && (
+                          <p className="text-xs text-slate-500 dark:text-slate-400">Loading recordings...</p>
+                        )}
+                        {microsoftRecordingsError && !microsoftRecordingsLoading && (
+                          renderIntegrationErrorNotice(microsoftRecordingsError, 'microsoft')
+                        )}
+                        {!microsoftRecordingsLoading && !microsoftRecordingsError && microsoftRecordings.length === 0 && (
+                          <p className="text-xs text-slate-500 dark:text-slate-400">No files found in your OneDrive Recordings folder.</p>
+                        )}
+                        {!microsoftRecordingsLoading && microsoftRecordings.length > 0 && (
+                          <div className="space-y-2">
+                            {microsoftRecordings.slice(0, 10).map((recording) => (
+                              <div key={recording.id} className="flex items-center gap-3 rounded-md border border-slate-200 bg-slate-50 p-2 dark:border-slate-700 dark:bg-slate-800/60">
+                                <span className="inline-flex h-12 w-12 shrink-0 items-center justify-center rounded bg-indigo-50 text-indigo-600 dark:bg-indigo-500/10 dark:text-indigo-300">
+                                  <Users className="h-5 w-5" />
+                                </span>
+                                <div className="min-w-0 flex-1">
+                                  <p className="truncate text-sm font-medium text-slate-900 dark:text-slate-50">{recording.name || 'Teams recording'}</p>
+                                  <p className="truncate text-xs text-slate-500 dark:text-slate-400">
+                                    {recording.createdAt ? new Date(recording.createdAt).toLocaleDateString() : 'Microsoft Teams'}
+                                    {recording.mimeType ? ` · ${recording.mimeType}` : ''}
+                                  </p>
+                                </div>
+                                <button
+                                  type="button"
+                                  onClick={() => void handleImportMicrosoftRecording(recording)}
+                                  disabled={microsoftImportingItemId === recording.id}
+                                  className="inline-flex shrink-0 items-center justify-center rounded-md border border-slate-300 bg-white px-2.5 py-1 text-xs font-medium text-slate-700 transition-colors hover:bg-slate-100 disabled:cursor-not-allowed disabled:opacity-60 dark:border-slate-600 dark:bg-slate-800 dark:text-slate-200 dark:hover:bg-slate-700"
+                                >
+                                  {microsoftImportingItemId === recording.id ? 'Queueing...' : 'Import'}
+                                </button>
+                              </div>
+                            ))}
+                          </div>
+                        )}
+                      </div>
+                    )}
+
+	                    {openIntegrationProvider === 'onedrive' && integrationStatuses.some((item) => item.provider === 'onedrive' && item.connected) && (
+                      <div className="mt-4 rounded-lg border border-slate-200 bg-white p-3 dark:border-slate-700 dark:bg-slate-900">
+                        <div className="mb-2 flex items-center justify-between gap-3">
+                          <div>
+                            <h4 className="text-sm font-semibold text-slate-900 dark:text-slate-50">OneDrive files</h4>
+                            <p className="mt-0.5 text-xs text-slate-500 dark:text-slate-400">
+                              Audio and video files from the connected OneDrive account.
+                            </p>
+                          </div>
+                          <button
+                            type="button"
+                            onClick={() => void fetchOneDriveFiles()}
+                            disabled={oneDriveFilesLoading}
+                            className="inline-flex items-center justify-center rounded-md border border-slate-300 bg-white px-2.5 py-1 text-xs font-medium text-slate-700 transition-colors hover:bg-slate-100 disabled:cursor-not-allowed disabled:opacity-60 dark:border-slate-600 dark:bg-slate-800 dark:text-slate-200 dark:hover:bg-slate-700"
+                          >
+                            {oneDriveFilesLoading ? 'Refreshing...' : 'Refresh'}
+                          </button>
+                        </div>
+                        {oneDriveFilesLoading && (
+                          <p className="text-xs text-slate-500 dark:text-slate-400">Loading OneDrive files...</p>
+                        )}
+                        {oneDriveFilesError && !oneDriveFilesLoading && (
+                          renderIntegrationErrorNotice(oneDriveFilesError, 'onedrive')
+                        )}
+                        {!oneDriveFilesLoading && !oneDriveFilesError && oneDriveFiles.length === 0 && (
+                          <p className="text-xs text-slate-500 dark:text-slate-400">No audio or video files found in OneDrive.</p>
+                        )}
+                        {!oneDriveFilesLoading && oneDriveFiles.length > 0 && (
+                          <div className="space-y-2">
+                            {oneDriveFiles.slice(0, 10).map((file) => (
+                              <div key={file.id} className="flex items-center gap-3 rounded-md border border-slate-200 bg-slate-50 p-2 dark:border-slate-700 dark:bg-slate-800/60">
+                                <span className="inline-flex h-12 w-12 shrink-0 items-center justify-center rounded bg-sky-50 text-sky-600 dark:bg-sky-500/10 dark:text-sky-300">
+                                  <FolderOpen className="h-5 w-5" />
+                                </span>
+                                <div className="min-w-0 flex-1">
+                                  <p className="truncate text-sm font-medium text-slate-900 dark:text-slate-50">{file.name || 'OneDrive file'}</p>
+                                  <p className="truncate text-xs text-slate-500 dark:text-slate-400">
+                                    {file.modifiedAt ? new Date(file.modifiedAt).toLocaleDateString() : 'OneDrive'}
+                                    {file.mimeType ? ` · ${file.mimeType}` : ''}
+                                  </p>
+                                </div>
+                                <button
+                                  type="button"
+                                  onClick={() => void handleImportOneDriveFile(file)}
+                                  disabled={oneDriveImportingFileId === file.id}
+                                  className="inline-flex shrink-0 items-center justify-center rounded-md border border-slate-300 bg-white px-2.5 py-1 text-xs font-medium text-slate-700 transition-colors hover:bg-slate-100 disabled:cursor-not-allowed disabled:opacity-60 dark:border-slate-600 dark:bg-slate-800 dark:text-slate-200 dark:hover:bg-slate-700"
+                                >
+                                  {oneDriveImportingFileId === file.id ? 'Queueing...' : 'Import'}
+                                </button>
+                              </div>
+                            ))}
+                          </div>
+                        )}
+                      </div>
+                    )}
+
+	                    {openIntegrationProvider === 'google_drive' && integrationStatuses.some((item) => item.provider === 'google_drive' && item.connected) && (
+                      <div className="mt-4 rounded-lg border border-slate-200 bg-white p-3 dark:border-slate-700 dark:bg-slate-900">
+                        <div className="mb-2 flex items-center justify-between gap-3">
+                          <div>
+                            <h4 className="text-sm font-semibold text-slate-900 dark:text-slate-50">Google Drive files</h4>
+                            <p className="mt-0.5 text-xs text-slate-500 dark:text-slate-400">
+                              Recent audio and video files from the connected Google Drive.
+                            </p>
+                          </div>
+                          <button
+                            type="button"
+                            onClick={() => void fetchGoogleDriveFiles()}
+                            disabled={googleDriveFilesLoading}
+                            className="inline-flex items-center justify-center rounded-md border border-slate-300 bg-white px-2.5 py-1 text-xs font-medium text-slate-700 transition-colors hover:bg-slate-100 disabled:cursor-not-allowed disabled:opacity-60 dark:border-slate-600 dark:bg-slate-800 dark:text-slate-200 dark:hover:bg-slate-700"
+                          >
+                            {googleDriveFilesLoading ? 'Refreshing...' : 'Refresh'}
+                          </button>
+                        </div>
+                        {googleDriveFilesLoading && (
+                          <p className="text-xs text-slate-500 dark:text-slate-400">Loading Drive files...</p>
+                        )}
+                        {googleDriveFilesError && !googleDriveFilesLoading && (
+                          renderIntegrationErrorNotice(googleDriveFilesError, 'google_drive')
+                        )}
+                        {!googleDriveFilesLoading && !googleDriveFilesError && googleDriveFiles.length === 0 && (
+                          <p className="text-xs text-slate-500 dark:text-slate-400">No audio or video files found in Google Drive.</p>
+                        )}
+                        {!googleDriveFilesLoading && googleDriveFiles.length > 0 && (
+                          <div className="space-y-2">
+                            {googleDriveFiles.slice(0, 10).map((file) => (
+                              <div key={file.id} className="flex items-center gap-3 rounded-md border border-slate-200 bg-slate-50 p-2 dark:border-slate-700 dark:bg-slate-800/60">
+                                {file.thumbnailUrl ? (
+                                  // eslint-disable-next-line @next/next/no-img-element
+                                  <img
+                                    src={file.thumbnailUrl}
+                                    alt={file.name}
+                                    className="h-12 w-20 rounded object-cover"
+                                  />
+                                ) : (
+                                  <span className="inline-flex h-12 w-12 shrink-0 items-center justify-center rounded bg-emerald-50 text-emerald-600 dark:bg-emerald-500/10 dark:text-emerald-300">
+                                    <Cloud className="h-5 w-5" />
+                                  </span>
+                                )}
+                                <div className="min-w-0 flex-1">
+                                  <p className="truncate text-sm font-medium text-slate-900 dark:text-slate-50">{file.name || 'Google Drive file'}</p>
+                                  <p className="truncate text-xs text-slate-500 dark:text-slate-400">
+                                    {file.modifiedAt ? new Date(file.modifiedAt).toLocaleDateString() : 'Google Drive'}
+                                    {file.durationSeconds ? ` · ${formatDuration(file.durationSeconds)}` : ''}
+                                    {file.mimeType ? ` · ${file.mimeType}` : ''}
+                                  </p>
+                                </div>
+                                <button
+                                  type="button"
+                                  onClick={() => void handleImportGoogleDriveFile(file)}
+                                  disabled={googleDriveImportingFileId === file.id}
+                                  className="inline-flex shrink-0 items-center justify-center rounded-md border border-slate-300 bg-white px-2.5 py-1 text-xs font-medium text-slate-700 transition-colors hover:bg-slate-100 disabled:cursor-not-allowed disabled:opacity-60 dark:border-slate-600 dark:bg-slate-800 dark:text-slate-200 dark:hover:bg-slate-700"
+                                >
+                                  {googleDriveImportingFileId === file.id ? 'Queueing...' : 'Import'}
+                                </button>
+                              </div>
+                            ))}
+                          </div>
+                        )}
+                      </div>
+                    )}
+
+	                    {openIntegrationProvider === 'notion' && integrationStatuses.some((item) => item.provider === 'notion' && item.connected) && (
+                      <div className="mt-4 rounded-lg border border-slate-200 bg-white p-3 dark:border-slate-700 dark:bg-slate-900">
+                        <div className="mb-2 flex items-center justify-between gap-3">
+                          <div>
+                            <h4 className="text-sm font-semibold text-slate-900 dark:text-slate-50">Notion pages</h4>
+                            <p className="mt-0.5 text-xs text-slate-500 dark:text-slate-400">
+                              Shared pages, transcripts, and notes from the connected Notion workspace.
+                            </p>
+                          </div>
+                          <button
+                            type="button"
+                            onClick={() => void fetchNotionPages()}
+                            disabled={notionPagesLoading}
+                            className="inline-flex items-center justify-center rounded-md border border-slate-300 bg-white px-2.5 py-1 text-xs font-medium text-slate-700 transition-colors hover:bg-slate-100 disabled:cursor-not-allowed disabled:opacity-60 dark:border-slate-600 dark:bg-slate-800 dark:text-slate-200 dark:hover:bg-slate-700"
+                          >
+                            {notionPagesLoading ? 'Refreshing...' : 'Refresh'}
+                          </button>
+                        </div>
+                        {notionPagesLoading && (
+                          <p className="text-xs text-slate-500 dark:text-slate-400">Loading Notion pages...</p>
+                        )}
+                        {notionPagesError && !notionPagesLoading && (
+                          renderIntegrationErrorNotice(notionPagesError, 'notion')
+                        )}
+                        {!notionPagesLoading && !notionPagesError && notionPages.length === 0 && (
+                          <p className="text-xs text-slate-500 dark:text-slate-400">No shared Notion pages found. Reconnect Notion and select pages to share with AudioRepurpose.</p>
+                        )}
+                        {!notionPagesLoading && notionPages.length > 0 && (
+                          <div className="space-y-2">
+                            {notionPages.slice(0, 10).map((page) => (
+                              <div key={page.id} className="flex items-center gap-3 rounded-md border border-slate-200 bg-slate-50 p-2 dark:border-slate-700 dark:bg-slate-800/60">
+                                <span className="inline-flex h-12 w-12 shrink-0 items-center justify-center rounded bg-slate-100 text-slate-700 dark:bg-slate-700 dark:text-slate-200">
+                                  <FileText className="h-5 w-5" />
+                                </span>
+                                <div className="min-w-0 flex-1">
+                                  <p className="truncate text-sm font-medium text-slate-900 dark:text-slate-50">{page.title || 'Notion page'}</p>
+                                  <p className="truncate text-xs text-slate-500 dark:text-slate-400">
+                                    {page.editedAt ? new Date(page.editedAt).toLocaleDateString() : 'Notion'}
+                                    {page.url ? ' · Shared page' : ''}
+                                  </p>
+                                </div>
+                                <button
+                                  type="button"
+                                  onClick={() => void handleImportNotionPage(page)}
+                                  disabled={notionImportingPageId === page.id}
+                                  className="inline-flex shrink-0 items-center justify-center rounded-md border border-slate-300 bg-white px-2.5 py-1 text-xs font-medium text-slate-700 transition-colors hover:bg-slate-100 disabled:cursor-not-allowed disabled:opacity-60 dark:border-slate-600 dark:bg-slate-800 dark:text-slate-200 dark:hover:bg-slate-700"
+                                >
+                                  {notionImportingPageId === page.id ? 'Queueing...' : 'Import'}
+                                </button>
+                              </div>
+                            ))}
+                          </div>
+                        )}
+                      </div>
+                    )}
+
+	                    {openIntegrationProvider === 'slack' && integrationStatuses.some((item) => item.provider === 'slack' && item.connected) && (
+                      <div className="mt-4 rounded-lg border border-slate-200 bg-white p-3 dark:border-slate-700 dark:bg-slate-900">
+                        <div className="mb-2 flex items-center justify-between gap-3">
+                          <div>
+                            <h4 className="text-sm font-semibold text-slate-900 dark:text-slate-50">Slack files</h4>
+                            <p className="mt-0.5 text-xs text-slate-500 dark:text-slate-400">
+                              Recent audio and video files from the connected Slack workspace.
+                            </p>
+                          </div>
+                          <button
+                            type="button"
+                            onClick={() => void fetchSlackFiles()}
+                            disabled={slackFilesLoading}
+                            className="inline-flex items-center justify-center rounded-md border border-slate-300 bg-white px-2.5 py-1 text-xs font-medium text-slate-700 transition-colors hover:bg-slate-100 disabled:cursor-not-allowed disabled:opacity-60 dark:border-slate-600 dark:bg-slate-800 dark:text-slate-200 dark:hover:bg-slate-700"
+                          >
+                            {slackFilesLoading ? 'Refreshing...' : 'Refresh'}
+                          </button>
+                        </div>
+                        {slackFilesLoading && (
+                          <p className="text-xs text-slate-500 dark:text-slate-400">Loading Slack files...</p>
+                        )}
+                        {slackFilesError && !slackFilesLoading && (
+                          renderIntegrationErrorNotice(slackFilesError, 'slack')
+                        )}
+                        {!slackFilesLoading && !slackFilesError && slackFiles.length === 0 && (
+                          <p className="text-xs text-slate-500 dark:text-slate-400">No recent audio or video files found in Slack.</p>
+                        )}
+                        {!slackFilesLoading && slackFiles.length > 0 && (
+                          <div className="space-y-2">
+                            {slackFiles.slice(0, 10).map((file) => (
+                              <div key={file.id} className="flex items-center gap-3 rounded-md border border-slate-200 bg-slate-50 p-2 dark:border-slate-700 dark:bg-slate-800/60">
+                                <span className="inline-flex h-12 w-12 shrink-0 items-center justify-center rounded bg-emerald-50 text-emerald-600 dark:bg-emerald-500/10 dark:text-emerald-300">
+                                  <MessageSquare className="h-5 w-5" />
+                                </span>
+                                <div className="min-w-0 flex-1">
+                                  <p className="truncate text-sm font-medium text-slate-900 dark:text-slate-50">{file.name || 'Slack file'}</p>
+                                  <p className="truncate text-xs text-slate-500 dark:text-slate-400">
+                                    {file.createdAt ? new Date(file.createdAt).toLocaleDateString() : 'Slack'}
+                                    {file.mimeType ? ` · ${file.mimeType}` : ''}
+                                  </p>
+                                </div>
+                                <button
+                                  type="button"
+                                  onClick={() => void handleImportSlackFile(file)}
+                                  disabled={slackImportingFileId === file.id}
+                                  className="inline-flex shrink-0 items-center justify-center rounded-md border border-slate-300 bg-white px-2.5 py-1 text-xs font-medium text-slate-700 transition-colors hover:bg-slate-100 disabled:cursor-not-allowed disabled:opacity-60 dark:border-slate-600 dark:bg-slate-800 dark:text-slate-200 dark:hover:bg-slate-700"
+                                >
+                                  {slackImportingFileId === file.id ? 'Queueing...' : 'Import'}
+                                </button>
+                              </div>
+                            ))}
+                          </div>
+                        )}
+                      </div>
+                    )}
+
+	                    {openIntegrationProvider === 'granola' && (
+	                    <div id="granola-manual-import" className="mt-4 rounded-lg border border-amber-200 bg-white p-3 dark:border-amber-500/20 dark:bg-slate-900">
+                      <div className="mb-3">
+                        <h4 className="text-sm font-semibold text-slate-900 dark:text-slate-50">Granola AI notes</h4>
+                        <p className="mt-0.5 text-xs text-slate-500 dark:text-slate-400">
+                          Granola does not provide a standard public OAuth import API, so paste exported notes or transcript text here.
+                        </p>
+                      </div>
+                      <div className="space-y-3">
+                        <div>
+                          <label htmlFor="granola-title" className="block text-xs font-medium text-slate-700 dark:text-slate-300">
+                            Title
+                          </label>
+                          <input
+                            id="granola-title"
+                            type="text"
+                            value={granolaTitle}
+                            onChange={(event) => setGranolaTitle(event.target.value)}
+                            placeholder="Customer discovery call notes"
+                            className="mt-1 w-full rounded-md border border-slate-300 bg-white px-3 py-2 text-sm text-slate-900 shadow-sm focus:border-blue-500 focus:outline-none focus:ring-1 focus:ring-blue-500 placeholder:text-slate-500 dark:border-slate-600 dark:bg-slate-800 dark:text-slate-200"
+                          />
+                        </div>
+                        <div>
+                          <label htmlFor="granola-text" className="block text-xs font-medium text-slate-700 dark:text-slate-300">
+                            Notes or transcript
+                          </label>
+                          <textarea
+                            id="granola-text"
+                            value={granolaText}
+                            onChange={(event) => setGranolaText(event.target.value)}
+                            placeholder="Paste Granola notes, summary, or transcript text..."
+                            rows={7}
+                            className="mt-1 w-full rounded-md border border-slate-300 bg-white px-3 py-2 text-sm text-slate-900 shadow-sm focus:border-blue-500 focus:outline-none focus:ring-1 focus:ring-blue-500 placeholder:text-slate-500 dark:border-slate-600 dark:bg-slate-800 dark:text-slate-200"
+                          />
+                        </div>
+                        {granolaError && (
+                          renderIntegrationErrorNotice(granolaError, 'granola')
+                        )}
+                        <button
+                          type="button"
+                          onClick={handleImportGranolaNotes}
+                          className="inline-flex items-center justify-center rounded-md bg-slate-900 px-3 py-2 text-xs font-semibold text-white transition hover:bg-slate-800 dark:bg-white dark:text-slate-950 dark:hover:bg-slate-200"
+                        >
+                          Import Granola notes
+                        </button>
+	                      </div>
+	                    </div>
+	                    )}
+
+	                    {openIntegrationProvider === 'youtube' && integrationStatuses.some((item) => item.provider === 'youtube' && item.connected) && (
+                      <div className="mt-4 rounded-lg border border-slate-200 bg-white p-3 dark:border-slate-700 dark:bg-slate-900">
+                        <div className="mb-2 flex items-center justify-between gap-3">
+                          <div>
+                            <h4 className="text-sm font-semibold text-slate-900 dark:text-slate-50">YouTube uploads</h4>
+                            <p className="mt-0.5 text-xs text-slate-500 dark:text-slate-400">
+                              Public, unlisted, and private uploads can appear here when the connected account owns them.
+                            </p>
+                          </div>
                           <button
                             type="button"
                             onClick={() => void fetchYouTubeUploads()}
@@ -1704,10 +2817,10 @@ export default function UploadPage() {
                           <p className="text-xs text-slate-500 dark:text-slate-400">Loading uploads...</p>
                         )}
                         {youtubeUploadsError && !youtubeUploadsLoading && (
-                          <p className="text-xs text-amber-700 dark:text-amber-300">{youtubeUploadsError}</p>
+                          renderIntegrationErrorNotice(youtubeUploadsError, 'youtube')
                         )}
                         {!youtubeUploadsLoading && !youtubeUploadsError && youtubeUploads.length === 0 && (
-                          <p className="text-xs text-slate-500 dark:text-slate-400">No public uploads found on this channel yet.</p>
+                          <p className="text-xs text-slate-500 dark:text-slate-400">No uploads found on this channel yet.</p>
                         )}
                         {!youtubeUploadsLoading && youtubeUploads.length > 0 && (
                           <div className="space-y-2">
@@ -1728,6 +2841,19 @@ export default function UploadPage() {
                                   <p className="truncate text-xs text-slate-500 dark:text-slate-400">
                                     {upload.channelTitle || 'YouTube'}{upload.durationSeconds ? ` · ${formatDuration(upload.durationSeconds)}` : ''}
                                   </p>
+                                  <div className="mt-1">
+                                    <span
+                                      className={`inline-flex rounded-full px-2 py-0.5 text-[10px] font-semibold uppercase tracking-wide ${
+                                        upload.privacyStatus === 'private'
+                                          ? 'bg-rose-100 text-rose-700 dark:bg-rose-500/10 dark:text-rose-300'
+                                          : upload.privacyStatus === 'unlisted'
+                                            ? 'bg-amber-100 text-amber-700 dark:bg-amber-500/10 dark:text-amber-300'
+                                            : 'bg-emerald-100 text-emerald-700 dark:bg-emerald-500/10 dark:text-emerald-300'
+                                      }`}
+                                    >
+                                      {youtubePrivacyLabel(upload.privacyStatus)}
+                                    </span>
+                                  </div>
                                 </div>
                                 <button
                                   type="button"
@@ -1744,26 +2870,7 @@ export default function UploadPage() {
                       </div>
                     )}
 
-                    <h3 className="mt-5 text-xs font-semibold uppercase tracking-wide text-slate-500 dark:text-slate-400">Coming soon</h3>
-                    <div className="mt-2 grid gap-2 sm:grid-cols-3">
-                      {COMING_SOON_INTEGRATIONS.map(({ name, detail, Icon, accent, bg, border }) => (
-                        <div
-                          key={name}
-                          className={`rounded-lg border ${border} ${bg} p-3`}
-                        >
-                          <div className="flex items-center gap-2">
-                            <span className="inline-flex h-8 w-8 items-center justify-center rounded-md bg-white/80 shadow-sm dark:bg-slate-900/80">
-                              <Icon className={`h-4 w-4 ${accent}`} />
-                            </span>
-                            <div className="min-w-0">
-                              <p className="text-sm font-semibold text-slate-900 dark:text-slate-50">{name}</p>
-                              <p className="truncate text-xs text-slate-500 dark:text-slate-400">{detail}</p>
-                            </div>
-                          </div>
-                        </div>
-                      ))}
-                    </div>
-                  </div>
+	                  </div>
                 )}
               </div>
               <UploadActivitySection

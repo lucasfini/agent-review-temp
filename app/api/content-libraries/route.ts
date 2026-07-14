@@ -13,6 +13,7 @@ import {
 import { isDemoUser } from '@/lib/demo-mode';
 import { recordOrganizationAuditLog } from '@/lib/organizations/audit';
 import { requireStudioAssetContext } from '@/lib/studio-assets';
+import { resolveStudioAssetWriteOrganizationId } from '@/lib/studio-sharing';
 import { supabaseAdmin } from '@/lib/supabase/server';
 
 export const dynamic = 'force-dynamic';
@@ -92,8 +93,14 @@ export async function POST(request: NextRequest) {
       return NextResponse.json({ error: 'You do not have permission to create collections' }, { status: 403 });
     }
 
+    const targetOrganizationId = resolveStudioAssetWriteOrganizationId({
+      activeOrganizationId: context.activeOrganizationId,
+      privateOrganizationId: context.privateOrganizationId,
+      organizationType: context.organization.type,
+    }, body?.visibility);
+
     const contentLibrary = decorateContentLibraryScope(
-      await createContentLibrary(supabaseAdmin, context.privateOrganizationId, context.user.id, body),
+      await createContentLibrary(supabaseAdmin, targetOrganizationId, context.user.id, body),
       {
         activeOrganizationId: context.activeOrganizationId,
         privateOrganizationId: context.privateOrganizationId,

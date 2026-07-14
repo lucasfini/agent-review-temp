@@ -1,5 +1,6 @@
 import { NextRequest, NextResponse } from 'next/server';
 
+import { displayOrganizationName } from '@/lib/authz/organization-context';
 import { RouteAccessError } from '@/lib/api/route-auth';
 import { assertCan, requirePermissionContext } from '@/lib/authz/permissions';
 import { OrganizationAccessError } from '@/lib/authz/types';
@@ -34,6 +35,12 @@ export async function POST(
     const { user, organization, permissionContext } = await requirePermissionContext(request, {
       requestedOrganizationId: requestedOrganizationIdFrom(request, body),
     });
+    if (organization.type !== 'saas_customer') {
+      return NextResponse.json(
+        { error: 'Team workspace settings are only available for team workspaces' },
+        { status: 400 }
+      );
+    }
 
     if (permissionContext.isDemo) {
       return NextResponse.json({ error: 'Demo account is read-only' }, { status: 403 });
@@ -71,7 +78,7 @@ export async function POST(
       try {
         emailDelivery = await sendWorkspaceInvitationEmail({
           invitation: result.invitation,
-          workspaceName: organization.name,
+          workspaceName: displayOrganizationName(organization),
           acceptUrl: result.acceptUrl,
           invitedByEmail: user.email,
         });

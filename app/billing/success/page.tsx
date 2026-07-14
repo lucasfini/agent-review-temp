@@ -11,6 +11,9 @@ import { AlertTriangle, CheckCircle, Loader2 } from 'lucide-react';
 import Link from 'next/link';
 import { useAuth } from '@/lib/auth/context';
 import { formatSiteCreditDeltaFromUsd, formatSiteCreditsFromUsd } from '@/lib/billing/display';
+import { withOrganizationId } from '@/lib/organizations/current-organization';
+
+type CheckoutType = 'payment' | 'subscription';
 
 function formatPurchasedCredits(amount: number, creditUnit?: string | null) {
   if (creditUnit === 'plan_credit') {
@@ -22,7 +25,7 @@ function formatPurchasedCredits(amount: number, creditUnit?: string | null) {
 
 function PaymentSuccessContent() {
   const searchParams = useSearchParams();
-  const { session } = useAuth();
+  const { session, loading: authLoading } = useAuth();
   const sessionId = searchParams.get('session_id');
 
   const [loading, setLoading] = useState(true);
@@ -32,12 +35,24 @@ function PaymentSuccessContent() {
   const [balanceError, setBalanceError] = useState<string | null>(null);
   const [creditsAdded, setCreditsAdded] = useState<number | null>(null);
   const [creditUnit, setCreditUnit] = useState<string | null>(null);
+  const [checkoutType, setCheckoutType] = useState<CheckoutType>('payment');
+  const [planSlug, setPlanSlug] = useState<string | null>(null);
   const [alreadyProcessed, setAlreadyProcessed] = useState(false);
   const hasVerified = useRef(false);
 
   useEffect(() => {
-    if (!sessionId || !session?.access_token) {
-      if (!sessionId) setLoading(false);
+    if (!sessionId) {
+      setLoading(false);
+      return;
+    }
+
+    if (authLoading) {
+      return;
+    }
+
+    if (!session?.access_token) {
+      setVerificationError('Please sign in to confirm this payment session and view your updated balance.');
+      setLoading(false);
       return;
     }
 
@@ -47,6 +62,11 @@ function PaymentSuccessContent() {
 
     const verifyAndFetchBalance = async () => {
       try {
+        setLoading(true);
+        setVerificationError(null);
+        setBalanceError(null);
+        let verifiedOrganizationId: string | null = null;
+
         // First, verify the session and ensure credits are added
         const verifyResponse = await fetch('/api/stripe/verify-session', {
           method: 'POST',
@@ -62,6 +82,11 @@ function PaymentSuccessContent() {
           if (verifyData.success) {
             setAlreadyProcessed(Boolean(verifyData.alreadyProcessed));
             setCreditUnit(typeof verifyData.creditUnit === 'string' ? verifyData.creditUnit : null);
+            setCheckoutType(verifyData.checkoutType === 'subscription' ? 'subscription' : 'payment');
+            setPlanSlug(typeof verifyData.planSlug === 'string' ? verifyData.planSlug : null);
+            verifiedOrganizationId = typeof verifyData.organizationId === 'string'
+              ? verifyData.organizationId
+              : null;
             if (!verifyData.alreadyProcessed && typeof verifyData.creditsAdded === 'number') {
               setCreditsAdded(verifyData.creditsAdded);
             }
@@ -79,7 +104,7 @@ function PaymentSuccessContent() {
         }
 
         // Then fetch the updated balance
-        const balanceResponse = await fetch('/api/billing/balance', {
+        const balanceResponse = await fetch(withOrganizationId('/api/billing/balance', verifiedOrganizationId), {
           headers: {
             'Authorization': `Bearer ${session.access_token}`,
           },
@@ -107,7 +132,7 @@ function PaymentSuccessContent() {
     // Small delay to let any webhooks process first
     const timeout = window.setTimeout(verifyAndFetchBalance, 1000);
     return () => window.clearTimeout(timeout);
-  }, [sessionId, session]);
+  }, [authLoading, sessionId, session]);
 
   if (!sessionId) {
     return (
@@ -143,29 +168,39 @@ function PaymentSuccessContent() {
 
   const hasVerificationError = Boolean(verificationError);
   const warningMessage = verificationError || balanceError;
+  const isSubscriptionCheckout = checkoutType === 'subscription';
+  const readablePlanName = planSlug
+    ? planSlug.charAt(0).toUpperCase() + planSlug.slice(1)
+    : null;
 
   return (
     <div className="min-h-screen flex items-center justify-center bg-white dark:bg-slate-950 p-4">
       <div className="max-w-md w-full bg-slate-50 dark:bg-slate-900 border border-slate-200 dark:border-slate-800 rounded-lg shadow-lg p-6 sm:p-8">
         {/* Success Icon */}
         <div className="flex justify-center mb-6">
-          <div className={hasVerificationError ? 'bg-yellow-900/30 rounded-full p-3' : 'bg-green-900/30 rounded-full p-3'}>
+          <div className={hasVerificationError ? 'rounded-full bg-yellow-100 p-3 dark:bg-yellow-900/30' : 'rounded-full bg-green-100 p-3 dark:bg-green-900/30'}>
             {hasVerificationError ? (
-              <AlertTriangle className="h-16 w-16 text-yellow-400" />
+              <AlertTriangle className="h-16 w-16 text-yellow-600 dark:text-yellow-400" />
             ) : (
-              <CheckCircle className="h-16 w-16 text-green-400" />
+              <CheckCircle className="h-16 w-16 text-green-600 dark:text-green-400" />
             )}
           </div>
         </div>
 
         {/* Success Message */}
         <h1 className="text-2xl font-bold text-slate-900 dark:text-slate-50 text-center mb-2">
-          {hasVerificationError ? 'Payment Needs Review' : 'Payment Successful'}
+          {hasVerificationError
+            ? isSubscriptionCheckout ? 'Subscription Needs Review' : 'Payment Needs Review'
+            : isSubscriptionCheckout ? 'Subscription Updated' : 'Payment Successful'}
         </h1>
         <p className="text-slate-500 dark:text-slate-400 text-center mb-6">
           {hasVerificationError
-            ? 'Stripe redirected you back, but we could not verify that credits were applied.'
-            : 'Your payment was received. Your credits are being applied to your billing balance.'}
+            ? isSubscriptionCheckout
+              ? 'Stripe redirected you back, but we could not verify that your subscription was updated.'
+              : 'Stripe redirected you back, but we could not verify that credits were applied.'
+            : isSubscriptionCheckout
+              ? `${readablePlanName ? `${readablePlanName} is now active. ` : ''}Your billing and plan credits are being refreshed.`
+              : 'Your payment was received. Your credits are being applied to your billing balance.'}
         </p>
 
         {/* Credits Added */}
@@ -182,10 +217,18 @@ function PaymentSuccessContent() {
           </div>
         )}
 
-        {alreadyProcessed && creditsAdded === null && (
+        {alreadyProcessed && creditsAdded === null && !isSubscriptionCheckout && (
           <div className="bg-green-50 dark:bg-green-900/20 border border-green-200 dark:border-green-800/30 rounded-lg p-4 mb-4">
             <p className="text-sm text-green-700 dark:text-green-300">
               This payment was already processed, so no duplicate credits were added.
+            </p>
+          </div>
+        )}
+
+        {isSubscriptionCheckout && !hasVerificationError && (
+          <div className="bg-green-50 dark:bg-green-900/20 border border-green-200 dark:border-green-800/30 rounded-lg p-4 mb-4">
+            <p className="text-sm text-green-700 dark:text-green-300">
+              Your subscription checkout was confirmed. Billing may take a moment to refresh across Stripe and the app.
             </p>
           </div>
         )}
@@ -205,11 +248,13 @@ function PaymentSuccessContent() {
         )}
 
         {warningMessage && (
-          <div className="bg-yellow-900/20 border border-yellow-800/30 rounded-lg p-4 mb-6">
-            <p className="text-sm text-yellow-400">
+          <div className="mb-6 rounded-lg border border-yellow-200 bg-yellow-50 p-4 dark:border-yellow-800/30 dark:bg-yellow-900/20">
+            <p className="text-sm text-yellow-700 dark:text-yellow-300">
               {hasVerificationError
                 ? warningMessage
-                : "Payment was verified, but we couldn't fetch your updated balance. Please check Billing in a moment."}
+                : isSubscriptionCheckout
+                  ? "Subscription was verified, but we couldn't fetch your updated balance. Please check Billing in a moment."
+                  : "Payment was verified, but we couldn't fetch your updated balance. Please check Billing in a moment."}
             </p>
           </div>
         )}
@@ -218,10 +263,21 @@ function PaymentSuccessContent() {
         <div className="bg-slate-100/80 dark:bg-slate-800/50 rounded-lg p-4 mb-6">
           <h3 className="font-semibold text-slate-900 dark:text-slate-50 mb-2">What's Next?</h3>
           <ul className="text-sm text-slate-500 dark:text-slate-400 space-y-2">
-            <li>• Your credits are ready to use once Stripe confirmation is recorded</li>
-            <li>• Some credit grants may follow plan or promotional expiry rules</li>
-            <li>• View balance, transactions, and receipts in Billing</li>
-            <li>• Start transcribing and generating content</li>
+            {isSubscriptionCheckout ? (
+              <>
+                <li>• Your new plan is ready once Stripe confirmation is recorded</li>
+                <li>• Plan credits may take a moment to refresh after checkout</li>
+                <li>• View subscription status, balance, and receipts in Billing</li>
+                <li>• Start transcribing and generating content</li>
+              </>
+            ) : (
+              <>
+                <li>• Your credits are ready to use once Stripe confirmation is recorded</li>
+                <li>• Some credit grants may follow plan or promotional expiry rules</li>
+                <li>• View balance, transactions, and receipts in Billing</li>
+                <li>• Start transcribing and generating content</li>
+              </>
+            )}
           </ul>
         </div>
 
@@ -243,11 +299,11 @@ function PaymentSuccessContent() {
 
         {/* Receipt Info */}
         <div className="mt-6 text-center">
-          <p className="text-xs text-slate-500 dark:text-slate-500">
+          <p className="text-xs text-slate-500 dark:text-slate-400">
             A receipt has been sent to your email when Stripe has one on file.
           </p>
           {sessionId && (
-            <p className="text-xs text-slate-500 dark:text-slate-600 mt-1">
+            <p className="mt-1 text-xs text-slate-500 dark:text-slate-500">
               Session ID: {sessionId.substring(0, 20)}...
             </p>
           )}

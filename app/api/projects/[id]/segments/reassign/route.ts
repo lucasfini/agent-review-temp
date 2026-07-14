@@ -117,8 +117,11 @@ export async function PATCH(
             ...updatedSegments[index],
             speakerId: newSpeakerId,
             finalSpeakerId: newSpeakerId,
-            reviewStatus: 'pending' as const,
-            reviewConfirmedAt: undefined,
+            status: 'confirmed' as const,
+            confidence: 1.0,
+            confidenceReason: 'user_reassigned',
+            reviewStatus: 'confirmed' as const,
+            reviewConfirmedAt: new Date().toISOString(),
           };
           reassignedCount++;
         }

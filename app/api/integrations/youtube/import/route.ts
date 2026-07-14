@@ -1,5 +1,5 @@
 import { NextRequest, NextResponse } from 'next/server';
-import { getConnection } from '../../_utils';
+import { getConnection, integrationErrorResponse, signedOutIntegrationResponse } from '../../_utils';
 import { supabaseAdmin } from '@/lib/supabase/server';
 import { importRecording } from '@/lib/integrations/importer';
 import { downloadYouTubeAudio, YouTubeImportError } from '@/lib/url-importer';
@@ -10,7 +10,8 @@ import { releaseReservation } from '@/lib/billing/credit';
 import { resolveOrganizationIdForWrite } from '@/lib/authz/organization-context';
 import { runEntitlementGuard } from '@/lib/billing/entitlement-guards';
 import { recordSubscriptionUsage } from '@/lib/billing/subscription-usage-counters';
-import { assertPlanUploadDuration, createPlanCreditReservation } from '@/lib/billing/plan-credits';
+import { createPlanCreditReservation, resolvePlanUploadDuration } from '@/lib/billing/plan-credits';
+import { getUploadProcessingReservationExpiresAt } from '@/lib/billing/plan-upload-limits';
 import { estimateAudioProductCredits } from '@/lib/billing/product-credits';
 
 export const runtime = 'nodejs';
@@ -27,27 +28,27 @@ async function ensureAuth(request: NextRequest) {
 export async function POST(request: NextRequest) {
   try {
     const user = await ensureAuth(request);
-    if (!user) return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
+    if (!user) return signedOutIntegrationResponse();
 
     const body = await request.json().catch(() => ({}));
     const videoId = typeof body?.videoId === 'string' ? body.videoId.trim() : '';
     const analysisOptions = normalizeAnalysisOptions(body?.analysisOptions);
     const performanceLevel = body?.performanceLevel || getProcessingTierForAnalysis(analysisOptions);
-    const estimatedDurationSeconds = typeof body?.estimatedDurationSeconds === 'number'
-      ? Math.max(1, Math.round(body.estimatedDurationSeconds))
-      : 60 * 60;
+    const organizationId = await resolveOrganizationIdForWrite(user.id);
+    const resolvedDuration = await resolvePlanUploadDuration({
+      organizationId,
+      userId: user.id,
+      durationSeconds: typeof body?.estimatedDurationSeconds === 'number'
+        ? body.estimatedDurationSeconds
+        : null,
+    });
+    const estimatedDurationSeconds = resolvedDuration.durationSeconds;
+    const subscription = resolvedDuration.subscription;
 
     const estimatedCost = await estimateTranscriptionCostAsync({
       durationSeconds: estimatedDurationSeconds,
       tier: performanceLevel,
       analysisOptions,
-    });
-
-    const organizationId = await resolveOrganizationIdForWrite(user.id);
-    const subscription = await assertPlanUploadDuration({
-      organizationId,
-      userId: user.id,
-      durationSeconds: estimatedDurationSeconds,
     });
     const entitlementGuard = await runEntitlementGuard({
       organizationId,
@@ -60,6 +61,7 @@ export async function POST(request: NextRequest) {
         metadata: {
           provider: 'youtube',
           estimatedDurationSeconds,
+          durationSource: resolvedDuration.durationSource,
         },
       },
     });
@@ -68,12 +70,12 @@ export async function POST(request: NextRequest) {
     }
 
     if (!videoId) {
-      return NextResponse.json({ error: 'Missing videoId' }, { status: 400 });
+      return integrationErrorResponse({ provider: 'youtube', code: 'BAD_REQUEST', action: 'import', status: 400 });
     }
 
     const connection = await getConnection(user.id, 'youtube');
     if (!connection) {
-      return NextResponse.json({ error: 'YouTube not connected' }, { status: 404 });
+      return integrationErrorResponse({ provider: 'youtube', code: 'RECONNECT_REQUIRED', action: 'import', status: 404, userId: user.id });
     }
 
     const existing = await supabaseAdmin
@@ -110,8 +112,9 @@ export async function POST(request: NextRequest) {
         productCreditWorkflow: performanceLevel,
         analysisOptions,
         estimatedDurationSeconds,
+        durationSource: resolvedDuration.durationSource,
       },
-      expiresAt: new Date(Date.now() + (2 * 60 * 60 * 1000)).toISOString(),
+      expiresAt: getUploadProcessingReservationExpiresAt(),
     });
 
     let result;
@@ -128,6 +131,7 @@ export async function POST(request: NextRequest) {
         reservationId: reservation.id,
         reservationHoldAmount: estimatedProductCredits,
         reservationEstimatedCost: estimatedCost.total,
+        estimatedDurationSeconds,
         externalSource: { provider: 'youtube', recordingId: videoId }
       });
     } catch (importError) {
@@ -170,9 +174,16 @@ export async function POST(request: NextRequest) {
     const billingResponse = billingErrorResponse(error);
     if (billingResponse.status === 402) return billingResponse;
     if (error instanceof YouTubeImportError) {
-      return NextResponse.json({ error: error.message, code: error.code }, { status: error.status });
+      return integrationErrorResponse({
+        provider: 'youtube',
+        code: 'DOWNLOAD_FAILED',
+        action: 'download',
+        status: error.status,
+        logPrefix: '[YOUTUBE IMPORT] Download failed:',
+        cause: error.details || error.message,
+      });
     }
     console.error('[YOUTUBE IMPORT] Failed:', error);
-    return NextResponse.json({ error: 'Import failed' }, { status: 500 });
+    return integrationErrorResponse({ provider: 'youtube', code: 'IMPORT_FAILED', action: 'import', status: 500 });
   }
 }

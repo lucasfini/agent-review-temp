@@ -6,6 +6,7 @@ import {
   type OrganizationMemberRole,
   type OrganizationType,
 } from '@/lib/authz/types';
+import { getAvailableStudioAssetName, hideLegacySharedSources } from '@/lib/studio-sharing';
 
 export type StudioAssetScope = 'private' | 'organization';
 
@@ -278,7 +279,10 @@ export async function listCreatorProfiles(
     throw new Error(error.message || 'Failed to load profiles');
   }
 
-  return (data || []).map(mapCreatorProfileRow);
+  return hideLegacySharedSources(
+    (data || []).map(mapCreatorProfileRow),
+    (profile) => profile.sharedFromProfileId
+  );
 }
 
 export async function listCreatorProfilesForOrganizations(
@@ -446,14 +450,6 @@ export async function shareCreatorProfileToOrganization(
   targetOrganizationId: string,
   userId: string
 ): Promise<CreatorProfile> {
-  const sharedPayload = {
-    name: source.name,
-    website: source.website,
-    positioning: source.positioning,
-    audience: source.audience,
-    content_goal: source.contentGoal,
-  };
-
   const { data: existing, error: existingError } = await supabase
     .from('creator_profiles')
     .select('*')
@@ -465,6 +461,28 @@ export async function shareCreatorProfileToOrganization(
   if (existingError) {
     throw new Error(existingError.message || 'Failed to load shared profile');
   }
+
+  const { data: siblingProfiles, error: siblingError } = await supabase
+    .from('creator_profiles')
+    .select('id, name')
+    .eq('organization_id', targetOrganizationId)
+    .is('client_id', null) as { data: Array<{ id: string; name: string }> | null; error: any };
+
+  if (siblingError) {
+    throw new Error(siblingError.message || 'Failed to load team profile names');
+  }
+
+  const sharedPayload = {
+    name: getAvailableStudioAssetName(source.name, siblingProfiles || [], {
+      excludeId: existing?.id || source.id,
+      maxNameLength: MAX_NAME_LENGTH,
+      suffixLabel: 'team',
+    }),
+    website: source.website,
+    positioning: source.positioning,
+    audience: source.audience,
+    content_goal: source.contentGoal,
+  };
 
   if (existing) {
     const { data, error } = await supabase
@@ -486,23 +504,88 @@ export async function shareCreatorProfileToOrganization(
 
   const { data, error } = await supabase
     .from('creator_profiles')
-    .insert({
+    .update({
       ...sharedPayload,
       organization_id: targetOrganizationId,
       client_id: null,
-      created_by: userId,
-      owner_user_id: userId,
+      owner_user_id: source.ownerUserId || source.createdBy || userId,
       is_default: false,
-      shared_from_profile_id: source.id,
+      shared_from_profile_id: null,
     } as any)
+    .eq('id', source.id)
+    .eq('organization_id', source.organizationId)
+    .is('client_id', null)
     .select('*')
-    .single() as { data: CreatorProfileRow | null; error: any };
+    .maybeSingle() as { data: CreatorProfileRow | null; error: any };
 
   if (error || !data) {
     if (isUniqueViolation(error)) {
       throw new CreatorProfileValidationError('A shared profile with this name already exists');
     }
     throw new Error(error?.message || 'Failed to share profile');
+  }
+
+  return mapCreatorProfileRow(data);
+}
+
+export async function unshareCreatorProfileToPrivateOrganization(
+  supabase: SupabaseClient<any>,
+  source: CreatorProfile,
+  privateOrganizationId: string,
+  activeOrganizationId: string
+): Promise<CreatorProfile> {
+  const { data: siblingProfiles, error: siblingError } = await supabase
+    .from('creator_profiles')
+    .select('id, name')
+    .eq('organization_id', privateOrganizationId)
+    .is('client_id', null) as { data: Array<{ id: string; name: string }> | null; error: any };
+
+  if (siblingError) {
+    throw new Error(siblingError.message || 'Failed to load private profile names');
+  }
+
+  const referenceUpdates = [
+    supabase
+      .from('content_library_items')
+      .update({ creator_profile_id: null } as any)
+      .eq('organization_id', activeOrganizationId)
+      .eq('creator_profile_id', source.id)
+      .is('client_id', null),
+    supabase
+      .from('project_generation_jobs')
+      .update({ creator_profile_id: null } as any)
+      .eq('organization_id', activeOrganizationId)
+      .eq('creator_profile_id', source.id),
+  ];
+  const referenceResults = await Promise.all(referenceUpdates);
+  const referenceError = referenceResults.find((result) => result.error)?.error;
+  if (referenceError) {
+    throw new Error(referenceError.message || 'Failed to remove team profile references');
+  }
+
+  const { data, error } = await supabase
+    .from('creator_profiles')
+    .update({
+      organization_id: privateOrganizationId,
+      name: getAvailableStudioAssetName(source.name, siblingProfiles || [], {
+        excludeId: source.id,
+        maxNameLength: MAX_NAME_LENGTH,
+        suffixLabel: 'private',
+      }),
+      is_default: false,
+      shared_from_profile_id: null,
+    } as any)
+    .eq('id', source.id)
+    .eq('organization_id', source.organizationId)
+    .is('client_id', null)
+    .select('*')
+    .maybeSingle() as { data: CreatorProfileRow | null; error: any };
+
+  if (error || !data) {
+    if (isUniqueViolation(error)) {
+      throw new CreatorProfileValidationError('Could not find an available private profile name');
+    }
+    throw new Error(error?.message || 'Failed to make profile private');
   }
 
   return mapCreatorProfileRow(data);

@@ -103,7 +103,7 @@ const classifyYouTubeError = (error: unknown) => {
   ) {
     return new YouTubeImportError(
       'protected_video',
-      'This YouTube video is protected by a sign-in or bot check and cannot be imported right now. Please use a public YouTube link or upload the audio file directly.',
+      'This YouTube video could not be fetched by the server right now. If YouTube is blocking it, or if it is private, upload the media file directly instead.',
       422,
       message
     );
@@ -131,7 +131,7 @@ const classifyYouTubeError = (error: unknown) => {
   ) {
     return new YouTubeImportError(
       'unsupported_video',
-      'This YouTube link could not be imported. Right now we only support public YouTube videos.',
+      'This YouTube link could not be imported. Public and unlisted videos are best-effort; if this one is private or blocked, upload the media file directly.',
       422,
       message
     );
@@ -139,7 +139,7 @@ const classifyYouTubeError = (error: unknown) => {
 
   return new YouTubeImportError(
     'download_failed',
-    'We could not import this YouTube video right now. Please try another public link or upload the media file directly.',
+    'We could not import this YouTube video right now. Public and unlisted videos may work, but private or protected videos can still fail. Upload the media file directly if that happens.',
     502,
     message
   );

@@ -12,7 +12,7 @@ import { useCoverageProgress } from '@/lib/context/coverage-progress';
 import { useCurrentOrganization } from '@/lib/hooks/useCurrentOrganization';
 import { DashboardLoadErrorState } from '@/components/dashboard/load-error-state';
 import ExportModal, { type ExportPayload } from '@/components/ExportModal';
-import { exportContent } from '@/lib/export-utils';
+import { exportContent, exportSingleOutput, type SingleOutputExportFormat } from '@/lib/export-utils';
 import ConversationView from '@/components/ConversationView';
 import { AudioPlayer } from '@/components/AudioPlayer';
 import { getSpeakerColor, getSpeakerDisplayName } from '@/lib/name-extraction';
@@ -38,6 +38,7 @@ import {
   getSpeakerAssignmentConfidencePercent,
   getSpeakerSuggestionsFromSpeakerData,
 } from '@/lib/speaker-review';
+import { getAnalysisCompatibility, getTextOnlyGenerationNotice, hasProjectPlayableAudio } from '@/lib/generation-capabilities';
 
 type ProjectType = 'DEBATE' | 'INTERVIEW' | 'PODCAST' | 'MONOLOGUE' | 'OTHER';
 type MobileStudioTab = 'projects' | 'conversation' | 'content';
@@ -397,6 +398,7 @@ export default function ProjectsPage() {
 
   // Per-output delete tracking
   const [deletingOutput, setDeletingOutput] = useState<string | null>(null);
+  const [savingOutputToLibrary, setSavingOutputToLibrary] = useState<string | null>(null);
   const [contentGuidanceByType, setContentGuidanceByType] = useState<ContentGuidanceMap>({});
   const [contentContextByType, setContentContextByType] = useState<ContentContextMap>({});
   const [creatorProfiles, setCreatorProfiles] = useState<CreatorProfile[]>([]);
@@ -415,7 +417,9 @@ export default function ProjectsPage() {
   const searchParams = useSearchParams();
   const router = useRouter();
   const requestedProjectId = searchParams.get('id');
+  const shouldOpenGenerateTab = searchParams.get('generate') === 'true' || searchParams.get('tab') === 'generate';
   const selectedProjectAudioExpired = isProjectAudioExpired(selectedProject);
+  const selectedProjectHasPlayableAudio = hasProjectPlayableAudio(selectedProject);
   const mobileRequestedProjectId = isMobileViewport ? requestedProjectId : null;
   const mobileHasProjectStage = Boolean(mobileRequestedProjectId || selectedProjectLoading || selectedProject);
   const showMobileList = isMobileViewport && mobileStudioTab === 'projects';
@@ -582,6 +586,10 @@ export default function ProjectsPage() {
       ...uploadBackgroundAnalysisKeys,
     ]),
     [generatingAnalysisKeys, optimisticGeneratingAnalysisKeys, uploadBackgroundAnalysisKeys]
+  );
+  const textOnlyGenerationNotice = useMemo(
+    () => getTextOnlyGenerationNotice(selectedProject),
+    [selectedProject]
   );
 
   useEffect(() => {
@@ -848,7 +856,7 @@ export default function ProjectsPage() {
   // Fetch signed URL for audio playback when project changes
   useEffect(() => {
     async function fetchAudioUrl() {
-      if (!selectedProject?.id || !selectedProject?.audio_file_name) {
+      if (!selectedProject?.id || !selectedProjectHasPlayableAudio) {
         setAudioUrl(null);
         return;
       }
@@ -885,7 +893,7 @@ export default function ProjectsPage() {
     }
 
     fetchAudioUrl();
-  }, [selectedProject?.id, selectedProject?.audio_file_name]);
+  }, [selectedProject?.id, selectedProject?.audio_file_name, selectedProjectHasPlayableAudio]);
 
   // Insights are fetched by ConversationView and reported back via onInsightsDataChange / onInsightsStatusChange callbacks.
   // No independent fetch needed here — single source of truth avoids race conditions.
@@ -893,9 +901,9 @@ export default function ProjectsPage() {
   // Open details panel when a project is selected
   useEffect(() => {
     if (selectedProject) {
-      setContextSidebarOpen(isDesktopViewport);
+      setContextSidebarOpen(isDesktopViewport || shouldOpenGenerateTab);
     }
-  }, [isDesktopViewport, selectedProject?.id]);
+  }, [isDesktopViewport, selectedProject?.id, shouldOpenGenerateTab]);
 
   useEffect(() => {
     if (!isMobileViewport) return;
@@ -905,8 +913,13 @@ export default function ProjectsPage() {
       return;
     }
 
+    if (shouldOpenGenerateTab) {
+      setMobileStudioTab('content');
+      return;
+    }
+
     setMobileStudioTab((prev) => (prev === 'projects' ? 'conversation' : prev));
-  }, [isMobileViewport, mobileRequestedProjectId]);
+  }, [isMobileViewport, mobileRequestedProjectId, shouldOpenGenerateTab]);
 
   useEffect(() => {
     if (!selectedProject && !selectedProjectLoading) {
@@ -1493,6 +1506,7 @@ export default function ProjectsPage() {
     }
 
     await fetchGenerationJobs(selectedProject.id);
+    window.dispatchEvent(new Event('audiorepurpose:notifications-refresh'));
     return data;
   };
 
@@ -1584,6 +1598,12 @@ export default function ProjectsPage() {
       return;
     }
 
+    const compatibility = getAnalysisCompatibility(selectedProject, key);
+    if (!compatibility.compatible) {
+      showToast(compatibility.reason || 'This analysis cannot run for this project.');
+      return;
+    }
+
     if (!selectedProject?.id || !selectedProject.audio_file_name) {
       showToast('This project cannot run additional analysis.');
       return;
@@ -1629,15 +1649,63 @@ export default function ProjectsPage() {
   };
 
   // Output action handlers
-  const handleDownloadOutput = (output: Output) => {
-    const blob = new Blob([`${output.title}\n\n${output.content}`], { type: 'text/plain' });
-    const url = URL.createObjectURL(blob);
-    const a = document.createElement('a');
-    a.href = url;
-    a.download = `${output.title.replace(/[^a-z0-9]/gi, '_').toLowerCase()}.txt`;
-    a.click();
-    URL.revokeObjectURL(url);
-    showToast('Downloaded', 'success');
+  const handleSaveOutputLocally = async (output: Output, format: SingleOutputExportFormat) => {
+    if (!selectedProject) {
+      showToast('Select a project before saving content');
+      throw new Error('No selected project');
+    }
+
+    const result = await exportSingleOutput(
+      { id: selectedProject.id, title: selectedProject.title },
+      output,
+      format
+    );
+
+    if (!result.success) {
+      showToast(result.message || 'Failed to save content');
+      throw new Error(result.message || 'Failed to save content');
+    }
+
+    showToast(result.message, 'success');
+  };
+
+  const handleSaveOutputToLibrary = async (output: Output, libraryId: string) => {
+    if (isDemoMode) {
+      showToast('Demo account is read-only.');
+      throw new Error('Demo account is read-only');
+    }
+    if (!selectedProject?.id || !organizationId) {
+      showToast('Select a project and workspace before saving content');
+      throw new Error('Missing project or workspace');
+    }
+
+    setSavingOutputToLibrary(output.id);
+    try {
+      const response = await fetch(
+        withOrganizationId(`/api/projects/${selectedProject.id}/outputs/${output.id}/library`, organizationId),
+        {
+          method: 'POST',
+          headers: {
+            ...authHeaders,
+            'Content-Type': 'application/json',
+          },
+          body: JSON.stringify({ libraryId }),
+        }
+      );
+      const payload = await response.json().catch(() => ({}));
+      if (!response.ok) {
+        throw new Error(payload.error || 'Failed to save content to library');
+      }
+
+      const libraryName = contentLibraries.find((library) => library.id === libraryId)?.name || 'Library';
+      showToast(`Saved to ${libraryName}`, 'success');
+    } catch (error) {
+      const message = error instanceof Error ? error.message : 'Failed to save content to library';
+      showToast(message);
+      throw error;
+    } finally {
+      setSavingOutputToLibrary(null);
+    }
   };
 
   const handleCopyOutput = async (output: Output) => {
@@ -2112,6 +2180,7 @@ export default function ProjectsPage() {
             (payload) => {
               console.log('Generation job change detected:', payload);
               void fetchGenerationJobs(subscribedProjectId);
+              window.dispatchEvent(new Event('audiorepurpose:notifications-refresh'));
               if (payload.eventType === 'UPDATE') {
                 const data = payload.new as any;
                 if (data?.status === 'completed' || data?.status === 'failed') {
@@ -2142,6 +2211,7 @@ export default function ProjectsPage() {
 
               if (data && data.project_id) {
                 console.log('[REALTIME] Project:', data.project_id, 'Status:', data.status);
+                window.dispatchEvent(new Event('audiorepurpose:notifications-refresh'));
 
                 // Add to generating set if status is preparing or generating
                 if (data.status === 'preparing' || data.status === 'generating') {
@@ -3577,32 +3647,6 @@ export default function ProjectsPage() {
                           <span>Repairing&hellip;</span>
                         </div>
                       )}
-                      {selectedProject.status === 'completed' && (
-                        <div className="hidden sm:flex relative group">
-                          <div className="flex items-center gap-1.5 px-2.5 py-1 rounded-full bg-emerald-500/10 text-emerald-400 border border-emerald-500/20 text-xs font-medium cursor-default whitespace-nowrap">
-                            <CheckCircle className="w-3 h-3 flex-shrink-0" />
-                            <span>Processing complete</span>
-                          </div>
-                          {/* Tooltip on hover */}
-                          <div className="absolute bottom-full mb-2 left-1/2 -translate-x-1/2 opacity-0 group-hover:opacity-100 transition-opacity pointer-events-none z-50 bg-white dark:bg-slate-800 border border-slate-200 dark:border-slate-700 rounded-xl shadow-xl p-3 w-56">
-                            <p className="text-[10px] font-semibold text-slate-400 dark:text-slate-500 uppercase tracking-widest mb-2">Completed Tasks</p>
-                            <div className="space-y-1.5 text-xs text-slate-600 dark:text-slate-300">
-                              <div className="flex items-center gap-2">
-                                <CheckCircle className="w-3 h-3 text-emerald-400 flex-shrink-0" />
-                                <span>Transcription (AssemblyAI)</span>
-                              </div>
-                              <div className="flex items-center gap-2">
-                                <CheckCircle className="h-3 w-3 text-emerald-400 flex-shrink-0" />
-                                <span>Speaker Attribution (AI Enhanced)</span>
-                              </div>
-                              <div className="flex items-center gap-2">
-                                <CheckCircle className="h-3 w-3 text-emerald-400 flex-shrink-0" />
-                                <span>Selected analysis outputs</span>
-                              </div>
-                            </div>
-                          </div>
-                        </div>
-                      )}
                       {selectedProject.status === 'processing' && (
                         <div className="hidden sm:flex items-center gap-1.5 px-2.5 py-1 rounded-full bg-amber-500/10 text-amber-400 border border-amber-500/20 text-xs font-medium whitespace-nowrap">
                           <Loader2 className="w-3 h-3 animate-spin flex-shrink-0" />
@@ -3793,7 +3837,7 @@ export default function ProjectsPage() {
                     )}
 
                     {/* Audio Player */}
-                    {!selectedProjectAudioExpired && audioUrl && (
+                    {!selectedProjectAudioExpired && selectedProjectHasPlayableAudio && audioUrl && (
                       <AudioPlayer
                         src={audioUrl}
                         audioElementRef={audioElementRef}
@@ -4052,8 +4096,10 @@ export default function ProjectsPage() {
             contentLoading={selectedProject?.status === 'processing' || isProjectRefreshing}
             outputs={outputs}
             onCopyOutput={handleCopyOutput}
-            onDownloadOutput={handleDownloadOutput}
+            onSaveOutputLocally={handleSaveOutputLocally}
+            onSaveOutputToLibrary={handleSaveOutputToLibrary}
             onDeleteOutput={handleDeleteOutput}
+            savingOutputToLibrary={savingOutputToLibrary}
             deletingOutput={deletingOutput}
             generatingContentTypes={generatingContentTypes}
             onGenerateContentBlock={handleGenerateContentBlock}
@@ -4069,15 +4115,22 @@ export default function ProjectsPage() {
             analysisStates={Object.fromEntries(
               ANALYSIS_OPTION_CONFIG.map((option) => [
                 option.key,
-                {
+                (() => {
+                  const compatibility = getAnalysisCompatibility(selectedProject, option.key);
+                  return {
                   available: isAnalysisOptionAvailable(selectedProject, option.key),
                   generating: effectiveGeneratingAnalysisKeys.has(option.key),
-                },
+                    disabled: !compatibility.compatible,
+                    disabledReason: compatibility.reason,
+                  };
+                })(),
               ])
             )}
             onGenerateAnalysisOption={handleGenerateAnalysisOption}
+            generationNotice={textOnlyGenerationNotice}
             isOpen={isMobileViewport ? showMobileContent : contextSidebarOpen}
             onClose={isMobileViewport ? undefined : () => setContextSidebarOpen(false)}
+            requestedTab={shouldOpenGenerateTab ? 'generate' : null}
             readOnly={isDemoMode}
             mobileSheet={!isMobileViewport}
             className={`transition-all duration-300 ease-in-out overflow-hidden ${

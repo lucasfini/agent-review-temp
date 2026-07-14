@@ -141,6 +141,20 @@ function isAnonymousConversationalSpeakerName(name: string | null | undefined): 
   return /^speaker\s+\d+$/i.test(name.trim());
 }
 
+function getSpeakerNameForSuggestion(speaker: any): string | null {
+  return speaker?.customName ||
+    speaker?.finalName ||
+    speaker?.extractedName?.name ||
+    speaker?.fallbackName ||
+    speaker?.name ||
+    null;
+}
+
+function hasOpenSpeakerNameSuggestion(speakers: Record<string, any>, speakerId: string): boolean {
+  const currentName = getSpeakerNameForSuggestion(speakers[speakerId]);
+  return !currentName || isAnonymousConversationalSpeakerName(currentName);
+}
+
 function normalizeSuggestionName(name: string): string {
   return name.toLowerCase().trim().replace(/\s+/g, ' ');
 }
@@ -158,7 +172,8 @@ function buildSpeakerNameSuggestions(speakerData: any): SpeakerAssignmentTrustSu
     return existing.filter((suggestion: any) => (
       typeof suggestion?.speakerId === 'string' &&
       isValidSuggestedSpeakerName(suggestion?.suggestedName) &&
-      typeof suggestion?.confidence === 'number'
+      typeof suggestion?.confidence === 'number' &&
+      hasOpenSpeakerNameSuggestion(speakerData?.speakers || {}, suggestion.speakerId)
     ));
   }
 
@@ -177,8 +192,7 @@ function buildSpeakerNameSuggestions(speakerData: any): SpeakerAssignmentTrustSu
       const speakerId = proposal?.targetSpeakerId || proposal?.sourceSpeakerId;
       if (typeof speakerId !== 'string' || !speakerId) continue;
 
-      const currentName = speakers[speakerId]?.finalName || speakers[speakerId]?.name || speakers[speakerId]?.fallbackName;
-      if (currentName && !isAnonymousConversationalSpeakerName(currentName)) {
+      if (!hasOpenSpeakerNameSuggestion(speakers, speakerId)) {
         continue;
       }
 
@@ -219,8 +233,7 @@ function buildSpeakerNameSuggestions(speakerData: any): SpeakerAssignmentTrustSu
     const candidateSpeakerIds = Object.keys(speakers)
       .filter((speakerId) => {
         const speaker = speakers[speakerId];
-        const currentName = speaker?.finalName || speaker?.name || speaker?.fallbackName || null;
-        if (!isAnonymousConversationalSpeakerName(currentName)) return false;
+        if (!hasOpenSpeakerNameSuggestion(speakers, speakerId)) return false;
         const role = String(speaker?.role || '').toLowerCase();
         if (role === 'advertiser' || role === 'listener_clip') return false;
         return true;
@@ -721,16 +734,21 @@ function buildTargetedReviewIndicesForSpeaker(
     boundaryReviewBudget?: number;
   }
 ): number[] {
+  const hasConfirmedReviewCoverage = ownedSegments.some(({ segment }) => isConfirmedReviewSegment(segment));
   const hasUnresolvedUncertainSegments = ownedSegments.some(({ segment }) => (
     segment.status === 'uncertain' &&
     isRiskySegmentReason(segment.confidenceReason) &&
     !isConfirmedReviewSegment(segment)
   ));
-  const riskySpeaker = options.requiresReview ||
-    (options.assignmentConfidence != null && options.assignmentConfidence < 0.75) ||
-    options.contradictions.length > 0 ||
-    options.anonymous ||
-    hasUnresolvedUncertainSegments;
+  const lowAssignmentConfidence = options.assignmentConfidence != null && options.assignmentConfidence < 0.75;
+  const hasAssignmentContradictions = options.contradictions.length > 0;
+  const needsSpeakerLevelSample = !hasConfirmedReviewCoverage && (
+    options.requiresReview ||
+    lowAssignmentConfidence ||
+    hasAssignmentContradictions ||
+    options.anonymous
+  );
+  const riskySpeaker = needsSpeakerLevelSample || hasUnresolvedUncertainSegments;
 
   if (!riskySpeaker) return [];
 
@@ -746,6 +764,20 @@ function buildTargetedReviewIndicesForSpeaker(
     existing.reasons.add(reason);
     candidates.set(index, existing);
   };
+  const addSupportingReason = (index: number, reason: string) => {
+    const existing = candidates.get(index);
+    if (!existing) return;
+    existing.reasons.add(reason);
+  };
+  const speakerLevelReason = options.anonymous
+    ? 'anonymous_fallback'
+    : hasAssignmentContradictions
+      ? 'assignment_contradiction'
+      : lowAssignmentConfidence
+        ? 'low_assignment_confidence'
+        : options.requiresReview
+          ? 'requires_review'
+          : null;
 
   const sortedOwnedSegments = [...ownedSegments].sort((a, b) => a.index - b.index);
 
@@ -759,18 +791,18 @@ function buildTargetedReviewIndicesForSpeaker(
       }
       addCandidate(index, 100, `uncertain:${segment.confidenceReason || 'unknown'}`);
     }
-    if (contradictionAliases.length > 0 && segmentContainsAlias(segment, contradictionAliases)) {
+    if (needsSpeakerLevelSample && contradictionAliases.length > 0 && segmentContainsAlias(segment, contradictionAliases)) {
       addCandidate(index, 90, 'contradiction_alias');
     }
     const text = String(segment.text || '');
     if (/\b[A-Z][a-z]+,\s/.test(text) || /\?/.test(text)) {
-      addCandidate(index, 70, 'anchor_turn');
+      addSupportingReason(index, 'anchor_turn');
     }
   }
 
   if (!options.stableOwnership) {
     for (const { index } of sortedOwnedSegments.slice(0, 2)) {
-      addCandidate(index, 65, 'early_turn');
+      addSupportingReason(index, 'early_turn');
     }
   }
 
@@ -788,13 +820,17 @@ function buildTargetedReviewIndicesForSpeaker(
       return a.index - b.index;
     });
 
+  if (needsSpeakerLevelSample && speakerLevelReason && substantiveSegments.length > 0) {
+    addCandidate(substantiveSegments[0].index, 80, speakerLevelReason);
+  }
+
   if (!options.stableOwnership || !options.panelCorroborated) {
     for (const candidate of substantiveSegments.slice(0, 2)) {
-      addCandidate(candidate.index, 55, 'representative_substantive');
+      addSupportingReason(candidate.index, 'representative_substantive');
     }
   }
 
-  if (options.anonymous && sortedOwnedSegments.length > 0) {
+  if (needsSpeakerLevelSample && options.anonymous && sortedOwnedSegments.length > 0) {
     addCandidate(sortedOwnedSegments[0].index, 60, 'anonymous_fallback');
   }
 
@@ -821,16 +857,21 @@ function buildTargetedReviewItemsForSpeaker(
     boundaryReviewBudget?: number;
   }
 ): Array<{ index: number; speakerId: string; reasons: string[]; primaryReason: string }> {
+  const hasConfirmedReviewCoverage = ownedSegments.some(({ segment }) => isConfirmedReviewSegment(segment));
   const hasUnresolvedUncertainSegments = ownedSegments.some(({ segment }) => (
     segment.status === 'uncertain' &&
     isRiskySegmentReason(segment.confidenceReason) &&
     !isConfirmedReviewSegment(segment)
   ));
-  const riskySpeaker = options.requiresReview ||
-    (options.assignmentConfidence != null && options.assignmentConfidence < 0.75) ||
-    options.contradictions.length > 0 ||
-    options.anonymous ||
-    hasUnresolvedUncertainSegments;
+  const lowAssignmentConfidence = options.assignmentConfidence != null && options.assignmentConfidence < 0.75;
+  const hasAssignmentContradictions = options.contradictions.length > 0;
+  const needsSpeakerLevelSample = !hasConfirmedReviewCoverage && (
+    options.requiresReview ||
+    lowAssignmentConfidence ||
+    hasAssignmentContradictions ||
+    options.anonymous
+  );
+  const riskySpeaker = needsSpeakerLevelSample || hasUnresolvedUncertainSegments;
 
   if (!riskySpeaker) return [];
 
@@ -846,6 +887,20 @@ function buildTargetedReviewItemsForSpeaker(
     existing.reasons.add(reason);
     candidates.set(index, existing);
   };
+  const addSupportingReason = (index: number, reason: string) => {
+    const existing = candidates.get(index);
+    if (!existing) return;
+    existing.reasons.add(reason);
+  };
+  const speakerLevelReason = options.anonymous
+    ? 'anonymous_fallback'
+    : hasAssignmentContradictions
+      ? 'assignment_contradiction'
+      : lowAssignmentConfidence
+        ? 'low_assignment_confidence'
+        : options.requiresReview
+          ? 'requires_review'
+          : null;
 
   const sortedOwnedSegments = [...ownedSegments].sort((a, b) => a.index - b.index);
 
@@ -859,18 +914,18 @@ function buildTargetedReviewItemsForSpeaker(
       }
       addCandidate(index, 100, `uncertain:${segment.confidenceReason || 'unknown'}`);
     }
-    if (contradictionAliases.length > 0 && segmentContainsAlias(segment, contradictionAliases)) {
+    if (needsSpeakerLevelSample && contradictionAliases.length > 0 && segmentContainsAlias(segment, contradictionAliases)) {
       addCandidate(index, 90, 'contradiction_alias');
     }
     const text = String(segment.text || '');
     if (/\b[A-Z][a-z]+,\s/.test(text) || /\?/.test(text)) {
-      addCandidate(index, 70, 'anchor_turn');
+      addSupportingReason(index, 'anchor_turn');
     }
   }
 
   if (!options.stableOwnership) {
     for (const { index } of sortedOwnedSegments.slice(0, 2)) {
-      addCandidate(index, 65, 'early_turn');
+      addSupportingReason(index, 'early_turn');
     }
   }
 
@@ -888,13 +943,17 @@ function buildTargetedReviewItemsForSpeaker(
       return a.index - b.index;
     });
 
+  if (needsSpeakerLevelSample && speakerLevelReason && substantiveSegments.length > 0) {
+    addCandidate(substantiveSegments[0].index, 80, speakerLevelReason);
+  }
+
   if (!options.stableOwnership || !options.panelCorroborated) {
     for (const candidate of substantiveSegments.slice(0, 2)) {
-      addCandidate(candidate.index, 55, 'representative_substantive');
+      addSupportingReason(candidate.index, 'representative_substantive');
     }
   }
 
-  if (options.anonymous && sortedOwnedSegments.length > 0) {
+  if (needsSpeakerLevelSample && options.anonymous && sortedOwnedSegments.length > 0) {
     addCandidate(sortedOwnedSegments[0].index, 60, 'anonymous_fallback');
   }
 

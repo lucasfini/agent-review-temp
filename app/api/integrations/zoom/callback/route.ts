@@ -1,6 +1,6 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { Buffer } from 'buffer';
-import { upsertConnection } from '../../_utils';
+import { integrationErrorResponse, signedOutIntegrationResponse, upsertConnection } from '../../_utils';
 
 export async function GET(request: NextRequest) {
   const { searchParams } = new URL(request.url);
@@ -8,12 +8,12 @@ export async function GET(request: NextRequest) {
   const state = searchParams.get('state');
 
   if (!code || !state) {
-    return NextResponse.json({ error: 'Missing code or state' }, { status: 400 });
+    return integrationErrorResponse({ provider: 'zoom', code: 'OAUTH_LINK_EXPIRED', action: 'callback', status: 400 });
   }
 
   const storedState = request.cookies.get('zoom_oauth_state')?.value;
   if (!storedState || storedState !== state) {
-    return NextResponse.json({ error: 'Invalid OAuth state' }, { status: 400 });
+    return integrationErrorResponse({ provider: 'zoom', code: 'OAUTH_LINK_EXPIRED', action: 'callback', status: 400 });
   }
 
   const clientId = process.env.ZOOM_CLIENT_ID;
@@ -21,7 +21,7 @@ export async function GET(request: NextRequest) {
   const redirectUri = process.env.ZOOM_REDIRECT_URI;
 
   if (!clientId || !clientSecret || !redirectUri) {
-    return NextResponse.json({ error: 'Zoom OAuth not configured' }, { status: 500 });
+    return integrationErrorResponse({ provider: 'zoom', code: 'INTEGRATION_NOT_CONFIGURED', action: 'connect', status: 500 });
   }
 
   const authHeader = Buffer.from(`${clientId}:${clientSecret}`).toString('base64');
@@ -40,7 +40,14 @@ export async function GET(request: NextRequest) {
 
   if (!tokenRes.ok) {
     const errorText = await tokenRes.text();
-    return NextResponse.json({ error: `Zoom token error: ${errorText}` }, { status: 500 });
+    return integrationErrorResponse({
+      provider: 'zoom',
+      code: 'RECONNECT_REQUIRED',
+      action: 'connect',
+      status: 401,
+      logPrefix: '[ZOOM CALLBACK] Token exchange failed:',
+      cause: errorText,
+    });
   }
 
   const tokenData = await tokenRes.json();
@@ -53,14 +60,14 @@ export async function GET(request: NextRequest) {
   });
 
   if (!userRes.ok) {
-    return NextResponse.json({ error: 'Failed to fetch Zoom user' }, { status: 500 });
+    return integrationErrorResponse({ provider: 'zoom', code: 'RECONNECT_REQUIRED', action: 'connect', status: 401 });
   }
 
   const zoomUser = await userRes.json();
 
   const userId = request.cookies.get('zoom_oauth_user')?.value;
   if (!userId) {
-    return NextResponse.json({ error: 'Missing OAuth user context' }, { status: 401 });
+    return signedOutIntegrationResponse();
   }
 
   await upsertConnection({
@@ -74,7 +81,7 @@ export async function GET(request: NextRequest) {
     metadata: { email: zoomUser.email, name: zoomUser.first_name ? `${zoomUser.first_name} ${zoomUser.last_name}` : zoomUser.email }
   });
 
-  const response = NextResponse.redirect(new URL('/dashboard/settings', request.url));
+  const response = NextResponse.redirect(new URL('/dashboard/integrations', request.url));
   response.cookies.delete('zoom_oauth_state');
   response.cookies.delete('zoom_oauth_user');
   return response;

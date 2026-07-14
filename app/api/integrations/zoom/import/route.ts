@@ -1,5 +1,5 @@
 import { NextRequest, NextResponse } from 'next/server';
-import { getConnection, getDecryptedTokens } from '../../_utils';
+import { getConnection, getDecryptedTokens, integrationErrorResponse, signedOutIntegrationResponse } from '../../_utils';
 import { supabaseAdmin } from '@/lib/supabase/server';
 import { importRecording } from '@/lib/integrations/importer';
 import { billingErrorResponse } from '@/lib/billing/middleware';
@@ -9,7 +9,8 @@ import { releaseReservation } from '@/lib/billing/credit';
 import { resolveOrganizationIdForWrite } from '@/lib/authz/organization-context';
 import { runEntitlementGuard } from '@/lib/billing/entitlement-guards';
 import { recordSubscriptionUsage } from '@/lib/billing/subscription-usage-counters';
-import { assertPlanUploadDuration, createPlanCreditReservation } from '@/lib/billing/plan-credits';
+import { createPlanCreditReservation, resolvePlanUploadDuration } from '@/lib/billing/plan-credits';
+import { getUploadProcessingReservationExpiresAt } from '@/lib/billing/plan-upload-limits';
 import { estimateAudioProductCredits } from '@/lib/billing/product-credits';
 
 async function ensureAuth(request: NextRequest) {
@@ -23,28 +24,28 @@ async function ensureAuth(request: NextRequest) {
 export async function POST(request: NextRequest) {
   try {
     const user = await ensureAuth(request);
-    if (!user) return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
+    if (!user) return signedOutIntegrationResponse();
 
     const body = await request.json().catch(() => ({}));
     const meetingId = body?.meetingId;
     const fileId = body?.fileId;
     const analysisOptions = normalizeAnalysisOptions(body?.analysisOptions);
     const performanceLevel = body?.performanceLevel || getProcessingTierForAnalysis(analysisOptions);
-    const estimatedDurationSeconds = typeof body?.estimatedDurationSeconds === 'number'
-      ? Math.max(1, Math.round(body.estimatedDurationSeconds))
-      : 60 * 60;
+    const organizationId = await resolveOrganizationIdForWrite(user.id);
+    const resolvedDuration = await resolvePlanUploadDuration({
+      organizationId,
+      userId: user.id,
+      durationSeconds: typeof body?.estimatedDurationSeconds === 'number'
+        ? body.estimatedDurationSeconds
+        : null,
+    });
+    const estimatedDurationSeconds = resolvedDuration.durationSeconds;
+    const subscription = resolvedDuration.subscription;
 
     const estimatedCost = await estimateTranscriptionCostAsync({
       durationSeconds: estimatedDurationSeconds,
       tier: performanceLevel,
       analysisOptions,
-    });
-
-    const organizationId = await resolveOrganizationIdForWrite(user.id);
-    const subscription = await assertPlanUploadDuration({
-      organizationId,
-      userId: user.id,
-      durationSeconds: estimatedDurationSeconds,
     });
     const entitlementGuard = await runEntitlementGuard({
       organizationId,
@@ -57,6 +58,7 @@ export async function POST(request: NextRequest) {
         metadata: {
           provider: 'zoom',
           estimatedDurationSeconds,
+          durationSource: resolvedDuration.durationSource,
         },
       },
     });
@@ -65,14 +67,14 @@ export async function POST(request: NextRequest) {
     }
 
     if (!meetingId || !fileId) {
-      return NextResponse.json({ error: 'Missing meetingId or fileId' }, { status: 400 });
+      return integrationErrorResponse({ provider: 'zoom', code: 'BAD_REQUEST', action: 'import', status: 400 });
     }
 
     const connection = await getConnection(user.id, 'zoom');
-    if (!connection) return NextResponse.json({ error: 'Zoom not connected' }, { status: 404 });
+    if (!connection) return integrationErrorResponse({ provider: 'zoom', code: 'RECONNECT_REQUIRED', action: 'import', status: 404, userId: user.id });
 
     const { accessToken } = getDecryptedTokens(connection);
-    if (!accessToken) return NextResponse.json({ error: 'Zoom token missing' }, { status: 401 });
+    if (!accessToken) return integrationErrorResponse({ provider: 'zoom', code: 'RECONNECT_REQUIRED', action: 'import', status: 401, userId: user.id });
 
     const detailsRes = await fetch(`https://api.zoom.us/v2/meetings/${encodeURIComponent(meetingId)}/recordings`, {
       headers: { Authorization: `Bearer ${accessToken}` }
@@ -80,13 +82,21 @@ export async function POST(request: NextRequest) {
 
     if (!detailsRes.ok) {
       const text = await detailsRes.text();
-      return NextResponse.json({ error: `Zoom API error: ${text}` }, { status: 500 });
+      return integrationErrorResponse({
+        provider: 'zoom',
+        code: detailsRes.status === 401 || detailsRes.status === 403 ? 'RECONNECT_REQUIRED' : 'LIST_FAILED',
+        action: 'import',
+        status: detailsRes.status === 401 || detailsRes.status === 403 ? 401 : 500,
+        logPrefix: '[ZOOM IMPORT] Provider metadata error:',
+        cause: text,
+        userId: user.id,
+      });
     }
 
     const details = await detailsRes.json();
     const file = (details.recording_files || []).find((f: any) => f.id === fileId);
     if (!file) {
-      return NextResponse.json({ error: 'Recording file not found' }, { status: 404 });
+      return integrationErrorResponse({ provider: 'zoom', code: 'BAD_REQUEST', action: 'import', status: 404 });
     }
 
     const existing = await supabaseAdmin
@@ -107,7 +117,15 @@ export async function POST(request: NextRequest) {
 
     if (!downloadRes.ok) {
       const text = await downloadRes.text();
-      return NextResponse.json({ error: `Zoom download error: ${text}` }, { status: 500 });
+      return integrationErrorResponse({
+        provider: 'zoom',
+        code: downloadRes.status === 401 || downloadRes.status === 403 ? 'RECONNECT_REQUIRED' : 'DOWNLOAD_FAILED',
+        action: 'download',
+        status: downloadRes.status === 401 || downloadRes.status === 403 ? 401 : 500,
+        logPrefix: '[ZOOM IMPORT] Provider download error:',
+        cause: text,
+        userId: user.id,
+      });
     }
 
     const arrayBuffer = await downloadRes.arrayBuffer();
@@ -134,8 +152,9 @@ export async function POST(request: NextRequest) {
         productCreditWorkflow: performanceLevel,
         analysisOptions,
         estimatedDurationSeconds,
+        durationSource: resolvedDuration.durationSource,
       },
-      expiresAt: new Date(Date.now() + (2 * 60 * 60 * 1000)).toISOString(),
+      expiresAt: getUploadProcessingReservationExpiresAt(),
     });
 
     let result;
@@ -152,6 +171,7 @@ export async function POST(request: NextRequest) {
         reservationId: reservation.id,
         reservationHoldAmount: estimatedProductCredits,
         reservationEstimatedCost: estimatedCost.total,
+        estimatedDurationSeconds,
         externalSource: { provider: 'zoom', recordingId: fileId }
       });
     } catch (importError) {
@@ -195,6 +215,6 @@ export async function POST(request: NextRequest) {
     const billingResponse = billingErrorResponse(error);
     if (billingResponse.status === 402) return billingResponse;
     console.error('[ZOOM IMPORT] Failed:', error);
-    return NextResponse.json({ error: 'Import failed' }, { status: 500 });
+    return integrationErrorResponse({ provider: 'zoom', code: 'IMPORT_FAILED', action: 'import', status: 500 });
   }
 }

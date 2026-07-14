@@ -157,10 +157,10 @@ function InvitePageContent() {
                   Try again
                 </button>
                 <Link
-                  href="/dashboard/settings?section=workspace"
+                  href="/dashboard/team"
                   className="inline-flex min-h-10 flex-1 items-center justify-center rounded-lg border border-slate-300 px-4 py-2 text-sm font-semibold text-slate-700 hover:bg-slate-50 dark:border-slate-700 dark:text-slate-200 dark:hover:bg-slate-800"
                 >
-                  Settings
+                  Team
                 </Link>
               </div>
             </>

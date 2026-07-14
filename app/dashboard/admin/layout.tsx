@@ -42,14 +42,14 @@ export default async function AdminLayout({
   ];
 
   return (
-    <div className="min-h-full bg-transparent">
+    <div className="themeable-admin min-h-full bg-transparent">
       <div className="mx-auto max-w-7xl px-6 pt-6">
-        <div className="flex flex-wrap gap-2 rounded-2xl border border-slate-800 bg-slate-950/70 p-2">
+        <div className="flex flex-wrap gap-2 rounded-2xl border border-slate-200 bg-white/80 p-2 shadow-sm dark:border-slate-800 dark:bg-slate-950/70">
           {adminLinks.map((link) => (
             <Link
               key={link.href}
               href={link.href}
-              className="rounded-xl px-3 py-2 text-sm text-slate-300 transition hover:bg-slate-900 hover:text-white"
+              className="rounded-xl px-3 py-2 text-sm text-slate-600 transition hover:bg-slate-100 hover:text-slate-950 dark:text-slate-300 dark:hover:bg-slate-900 dark:hover:text-white"
             >
               {link.label}
             </Link>

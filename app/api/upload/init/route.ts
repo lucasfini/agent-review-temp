@@ -18,7 +18,13 @@ import { releaseReservation } from '@/lib/billing/credit';
 import { resolveOrganizationIdForWrite } from '@/lib/authz/organization-context';
 import { runEntitlementGuard } from '@/lib/billing/entitlement-guards';
 import { assertPlanUploadDuration, createPlanCreditReservation } from '@/lib/billing/plan-credits';
+import { InsufficientPlanCreditsError } from '@/lib/billing/plan-credits';
 import { estimateAudioProductCredits } from '@/lib/billing/product-credits';
+import { getUploadProcessingReservationExpiresAt } from '@/lib/billing/plan-upload-limits';
+import {
+    notifyCreditsDepleted,
+    notifyUploadStarted,
+} from '@/lib/notifications/notification-events';
 
 export const runtime = 'nodejs';
 
@@ -43,6 +49,9 @@ const sanitizeFileName = (name: string) => {
 };
 
 export async function POST(request: NextRequest) {
+    let notificationOrganizationId: string | null = null;
+    let notificationUserId: string | null = null;
+    let notificationTitle: string | null = null;
     try {
         const authHeader = request.headers.get('authorization');
         const { data: { user }, error: authError } = await supabaseAdmin.auth.getUser(
@@ -60,6 +69,7 @@ export async function POST(request: NextRequest) {
 
         const body = await request.json();
         const { fileName, contentType, size, title, rosterSpeakers, speakerCount } = body;
+        notificationTitle = typeof title === 'string' ? title.trim() : null;
         const requestedOrganizationId = typeof body?.organization_id === 'string'
             ? body.organization_id
             : null;
@@ -105,6 +115,8 @@ export async function POST(request: NextRequest) {
         });
 
         const organizationId = await resolveOrganizationIdForWrite(user.id, requestedOrganizationId);
+        notificationOrganizationId = organizationId;
+        notificationUserId = user.id;
         const subscription = await assertPlanUploadDuration({
             organizationId,
             userId: user.id,
@@ -149,7 +161,7 @@ export async function POST(request: NextRequest) {
                 estimatedDuration,
                 durationSource: providedEstimatedDuration ? 'client_metadata' : 'file_size_estimate',
             },
-            expiresAt: new Date(Date.now() + (2 * 60 * 60 * 1000)).toISOString(),
+            expiresAt: getUploadProcessingReservationExpiresAt(),
         });
 
         // We cannot compute actual file hash on client easily without reading the whole file into memory.
@@ -235,6 +247,19 @@ export async function POST(request: NextRequest) {
             return NextResponse.json({ error: 'Failed to create project' }, { status: 500 });
         }
 
+        await notifyUploadStarted({
+            organizationId,
+            actorUserId: user.id,
+            projectId: project.id,
+            projectTitle: project.title || title.trim(),
+            metadata: {
+                source: 'direct_upload',
+                fileName: sanitizedBaseName,
+                estimatedDuration,
+                processingTier,
+            },
+        });
+
         // Save roster speakers if provided
         if (rosterSpeakers && Array.isArray(rosterSpeakers)) {
             try {
@@ -279,12 +304,29 @@ export async function POST(request: NextRequest) {
             objectKey,
             projectId: project.id,
             audioFingerprint: pseudoFingerprint,
-            uploadToken
+            uploadToken,
+            billing: {
+                estimatedCredits: estimatedProductCredits,
+                remainingCreditsAfterUpload: reservation.remainingCreditsAfterReservation ?? null,
+                topUpsEnabled: Boolean(subscription.plan?.topUpEnabled),
+                topUpPath: subscription.plan?.topUpEnabled ? '/dashboard/billing' : null,
+            }
         });
     } catch (error) {
         console.error('Init upload error:', error);
         const billingResponse = billingErrorResponse(error);
         if (billingResponse.status === 402) {
+            if (error instanceof InsufficientPlanCreditsError) {
+                await notifyCreditsDepleted({
+                    organizationId: notificationOrganizationId || error.organizationId,
+                    actorUserId: notificationUserId,
+                    idempotencyKey: `credits_depleted:upload_init:${notificationOrganizationId || error.organizationId}:${Date.now()}`,
+                    metadata: {
+                        source: 'upload_init',
+                        projectTitle: notificationTitle,
+                    },
+                });
+            }
             return billingResponse;
         }
         return NextResponse.json(

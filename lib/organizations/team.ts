@@ -4,12 +4,18 @@ import type { SupabaseClient } from '@supabase/supabase-js';
 import { isValidEmail } from '@/lib/auth/validation';
 import { can } from '@/lib/authz/permissions';
 import {
+  type OrganizationType,
   normalizeOrganizationMemberRole,
   type WorkspaceAssignableRole,
   type WorkspaceRole,
+  type OrganizationRecord,
 } from '@/lib/authz/types';
 import { getAppBaseUrl } from '@/lib/app-url';
-import { getOrganizationSubscription, isSubscriptionUsable } from '@/lib/billing/subscriptions';
+import {
+  getOrganizationSubscription,
+  getSubscriptionSeatLimit,
+  isSubscriptionUsable,
+} from '@/lib/billing/subscriptions';
 
 export type WorkspaceMemberRole = WorkspaceRole;
 export type WorkspaceInvitationStatus = 'pending' | 'accepted' | 'canceled' | 'expired';
@@ -52,6 +58,163 @@ export interface WorkspaceTeamSnapshot {
   members: WorkspaceMember[];
   invitations: WorkspaceInvitation[];
   seats: WorkspaceSeatSummary;
+}
+
+export type InvitationOrganizationContext = {
+  organization: OrganizationRecord;
+  isNewTeam: boolean;
+};
+
+type TeamWorkspaceByIdRow = {
+  id: string;
+  name: string;
+  slug: string | null;
+  type: OrganizationType;
+  owner_user_id: string | null;
+  onboarding_completed_at: string | null;
+  onboarding_skipped_at: string | null;
+  onboarding_metadata_json: Record<string, unknown> | null;
+  created_at: string;
+  updated_at: string;
+};
+
+function deriveTeamWorkspaceName(baseName: string): string {
+  const trimmed = baseName.trim();
+  const name = trimmed || 'Team';
+  return name.endsWith(' Team') ? name : `${name} Team`;
+}
+
+function workspaceSlugForOwner(ownerUserId: string): string {
+  return `team-${ownerUserId}`;
+}
+
+async function getExistingTeamWorkspaceForOwner(
+  supabase: SupabaseClient<any>,
+  ownerUserId: string
+): Promise<OrganizationRecord | null> {
+  const { data, error } = await supabase
+    .from('organizations')
+    .select('id,name,slug,type,owner_user_id,created_at,updated_at,onboarding_completed_at,onboarding_skipped_at,onboarding_metadata_json')
+    .eq('owner_user_id', ownerUserId)
+    .eq('type', 'saas_customer')
+    .order('created_at', { ascending: true })
+    .limit(1)
+    .maybeSingle() as { data: TeamWorkspaceByIdRow | null; error: any };
+
+  if (error) {
+    throw new WorkspaceTeamError(500, error.message || 'Failed to load existing team workspace');
+  }
+
+  return data
+    ? {
+      id: data.id,
+      name: data.name,
+      slug: data.slug,
+      type: data.type,
+      owner_user_id: data.owner_user_id,
+      onboarding_completed_at: data.onboarding_completed_at ?? null,
+      onboarding_skipped_at: data.onboarding_skipped_at ?? null,
+      onboarding_metadata_json: data.onboarding_metadata_json ?? null,
+      created_at: data.created_at,
+      updated_at: data.updated_at,
+    }
+    : null;
+}
+
+export async function resolveInviteOrganization(
+  params: {
+    supabase: SupabaseClient<any>;
+    ownerUserId: string;
+    fallbackWorkspaceName: string;
+  }
+): Promise<InvitationOrganizationContext> {
+  const ownerTeamOrganizationIds = await getActiveTeamOrganizationIdsForUser(
+    params.supabase,
+    params.ownerUserId
+  );
+
+  const existing = await getExistingTeamWorkspaceForOwner(
+    params.supabase,
+    params.ownerUserId
+  );
+
+  if (existing) {
+    if (ownerTeamOrganizationIds.size === 0) {
+      ownerTeamOrganizationIds.add(existing.id);
+    }
+
+    return {
+      organization: existing,
+      isNewTeam: false,
+    };
+  }
+
+  if (ownerTeamOrganizationIds.size > 0) {
+    throw new WorkspaceTeamError(409, 'You are already a member of a team workspace');
+  }
+
+  const now = new Date().toISOString();
+  const slug = workspaceSlugForOwner(params.ownerUserId);
+  const { data, error } = await params.supabase
+    .from('organizations')
+    .insert({
+      name: deriveTeamWorkspaceName(params.fallbackWorkspaceName),
+      slug,
+      type: 'saas_customer',
+      owner_user_id: params.ownerUserId,
+    } as any)
+    .select('*')
+    .single() as { data: TeamWorkspaceByIdRow | null; error: any };
+
+  if (error || !data) {
+    if (error?.code === '23505' && (/organization.*slug/i.test(error.message || '') || error.message?.includes('organizations_slug_unique'))) {
+      const recovered = await getExistingTeamWorkspaceForOwner(
+        params.supabase,
+        params.ownerUserId
+      );
+      if (!recovered) {
+        throw new WorkspaceTeamError(500, error.message || 'Failed to create team workspace');
+      }
+      return { organization: recovered, isNewTeam: false };
+    }
+
+    throw new WorkspaceTeamError(500, error?.message || 'Failed to create team workspace');
+  }
+
+  const organization: OrganizationRecord = {
+    id: data.id,
+    name: data.name,
+    slug: data.slug,
+    type: data.type,
+    owner_user_id: data.owner_user_id,
+    onboarding_completed_at: data.onboarding_completed_at ?? null,
+    onboarding_skipped_at: data.onboarding_skipped_at ?? null,
+    onboarding_metadata_json: data.onboarding_metadata_json ?? null,
+    created_at: data.created_at,
+    updated_at: data.updated_at,
+  };
+
+  const membershipPayload = {
+    organization_id: data.id,
+    user_id: params.ownerUserId,
+    role: 'owner',
+    status: 'active',
+    invited_by: params.ownerUserId,
+    joined_at: now,
+  };
+
+  const { error: membershipError } = await params.supabase
+    .from('organization_members')
+    .upsert(membershipPayload as any, { onConflict: 'organization_id,user_id' });
+
+  if (membershipError) {
+    throw new WorkspaceTeamError(500, membershipError.message || 'Failed to create team workspace membership');
+  }
+
+  return {
+    organization,
+    isNewTeam: true,
+  };
 }
 
 type OrganizationMemberRow = {
@@ -250,7 +413,7 @@ async function getSeatLimit(
 ): Promise<number> {
   const subscription = await getOrganizationSubscription(supabase, organizationId);
   const seatLimit = subscription && isSubscriptionUsable(subscription.status)
-    ? subscription.plan?.limits.seatLimit
+    ? getSubscriptionSeatLimit(subscription)
     : null;
 
   return typeof seatLimit === 'number' && seatLimit > 0 ? seatLimit : 1;
@@ -296,6 +459,53 @@ async function countPendingInvitations(
   }
 
   return data?.length || 0;
+}
+
+async function getOrganizationType(
+  supabase: SupabaseClient<any>,
+  organizationId: string
+): Promise<OrganizationType | null> {
+  const { data, error } = await supabase
+    .from('organizations')
+    .select('type')
+    .eq('id', organizationId)
+    .maybeSingle() as { data: { type: OrganizationType } | null; error: any };
+
+  if (error) {
+    throw new WorkspaceTeamError(500, error.message || 'Failed to resolve organization type');
+  }
+
+  return data?.type || null;
+}
+
+async function getActiveTeamOrganizationIdsForUser(
+  supabase: SupabaseClient<any>,
+  userId: string
+): Promise<Set<string>> {
+  const { data: activeMemberships, error } = await supabase
+    .from('organization_members')
+    .select('organization_id')
+    .eq('user_id', userId)
+    .eq('status', 'active') as { data: Array<{ organization_id: string }> | null; error: any };
+
+  if (error) {
+    throw new WorkspaceTeamError(500, error.message || 'Failed to load workspace memberships');
+  }
+
+  const organizationIds = Array.from(new Set((activeMemberships || []).map((membership) => membership.organization_id)));
+  if (organizationIds.length === 0) return new Set();
+
+  const { data: teamOrganizations, error: teamOrganizationsError } = await supabase
+    .from('organizations')
+    .select('id')
+    .in('id', organizationIds)
+    .eq('type', 'saas_customer') as { data: Array<{ id: string }> | null; error: any };
+
+  if (teamOrganizationsError) {
+    throw new WorkspaceTeamError(500, teamOrganizationsError.message || 'Failed to load team workspace memberships');
+  }
+
+  return new Set((teamOrganizations || []).map((teamOrganization) => teamOrganization.id));
 }
 
 export async function getWorkspaceSeatSummary(
@@ -683,6 +893,26 @@ export async function acceptWorkspaceInvitation(params: {
 
   const activeMembers = await countActiveMembers(params.supabase, invitation.organization_id);
   const seatLimit = await getSeatLimit(params.supabase, invitation.organization_id);
+
+  const invitationOrganizationType = await getOrganizationType(params.supabase, invitation.organization_id);
+  if (!invitationOrganizationType) {
+    throw new WorkspaceTeamError(404, 'Workspace invitation is invalid or expired');
+  }
+
+  if (invitationOrganizationType === 'saas_customer') {
+    const teamOrganizationIds = await getActiveTeamOrganizationIdsForUser(params.supabase, params.userId);
+    const hasOtherTeamMembership = Array.from(teamOrganizationIds).some(
+      (teamOrganizationId) => teamOrganizationId !== invitation.organization_id
+    );
+
+    if (hasOtherTeamMembership) {
+      throw new WorkspaceTeamError(
+        409,
+        'You can only be a member of one team workspace at a time'
+      );
+    }
+  }
+
   if (activeMembers >= seatLimit) {
     throw new WorkspaceTeamError(409, 'Workspace seat limit reached');
   }

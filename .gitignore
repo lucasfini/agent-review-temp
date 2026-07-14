@@ -61,6 +61,7 @@ next-env.d.ts
 Screenshot *.png
 screencapture-*.png
 /artifacts/screenshots/
+/artifacts/db-audit/*.dump
 /playwright-report/
 /test-results/
 /docs/pdfs/

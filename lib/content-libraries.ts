@@ -6,6 +6,7 @@ import {
   type OrganizationMemberRole,
   type OrganizationType,
 } from '@/lib/authz/types';
+import { getAvailableStudioAssetName, hideLegacySharedSources } from '@/lib/studio-sharing';
 
 export type ContentLibraryScope = 'private' | 'organization';
 
@@ -209,7 +210,10 @@ export async function listContentLibrariesForOrganizations(
     throw new Error(error.message || 'Failed to load libraries');
   }
 
-  return (data || []).map(mapContentLibraryRow);
+  return hideLegacySharedSources(
+    (data || []).map(mapContentLibraryRow),
+    (library) => library.sharedFromLibraryId
+  );
 }
 
 export async function getContentLibrary(
@@ -280,11 +284,6 @@ export async function shareContentLibraryToOrganization(
   targetOrganizationId: string,
   userId: string
 ): Promise<ContentLibrary> {
-  const sharedPayload = {
-    name: source.name,
-    description: source.description,
-  };
-
   const { data: existing, error: existingError } = await supabase
     .from('content_libraries')
     .select('*')
@@ -297,6 +296,25 @@ export async function shareContentLibraryToOrganization(
     throw new Error(existingError.message || 'Failed to load shared library');
   }
 
+  const { data: siblingLibraries, error: siblingError } = await supabase
+    .from('content_libraries')
+    .select('id, name')
+    .eq('organization_id', targetOrganizationId)
+    .is('client_id', null) as { data: Array<{ id: string; name: string }> | null; error: any };
+
+  if (siblingError) {
+    throw new Error(siblingError.message || 'Failed to load shared library names');
+  }
+
+  const sharedPayload = {
+    name: getAvailableStudioAssetName(source.name, siblingLibraries || [], {
+      excludeId: existing?.id || source.id,
+      maxNameLength: MAX_NAME_LENGTH,
+      suffixLabel: 'team',
+    }),
+    description: source.description,
+  };
+
   if (existing) {
     const { data, error } = await supabase
       .from('content_libraries')
@@ -307,7 +325,7 @@ export async function shareContentLibraryToOrganization(
 
     if (error || !data) {
       if (isUniqueViolation(error)) {
-        throw new ContentLibraryValidationError('A shared library with this name already exists');
+        throw new ContentLibraryValidationError('Could not find an available shared library name');
       }
       throw new Error(error?.message || 'Failed to update shared library');
     }
@@ -317,22 +335,86 @@ export async function shareContentLibraryToOrganization(
 
   const { data, error } = await supabase
     .from('content_libraries')
-    .insert({
+    .update({
       ...sharedPayload,
       organization_id: targetOrganizationId,
       client_id: null,
-      shared_from_library_id: source.id,
-      created_by: userId,
-      owner_user_id: userId,
+      shared_from_library_id: null,
+      owner_user_id: source.ownerUserId || source.createdBy || userId,
     } as any)
+    .eq('id', source.id)
+    .eq('organization_id', source.organizationId)
+    .is('client_id', null)
     .select('*')
-    .single() as { data: ContentLibraryRow | null; error: any };
+    .maybeSingle() as { data: ContentLibraryRow | null; error: any };
 
   if (error || !data) {
     if (isUniqueViolation(error)) {
-      throw new ContentLibraryValidationError('A shared library with this name already exists');
+      throw new ContentLibraryValidationError('Could not find an available team collection name');
     }
     throw new Error(error?.message || 'Failed to share library');
+  }
+
+  return mapContentLibraryRow(data);
+}
+
+export async function unshareContentLibraryToPrivateOrganization(
+  supabase: SupabaseClient<any>,
+  source: ContentLibrary,
+  privateOrganizationId: string,
+  activeOrganizationId: string
+): Promise<ContentLibrary> {
+  const { data: siblingLibraries, error: siblingError } = await supabase
+    .from('content_libraries')
+    .select('id, name')
+    .eq('organization_id', privateOrganizationId)
+    .is('client_id', null) as { data: Array<{ id: string; name: string }> | null; error: any };
+
+  if (siblingError) {
+    throw new Error(siblingError.message || 'Failed to load private library names');
+  }
+
+  const referenceUpdates = [
+    supabase
+      .from('content_library_items')
+      .update({ library_id: null } as any)
+      .eq('organization_id', activeOrganizationId)
+      .eq('library_id', source.id)
+      .is('client_id', null),
+    supabase
+      .from('project_generation_jobs')
+      .update({ library_id: null } as any)
+      .eq('organization_id', activeOrganizationId)
+      .eq('library_id', source.id),
+  ];
+  const referenceResults = await Promise.all(referenceUpdates);
+  const referenceError = referenceResults.find((result) => result.error)?.error;
+  if (referenceError) {
+    throw new Error(referenceError.message || 'Failed to remove team library references');
+  }
+
+  const { data, error } = await supabase
+    .from('content_libraries')
+    .update({
+      organization_id: privateOrganizationId,
+      name: getAvailableStudioAssetName(source.name, siblingLibraries || [], {
+        excludeId: source.id,
+        maxNameLength: MAX_NAME_LENGTH,
+        suffixLabel: 'private',
+      }),
+      shared_from_library_id: null,
+    } as any)
+    .eq('id', source.id)
+    .eq('organization_id', source.organizationId)
+    .is('client_id', null)
+    .select('*')
+    .maybeSingle() as { data: ContentLibraryRow | null; error: any };
+
+  if (error || !data) {
+    if (isUniqueViolation(error)) {
+      throw new ContentLibraryValidationError('Could not find an available private collection name');
+    }
+    throw new Error(error?.message || 'Failed to make library private');
   }
 
   return mapContentLibraryRow(data);

@@ -6,6 +6,11 @@ import {
   type Plan,
 } from '@/lib/billing/plans';
 import {
+  buildPlanUploadLimitMessage,
+  getPlanMaxUploadMinutes,
+  getPlanMaxUploadSeconds,
+} from '@/lib/billing/plan-upload-limits';
+import {
   getOrganizationSubscription,
   isSubscriptionUsable,
   mapOrganizationSubscriptionRow,
@@ -99,9 +104,14 @@ export class PlanUploadLimitError extends Error {
     public readonly organizationId: string,
     public readonly requestedMinutes: number,
     public readonly maxUploadMinutes: number,
-    public readonly planSlug: string | null
+    public readonly planSlug: string | null,
+    public readonly requestedSeconds: number = Math.round(requestedMinutes * 60)
   ) {
-    super(`Upload is ${requestedMinutes.toFixed(1)} minutes; ${planSlug || 'current plan'} allows ${maxUploadMinutes} minutes`);
+    super(buildPlanUploadLimitMessage({
+      requestedSeconds,
+      planSlug,
+      maxUploadMinutes,
+    }));
     this.name = 'PlanUploadLimitError';
   }
 }
@@ -198,6 +208,98 @@ function sortGrantsForConsumption(grants: BillingCreditGrant[], now: Date): Bill
   });
 }
 
+function currentOrRolloverPlanGrantKey(grant: BillingCreditGrant): string | null {
+  if (grant.sourceType !== 'plan_grant' || !grant.periodStart || !grant.periodEnd) return null;
+  return [
+    grant.subscriptionId || 'no-subscription',
+    grant.periodStart,
+    grant.periodEnd,
+  ].join(':');
+}
+
+function planGrantMetadataSlug(grant: BillingCreditGrant): string | null {
+  const slug = grant.metadata.planSlug;
+  return typeof slug === 'string' && slug.trim() ? slug.trim() : null;
+}
+
+function isFreePlanGrant(grant: BillingCreditGrant): boolean {
+  return planGrantMetadataSlug(grant) === 'free';
+}
+
+function chooseCanonicalPlanGrant(
+  existing: BillingCreditGrant,
+  candidate: BillingCreditGrant,
+  subscription?: OrganizationSubscription | null
+): BillingCreditGrant {
+  const activePlanId = subscription?.planId || null;
+  if (activePlanId) {
+    if (candidate.planId === activePlanId && existing.planId !== activePlanId) return candidate;
+    if (existing.planId === activePlanId && candidate.planId !== activePlanId) return existing;
+  }
+
+  const existingCreated = new Date(existing.createdAt).getTime();
+  const candidateCreated = new Date(candidate.createdAt).getTime();
+  if (Number.isFinite(existingCreated) && Number.isFinite(candidateCreated) && candidateCreated < existingCreated) {
+    return candidate;
+  }
+
+  return existing;
+}
+
+export function filterSpendablePlanCreditGrants(
+  grants: BillingCreditGrant[],
+  subscription: OrganizationSubscription | null,
+  now: Date
+): BillingCreditGrant[] {
+  const canonicalPlanGrants = new Map<string, BillingCreditGrant>();
+  const passthrough: BillingCreditGrant[] = [];
+
+  for (const grant of grants) {
+    const key = currentOrRolloverPlanGrantKey(grant);
+    const currentPlanGrant = isCurrentPlanGrant(grant, now);
+    const rolloverPlanGrant = isRolloverPlanGrant(grant, now);
+    const isPeriodPlanGrant = key && (currentPlanGrant || rolloverPlanGrant);
+    if (grant.sourceType === 'plan_grant' && !isPeriodPlanGrant) {
+      continue;
+    }
+
+    if (
+      grant.sourceType === 'plan_grant'
+      && subscription
+      && currentPlanGrant
+      && grant.subscriptionId
+      && grant.subscriptionId !== subscription.id
+    ) {
+      continue;
+    }
+
+    if (
+      grant.sourceType === 'plan_grant'
+      && subscription?.plan?.slug
+      && subscription.plan.slug !== 'free'
+      && isFreePlanGrant(grant)
+    ) {
+      continue;
+    }
+
+    if (!key) {
+      passthrough.push(grant);
+      continue;
+    }
+
+    const existing = canonicalPlanGrants.get(key);
+    canonicalPlanGrants.set(
+      key,
+      existing ? chooseCanonicalPlanGrant(existing, grant, subscription) : grant
+    );
+  }
+
+  return [
+    ...passthrough,
+    ...canonicalPlanGrants.values(),
+  ];
+}
+
 async function reserveGrantCredits(
   supabase: SupabaseClient<any>,
   grant: BillingCreditGrant,
@@ -222,6 +324,85 @@ async function reserveGrantCredits(
   if (!data) {
     throw new Error('Credit grant changed while reserving credits; please retry');
   }
+}
+
+async function reconcilePlanGrantToSubscription(params: {
+  supabase: SupabaseClient<any>;
+  grant: BillingCreditGrant;
+  subscription: OrganizationSubscription;
+  plan: Plan;
+  monthlyGrant: number;
+  periodStart: string;
+  periodEnd: string;
+  idempotencyKey: string;
+}): Promise<BillingCreditGrant> {
+  const usedCredits = roundProductCredits(Math.max(0, params.grant.creditsGranted - params.grant.creditsRemaining));
+  const creditsGranted = roundProductCredits(params.monthlyGrant);
+  const creditsRemaining = roundProductCredits(Math.max(0, creditsGranted - usedCredits));
+  const expiresAt = planGrantExpiry(params.plan, params.periodEnd);
+  const metadata = {
+    ...params.grant.metadata,
+    planSlug: params.plan.slug,
+    creditRolloverMonths: params.plan.creditRolloverMonths,
+    reconciledAt: new Date().toISOString(),
+    previousPlanId: params.grant.planId,
+    previousCreditsGranted: params.grant.creditsGranted,
+  };
+
+  const needsUpdate = params.grant.subscriptionId !== params.subscription.id
+    || params.grant.planId !== params.plan.id
+    || params.grant.creditsGranted !== creditsGranted
+    || params.grant.creditsRemaining !== creditsRemaining
+    || params.grant.expiresAt !== expiresAt
+    || params.grant.idempotencyKey !== params.idempotencyKey;
+
+  if (!needsUpdate) {
+    return params.grant;
+  }
+
+  const { data, error } = await params.supabase
+    .from('billing_credit_grants')
+    .update({
+      subscription_id: params.subscription.id,
+      plan_id: params.plan.id,
+      credits_granted: creditsGranted,
+      credits_remaining: creditsRemaining,
+      period_start: params.periodStart,
+      period_end: params.periodEnd,
+      expires_at: expiresAt,
+      idempotency_key: params.idempotencyKey,
+      metadata_json: metadata,
+    } as any)
+    .eq('id', params.grant.id)
+    .eq('updated_at', params.grant.updatedAt)
+    .select('*')
+    .maybeSingle() as { data: GrantRow | null; error: any };
+
+  if (error?.code === '23505') {
+    const { data: racedGrant, error: racedError } = await params.supabase
+      .from('billing_credit_grants')
+      .select('*')
+      .eq('idempotency_key', params.idempotencyKey)
+      .limit(1)
+      .maybeSingle() as { data: GrantRow | null; error: any };
+
+    if (racedError) {
+      throw new Error(racedError.message || 'Failed to load raced reconciled plan credit grant');
+    }
+    if (racedGrant) {
+      return mapGrantRow(racedGrant);
+    }
+  }
+
+  if (error) {
+    throw new Error(error.message || 'Failed to reconcile plan credit grant');
+  }
+
+  if (!data) {
+    throw new Error('Plan credit grant changed while reconciling; please retry');
+  }
+
+  return mapGrantRow(data);
 }
 
 async function ensureFreeSubscriptionForOrganization(
@@ -316,7 +497,51 @@ export async function ensureCurrentPlanCreditGrant(params: {
   }
 
   if (existing) {
-    return { subscription, grant: mapGrantRow(existing) };
+    const grant = await reconcilePlanGrantToSubscription({
+      supabase,
+      grant: mapGrantRow(existing),
+      subscription,
+      plan,
+      monthlyGrant,
+      periodStart,
+      periodEnd,
+      idempotencyKey,
+    });
+    return { subscription, grant };
+  }
+
+  const { data: currentPeriodGrants, error: currentPeriodError } = await supabase
+    .from('billing_credit_grants')
+    .select('*')
+    .eq('organization_id', params.organizationId)
+    .eq('subscription_id', subscription.id)
+    .eq('source_type', 'plan_grant')
+    .eq('period_start', periodStart)
+    .eq('period_end', periodEnd)
+    .order('created_at', { ascending: true }) as { data: GrantRow[] | null; error: any };
+
+  if (currentPeriodError) {
+    throw new Error(currentPeriodError.message || 'Failed to load current period plan credit grants');
+  }
+
+  const currentGrant = filterSpendablePlanCreditGrants(
+    (currentPeriodGrants || []).map(mapGrantRow).filter((grant) => grant.sourceType === 'plan_grant'),
+    subscription,
+    now
+  )[0] || null;
+
+  if (currentGrant) {
+    const grant = await reconcilePlanGrantToSubscription({
+      supabase,
+      grant: currentGrant,
+      subscription,
+      plan,
+      monthlyGrant,
+      periodStart,
+      periodEnd,
+      idempotencyKey,
+    });
+    return { subscription, grant };
   }
 
   const { data, error } = await supabase
@@ -400,7 +625,8 @@ export async function getOrganizationPlanCreditBalance(params: {
   }
 
   const grants = (data || []).map(mapGrantRow);
-  const totals = grants.reduce((acc, grant) => {
+  const spendableGrants = filterSpendablePlanCreditGrants(grants, subscription, now);
+  const totals = spendableGrants.reduce((acc, grant) => {
     if (isRolloverPlanGrant(grant, now)) {
       acc.rollover += grant.creditsRemaining;
     } else if (isCurrentPlanGrant(grant, now)) {
@@ -436,19 +662,70 @@ export async function assertPlanUploadDuration(params: {
     organizationId: params.organizationId,
     now,
   });
-  const maxUploadMinutes = subscription.plan?.maxUploadMinutes || null;
-  const requestedMinutes = roundProductCredits(Math.max(0, params.durationSeconds || 0) / 60);
+  const maxUploadSeconds = getPlanMaxUploadSeconds(subscription.plan);
+  const maxUploadMinutes = getPlanMaxUploadMinutes(subscription.plan);
+  const requestedSeconds = Math.max(0, Math.round(params.durationSeconds || 0));
+  const requestedMinutes = roundProductCredits(requestedSeconds / 60);
 
-  if (maxUploadMinutes && requestedMinutes > maxUploadMinutes + 0.0001) {
+  if (maxUploadSeconds && maxUploadMinutes && requestedSeconds > maxUploadSeconds) {
     throw new PlanUploadLimitError(
       params.organizationId,
       requestedMinutes,
       maxUploadMinutes,
-      subscription.plan?.slug || null
+      subscription.plan?.slug || null,
+      requestedSeconds
     );
   }
 
   return subscription;
+}
+
+export async function resolvePlanUploadDuration(params: {
+  supabase?: SupabaseClient<any>;
+  organizationId: string;
+  userId?: string | null;
+  durationSeconds?: number | null;
+  subscription?: OrganizationSubscription | null;
+  now?: Date;
+}): Promise<{
+  subscription: OrganizationSubscription;
+  durationSeconds: number;
+  durationSource: 'provided' | 'plan_limit_estimate' | 'default_estimate';
+}> {
+  const supabase = params.supabase || supabaseAdmin;
+  const subscription = params.subscription || await getOrCreateCreditSubscription({
+    supabase,
+    organizationId: params.organizationId,
+    now: params.now,
+  });
+
+  const providedDuration = typeof params.durationSeconds === 'number' && Number.isFinite(params.durationSeconds)
+    ? Math.max(1, Math.round(params.durationSeconds))
+    : null;
+
+  const durationSeconds = providedDuration
+    ?? getPlanMaxUploadSeconds(subscription.plan)
+    ?? 3_600;
+  const durationSource = providedDuration
+    ? 'provided'
+    : getPlanMaxUploadSeconds(subscription.plan)
+      ? 'plan_limit_estimate'
+      : 'default_estimate';
+
+  const assertedSubscription = await assertPlanUploadDuration({
+    supabase,
+    organizationId: params.organizationId,
+    userId: params.userId,
+    durationSeconds,
+    subscription,
+    now: params.now,
+  });
+
+  return {
+    subscription: assertedSubscription,
+    durationSeconds,
+    durationSource,
+  };
 }
 
 export async function createPlanCreditReservation(params: {
@@ -490,7 +767,10 @@ export async function createPlanCreditReservation(params: {
     throw new Error(error.message || 'Failed to load credit grants');
   }
 
-  const grants = sortGrantsForConsumption((data || []).map(mapGrantRow), now);
+  const grants = sortGrantsForConsumption(
+    filterSpendablePlanCreditGrants((data || []).map(mapGrantRow), subscription, now),
+    now
+  );
   const available = roundProductCredits(grants.reduce((sum, grant) => sum + grant.creditsRemaining, 0));
 
   if (available + 0.0001 < amount) {
@@ -575,7 +855,11 @@ export async function createPlanCreditReservation(params: {
       },
     } as any);
 
-    return reservation;
+    return {
+      ...reservation,
+      remainingCreditsAfterReservation: roundProductCredits(available - amount),
+      availableCreditsBeforeReservation: available,
+    };
   } catch (reserveError) {
     for (const allocation of allocations) {
       await restoreGrantCredits(supabase, allocation.grant.id, allocation.amount).catch((restoreError) => {

@@ -1,5 +1,6 @@
 const {
   collectStaticChecks,
+  collectStripeEnvironmentErrors,
   normalizeEnforcementMode,
   parseArgs,
   summarizePlanRows,
@@ -28,6 +29,29 @@ describe('subscription launch readiness helpers', () => {
     expect(report.missingRequiredEnv).toEqual(['STRIPE_WEBHOOK_SECRET']);
     expect(report.enforcementMode).toBe('dry_run');
     expect(report.invalidEnforcementMode).toBe(true);
+    expect(report.stripeEnvironmentErrors).toEqual([]);
+  });
+
+  it('reports Stripe env values that would bypass or break hosted Checkout', () => {
+    expect(collectStripeEnvironmentErrors({
+      STRIPE_SECRET_KEY: 'sk_test_123',
+      NEXT_PUBLIC_STRIPE_PUBLISHABLE_KEY: 'pk_live_123',
+      STRIPE_WEBHOOK_SECRET: 'sk_test_not_a_webhook_secret',
+      BILLING_TEST_MODE: 'TRUE',
+    })).toEqual([
+      'STRIPE_WEBHOOK_SECRET must be a webhook signing secret that starts with whsec_.',
+      'STRIPE_SECRET_KEY and NEXT_PUBLIC_STRIPE_PUBLISHABLE_KEY must both use the same Stripe mode.',
+      'BILLING_TEST_MODE is enabled; hosted Stripe Checkout will be bypassed.',
+    ]);
+  });
+
+  it('accepts a Stripe test-mode pre-production env', () => {
+    expect(collectStripeEnvironmentErrors({
+      STRIPE_SECRET_KEY: 'sk_test_123',
+      NEXT_PUBLIC_STRIPE_PUBLISHABLE_KEY: 'pk_test_123',
+      STRIPE_WEBHOOK_SECRET: 'whsec_123',
+      BILLING_TEST_MODE: 'false',
+    })).toEqual([]);
   });
 
   it('summarizes active plans and missing Stripe prices', () => {

@@ -21,6 +21,7 @@ import {
   releasePlanCreditReservation,
   settlePlanCreditReservationAmount,
 } from '@/lib/billing/plan-credits';
+import { estimateAudioProductCredits } from '@/lib/billing/product-credits';
 
 // ============================================================================
 // Types and Interfaces
@@ -1452,6 +1453,11 @@ export async function reconcileBillingReservations(options?: {
   for (const row of rows || []) {
     const reservation = mapReservationRow(row);
     try {
+      if (await settleCompletedUploadPlanCreditReservation(reservation)) {
+        result.settled += 1;
+        continue;
+      }
+
       const expiresAt = reservation.expiresAt ? new Date(reservation.expiresAt).getTime() : null;
       const isExpired = expiresAt !== null && expiresAt <= now;
       const hasStaleActive = reservation.status === 'active' && reservation.updatedAt <= activeCutoff;
@@ -1489,6 +1495,76 @@ export async function reconcileBillingReservations(options?: {
   }
 
   return result;
+}
+
+export function estimateCompletedUploadReservationCredits(
+  reservation: BillingReservation,
+  project: {
+    status?: string | null;
+    audio_duration_seconds?: string | number | null;
+    audio_duration?: string | number | null;
+    performance_level?: string | null;
+    metadata?: any;
+  } | null
+): number | null {
+  if (
+    !project ||
+    project.status !== 'completed' ||
+    !isPlanCreditReservation(reservation) ||
+    reservation.workflowType !== 'upload_processing' ||
+    !['active', 'settling'].includes(reservation.status)
+  ) {
+    return null;
+  }
+
+  const durationSeconds = Number(project.audio_duration_seconds || project.audio_duration || 0);
+  if (!Number.isFinite(durationSeconds) || durationSeconds <= 0) {
+    return null;
+  }
+
+  const tier = project.performance_level
+    || reservation.metadata?.productCreditWorkflow
+    || project.metadata?.billing?.productCreditWorkflow
+    || project.metadata?.billing?.processingTier
+    || null;
+
+  return estimateAudioProductCredits({
+    durationSeconds,
+    tier: typeof tier === 'string' ? tier : null,
+  });
+}
+
+async function settleCompletedUploadPlanCreditReservation(reservation: BillingReservation): Promise<boolean> {
+  if (
+    !isPlanCreditReservation(reservation) ||
+    reservation.workflowType !== 'upload_processing' ||
+    !reservation.projectId ||
+    !['active', 'settling'].includes(reservation.status)
+  ) {
+    return false;
+  }
+
+  const { data: project, error } = await supabase
+    .from('projects')
+    .select('status, audio_duration_seconds, audio_duration, performance_level, metadata')
+    .eq('id', reservation.projectId)
+    .maybeSingle() as { data: any; error: any };
+
+  if (error) {
+    throw new Error(`Failed to load completed project for reservation repair: ${error.message}`);
+  }
+
+  if (!project || project.status !== 'completed') {
+    return false;
+  }
+
+  const actualCredits = estimateCompletedUploadReservationCredits(reservation, project);
+  if (actualCredits === null) {
+    return false;
+  }
+
+  await settleReservationAmount(reservation.id, actualCredits);
+  return true;
 }
 
 // ============================================================================

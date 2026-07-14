@@ -1,6 +1,6 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { supabaseAdmin } from '@/lib/supabase/server';
-import { getFeaturesFromAnalysisOptions, getProjectAnalysisOptions } from '@/lib/analysis-options';
+import { getFeaturesFromAnalysisOptions, getProjectAnalysisOptions, type AnalysisOptionKey } from '@/lib/analysis-options';
 import { generatePodcastSummary } from '@/lib/content-generators/summary';
 import { detectPodcastChapters } from '@/lib/content-generators/chapters';
 import { extractKeyTakeaways } from '@/lib/content-generators/takeaways';
@@ -19,6 +19,7 @@ import { getOpenAIApiKeyForUser } from '@/lib/openai/consent';
 import { aiRatelimit } from '@/lib/rate-limit';
 import { isAuthorizedMaintenanceRequest } from '@/lib/maintenance-auth';
 import { RouteAccessError, requireProjectOwner } from '@/lib/api/route-auth';
+import { getAnalysisCompatibility } from '@/lib/generation-capabilities';
 
 export const dynamic = 'force-dynamic';
 export const maxDuration = 300;
@@ -31,6 +32,15 @@ type AIProcessingFlags = {
   takeaways?: boolean;
   quotes?: boolean;
   insights?: boolean;
+};
+
+const RECONCILE_TARGET_TO_ANALYSIS_KEY: Partial<Record<keyof AIProcessingFlags, AnalysisOptionKey>> = {
+  nameExtraction: 'namedSpeakers',
+  summary: 'summary',
+  chapters: 'chapters',
+  takeaways: 'takeaways',
+  quotes: 'quotes',
+  insights: 'insights',
 };
 
 function buildSpeakerContext(
@@ -89,7 +99,7 @@ export async function POST(
   try {
     const { id: projectId } = await params;
     const body = await request.json().catch(() => null);
-    const requestedTargets = Array.isArray(body?.targets)
+    const requestedTargets: Array<keyof AIProcessingFlags> | null = Array.isArray(body?.targets)
       ? body.targets.filter((value: unknown): value is keyof AIProcessingFlags =>
           ['nameExtraction', 'summary', 'chapters', 'takeaways', 'quotes', 'insights'].includes(String(value))
         )
@@ -140,6 +150,37 @@ export async function POST(
       const { success } = await aiRatelimit.limit(userIdForRateLimit);
       if (!success) {
         return NextResponse.json({ error: 'Rate limit exceeded for AI operations. Please wait a moment.' }, { status: 429 });
+      }
+    }
+
+    if (requestedTargets) {
+      const incompatibleTargets = requestedTargets
+        .map((target) => {
+          const analysisKey = RECONCILE_TARGET_TO_ANALYSIS_KEY[target];
+          if (!analysisKey) return null;
+          const compatibility = getAnalysisCompatibility(project, analysisKey);
+          return compatibility.compatible
+            ? null
+            : {
+              target,
+              reason: compatibility.reason || 'This analysis cannot run for this project.',
+            };
+        })
+        .filter(Boolean) as Array<{ target: keyof AIProcessingFlags; reason: string }>;
+
+      if (incompatibleTargets.length > 0) {
+        if (reservationId) {
+          await failReservation(reservationId, incompatibleTargets[0].reason).catch((billingError) => {
+            console.error('[RECONCILE] Failed to fail incompatible reservation:', billingError);
+          });
+        }
+        return NextResponse.json(
+          {
+            error: incompatibleTargets[0].reason,
+            invalidTargets: incompatibleTargets,
+          },
+          { status: 422 }
+        );
       }
     }
 
@@ -439,6 +480,13 @@ export async function POST(
         }
       } catch (err: any) {
         console.error(`[RECONCILE] ❌ Failed to repair ${flag}:`, err.message);
+      }
+    }
+
+    if (requestedTargets && filteredToGenerate.length > 0) {
+      const missingRequested = filteredToGenerate.filter((flag) => !generated.includes(flag));
+      if (missingRequested.length > 0) {
+        throw new Error(`Failed to generate ${missingRequested.join(', ')}`);
       }
     }
 

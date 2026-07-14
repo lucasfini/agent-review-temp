@@ -11,19 +11,37 @@ import { formatSiteCreditsFromUsd } from '@/lib/billing/display';
 import { getOrganizationPlanCreditBalance } from '@/lib/billing/plan-credits';
 import { formatProductCredits } from '@/lib/billing/product-credits';
 
+type BillingPlanCreditBalance = Awaited<ReturnType<typeof getOrganizationPlanCreditBalance>>;
+
+function emptyPlanCreditBalance(): BillingPlanCreditBalance {
+  return {
+    available: 0,
+    rollover: 0,
+    current: 0,
+    topUp: 0,
+    subscription: null,
+  };
+}
+
 export async function GET(request: NextRequest) {
   try {
     const user = await requireAuthenticatedUser(request);
     const { organizationId } = await getBillingOrganizationContext(request, user.id);
 
-    const [legacyBalance, planCredits] = await Promise.all([
-      getDisplayBalance(user.id),
-      getOrganizationPlanCreditBalance({
+    const legacyBalance = await getDisplayBalance(user.id);
+    let planCredits = emptyPlanCreditBalance();
+    let planCreditError: string | null = null;
+
+    try {
+      planCredits = await getOrganizationPlanCreditBalance({
         organizationId,
         userId: user.id,
         ensureGrant: true,
-      }),
-    ]);
+      });
+    } catch (error) {
+      planCreditError = error instanceof Error ? error.message : 'Failed to fetch plan credit balance';
+      console.error('[BILLING API] Error fetching plan credit balance:', error);
+    }
 
     return NextResponse.json({
       success: true,
@@ -46,6 +64,7 @@ export async function GET(request: NextRequest) {
       lifetimeCreditsAdded: legacyBalance.lifetimeCreditsAdded,
       lifetimeCreditsSpent: legacyBalance.lifetimeCreditsSpent,
       lastUpdated: legacyBalance.updatedAt,
+      planCreditError,
     });
   } catch (error) {
     if (error instanceof RouteAccessError) {

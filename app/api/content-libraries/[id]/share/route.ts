@@ -9,10 +9,16 @@ import {
   deleteContentLibrary,
   getContentLibraryInOrganizations,
   shareContentLibraryToOrganization,
+  unshareContentLibraryToPrivateOrganization,
 } from '@/lib/content-libraries';
 import { isDemoUser } from '@/lib/demo-mode';
 import { requireStudioAssetContext } from '@/lib/studio-assets';
+import { assertShareTargetIsTeamOrganization } from '@/lib/studio-sharing';
 import { supabaseAdmin } from '@/lib/supabase/server';
+import {
+  notifyMovedToPrivate,
+  notifySharedWithTeam,
+} from '@/lib/notifications/notification-events';
 
 export const dynamic = 'force-dynamic';
 export const revalidate = 0;
@@ -47,6 +53,11 @@ export async function POST(
     if (isDemoUser(context.user)) {
       return NextResponse.json({ error: 'Demo account is read-only' }, { status: 403 });
     }
+    assertShareTargetIsTeamOrganization({
+      activeOrganizationId: context.activeOrganizationId,
+      privateOrganizationId: context.privateOrganizationId,
+      organizationType: context.organization.type,
+    }, 'collection');
 
     const library = await getContentLibraryInOrganizations(supabaseAdmin, context.organizationIds, id);
     const scopedLibrary = library ? decorateContentLibraryScope(library, {
@@ -62,7 +73,7 @@ export async function POST(
     }
 
     if (scopedLibrary.scope !== 'private' || !scopedLibrary.canShare) {
-      return NextResponse.json({ error: 'You do not have permission to share this library' }, { status: 403 });
+      return NextResponse.json({ error: 'You do not have permission to publish this collection' }, { status: 403 });
     }
 
     const sharedLibrary = decorateContentLibraryScope(
@@ -94,9 +105,22 @@ export async function POST(
       },
     });
 
+    await notifySharedWithTeam({
+      organizationId: context.activeOrganizationId,
+      actorUserId: context.user.id,
+      name: sharedLibrary.name,
+      href: '/dashboard/library',
+      idempotencyKey: `asset_shared:collection:${sharedLibrary.id}`,
+      metadata: {
+        assetType: 'collection',
+        assetId: sharedLibrary.id,
+        sourceLibraryId: scopedLibrary.id,
+      },
+    });
+
     return NextResponse.json({ success: true, contentLibrary: sharedLibrary });
   } catch (error) {
-    return errorResponse(error, 'Failed to share library');
+    return errorResponse(error, 'Failed to publish collection');
   }
 }
 
@@ -128,12 +152,32 @@ export async function DELETE(
     }
 
     if (!scopedLibrary.canUnshare) {
-      return NextResponse.json({ error: 'You do not have permission to unshare this library' }, { status: 403 });
+      return NextResponse.json({ error: 'You do not have permission to move this collection to private' }, { status: 403 });
     }
 
-    const deleted = await deleteContentLibrary(supabaseAdmin, scopedLibrary.organizationId, scopedLibrary.id);
-    if (!deleted) {
-      return NextResponse.json({ error: 'Library not found' }, { status: 404 });
+    const privateLibrary = scopedLibrary.sharedFromLibraryId
+      ? null
+      : decorateContentLibraryScope(
+        await unshareContentLibraryToPrivateOrganization(
+          supabaseAdmin,
+          scopedLibrary,
+          context.privateOrganizationId,
+          context.activeOrganizationId
+        ),
+        {
+          activeOrganizationId: context.activeOrganizationId,
+          privateOrganizationId: context.privateOrganizationId,
+          userId: context.user.id,
+          role: context.membership.role,
+          organizationType: context.organization.type,
+        }
+      );
+
+    if (scopedLibrary.sharedFromLibraryId) {
+      const deleted = await deleteContentLibrary(supabaseAdmin, scopedLibrary.organizationId, scopedLibrary.id);
+      if (!deleted) {
+        return NextResponse.json({ error: 'Library not found' }, { status: 404 });
+      }
     }
 
     await recordOrganizationAuditLog({
@@ -148,8 +192,20 @@ export async function DELETE(
       },
     });
 
-    return NextResponse.json({ success: true });
+    await notifyMovedToPrivate({
+      organizationId: context.activeOrganizationId,
+      actorUserId: context.user.id,
+      name: scopedLibrary.name,
+      href: '/dashboard/library',
+      idempotencyKey: `asset_unshared:collection:${scopedLibrary.id}`,
+      metadata: {
+        assetType: 'collection',
+        assetId: scopedLibrary.id,
+      },
+    });
+
+    return NextResponse.json({ success: true, contentLibrary: privateLibrary });
   } catch (error) {
-    return errorResponse(error, 'Failed to unshare library');
+    return errorResponse(error, 'Failed to move collection to private');
   }
 }

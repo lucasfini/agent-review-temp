@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { supabaseAdmin } from '@/lib/supabase/server';
 import { INTEGRATIONS_COMING_SOON_MESSAGE, YOUTUBE_INTEGRATION_ENABLED } from '@/lib/integrations/availability';
+import { integrationErrorResponse, signedOutIntegrationResponse } from '../../_utils';
 
 const YOUTUBE_SCOPES = [
   'openid',
@@ -16,20 +17,20 @@ export async function GET(request: NextRequest) {
 
   const authHeader = request.headers.get('authorization');
   if (!authHeader) {
-    return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
+    return signedOutIntegrationResponse();
   }
 
   const token = authHeader.replace('Bearer ', '');
   const { data: { user } } = await supabaseAdmin.auth.getUser(token);
   if (!user) {
-    return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
+    return signedOutIntegrationResponse();
   }
 
   const clientId = process.env.GOOGLE_OAUTH_CLIENT_ID;
   const redirectUri = process.env.YOUTUBE_REDIRECT_URI;
 
   if (!clientId || !redirectUri) {
-    return NextResponse.json({ error: 'YouTube OAuth not configured' }, { status: 500 });
+    return integrationErrorResponse({ provider: 'youtube', code: 'INTEGRATION_NOT_CONFIGURED', action: 'connect', status: 500 });
   }
 
   const state = crypto.randomUUID();

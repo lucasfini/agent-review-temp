@@ -22,6 +22,14 @@ describe('product credit rates', () => {
     expect(getRepurposePackHoursFromCredits(300)).toBe(1);
   });
 
+  it('charges longer recordings more credits than shorter recordings', () => {
+    const shortRecording = estimateAudioProductCredits({ durationSeconds: 30 * 60, workflow: 'content_kit' });
+    const longRecording = estimateAudioProductCredits({ durationSeconds: 90 * 60, workflow: 'content_kit' });
+
+    expect(longRecording).toBeGreaterThan(shortRecording);
+    expect(longRecording).toBe(shortRecording * 3);
+  });
+
   it('maps monthly plan grants to expected Repurpose Pack capacity', () => {
     expect(getRepurposePackHoursFromCredits(300)).toBe(1);
     expect(getRepurposePackHoursFromCredits(3000)).toBe(10);

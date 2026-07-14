@@ -11,6 +11,7 @@ import type { OrganizationType } from '@/lib/authz/types';
 import { isDemoUser } from '@/lib/demo-mode';
 import { recordOrganizationAuditLog } from '@/lib/organizations/audit';
 import { supabaseAdmin } from '@/lib/supabase/server';
+import { notifyOrganization } from '@/lib/notifications/notification-events';
 
 export const dynamic = 'force-dynamic';
 export const revalidate = 0;
@@ -18,6 +19,7 @@ export const revalidate = 0;
 const MAX_ORGANIZATION_NAME_LENGTH = 160;
 const MAX_PROFILE_TEXT_LENGTH = 1200;
 const MAX_PROFILE_SHORT_TEXT_LENGTH = 240;
+const MAX_GUIDED_SETUP_TEXT_LENGTH = 120;
 const ORGANIZATION_TYPES: OrganizationType[] = ['personal_legacy', 'saas_customer', 'internal_agency'];
 
 function parseObject(value: unknown): Record<string, unknown> {
@@ -108,6 +110,25 @@ function normalizeProfile(input: unknown): Record<string, string | null> | null 
   return normalized;
 }
 
+function normalizeGuidedSetup(input: unknown): Record<string, string | null> | null {
+  if (input === undefined) return null;
+  if (!input || typeof input !== 'object' || Array.isArray(input)) {
+    throw new RouteAccessError(400, 'guidedSetup must be an object');
+  }
+
+  const guidedSetup = input as Record<string, unknown>;
+  const normalized: Record<string, string | null> = {};
+
+  if ('roleTitle' in guidedSetup) {
+    normalized.roleTitle = optionalString(guidedSetup.roleTitle, MAX_GUIDED_SETUP_TEXT_LENGTH, 'guidedSetup.roleTitle') ?? null;
+  }
+  if ('teamSize' in guidedSetup) {
+    normalized.teamSize = optionalString(guidedSetup.teamSize, MAX_GUIDED_SETUP_TEXT_LENGTH, 'guidedSetup.teamSize') ?? null;
+  }
+
+  return Object.keys(normalized).length > 0 ? normalized : null;
+}
+
 export async function GET(request: NextRequest) {
   try {
     const user = await requireAuthenticatedUser(request);
@@ -178,22 +199,43 @@ export async function PATCH(request: NextRequest) {
       'Organization setup requires owner or admin access'
     );
 
+    const editsWorkspaceIdentity = body.name !== undefined
+      || body.profile !== undefined
+      || body.onboardingProfile !== undefined
+      || body.onboarding_profile !== undefined
+      || body.guidedSetup !== undefined
+      || body.guided_setup !== undefined;
+    if (organization.type === 'personal_legacy' && editsWorkspaceIdentity) {
+      return NextResponse.json(
+        { error: 'Personal Workspace is fixed. Create or switch to a team workspace to edit workspace settings.' },
+        { status: 400 }
+      );
+    }
+
     const updatePayload: Record<string, unknown> = {};
     if (body.name !== undefined) {
       updatePayload.name = requiredOrganizationName(body.name);
     }
 
     const profile = normalizeProfile(body.profile ?? body.onboardingProfile ?? body.onboarding_profile);
+    const guidedSetup = normalizeGuidedSetup(body.guidedSetup ?? body.guided_setup);
     const nextMetadata = parseObject(organization.onboarding_metadata_json);
-    if (profile) {
-      updatePayload.onboarding_metadata_json = {
-        ...nextMetadata,
-        profile: {
+    if (profile || guidedSetup) {
+      const metadata: Record<string, unknown> = { ...nextMetadata };
+      if (profile) {
+        metadata.profile = {
           ...parseObject(nextMetadata.profile),
           ...profile,
-        },
-        updatedAt: new Date().toISOString(),
-      };
+        };
+      }
+      if (guidedSetup) {
+        metadata.guidedSetup = {
+          ...parseObject(nextMetadata.guidedSetup),
+          ...guidedSetup,
+        };
+      }
+      metadata.updatedAt = new Date().toISOString();
+      updatePayload.onboarding_metadata_json = metadata;
     }
 
     const completed = body.onboardingCompleted === true || body.onboarding_completed === true;
@@ -227,6 +269,19 @@ export async function PATCH(request: NextRequest) {
       action: 'workspace.updated',
       resourceType: 'workspace',
       resourceId: organization.id,
+      metadata: {
+        changedFields: Object.keys(updatePayload),
+      },
+    });
+
+    await notifyOrganization({
+      organizationId: organization.id,
+      actorUserId: user.id,
+      type: 'workspace_updated',
+      title: 'Workspace updated',
+      body: 'Workspace settings were updated.',
+      href: '/dashboard/team',
+      idempotencyKey: `workspace_updated:${organization.id}:${Date.now()}`,
       metadata: {
         changedFields: Object.keys(updatePayload),
       },

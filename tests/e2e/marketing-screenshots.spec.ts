@@ -14,6 +14,22 @@ const viewports = [
 
 const marketingPages = [
   { route: '/', label: 'home', routeFile: ['app', 'page.tsx'] },
+  { route: '/product/upload', label: 'product-upload', routeFile: ['app', 'product', 'upload', 'page.tsx'] },
+  { route: '/product/teams', label: 'product-teams', routeFile: ['app', 'product', 'teams', 'page.tsx'] },
+  { route: '/product/studio', label: 'product-studio', routeFile: ['app', 'product', 'studio', 'page.tsx'] },
+  { route: '/product/library', label: 'product-library', routeFile: ['app', 'product', 'library', 'page.tsx'] },
+  { route: '/product/integrations', label: 'product-integrations', routeFile: ['app', 'product', 'integrations', 'page.tsx'] },
+  { route: '/product/analysis', label: 'product-analysis', routeFile: ['app', 'product', 'analysis', 'page.tsx'] },
+  { route: '/pricing', label: 'pricing', routeFile: ['app', 'pricing', 'page.tsx'] },
+  { route: '/whats-new', label: 'whats-new', routeFile: ['app', 'whats-new', 'page.tsx'] },
+  { route: '/built-for', label: 'built-for', routeFile: ['app', 'built-for', 'page.tsx'] },
+  { route: '/built-for/marketing-teams', label: 'built-for-marketing-teams', routeFile: ['app', 'built-for', '[slug]', 'page.tsx'] },
+  { route: '/built-for/founders', label: 'built-for-founders', routeFile: ['app', 'built-for', '[slug]', 'page.tsx'] },
+  { route: '/built-for/sales-teams', label: 'built-for-sales-teams', routeFile: ['app', 'built-for', '[slug]', 'page.tsx'] },
+  { route: '/built-for/customer-success', label: 'built-for-customer-success', routeFile: ['app', 'built-for', '[slug]', 'page.tsx'] },
+  { route: '/built-for/product-marketers', label: 'built-for-product-marketers', routeFile: ['app', 'built-for', '[slug]', 'page.tsx'] },
+  { route: '/built-for/consultants', label: 'built-for-consultants', routeFile: ['app', 'built-for', '[slug]', 'page.tsx'] },
+  { route: '/built-for/creators', label: 'built-for-creators', routeFile: ['app', 'built-for', '[slug]', 'page.tsx'] },
   { route: '/contact', label: 'contact', routeFile: ['app', 'contact', 'page.tsx'] },
 ] as const;
 

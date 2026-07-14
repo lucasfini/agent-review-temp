@@ -7,7 +7,7 @@ import { useTheme } from 'next-themes';
 import { useAuth } from '@/lib/auth/context';
 import { isValidEmail, PASSWORD_MIN_LENGTH } from '@/lib/auth/validation';
 import BrandLogo from '@/components/site/BrandLogo';
-import { Eye, EyeOff, Mail, Lock, User, ArrowRight, FileText, Clock, Layers, CheckCircle } from 'lucide-react';
+import { Eye, EyeOff, Mail, Lock, ArrowRight, FileText, Clock, Layers, CheckCircle } from 'lucide-react';
 
 // ─── Waveform bar heights ─────────────────────────────────────────────────────
 const WAVE_BARS = [18, 32, 50, 38, 60, 44, 68, 30, 54, 40, 22, 46, 58, 36, 26];
@@ -23,7 +23,7 @@ function RightPanel() {
   const [mounted, setMounted] = useState(false);
 
   useEffect(() => setMounted(true), []);
-  const logoTheme = mounted && resolvedTheme === 'dark' ? 'dark' : 'light';
+  const logoTheme = mounted && resolvedTheme === 'light' ? 'light' : 'dark';
 
   return (
     <div className="relative hidden overflow-hidden bg-gradient-to-br from-slate-100 via-blue-50 to-indigo-100 lg:flex lg:w-1/2 lg:flex-col lg:items-center lg:justify-center dark:from-slate-900 dark:via-blue-950 dark:to-indigo-950">
@@ -127,7 +127,6 @@ function GoogleIcon() {
 }
 
 export default function SignupPage() {
-  const [name, setName] = useState('');
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
   const [confirmPassword, setConfirmPassword] = useState('');
@@ -144,6 +143,7 @@ export default function SignupPage() {
   const searchParams = useSearchParams();
   const inviteToken = searchParams.get('invite_token') || searchParams.get('token') || '';
   const inviteNextPath = inviteToken ? `/invite?token=${encodeURIComponent(inviteToken)}` : null;
+  const onboardingNextPath = inviteNextPath || '/dashboard/onboarding';
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -169,7 +169,7 @@ export default function SignupPage() {
       return;
     }
 
-    const { data, error } = await signUp(trimmedEmail, password, name.trim() || undefined, inviteNextPath);
+    const { data, error } = await signUp(trimmedEmail, password, undefined, onboardingNextPath);
 
     if (error) {
       setError(error.message);
@@ -178,7 +178,7 @@ export default function SignupPage() {
     }
 
     if (data?.session) {
-      router.push(inviteNextPath || '/dashboard');
+      router.push(onboardingNextPath);
       return;
     }
 
@@ -199,7 +199,7 @@ export default function SignupPage() {
     } catch (e) {
       console.warn('Failed to store signup consents in cookie:', e);
     }
-    const { error } = await signInWithGoogle(inviteNextPath);
+    const { error } = await signInWithGoogle(onboardingNextPath);
     if (error) {
       setError(error.message);
       setIsGoogleLoading(false);
@@ -245,7 +245,7 @@ export default function SignupPage() {
           {/* Heading */}
           <div className="mb-8 motion-safe:animate-fade-up-200">
             <h1 className="text-2xl font-bold text-slate-900 dark:text-slate-50">Create your account</h1>
-            <p className="text-slate-500 dark:text-slate-400 text-sm mt-1.5">Create the workspace your team uses to turn calls, meetings, and ideas into publish-ready content</p>
+            <p className="text-slate-500 dark:text-slate-400 text-sm mt-1.5">Start with account access. Profile and workspace setup comes next.</p>
           </div>
 
           {/* Google OAuth button */}
@@ -278,25 +278,6 @@ export default function SignupPage() {
 
           {/* Manual sign-up form */}
           <form onSubmit={handleSubmit} className="space-y-4 motion-safe:animate-fade-up-600">
-            {/* Full Name */}
-            <div>
-              <label htmlFor="name" className="block text-sm font-medium text-slate-600 dark:text-slate-300 mb-1.5">
-                Full Name
-              </label>
-              <div className="relative">
-                <User className="absolute left-3.5 top-1/2 -translate-y-1/2 h-4 w-4 text-slate-500" />
-                <input
-                  id="name"
-                  type="text"
-                  value={name}
-                  onChange={(e) => setName(e.target.value)}
-                  autoComplete="name"
-                  className="w-full pl-10 pr-4 py-3 border border-slate-300 dark:border-slate-700 bg-white dark:bg-slate-900 text-slate-900 dark:text-slate-50 rounded-xl text-sm focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-transparent placeholder:text-slate-500 transition-shadow"
-                  placeholder="Jane Smith"
-                />
-              </div>
-            </div>
-
             {/* Email */}
             <div>
               <label htmlFor="email" className="block text-sm font-medium text-slate-600 dark:text-slate-300 mb-1.5">
@@ -353,7 +334,7 @@ export default function SignupPage() {
             {/* Confirm password */}
             <div>
               <label htmlFor="confirmPassword" className="block text-sm font-medium text-slate-600 dark:text-slate-300 mb-1.5">
-                Confirm password
+                Retype password
               </label>
               <div className="relative">
                 <Lock className="absolute left-3.5 top-1/2 -translate-y-1/2 h-4 w-4 text-slate-500" />
@@ -366,7 +347,7 @@ export default function SignupPage() {
                   minLength={PASSWORD_MIN_LENGTH}
                   autoComplete="new-password"
                   className="w-full pl-10 pr-11 py-3 border border-slate-300 dark:border-slate-700 bg-white dark:bg-slate-900 text-slate-900 dark:text-slate-50 rounded-xl text-sm focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-transparent placeholder:text-slate-500 transition-shadow"
-                  placeholder="Confirm your password"
+                  placeholder="Retype your password"
                 />
                 <button
                   type="button"

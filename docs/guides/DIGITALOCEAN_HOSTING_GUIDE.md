@@ -105,7 +105,25 @@ Validate the file before starting the stack:
 npm run validate:production-env -- --env-file .env.production
 ```
 
-## 4. DNS And App URL Alignment
+## 4. Configure R2 CORS
+
+Direct browser uploads use a presigned Cloudflare R2 `PUT`, and audio playback uses presigned `GET`/`HEAD` requests. Configure the R2 bucket CORS policy before testing uploads:
+
+```json
+[
+  {
+    "AllowedOrigins": ["https://audiorepurpose.com"],
+    "AllowedMethods": ["PUT", "GET", "HEAD"],
+    "AllowedHeaders": ["Content-Type", "Range", "Authorization"],
+    "ExposeHeaders": ["ETag", "Content-Length", "Content-Range", "Accept-Ranges"],
+    "MaxAgeSeconds": 3000
+  }
+]
+```
+
+For a non-production test bucket, include the local app origin you use for QA, such as `http://localhost:3000`.
+
+## 5. DNS And App URL Alignment
 
 Before launch, make sure these match:
 
@@ -118,7 +136,7 @@ Before launch, make sure these match:
 - Stripe webhook endpoint points to the production domain
 - Avoid Cloudflare cache rules for HTML and `/api/*` on day one
 
-## 5. Start The Stack
+## 6. Start The Stack
 
 ```bash
 docker compose -f docker-compose.prod.yml up -d --build
@@ -133,7 +151,7 @@ Health check endpoint:
 
 - `GET /api/health`
 
-## 6. Install Cleanup Cron Jobs
+## 7. Install Cleanup Cron Jobs
 
 Use the cron entries in:
 
@@ -141,7 +159,7 @@ Use the cron entries in:
 
 This app relies on scheduled internal cleanup routes for maintenance tasks. Set `CRON_SECRET` first, then install the cron entries.
 
-## 7. Launch Verification
+## 8. Launch Verification
 
 Run these checks before treating production as live:
 
@@ -159,7 +177,7 @@ Run these checks before treating production as live:
 - Cleanup routes run successfully
 - Admin routes are restricted to allowed emails
 
-## 8. First Follow-Up Work After The Docs Cleanup
+## 9. First Follow-Up Work After The Docs Cleanup
 
 These are still important for the live transition:
 

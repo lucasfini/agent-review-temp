@@ -247,10 +247,6 @@ export function can(
       if (resource.locked && role === 'editor') return false;
       if (role === 'owner' || role === 'admin') return true;
       if (resource.visibility === 'private') return isOwnResource(context, resource);
-      const nextStatus = resource.nextStatus || null;
-      if (nextStatus === 'approved' || nextStatus === 'scheduled' || nextStatus === 'published') {
-        return false;
-      }
       return true;
     case 'library_item.delete':
       if (!canReadScopedResource(context, resource) || !isWorkspaceEditorRole(role)) return false;

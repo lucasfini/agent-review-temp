@@ -13,8 +13,6 @@ import {
   Download,
   Search,
   Filter,
-  ChevronDown,
-  ChevronUp,
   Trash2,
   Eye,
   Sparkles,
@@ -30,7 +28,8 @@ import {
   MoreHorizontal,
   SlidersHorizontal,
   Star,
-  UploadCloud
+  UploadCloud,
+  LayoutGrid
 } from 'lucide-react';
 import { useAuth } from '@/lib/auth/context';
 import { useCurrentOrganization } from '@/lib/hooks/useCurrentOrganization';
@@ -38,7 +37,7 @@ import { supabase } from '@/lib/supabase/client';
 import { Badge } from '@/components/ui/badge';
 import { DropdownMenu, DropdownMenuItem, DropdownMenuSeparator } from '@/components/ui/dropdown-menu';
 import { cn } from '@/lib/utils';
-import { DashboardPageShell, DashboardPanel } from '@/components/dashboard/shell';
+import { DashboardHeaderAction, DashboardPageHeader, DashboardPageShell, DashboardPanel } from '@/components/dashboard/shell';
 import { emitProjectMutation } from '@/lib/project-events';
 import { toast } from 'sonner';
 import ConfirmModal from '@/components/ui/confirm-modal';
@@ -561,7 +560,6 @@ export default function ProjectHubPage() {
   const [statusFilter, setStatusFilter] = useState<'all' | Project['status']>('all');
   const [typeFilter, setTypeFilter] = useState<'all' | ProjectType>('all');
   const [sortBy, setSortBy] = useState<'recent' | 'oldest' | 'name'>('recent');
-  const [showFilters, setShowFilters] = useState(false);
   const [deletingId, setDeletingId] = useState<string | null>(null);
   const [pendingDeleteId, setPendingDeleteId] = useState<string | null>(null);
   const [starredProjectIds, setStarredProjectIds] = useState<Set<string>>(new Set());
@@ -1153,112 +1151,81 @@ export default function ProjectHubPage() {
         onExport={handleExport}
       />
       <div className="space-y-6">
-        <header className="rounded-3xl border border-slate-200 bg-[#fbfaf7] p-5 shadow-[0_22px_70px_-54px_rgba(15,23,42,0.55)] dark:border-slate-800 dark:bg-slate-950 sm:p-6">
-          <div className="flex flex-col gap-5 xl:flex-row xl:items-start xl:justify-between">
-            <div className="min-w-0">
-              <p className="text-xs font-semibold uppercase tracking-[0.18em] text-blue-700 dark:text-blue-300">
-                Project Control Center
-              </p>
-              <h1 className="mt-2 text-3xl font-semibold tracking-tight text-slate-950 dark:text-white sm:text-4xl">
-                All Projects
-              </h1>
-              <p className="mt-3 max-w-2xl text-sm leading-6 text-slate-600 dark:text-slate-300">
-                Track every uploaded source as it moves from raw recording to reusable content assets.
-              </p>
+        <DashboardPageHeader
+          icon={LayoutGrid}
+          title="All Projects"
+          description="Organize and manage every repurposing project in one place."
+          actions={<DashboardHeaderAction href="/dashboard/upload" icon={Upload} variant="primary">New Project</DashboardHeaderAction>}
+        >
+          <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-[minmax(240px,1fr)_auto_auto_auto_auto] lg:items-center">
+            <div className="relative min-w-0 sm:col-span-2 lg:col-span-1">
+              <Search className="pointer-events-none absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-slate-500" />
+              <input
+                type="text"
+                placeholder="Search projects..."
+                value={searchTerm}
+                onChange={(event) => setSearchTerm(event.target.value)}
+                className="h-10 w-full rounded-lg border border-slate-200 bg-white pl-10 pr-4 text-sm text-slate-900 shadow-sm placeholder:text-slate-400 transition-colors focus:border-blue-400 focus:outline-none focus:ring-2 focus:ring-blue-400/20 dark:border-white/15 dark:bg-[#0b1832] dark:text-slate-100 dark:placeholder:text-slate-500"
+              />
             </div>
-            <div className="grid gap-2 sm:grid-cols-[minmax(220px,1fr)_auto_auto_auto] xl:min-w-[680px]">
-              <div className="relative">
-                <Search className="pointer-events-none absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-slate-500" />
-                <input
-                  type="text"
-                  placeholder="Search projects..."
-                  value={searchTerm}
-                  onChange={(event) => setSearchTerm(event.target.value)}
-                  className="h-11 w-full rounded-xl border border-slate-200 bg-white pl-10 pr-4 text-sm text-slate-950 shadow-sm placeholder:text-slate-400 transition-colors focus:border-blue-500 focus:outline-none focus:ring-2 focus:ring-blue-500/20 dark:border-slate-800 dark:bg-slate-900 dark:text-slate-100"
-                />
-              </div>
-              <button
-                type="button"
-                onClick={() => setShowFilters(!showFilters)}
-                className={cn(
-                  "inline-flex h-11 items-center justify-center gap-2 rounded-xl border px-4 text-sm font-medium shadow-sm transition-all duration-200 hover:-translate-y-0.5 focus:outline-none focus:ring-2 focus:ring-blue-500 focus:ring-offset-2 motion-reduce:transition-none motion-reduce:hover:translate-y-0 dark:focus:ring-offset-slate-950",
-                  showFilters
-                    ? 'border-blue-300 bg-blue-50 text-blue-700 dark:border-blue-500/30 dark:bg-blue-500/10 dark:text-blue-300'
-                    : 'border-slate-200 bg-white text-slate-700 hover:bg-slate-50 dark:border-slate-800 dark:bg-slate-900 dark:text-slate-200 dark:hover:bg-slate-800'
-                )}
+            <label className="flex min-w-0 items-center gap-2 text-sm text-slate-700 dark:text-slate-300">
+              <span className="text-xs font-semibold uppercase tracking-[0.14em] text-slate-500">Status</span>
+              <select
+                value={statusFilter}
+                onChange={(event) => setStatusFilter(event.target.value as 'all' | Project['status'])}
+                className="h-10 min-w-0 rounded-lg border border-slate-200 bg-white px-3 text-sm text-slate-800 focus:border-blue-400 focus:outline-none focus:ring-2 focus:ring-blue-400/20 dark:border-white/15 dark:bg-[#0b1832] dark:text-slate-100"
               >
-                <Filter className="h-4 w-4" />
-                Filters
-                {showFilters ? <ChevronUp className="h-4 w-4" /> : <ChevronDown className="h-4 w-4" />}
-              </button>
+                <option value="all">All</option>
+                <option value="uploading">Uploading</option>
+                <option value="processing">Processing</option>
+                <option value="completed">Completed</option>
+                <option value="failed">Failed</option>
+                <option value="cancelled">Cancelled</option>
+              </select>
+            </label>
+            <label className="flex min-w-0 items-center gap-2 text-sm text-slate-700 dark:text-slate-300">
+              <span className="text-xs font-semibold uppercase tracking-[0.14em] text-slate-500">Type</span>
+              <select
+                value={typeFilter}
+                onChange={(event) => setTypeFilter(event.target.value as 'all' | ProjectType)}
+                className="h-10 min-w-0 rounded-lg border border-slate-200 bg-white px-3 text-sm text-slate-800 focus:border-blue-400 focus:outline-none focus:ring-2 focus:ring-blue-400/20 dark:border-white/15 dark:bg-[#0b1832] dark:text-slate-100"
+              >
+                <option value="all">All</option>
+                <option value="DEBATE">Debate</option>
+                <option value="INTERVIEW">Interview</option>
+                <option value="PODCAST">Podcast</option>
+                <option value="MONOLOGUE">Monologue</option>
+                <option value="OTHER">Other</option>
+              </select>
+            </label>
+            <label className="flex min-w-0 items-center gap-2 text-sm text-slate-700 dark:text-slate-300">
+              <span className="text-xs font-semibold uppercase tracking-[0.14em] text-slate-500">Sort</span>
               <select
                 value={sortBy}
                 onChange={(event) => setSortBy(event.target.value as 'recent' | 'oldest' | 'name')}
-                className="h-11 rounded-xl border border-slate-200 bg-white px-3 text-sm font-medium text-slate-700 shadow-sm transition-colors focus:border-blue-500 focus:outline-none focus:ring-2 focus:ring-blue-500/20 dark:border-slate-800 dark:bg-slate-900 dark:text-slate-200"
+                className="h-10 min-w-0 rounded-lg border border-slate-200 bg-white px-3 text-sm font-medium text-slate-800 shadow-sm transition-colors focus:border-blue-400 focus:outline-none focus:ring-2 focus:ring-blue-400/20 dark:border-white/15 dark:bg-[#0b1832] dark:text-slate-100"
                 aria-label="Sort projects"
               >
-                <option value="recent">Sort: Newest</option>
-                <option value="oldest">Sort: Oldest</option>
-                <option value="name">Sort: Name</option>
+                <option value="recent">Newest</option>
+                <option value="oldest">Oldest</option>
+                <option value="name">Name</option>
               </select>
-              <Link
-                href="/dashboard/upload"
-                className="inline-flex h-11 items-center justify-center gap-2 rounded-xl bg-blue-600 px-5 text-sm font-semibold text-white shadow-[0_18px_35px_-20px_rgba(37,99,235,0.8)] transition-all duration-200 hover:-translate-y-0.5 hover:bg-blue-700 focus:outline-none focus:ring-2 focus:ring-blue-500 focus:ring-offset-2 motion-reduce:transition-none motion-reduce:hover:translate-y-0 dark:focus:ring-offset-slate-950"
+            </label>
+            {(searchTerm || statusFilter !== 'all' || typeFilter !== 'all') && (
+              <button
+                type="button"
+                onClick={() => {
+                  setSearchTerm('');
+                  setStatusFilter('all');
+                  setTypeFilter('all');
+                }}
+                className="inline-flex items-center justify-center rounded-lg px-3 py-2 text-sm font-semibold text-blue-700 transition-colors hover:bg-blue-50 dark:text-blue-200 dark:hover:bg-white/10"
               >
-                <Upload className="h-4 w-4" />
-                Add Source
-              </Link>
-            </div>
+                Clear filters
+              </button>
+            )}
           </div>
-
-          {showFilters && (
-            <div className="mt-5 flex flex-col gap-3 border-t border-slate-200 pt-4 dark:border-slate-800 sm:flex-row sm:items-center">
-              <label className="flex items-center gap-2 text-sm text-slate-600 dark:text-slate-300">
-                <span className="text-xs font-semibold uppercase tracking-[0.14em] text-slate-500">Status</span>
-                <select
-                  value={statusFilter}
-                  onChange={(event) => setStatusFilter(event.target.value as 'all' | Project['status'])}
-                  className="rounded-xl border border-slate-200 bg-white px-3 py-2 text-sm text-slate-900 focus:border-blue-500 focus:outline-none focus:ring-2 focus:ring-blue-500/20 dark:border-slate-800 dark:bg-slate-900 dark:text-slate-100"
-                >
-                  <option value="all">All</option>
-                  <option value="uploading">Uploading</option>
-                  <option value="processing">Processing</option>
-                  <option value="completed">Completed</option>
-                  <option value="failed">Failed</option>
-                  <option value="cancelled">Cancelled</option>
-                </select>
-              </label>
-              <label className="flex items-center gap-2 text-sm text-slate-600 dark:text-slate-300">
-                <span className="text-xs font-semibold uppercase tracking-[0.14em] text-slate-500">Type</span>
-                <select
-                  value={typeFilter}
-                  onChange={(event) => setTypeFilter(event.target.value as 'all' | ProjectType)}
-                  className="rounded-xl border border-slate-200 bg-white px-3 py-2 text-sm text-slate-900 focus:border-blue-500 focus:outline-none focus:ring-2 focus:ring-blue-500/20 dark:border-slate-800 dark:bg-slate-900 dark:text-slate-100"
-                >
-                  <option value="all">All</option>
-                  <option value="DEBATE">Debate</option>
-                  <option value="INTERVIEW">Interview</option>
-                  <option value="PODCAST">Podcast</option>
-                  <option value="MONOLOGUE">Monologue</option>
-                  <option value="OTHER">Other</option>
-                </select>
-              </label>
-              {(searchTerm || statusFilter !== 'all' || typeFilter !== 'all') && (
-                <button
-                  type="button"
-                  onClick={() => {
-                    setSearchTerm('');
-                    setStatusFilter('all');
-                    setTypeFilter('all');
-                  }}
-                  className="inline-flex items-center justify-center rounded-xl px-3 py-2 text-sm font-semibold text-blue-700 transition-colors hover:bg-blue-50 dark:text-blue-300 dark:hover:bg-blue-500/10"
-                >
-                  Clear filters
-                </button>
-              )}
-            </div>
-          )}
-        </header>
+        </DashboardPageHeader>
 
         <div data-tour="hub-stats" className="grid gap-3 md:grid-cols-2 xl:grid-cols-4">
           <PremiumStatCard

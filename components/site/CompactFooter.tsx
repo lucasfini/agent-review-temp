@@ -3,14 +3,21 @@
 import Link from "next/link";
 import { usePathname } from "next/navigation";
 import { useTheme } from "next-themes";
+import { useEffect, useState } from "react";
 import BrandLogo from "@/components/site/BrandLogo";
 
 export default function CompactFooter({ inDashboard = false }: { inDashboard?: boolean } = {}) {
   const pathname = usePathname();
-  const { resolvedTheme } = useTheme();
-  const logoTheme = resolvedTheme === "light" ? "light" : "dark";
+  const { theme, resolvedTheme } = useTheme();
+  const [mounted, setMounted] = useState(false);
+  const activeTheme = resolvedTheme ?? theme;
+  const logoTheme = mounted && activeTheme === "light" ? "light" : "dark";
 
-  if (pathname === "/") {
+  useEffect(() => {
+    setMounted(true);
+  }, []);
+
+  if (pathname === "/" || pathname === "/product" || pathname.startsWith("/product/")) {
     return null;
   }
 

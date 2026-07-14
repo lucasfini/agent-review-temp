@@ -1,7 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server';
 
 import { RouteAccessError } from '@/lib/api/route-auth';
-import { can, requirePermissionContext } from '@/lib/authz/permissions';
+import { can } from '@/lib/authz/permissions';
 import { OrganizationAccessError } from '@/lib/authz/types';
 import {
   CampaignLibraryValidationError,
@@ -9,8 +9,10 @@ import {
   decorateContentLibraryItemAccess,
   listContentLibraryItems,
 } from '@/lib/campaigns-content-library';
+import { isDemoUser } from '@/lib/demo-mode';
 import { recordOrganizationAuditLog } from '@/lib/organizations/audit';
 import { createResourceVersion } from '@/lib/resource-versions';
+import { requireStudioAssetContext } from '@/lib/studio-assets';
 import { supabaseAdmin } from '@/lib/supabase/server';
 
 export const dynamic = 'force-dynamic';
@@ -67,11 +69,19 @@ function buildVersionSnapshot(item: any) {
 export async function GET(request: NextRequest) {
   try {
     const { searchParams } = new URL(request.url);
-    const { user, organization, membership, permissionContext } = await requirePermissionContext(request, {
+    const context = await requireStudioAssetContext(request, {
       requestedOrganizationId: requestedOrganizationIdFrom(request),
     });
+    const { user, organization, membership } = context;
+    const permissionContext = {
+      userId: user.id,
+      organizationId: context.activeOrganizationId,
+      organizationType: organization.type,
+      role: membership.role,
+      isDemo: isDemoUser(user),
+    };
     const rawLimit = Number(searchParams.get('limit') || '100');
-    const contentItems = await listContentLibraryItems(supabaseAdmin, organization.id, {
+    const contentItems = await listContentLibraryItems(supabaseAdmin, context.activeOrganizationId, {
       campaignId: searchParams.get('campaign_id'),
       libraryId: searchParams.get('library_id'),
       creatorProfileId: searchParams.get('creator_profile_id'),
@@ -109,22 +119,36 @@ export async function GET(request: NextRequest) {
 export async function POST(request: NextRequest) {
   try {
     const body = await request.json().catch(() => ({}));
-    const { user, organization, permissionContext } = await requirePermissionContext(request, {
+    const context = await requireStudioAssetContext(request, {
       requestedOrganizationId: requestedOrganizationIdFrom(request, body),
     });
+    const { user, organization } = context;
+    const permissionContext = {
+      userId: user.id,
+      organizationId: context.activeOrganizationId,
+      organizationType: organization.type,
+      role: context.membership.role,
+      isDemo: isDemoUser(user),
+    };
 
     if (permissionContext.isDemo) {
       return NextResponse.json({ error: 'Demo account is read-only' }, { status: 403 });
     }
-    if (!can(permissionContext, 'library_item.create', { organizationId: organization.id, visibility: 'workspace' })) {
+    if (!can(permissionContext, 'library_item.create', { organizationId: context.activeOrganizationId, visibility: 'workspace' })) {
       return NextResponse.json({ error: 'You do not have permission to create drafts' }, { status: 403 });
     }
 
-    const contentItem = await createContentLibraryItem(supabaseAdmin, organization.id, user.id, body);
+    const contentItem = await createContentLibraryItem(
+      supabaseAdmin,
+      context.activeOrganizationId,
+      user.id,
+      body,
+      { referenceOrganizationIds: context.organizationIds }
+    );
 
     await recordOrganizationAuditLog({
       supabase: supabaseAdmin,
-      organizationId: organization.id,
+      organizationId: context.activeOrganizationId,
       actorUserId: user.id,
       action: 'library_item.created',
       resourceType: 'library_item',
@@ -142,7 +166,7 @@ export async function POST(request: NextRequest) {
     try {
       await createResourceVersion({
         supabase: supabaseAdmin,
-        organizationId: organization.id,
+        organizationId: context.activeOrganizationId,
         resourceType: 'library_item',
         resourceId: contentItem.id,
         changedByUserId: user.id,

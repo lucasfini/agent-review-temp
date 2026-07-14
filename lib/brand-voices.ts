@@ -6,6 +6,7 @@ import {
   type OrganizationMemberRole,
   type OrganizationType,
 } from '@/lib/authz/types';
+import { getAvailableStudioAssetName, hideLegacySharedSources } from '@/lib/studio-sharing';
 
 export type StudioAssetScope = 'private' | 'organization';
 
@@ -309,7 +310,10 @@ export async function listBrandVoices(
     throw new Error(error.message || 'Failed to load brand voices');
   }
 
-  return (data || []).map(mapBrandVoiceRow);
+  return hideLegacySharedSources(
+    (data || []).map(mapBrandVoiceRow),
+    (voice) => voice.sharedFromVoiceId
+  );
 }
 
 export async function listBrandVoicesForOrganizations(
@@ -466,17 +470,6 @@ export async function shareBrandVoiceToOrganization(
   targetOrganizationId: string,
   userId: string
 ): Promise<BrandVoice> {
-  const sharedPayload = {
-    name: source.name,
-    description: source.description,
-    tone: source.tone,
-    audience: source.audience,
-    content_pillars_json: source.contentPillars,
-    writing_examples_json: source.writingExamples,
-    banned_phrases_json: source.bannedPhrases,
-    cta_preferences: source.ctaPreferences,
-  };
-
   const { data: existing, error: existingError } = await supabase
     .from('brand_voices')
     .select('*')
@@ -488,6 +481,31 @@ export async function shareBrandVoiceToOrganization(
   if (existingError) {
     throw new Error(existingError.message || 'Failed to load shared brand voice');
   }
+
+  const { data: siblingVoices, error: siblingError } = await supabase
+    .from('brand_voices')
+    .select('id, name')
+    .eq('organization_id', targetOrganizationId)
+    .is('client_id', null) as { data: Array<{ id: string; name: string }> | null; error: any };
+
+  if (siblingError) {
+    throw new Error(siblingError.message || 'Failed to load team voice names');
+  }
+
+  const sharedPayload = {
+    name: getAvailableStudioAssetName(source.name, siblingVoices || [], {
+      excludeId: existing?.id || source.id,
+      maxNameLength: MAX_NAME_LENGTH,
+      suffixLabel: 'team',
+    }),
+    description: source.description,
+    tone: source.tone,
+    audience: source.audience,
+    content_pillars_json: source.contentPillars,
+    writing_examples_json: source.writingExamples,
+    banned_phrases_json: source.bannedPhrases,
+    cta_preferences: source.ctaPreferences,
+  };
 
   if (existing) {
     const { data, error } = await supabase
@@ -509,22 +527,92 @@ export async function shareBrandVoiceToOrganization(
 
   const { data, error } = await supabase
     .from('brand_voices')
-    .insert({
+    .update({
       ...sharedPayload,
       organization_id: targetOrganizationId,
       client_id: null,
-      created_by: userId,
-      owner_user_id: userId,
-      shared_from_voice_id: source.id,
+      owner_user_id: source.ownerUserId || source.createdBy || userId,
+      shared_from_voice_id: null,
     } as any)
+    .eq('id', source.id)
+    .eq('organization_id', source.organizationId)
+    .is('client_id', null)
     .select('*')
-    .single() as { data: BrandVoiceRow | null; error: any };
+    .maybeSingle() as { data: BrandVoiceRow | null; error: any };
 
   if (error || !data) {
     if (isUniqueViolation(error)) {
       throw new BrandVoiceValidationError('A shared brand voice with this name already exists');
     }
     throw new Error(error?.message || 'Failed to share brand voice');
+  }
+
+  return mapBrandVoiceRow(data);
+}
+
+export async function unshareBrandVoiceToPrivateOrganization(
+  supabase: SupabaseClient<any>,
+  source: BrandVoice,
+  privateOrganizationId: string,
+  activeOrganizationId: string
+): Promise<BrandVoice> {
+  const { data: siblingVoices, error: siblingError } = await supabase
+    .from('brand_voices')
+    .select('id, name')
+    .eq('organization_id', privateOrganizationId)
+    .is('client_id', null) as { data: Array<{ id: string; name: string }> | null; error: any };
+
+  if (siblingError) {
+    throw new Error(siblingError.message || 'Failed to load private voice names');
+  }
+
+  const referenceUpdates = [
+    supabase
+      .from('campaigns')
+      .update({ brand_voice_id: null } as any)
+      .eq('organization_id', activeOrganizationId)
+      .eq('brand_voice_id', source.id)
+      .is('client_id', null),
+    supabase
+      .from('content_library_items')
+      .update({ brand_voice_id: null } as any)
+      .eq('organization_id', activeOrganizationId)
+      .eq('brand_voice_id', source.id)
+      .is('client_id', null),
+    supabase
+      .from('project_generation_jobs')
+      .update({ brand_voice_id: null } as any)
+      .eq('organization_id', activeOrganizationId)
+      .eq('brand_voice_id', source.id),
+  ];
+  const referenceResults = await Promise.all(referenceUpdates);
+  const referenceError = referenceResults.find((result) => result.error)?.error;
+  if (referenceError) {
+    throw new Error(referenceError.message || 'Failed to remove team voice references');
+  }
+
+  const { data, error } = await supabase
+    .from('brand_voices')
+    .update({
+      organization_id: privateOrganizationId,
+      name: getAvailableStudioAssetName(source.name, siblingVoices || [], {
+        excludeId: source.id,
+        maxNameLength: MAX_NAME_LENGTH,
+        suffixLabel: 'private',
+      }),
+      shared_from_voice_id: null,
+    } as any)
+    .eq('id', source.id)
+    .eq('organization_id', source.organizationId)
+    .is('client_id', null)
+    .select('*')
+    .maybeSingle() as { data: BrandVoiceRow | null; error: any };
+
+  if (error || !data) {
+    if (isUniqueViolation(error)) {
+      throw new BrandVoiceValidationError('Could not find an available private brand voice name');
+    }
+    throw new Error(error?.message || 'Failed to make brand voice private');
   }
 
   return mapBrandVoiceRow(data);

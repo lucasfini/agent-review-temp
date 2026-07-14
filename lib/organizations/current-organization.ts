@@ -7,6 +7,10 @@ export interface CurrentOrganization {
   onboarding?: OrganizationOnboardingState;
 }
 
+export interface WorkspaceOption extends CurrentOrganization {
+  isCurrent: boolean;
+}
+
 export interface OrganizationOnboardingState {
   completedAt: string | null;
   skippedAt: string | null;
@@ -24,6 +28,22 @@ interface CurrentOrganizationResponse {
     role?: string;
     status?: string;
   };
+  error?: string;
+}
+
+interface ActiveOrganizationPayload {
+  id?: string;
+  name?: string;
+  type?: CurrentOrganizationType;
+  role?: string;
+  status?: string;
+  isCurrent?: boolean;
+}
+
+interface ActiveOrganizationsResponse {
+  currentOrganizationId?: string | null;
+  organizations?: ActiveOrganizationPayload[];
+  organization?: ActiveOrganizationPayload;
   error?: string;
 }
 
@@ -101,6 +121,68 @@ export async function fetchCurrentOrganization(
     status: payload.membership?.status,
     onboarding: payload.organization.onboarding || undefined,
   };
+}
+
+function normalizeWorkspaceOption(value: ActiveOrganizationPayload | undefined): WorkspaceOption | null {
+  if (!value?.id || !value.name || !value.type) return null;
+
+  return {
+    id: value.id,
+    name: value.name,
+    type: value.type,
+    role: value.role,
+    status: value.status,
+    isCurrent: Boolean(value.isCurrent),
+  };
+}
+
+export async function fetchWorkspaceOptions(accessToken?: string | null): Promise<{
+  currentOrganizationId: string | null;
+  organizations: WorkspaceOption[];
+}> {
+  const response = await fetch('/api/organizations/active', {
+    headers: accessToken ? { Authorization: `Bearer ${accessToken}` } : {},
+    cache: 'no-store',
+  });
+
+  const payload = await response.json().catch(() => ({})) as ActiveOrganizationsResponse;
+  if (!response.ok) {
+    throw new Error(payload.error || 'Failed to load workspaces');
+  }
+
+  return {
+    currentOrganizationId: payload.currentOrganizationId || null,
+    organizations: Array.isArray(payload.organizations)
+      ? payload.organizations.map(normalizeWorkspaceOption).filter((option): option is WorkspaceOption => Boolean(option))
+      : [],
+  };
+}
+
+export async function switchActiveOrganization(
+  organizationId: string,
+  accessToken?: string | null
+): Promise<WorkspaceOption> {
+  const response = await fetch('/api/organizations/active', {
+    method: 'PATCH',
+    headers: {
+      ...(accessToken ? { Authorization: `Bearer ${accessToken}` } : {}),
+      'Content-Type': 'application/json',
+    },
+    body: JSON.stringify({ organization_id: organizationId }),
+    cache: 'no-store',
+  });
+
+  const payload = await response.json().catch(() => ({})) as ActiveOrganizationsResponse;
+  if (!response.ok) {
+    throw new Error(payload.error || 'Failed to switch workspace');
+  }
+
+  const organization = normalizeWorkspaceOption(payload.organization);
+  if (!organization) {
+    throw new Error('Failed to switch workspace');
+  }
+
+  return organization;
 }
 
 export async function updateCurrentOrganizationOnboarding(

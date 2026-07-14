@@ -23,11 +23,15 @@ export async function GET(request: NextRequest) {
     const subscription = await getOrCreateCreditSubscription({
       organizationId: organization.id,
     });
-    await ensureCurrentPlanCreditGrant({
-      organizationId: organization.id,
-      userId: user.id,
-      subscription,
-    });
+    try {
+      await ensureCurrentPlanCreditGrant({
+        organizationId: organization.id,
+        userId: user.id,
+        subscription,
+      });
+    } catch (creditGrantError) {
+      console.error('[SUBSCRIPTIONS_CURRENT] Failed to ensure current plan credit grant:', creditGrantError);
+    }
     const entitlements = getEntitlementsForSubscription(subscription);
 
     return NextResponse.json(

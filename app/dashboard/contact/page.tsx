@@ -3,8 +3,9 @@
 import { useMemo, useState } from 'react';
 import { useAuth } from '@/lib/auth/context';
 import { SUPPORT_EMAIL } from '@/lib/site-config';
-import { AlertCircle, Copy, LifeBuoy, Loader2, Mail, Send, Sparkles } from 'lucide-react';
+import { AlertCircle, Copy, Loader2, Mail, Send, Sparkles } from 'lucide-react';
 import { toast } from 'sonner';
+import { DashboardPageHeader, DashboardPageShell } from '@/components/dashboard/shell';
 
 type Category = 'bug' | 'feedback' | 'billing' | 'account' | 'feature';
 type Severity = 'low' | 'normal' | 'high';
@@ -101,18 +102,13 @@ export default function ContactPage() {
   };
 
   return (
-    <div className="bg-white dark:bg-slate-950 min-h-full text-slate-900 dark:text-slate-100">
-      <div className="mx-auto max-w-3xl px-4 py-8 sm:px-6">
-        <div className="mb-6 flex items-center gap-2 text-sm text-slate-500 dark:text-slate-300">
-          <LifeBuoy className="h-4 w-4 text-blue-500 dark:text-blue-400" />
-          <span className="font-semibold">AudioRepurpose support</span>
-          <span className="rounded-full border border-slate-300 dark:border-slate-700 bg-slate-100 dark:bg-slate-800/80 px-2 py-0.5 text-[11px] text-slate-500 dark:text-slate-400">
-            Feedback
-          </span>
-          <span className="rounded-full border border-blue-200 dark:border-blue-500/20 bg-blue-50 dark:bg-blue-500/10 px-2 py-0.5 text-[11px] text-blue-700 dark:text-blue-300">
-            Contact us
-          </span>
-        </div>
+    <DashboardPageShell maxWidth="5xl">
+      <DashboardPageHeader
+        icon={Mail}
+        title="Contact Us"
+        description="Reach support, share questions, or request help from the team."
+      />
+      <div className="mx-auto max-w-3xl">
 
         <div className="rounded-2xl border border-slate-200 dark:border-slate-800 bg-slate-50 dark:bg-[#232323] shadow-[0_24px_60px_-30px_rgba(15,23,42,0.35)]">
           <div className="border-b border-slate-200 dark:border-slate-800 px-5 py-4">
@@ -261,6 +257,6 @@ export default function ContactPage() {
           </div>
         </div>
       </div>
-    </div>
+    </DashboardPageShell>
   );
 }

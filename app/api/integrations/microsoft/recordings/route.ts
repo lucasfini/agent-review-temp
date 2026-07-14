@@ -1,5 +1,5 @@
 import { NextRequest, NextResponse } from 'next/server';
-import { getConnection, getDecryptedTokens, upsertConnection } from '../../_utils';
+import { getConnection, getDecryptedTokens, integrationErrorResponse, signedOutIntegrationResponse, upsertConnection } from '../../_utils';
 import { supabaseAdmin } from '@/lib/supabase/server';
 
 async function refreshMicrosoftToken(connection: any) {
@@ -50,17 +50,17 @@ async function refreshMicrosoftToken(connection: any) {
 export async function GET(request: NextRequest) {
   const authHeader = request.headers.get('authorization');
   if (!authHeader) {
-    return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
+    return signedOutIntegrationResponse();
   }
   const token = authHeader.replace('Bearer ', '');
   const { data: { user } } = await supabaseAdmin.auth.getUser(token);
   if (!user) {
-    return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
+    return signedOutIntegrationResponse();
   }
 
   let connection = await getConnection(user.id, 'microsoft');
   if (!connection) {
-    return NextResponse.json({ error: 'Microsoft not connected' }, { status: 404 });
+    return integrationErrorResponse({ provider: 'microsoft', code: 'RECONNECT_REQUIRED', action: 'list', status: 404, userId: user.id });
   }
 
   const expiresAt = connection.expires_at ? new Date(connection.expires_at).getTime() : null;
@@ -70,7 +70,7 @@ export async function GET(request: NextRequest) {
 
   const { accessToken } = getDecryptedTokens(connection);
   if (!accessToken) {
-    return NextResponse.json({ error: 'Microsoft token missing' }, { status: 401 });
+    return integrationErrorResponse({ provider: 'microsoft', code: 'RECONNECT_REQUIRED', action: 'list', status: 401, userId: user.id });
   }
 
   const res = await fetch('https://graph.microsoft.com/v1.0/me/drive/root:/Recordings:/children', {
@@ -82,7 +82,15 @@ export async function GET(request: NextRequest) {
       return NextResponse.json({ recordings: [] });
     }
     const text = await res.text();
-    return NextResponse.json({ error: `Microsoft Graph error: ${text}` }, { status: 500 });
+    return integrationErrorResponse({
+      provider: 'microsoft',
+      code: res.status === 401 || res.status === 403 ? 'RECONNECT_REQUIRED' : 'LIST_FAILED',
+      action: 'list',
+      status: res.status === 401 || res.status === 403 ? 401 : 500,
+      logPrefix: '[MICROSOFT RECORDINGS] Provider API error:',
+      cause: text,
+      userId: user.id,
+    });
   }
 
   const data = await res.json();

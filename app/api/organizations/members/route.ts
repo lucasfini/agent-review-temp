@@ -22,6 +22,20 @@ function organizationProfile(metadata: unknown) {
   };
 }
 
+function optionalMetadataString(value: unknown): string | null {
+  if (typeof value !== 'string') return null;
+  const trimmed = value.trim();
+  return trimmed || null;
+}
+
+function organizationGuidedSetup(metadata: unknown) {
+  const guidedSetup = parseObject(parseObject(metadata).guidedSetup);
+  return {
+    roleTitle: optionalMetadataString(guidedSetup.roleTitle),
+    teamSize: optionalMetadataString(guidedSetup.teamSize),
+  };
+}
+
 export async function GET(request: NextRequest) {
   try {
     const { searchParams } = new URL(request.url);
@@ -29,6 +43,12 @@ export async function GET(request: NextRequest) {
     const { organization, membership } = await requireActiveOrganizationForUser(request, {
       requestedOrganizationId,
     });
+    if (organization.type !== 'saas_customer') {
+      return NextResponse.json(
+        { error: 'Team workspace settings are only available for team workspaces' },
+        { status: 400 }
+      );
+    }
 
     const snapshot = await getWorkspaceTeamSnapshot(supabaseAdmin, organization.id);
 
@@ -38,6 +58,7 @@ export async function GET(request: NextRequest) {
         name: organization.name,
         type: organization.type,
         profile: organizationProfile(organization.onboarding_metadata_json),
+        guidedSetup: organizationGuidedSetup(organization.onboarding_metadata_json),
       },
       membership: {
         role: membership.role,

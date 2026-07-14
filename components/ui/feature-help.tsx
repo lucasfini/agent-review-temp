@@ -7,8 +7,9 @@ import { cn } from "@/lib/utils";
 
 interface FeatureHelpProps {
   title?: string;
-  description: string;
+  description?: string;
   bestFor?: string;
+  children?: React.ReactNode;
   side?: "top" | "right" | "bottom" | "left";
   align?: "start" | "center" | "end";
   className?: string;
@@ -19,6 +20,7 @@ export function FeatureHelp({
   title,
   description,
   bestFor,
+  children,
   side = "top",
   align = "center",
   className,
@@ -57,9 +59,16 @@ export function FeatureHelp({
           )}
         >
           {title ? <p className="text-sm font-semibold">{title}</p> : null}
-          <p className={cn("text-sm leading-5 text-slate-600 dark:text-slate-300", title ? "mt-1.5" : "")}>
-            {description}
-          </p>
+          {description ? (
+            <p className={cn("text-sm leading-5 text-slate-600 dark:text-slate-300", title ? "mt-1.5" : "")}>
+              {description}
+            </p>
+          ) : null}
+          {children ? (
+            <div className={cn("text-sm leading-5 text-slate-600 dark:text-slate-300", title || description ? "mt-3" : "")}>
+              {children}
+            </div>
+          ) : null}
           {bestFor ? (
             <p className="mt-2 text-xs leading-5 text-slate-500 dark:text-slate-400">
               Best used when: {bestFor}

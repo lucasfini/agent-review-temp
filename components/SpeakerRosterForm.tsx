@@ -17,12 +17,20 @@ interface SpeakerRosterFormProps {
   onChange: (speakers: RosterSpeaker[]) => void;
 }
 
+function createSpeakerId() {
+  if (typeof crypto !== 'undefined' && typeof crypto.randomUUID === 'function') {
+    return crypto.randomUUID();
+  }
+
+  return `speaker-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 10)}`;
+}
+
 export function SpeakerRosterForm({ speakers, onChange }: SpeakerRosterFormProps) {
   const [showForm, setShowForm] = useState(false);
 
   const addSpeaker = () => {
     const newSpeaker: RosterSpeaker = {
-      id: crypto.randomUUID(),
+      id: createSpeakerId(),
       name: '',
       role: null,
       description: '',
@@ -46,8 +54,8 @@ export function SpeakerRosterForm({ speakers, onChange }: SpeakerRosterFormProps
 
   return (
     <div className="mb-6">
-      <div className="flex items-center justify-between mb-3">
-        <div>
+      <div className="mb-3 space-y-3">
+        <div className="min-w-0">
           <h3 className="text-sm font-semibold text-slate-900 dark:text-slate-100">
             Speaker Roster (Optional)
           </h3>
@@ -58,7 +66,7 @@ export function SpeakerRosterForm({ speakers, onChange }: SpeakerRosterFormProps
         <button
           onClick={() => setShowForm(!showForm)}
           type="button"
-          className="inline-flex items-center gap-2 text-xs text-blue-600 hover:text-blue-400 font-medium"
+          className="inline-flex items-center gap-2 rounded-md border border-blue-200 bg-blue-50 px-2.5 py-1.5 text-xs font-semibold text-blue-700 transition-colors hover:bg-blue-100 hover:text-blue-800 dark:border-blue-800/40 dark:bg-blue-900/20 dark:text-blue-300 dark:hover:bg-blue-900/35 dark:hover:text-blue-200"
         >
           {showForm ? (
             <>
@@ -75,17 +83,16 @@ export function SpeakerRosterForm({ speakers, onChange }: SpeakerRosterFormProps
 
       {showForm && (
         <div className="space-y-3 rounded-lg border border-slate-200 bg-white p-4 shadow-sm dark:border-slate-700 dark:bg-slate-900">
-          {/* Existing speakers */}
           {speakers.length > 0 && (
             <div className="space-y-3">
               {speakers.map((speaker, index) => (
-                <div key={speaker.id} className="flex items-start gap-3 rounded-lg border border-slate-200 bg-slate-50 p-3 dark:border-slate-700 dark:bg-slate-800/50">
+                <div key={speaker.id} className="grid grid-cols-[auto_minmax(0,1fr)_auto] items-start gap-3 rounded-lg border border-slate-200 bg-slate-50 p-3 dark:border-slate-700 dark:bg-slate-800/50">
                   <div className="flex-shrink-0 w-8 h-8 rounded-full bg-blue-100 text-blue-600 flex items-center justify-center text-sm font-semibold">
                     {index + 1}
                   </div>
 
-                  <div className="flex-1 space-y-2">
-                    <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
+                  <div className="min-w-0 space-y-2">
+                    <div className="grid grid-cols-1 gap-2">
                       <input
                         type="text"
                         value={speaker.name}

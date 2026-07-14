@@ -12,6 +12,7 @@ import { getBalance, checkSufficientCredit, InsufficientCreditError } from './cr
 import { formatSiteCreditsFromUsd } from './display';
 import { InsufficientPlanCreditsError, PlanUploadLimitError } from './plan-credits';
 import { formatProductCredits } from './product-credits';
+import { buildPlanUploadLimitMessage, getUploadLimitUpgradeTarget } from './plan-upload-limits';
 
 // ============================================================================
 // Error Response Formatting
@@ -22,15 +23,22 @@ import { formatProductCredits } from './product-credits';
  */
 export function billingErrorResponse(error: unknown): NextResponse {
   if (error instanceof PlanUploadLimitError) {
+    const upgradePlanSlug = getUploadLimitUpgradeTarget(error.planSlug);
     return NextResponse.json(
       {
         error: 'Upload exceeds plan limit',
         code: 'PLAN_UPLOAD_LIMIT_EXCEEDED',
         requestedMinutes: error.requestedMinutes,
+        requestedSeconds: error.requestedSeconds,
         maxUploadMinutes: error.maxUploadMinutes,
         planSlug: error.planSlug,
+        upgradePlanSlug,
         upgradeRequired: true,
-        message: `Your ${error.planSlug || 'current'} plan allows uploads up to ${error.maxUploadMinutes} minutes.`,
+        message: buildPlanUploadLimitMessage({
+          requestedSeconds: error.requestedSeconds,
+          planSlug: error.planSlug,
+          maxUploadMinutes: error.maxUploadMinutes,
+        }),
       },
       { status: 402 }
     );
@@ -47,10 +55,11 @@ export function billingErrorResponse(error: unknown): NextResponse {
         shortfall,
         planSlug: error.planSlug,
         topUpsEnabled: error.topUpsEnabled,
+        topUpPath: error.topUpsEnabled ? '/dashboard/billing' : null,
         upgradeRequired: error.upgradeRequired,
         message: error.topUpsEnabled
-          ? `You need ${formatProductCredits(error.required)} credits but only have ${formatProductCredits(error.available)}. Buy a top-up or upgrade to continue.`
-          : `You need ${formatProductCredits(error.required)} credits but only have ${formatProductCredits(error.available)}. Upgrade to continue.`,
+          ? `This recording requires about ${formatProductCredits(error.required)} credits. You have ${formatProductCredits(error.available)} credits available.`
+          : `This recording requires about ${formatProductCredits(error.required)} credits. You have ${formatProductCredits(error.available)} credits available.`,
       },
       { status: 402 }
     );

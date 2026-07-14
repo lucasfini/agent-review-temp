@@ -23,6 +23,12 @@ interface PersistedQueuedUploadRecord {
   analysisOptions: AnalysisOptions;
   displayName: string;
   estimatedDurationSeconds?: number;
+  estimatedCredits?: number;
+  remainingCreditsAfterUpload?: number | null;
+  billingErrorCode?: string;
+  topUpsEnabled?: boolean;
+  topUpPath?: string | null;
+  upgradeRequired?: boolean;
   sourceUrl?: string;
   sourceType?: UploadedFile['sourceType'];
   importPayload?: Record<string, unknown>;
@@ -123,6 +129,12 @@ function toPersistedQueuedUpload(uploadedFile: UploadedFile): PersistedQueuedUpl
     analysisOptions: normalizeAnalysisOptions(uploadedFile.analysisOptions),
     displayName: uploadedFile.displayName,
     estimatedDurationSeconds: uploadedFile.estimatedDurationSeconds,
+    estimatedCredits: uploadedFile.estimatedCredits,
+    remainingCreditsAfterUpload: uploadedFile.remainingCreditsAfterUpload,
+    billingErrorCode: uploadedFile.billingErrorCode,
+    topUpsEnabled: uploadedFile.topUpsEnabled,
+    topUpPath: uploadedFile.topUpPath,
+    upgradeRequired: uploadedFile.upgradeRequired,
     sourceUrl: uploadedFile.sourceUrl,
     sourceType: uploadedFile.sourceType,
     importPayload: uploadedFile.importPayload,
@@ -150,6 +162,12 @@ function toUploadedFile(record: PersistedQueuedUploadRecord): UploadedFile {
     analysisOptions: normalizeAnalysisOptions(record.analysisOptions),
     displayName: record.displayName,
     estimatedDurationSeconds: record.estimatedDurationSeconds,
+    estimatedCredits: record.estimatedCredits,
+    remainingCreditsAfterUpload: record.remainingCreditsAfterUpload,
+    billingErrorCode: record.billingErrorCode,
+    topUpsEnabled: record.topUpsEnabled,
+    topUpPath: record.topUpPath,
+    upgradeRequired: record.upgradeRequired,
     sourceUrl: record.sourceUrl,
     sourceType: record.sourceType,
     importPayload: record.importPayload,

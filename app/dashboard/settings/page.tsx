@@ -1,18 +1,40 @@
 /**
  * Settings Page
- * Unified settings page for preferences, workspace management, and integrations
+ * Account preferences page
  * Premium design with Shadcn UI patterns and Recharts
  */
 
 'use client';
 
-import { Suspense } from 'react';
+import { Suspense, useEffect } from 'react';
+import { useRouter, useSearchParams } from 'next/navigation';
 import { useAuth } from '@/lib/auth/context';
 import UnifiedSettings from './unified-settings';
 import { DashboardPageHeader, DashboardPageShell } from '@/components/dashboard/shell';
 
 export default function SettingsPage() {
   const { user, loading } = useAuth();
+  const router = useRouter();
+  const searchParams = useSearchParams();
+  const requestedSection = searchParams.get('section');
+
+  useEffect(() => {
+    if (requestedSection === 'workspace') {
+      router.replace('/dashboard/team');
+      return;
+    }
+    if (requestedSection === 'integrations') {
+      router.replace('/dashboard/integrations');
+      return;
+    }
+    if (requestedSection === 'billing') {
+      router.replace('/dashboard/billing');
+      return;
+    }
+    if (requestedSection === 'usage') {
+      router.replace('/dashboard/usage');
+    }
+  }, [requestedSection, router]);
 
   if (loading) {
     return (
@@ -49,10 +71,10 @@ export default function SettingsPage() {
       <DashboardPageHeader
         eyebrow="Settings"
         title="Preferences"
-        description="Update your account details, workspace defaults, and connected platforms from one control center."
+        description="Update your profile, email, password, and account controls."
       />
       <Suspense fallback={<div className="animate-pulse space-y-6"><div className="h-8 bg-slate-100 dark:bg-slate-800 rounded w-48" /><div className="h-64 bg-slate-100 dark:bg-slate-800 rounded-lg" /></div>}>
-        <UnifiedSettings userEmail={user.email || ''} />
+        <UnifiedSettings userEmail={user.email || ''} forcedSection="preferences" />
       </Suspense>
     </DashboardPageShell>
   );

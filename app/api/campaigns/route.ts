@@ -12,6 +12,7 @@ import {
 } from '@/lib/campaigns-content-library';
 import { isDemoUser } from '@/lib/demo-mode';
 import { requireStudioAssetContext } from '@/lib/studio-assets';
+import { resolveStudioAssetWriteOrganizationId } from '@/lib/studio-sharing';
 import { supabaseAdmin } from '@/lib/supabase/server';
 
 export const dynamic = 'force-dynamic';
@@ -91,8 +92,14 @@ export async function POST(request: NextRequest) {
       return NextResponse.json({ error: 'You do not have permission to create plans' }, { status: 403 });
     }
 
+    const targetOrganizationId = resolveStudioAssetWriteOrganizationId({
+      activeOrganizationId: context.activeOrganizationId,
+      privateOrganizationId: context.privateOrganizationId,
+      organizationType: context.organization.type,
+    }, body?.visibility);
+
     const campaign = decorateCampaignScope(
-      await createCampaign(supabaseAdmin, context.privateOrganizationId, context.user.id, body),
+      await createCampaign(supabaseAdmin, targetOrganizationId, context.user.id, body),
       {
         activeOrganizationId: context.activeOrganizationId,
         privateOrganizationId: context.privateOrganizationId,

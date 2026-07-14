@@ -1,9 +1,10 @@
 "use client";
 
 import { useEffect, useMemo, useState, type SVGProps } from 'react';
-import { ChevronDown, ChevronUp, Copy, Download, Loader2, Pencil, Sparkles, Trash2, X, Facebook, Instagram, Youtube, Mail, FileText, Quote, Newspaper, Mic } from 'lucide-react';
+import { Archive, ChevronDown, ChevronUp, Copy, FileJson, FileType, FolderInput, Loader2, Pencil, Save, Sparkles, Trash2, X, Facebook, Instagram, Youtube, Mail, FileText, Quote, Newspaper, Mic } from 'lucide-react';
 import { CONTENT_TYPES, MAX_CUSTOM_GUIDANCE_LENGTH, normalizeCustomGuidance, type ContentBlock } from '@/lib/content-types';
 import { DEFAULT_THEME_ID, getCuratedThemes } from '@/lib/content-themes';
+import type { SingleOutputExportFormat } from '@/lib/export-utils';
 
 type Output = {
   id: string;
@@ -63,6 +64,12 @@ function getThemeIdForOutput(output?: Output): string {
   return typeof raw === 'string' && raw.trim() ? raw : DEFAULT_THEME_ID;
 }
 
+function getGenerationLibraryIdForOutput(output?: Output): string | null {
+  const generationContext = output?.metadata?.generationContext || output?.metadata?.generation_context;
+  const libraryId = generationContext?.libraryId || generationContext?.library_id;
+  return typeof libraryId === 'string' && libraryId.trim() ? libraryId : null;
+}
+
 const XIcon = ({ className, ...props }: SVGProps<SVGSVGElement>) => (
   <svg viewBox="0 0 24 24" fill="currentColor" className={className} {...props}>
     <path d="M4 4h4l4 5 4-5h4l-6 7 6 9h-4l-4-5-4 5H4l6-9z" />
@@ -94,6 +101,17 @@ const CONTENT_LOGOS = {
   newsletter: Mail,
   quote: Quote,
 } as const;
+
+const LOCAL_SAVE_OPTIONS: Array<{
+  format: SingleOutputExportFormat;
+  label: string;
+  icon: typeof Archive;
+}> = [
+  { format: 'zip', label: 'ZIP', icon: Archive },
+  { format: 'pdf', label: 'PDF', icon: FileType },
+  { format: 'json', label: 'JSON', icon: FileJson },
+  { format: 'plaintext', label: 'Plain text', icon: FileText },
+];
 
 function getLaunchPageLogoKey(contentTypeId: string): keyof typeof CONTENT_LOGOS {
   switch (contentTypeId) {
@@ -285,8 +303,10 @@ type Props = {
   deletingOutput: string | null;
   onGenerate: (block: ContentBlock) => Promise<void>;
   onCopyOutput: (output: Output) => Promise<void> | void;
-  onDownloadOutput: (output: Output) => void;
+  onSaveOutputLocally: (output: Output, format: SingleOutputExportFormat) => Promise<void> | void;
+  onSaveOutputToLibrary: (output: Output, libraryId: string) => Promise<void> | void;
   onDeleteOutput: (outputId: string) => Promise<void> | void;
+  savingOutputToLibrary?: string | null;
   compact?: boolean;
   title?: string;
   description?: string;
@@ -311,8 +331,10 @@ export default function InlineContentStudio({
   deletingOutput,
   onGenerate,
   onCopyOutput,
-  onDownloadOutput,
+  onSaveOutputLocally,
+  onSaveOutputToLibrary,
   onDeleteOutput,
+  savingOutputToLibrary = null,
   compact = false,
   title = 'Content Studio',
   description = 'Generate any content type on demand. Use the pencil icon to set the style before you run it.',
@@ -334,6 +356,9 @@ export default function InlineContentStudio({
   const [editingThemeId, setEditingThemeId] = useState<string | null>(null);
   const [themeByType, setThemeByType] = useState<ThemeMap>({});
   const [expandedOutputs, setExpandedOutputs] = useState<Set<string>>(new Set());
+  const [activeSaveOutputId, setActiveSaveOutputId] = useState<string | null>(null);
+  const [selectedLibraryId, setSelectedLibraryId] = useState('');
+  const [localSaving, setLocalSaving] = useState<{ outputId: string; format: SingleOutputExportFormat } | null>(null);
   const activeThemeContentType = useMemo(
     () => CONTENT_TYPES.find((contentType) => contentType.id === editingThemeId) || null,
     [editingThemeId]
@@ -404,6 +429,35 @@ export default function InlineContentStudio({
     onContextChange?.(contentTypeId, {
       ...updateExplicitContextSelection(contextByType[contentTypeId], defaultContext, field, value),
     });
+  };
+
+  const openSavePopup = (output: Output) => {
+    const existingLibraryId = getGenerationLibraryIdForOutput(output);
+    const hasExistingLibrary = existingLibraryId && libraries.some((library) => library.id === existingLibraryId);
+    setSelectedLibraryId(hasExistingLibrary ? existingLibraryId : libraries.length === 1 ? libraries[0].id : '');
+    setActiveSaveOutputId((current) => (current === output.id ? null : output.id));
+  };
+
+  const saveOutputLocally = async (output: Output, format: SingleOutputExportFormat) => {
+    setLocalSaving({ outputId: output.id, format });
+    try {
+      await onSaveOutputLocally(output, format);
+      setActiveSaveOutputId(null);
+    } catch {
+      // Parent handler owns the toast.
+    } finally {
+      setLocalSaving(null);
+    }
+  };
+
+  const saveOutputToLibrary = async (output: Output) => {
+    if (!selectedLibraryId) return;
+    try {
+      await onSaveOutputToLibrary(output, selectedLibraryId);
+      setActiveSaveOutputId(null);
+    } catch {
+      // Parent handler owns the toast.
+    }
   };
 
   const buildGenerateBlock = (
@@ -723,7 +777,7 @@ export default function InlineContentStudio({
                                 {themeName} · {new Date(output.created_at).toLocaleString()}
                               </p>
                             </button>
-                            <div className="flex items-center gap-1">
+                            <div className="relative flex items-center gap-1">
                               {expandedOutputs.has(output.id) ? (
                                 <ChevronUp className="h-4 w-4 text-slate-500" />
                               ) : (
@@ -744,13 +798,95 @@ export default function InlineContentStudio({
                                 type="button"
                                 onClick={(event) => {
                                   event.stopPropagation();
-                                  onDownloadOutput(output);
+                                  openSavePopup(output);
                                 }}
                                 className="rounded-lg p-2 text-slate-500 transition-colors hover:bg-slate-100 hover:text-slate-900 dark:hover:bg-slate-800 dark:hover:text-slate-100"
-                                aria-label={`Download ${contentType.name}`}
+                                aria-label={`Save ${contentType.name}`}
+                                aria-haspopup="dialog"
+                                aria-expanded={activeSaveOutputId === output.id}
                               >
-                                <Download className="h-4 w-4" />
+                                <Save className="h-4 w-4" />
                               </button>
+                              {activeSaveOutputId === output.id ? (
+                                <div
+                                  className="absolute right-0 top-11 z-30 w-72 max-w-[calc(100vw-2rem)] rounded-xl border border-slate-200 bg-white p-3 text-left shadow-xl dark:border-slate-800 dark:bg-slate-950"
+                                  role="dialog"
+                                  aria-label={`Save ${contentType.name}`}
+                                  onClick={(event) => event.stopPropagation()}
+                                >
+                                  <div className="flex items-center justify-between gap-3">
+                                    <p className="text-sm font-semibold text-slate-900 dark:text-slate-50">Save content</p>
+                                    <button
+                                      type="button"
+                                      onClick={() => setActiveSaveOutputId(null)}
+                                      className="rounded-md p-1 text-slate-500 transition-colors hover:bg-slate-100 hover:text-slate-900 dark:hover:bg-slate-800 dark:hover:text-slate-100"
+                                      aria-label="Close save options"
+                                    >
+                                      <X className="h-3.5 w-3.5" />
+                                    </button>
+                                  </div>
+                                  <div className="mt-3">
+                                    <p className="mb-2 text-[10px] font-semibold uppercase tracking-wide text-slate-500 dark:text-slate-400">Local file</p>
+                                    <div className="grid grid-cols-2 gap-2">
+                                      {LOCAL_SAVE_OPTIONS.map(({ format, label, icon: Icon }) => {
+                                        const isSaving = localSaving?.outputId === output.id && localSaving.format === format;
+                                        return (
+                                          <button
+                                            key={format}
+                                            type="button"
+                                            onClick={() => void saveOutputLocally(output, format)}
+                                            disabled={Boolean(localSaving)}
+                                            className="inline-flex items-center justify-center gap-1.5 rounded-lg border border-slate-200 bg-white px-2.5 py-2 text-xs font-medium text-slate-700 transition-colors hover:bg-slate-50 disabled:cursor-not-allowed disabled:opacity-60 dark:border-slate-700 dark:bg-slate-900 dark:text-slate-200 dark:hover:bg-slate-800"
+                                          >
+                                            {isSaving ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <Icon className="h-3.5 w-3.5" />}
+                                            {label}
+                                          </button>
+                                        );
+                                      })}
+                                    </div>
+                                  </div>
+                                  <div className="mt-3 border-t border-slate-200 pt-3 dark:border-slate-800">
+                                    <label
+                                      htmlFor={`save-output-library-${output.id}`}
+                                      className="mb-2 block text-[10px] font-semibold uppercase tracking-wide text-slate-500 dark:text-slate-400"
+                                    >
+                                      Library collection
+                                    </label>
+                                    <select
+                                      id={`save-output-library-${output.id}`}
+                                      value={selectedLibraryId}
+                                      onChange={(event) => setSelectedLibraryId(event.target.value)}
+                                      disabled={readOnly || libraries.length === 0 || savingOutputToLibrary === output.id}
+                                      className="w-full rounded-lg border border-slate-200 bg-white px-2.5 py-2 text-xs text-slate-900 disabled:cursor-not-allowed disabled:opacity-60 dark:border-slate-700 dark:bg-slate-900 dark:text-slate-100"
+                                    >
+                                      <option value="">Choose collection</option>
+                                      {libraries.map((library) => (
+                                        <option key={library.id} value={library.id}>
+                                          {library.name}
+                                        </option>
+                                      ))}
+                                    </select>
+                                    {libraries.length === 0 ? (
+                                      <p className="mt-2 text-xs text-slate-500 dark:text-slate-400">
+                                        Create a collection in Library first.
+                                      </p>
+                                    ) : null}
+                                    <button
+                                      type="button"
+                                      onClick={() => void saveOutputToLibrary(output)}
+                                      disabled={readOnly || !selectedLibraryId || savingOutputToLibrary === output.id}
+                                      className="mt-2 inline-flex w-full items-center justify-center gap-1.5 rounded-lg bg-slate-900 px-3 py-2 text-xs font-semibold text-white transition-colors hover:bg-slate-800 disabled:cursor-not-allowed disabled:opacity-60 dark:bg-slate-100 dark:text-slate-900 dark:hover:bg-white"
+                                    >
+                                      {savingOutputToLibrary === output.id ? (
+                                        <Loader2 className="h-3.5 w-3.5 animate-spin" />
+                                      ) : (
+                                        <FolderInput className="h-3.5 w-3.5" />
+                                      )}
+                                      Save to collection
+                                    </button>
+                                  </div>
+                                </div>
+                              ) : null}
                               <button
                                 type="button"
                                 onClick={(event) => {

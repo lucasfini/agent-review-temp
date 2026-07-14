@@ -77,6 +77,7 @@ const OPTIONAL_ENV = [
 ];
 
 const DEFAULT_ENV_FILES = ['.env.production', '.env.local', '.env'];
+const BILLING_TEST_MODE_VALUES = new Set(['1', 'true', 'yes', 'on', 'enabled', 'enable']);
 
 function normalizeValue(value) {
   return typeof value === 'string' ? value.trim() : '';
@@ -180,6 +181,32 @@ function validateIntegrationEncryptionKey(value) {
   return 'INTEGRATIONS_ENCRYPTION_KEY must be 32 bytes as base64 or 64 hex characters';
 }
 
+function isBillingTestModeEnabled(value) {
+  return typeof value === 'string' && BILLING_TEST_MODE_VALUES.has(value.trim().toLowerCase());
+}
+
+function validateProductionStripeEnvironment(env) {
+  const errors = [];
+
+  if (isUsableValue(env.STRIPE_SECRET_KEY) && !normalizeValue(env.STRIPE_SECRET_KEY).startsWith('sk_live_')) {
+    errors.push('STRIPE_SECRET_KEY must be a live Stripe secret key that starts with sk_live_.');
+  }
+  if (
+    isUsableValue(env.NEXT_PUBLIC_STRIPE_PUBLISHABLE_KEY)
+    && !normalizeValue(env.NEXT_PUBLIC_STRIPE_PUBLISHABLE_KEY).startsWith('pk_live_')
+  ) {
+    errors.push('NEXT_PUBLIC_STRIPE_PUBLISHABLE_KEY must be a live Stripe publishable key that starts with pk_live_.');
+  }
+  if (isUsableValue(env.STRIPE_WEBHOOK_SECRET) && !normalizeValue(env.STRIPE_WEBHOOK_SECRET).startsWith('whsec_')) {
+    errors.push('STRIPE_WEBHOOK_SECRET must be a webhook signing secret that starts with whsec_.');
+  }
+  if (isBillingTestModeEnabled(env.BILLING_TEST_MODE)) {
+    errors.push('BILLING_TEST_MODE must not be enabled in production.');
+  }
+
+  return errors;
+}
+
 function collectProductionEnvChecks(env = process.env) {
   const requiredKeys = validateRequiredKeys(env, REQUIRED_ENV);
   const requiredGroups = validateAnyGroups(env, REQUIRED_ANY_GROUPS);
@@ -191,6 +218,7 @@ function collectProductionEnvChecks(env = process.env) {
     validateOptionalCredentials(env, ['MS_CLIENT_ID', 'MS_CLIENT_SECRET', 'MS_REDIRECT_URI']),
     validateOptionalCredentials(env, ['GOOGLE_OAUTH_CLIENT_ID', 'GOOGLE_OAUTH_CLIENT_SECRET', 'YOUTUBE_REDIRECT_URI']),
     validateIntegrationEncryptionKey(env.INTEGRATIONS_ENCRYPTION_KEY),
+    ...validateProductionStripeEnvironment(env),
   ].filter(Boolean);
 
   const rawEnforcementMode = env.SUBSCRIPTION_ENFORCEMENT_MODE;
@@ -358,11 +386,13 @@ module.exports = {
   isPlaceholderValue,
   isPresent,
   isUsableValue,
+  isBillingTestModeEnabled,
   loadEnvFiles,
   normalizeEnforcementMode,
   parseArgs,
   runCli,
   validateIntegrationEncryptionKey,
+  validateProductionStripeEnvironment,
   validateOptionalCredentials,
   validateRequiredKeys,
   validateRequiredTogether,

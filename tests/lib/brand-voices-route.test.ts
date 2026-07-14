@@ -167,11 +167,11 @@ describe('brand voice routes', () => {
     expect(mockListBrandVoicesForOrganizations).not.toHaveBeenCalled();
   });
 
-  it('creates a private brand voice for signed-in users', async () => {
+  it('creates a team brand voice by default in a team workspace', async () => {
     const { POST } = await import('@/app/api/brand-voices/route');
     mockCreateBrandVoice.mockResolvedValue({
       ...brandVoice,
-      organizationId: 'personal-1',
+      organizationId: 'org-1',
     });
 
     const response = await POST(new Request('http://localhost/api/brand-voices', {
@@ -186,19 +186,19 @@ describe('brand voice routes', () => {
 
     expect(response.status).toBe(201);
     expect(payload.brandVoice).toEqual(expect.objectContaining({
-      organizationId: 'personal-1',
-      scope: 'private',
+      organizationId: 'org-1',
+      scope: 'organization',
       canEdit: true,
     }));
     expect(mockCreateBrandVoice).toHaveBeenCalledWith(
       expect.anything(),
-      'personal-1',
+      'org-1',
       'user-1',
       expect.objectContaining({ name: 'Default voice', tone: 'Direct' })
     );
   });
 
-  it('allows non-admin members to create private brand voices', async () => {
+  it('allows non-admin members to create private brand voices when requested', async () => {
     const { POST } = await import('@/app/api/brand-voices/route');
     mockRequireStudioAssetContext.mockResolvedValue({
       user,
@@ -218,7 +218,7 @@ describe('brand voice routes', () => {
 
     const response = await POST(new Request('http://localhost/api/brand-voices', {
       method: 'POST',
-      body: JSON.stringify({ organization_id: 'org-1', name: 'Member edit' }),
+      body: JSON.stringify({ organization_id: 'org-1', visibility: 'private', name: 'Member edit' }),
     }) as any);
     const payload = await response.json();
 

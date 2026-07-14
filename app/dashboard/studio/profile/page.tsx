@@ -1,29 +1,37 @@
 "use client";
 
-import { useCallback, useEffect, useMemo, useState, type ElementType } from 'react';
-import Link from 'next/link';
+import { useCallback, useEffect, useMemo, useState, type ReactNode } from 'react';
 import {
-  ArrowRight,
-  CheckCircle2,
-  FolderKanban,
+  Building2,
+  Check,
+  Globe2,
   Loader2,
-  Palette,
   Plus,
   Save,
-  Share2,
-  Sparkles,
   Trash2,
-  Upload,
   UserRound,
 } from 'lucide-react';
 
+import {
+  StudioAccessControl,
+  StudioHeaderControls,
+  StudioMobileActionBar,
+  useStudioWorkspace,
+} from '@/components/dashboard/studio/studio-page-header';
+import { ActionButton, ActionSelectTrigger } from '@/components/dashboard/action-controls';
+import { DashboardPageHeader } from '@/components/dashboard/shell';
 import ConfirmModal from '@/components/ui/confirm-modal';
 import { Badge } from '@/components/ui/badge';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
+import {
+  DropdownMenu,
+  DropdownMenuItem,
+  DropdownMenuLabel,
+} from '@/components/ui/dropdown-menu';
 import { useAuth } from '@/lib/auth/context';
 import type { CreatorProfile } from '@/lib/creator-profiles';
-import { useCurrentOrganization } from '@/lib/hooks/useCurrentOrganization';
 import { withOrganizationId } from '@/lib/organizations/current-organization';
+import { cn } from '@/lib/utils';
 
 type ProfileForm = {
   name: string;
@@ -34,6 +42,8 @@ type ProfileForm = {
   isDefault: boolean;
 };
 
+type StudioSaveVisibility = 'private' | 'team';
+
 const emptyProfileForm: ProfileForm = {
   name: 'Main profile',
   website: '',
@@ -42,6 +52,9 @@ const emptyProfileForm: ProfileForm = {
   contentGoal: '',
   isDefault: false,
 };
+
+const inputClassName =
+  'mt-1.5 w-full rounded-md border border-slate-200 bg-white px-3 py-2 text-sm text-slate-950 shadow-sm outline-none transition placeholder:text-slate-400 focus:border-blue-500 focus:ring-2 focus:ring-blue-500/20 disabled:cursor-not-allowed disabled:bg-slate-50 disabled:text-slate-500 dark:border-slate-800 dark:bg-slate-950 dark:text-slate-100 dark:placeholder:text-slate-500 dark:disabled:bg-slate-900';
 
 function profileToForm(profile: CreatorProfile): ProfileForm {
   return {
@@ -54,9 +67,14 @@ function profileToForm(profile: CreatorProfile): ProfileForm {
   };
 }
 
-function formToPayload(form: ProfileForm, organizationId?: string | null) {
+function formToPayload(
+  form: ProfileForm,
+  organizationId?: string | null,
+  visibility?: StudioSaveVisibility
+) {
   return {
     organization_id: organizationId || undefined,
+    visibility,
     name: form.name,
     website: form.website,
     positioning: form.positioning,
@@ -66,9 +84,29 @@ function formToPayload(form: ProfileForm, organizationId?: string | null) {
   };
 }
 
-function TextField({
+function formatUpdatedDate(value?: string | null): string {
+  if (!value) return 'Not saved yet';
+  const date = new Date(value);
+  if (Number.isNaN(date.getTime())) return 'Not saved yet';
+  return date.toLocaleDateString(undefined, { month: 'short', day: 'numeric', year: 'numeric' });
+}
+
+function FieldLabel({
+  htmlFor,
+  children,
+}: {
+  htmlFor: string;
+  children: ReactNode;
+}) {
+  return (
+    <label htmlFor={htmlFor} className="text-xs font-semibold text-slate-700 dark:text-slate-200">
+      {children}
+    </label>
+  );
+}
+
+function TextInput({
   id,
-  label,
   value,
   onChange,
   disabled,
@@ -76,7 +114,6 @@ function TextField({
   type = 'text',
 }: {
   id: string;
-  label: string;
   value: string;
   onChange: (value: string) => void;
   disabled?: boolean;
@@ -84,24 +121,20 @@ function TextField({
   type?: string;
 }) {
   return (
-    <label htmlFor={id} className="block text-sm font-medium text-slate-700 dark:text-slate-200">
-      {label}
-      <input
-        id={id}
-        type={type}
-        value={value}
-        onChange={(event) => onChange(event.target.value)}
-        disabled={disabled}
-        placeholder={placeholder}
-        className="mt-1 w-full rounded-lg border border-slate-300 bg-white px-3 py-2 text-sm text-slate-900 shadow-sm outline-none transition focus:border-blue-500 focus:ring-2 focus:ring-blue-500/20 disabled:cursor-not-allowed disabled:bg-slate-100 disabled:text-slate-500 dark:border-slate-700 dark:bg-slate-950 dark:text-slate-100 dark:disabled:bg-slate-900"
-      />
-    </label>
+    <input
+      id={id}
+      type={type}
+      value={value}
+      onChange={(event) => onChange(event.target.value)}
+      disabled={disabled}
+      placeholder={placeholder}
+      className={inputClassName}
+    />
   );
 }
 
-function TextAreaField({
+function TextArea({
   id,
-  label,
   value,
   onChange,
   disabled,
@@ -109,7 +142,6 @@ function TextAreaField({
   rows = 4,
 }: {
   id: string;
-  label: string;
   value: string;
   onChange: (value: string) => void;
   disabled?: boolean;
@@ -117,51 +149,97 @@ function TextAreaField({
   rows?: number;
 }) {
   return (
-    <label htmlFor={id} className="block text-sm font-medium text-slate-700 dark:text-slate-200">
-      {label}
-      <textarea
-        id={id}
-        value={value}
-        onChange={(event) => onChange(event.target.value)}
-        disabled={disabled}
-        placeholder={placeholder}
-        rows={rows}
-        className="mt-1 w-full resize-y rounded-lg border border-slate-300 bg-white px-3 py-2 text-sm leading-6 text-slate-900 shadow-sm outline-none transition focus:border-blue-500 focus:ring-2 focus:ring-blue-500/20 disabled:cursor-not-allowed disabled:bg-slate-100 disabled:text-slate-500 dark:border-slate-700 dark:bg-slate-950 dark:text-slate-100 dark:disabled:bg-slate-900"
-      />
-    </label>
+    <textarea
+      id={id}
+      value={value}
+      onChange={(event) => onChange(event.target.value)}
+      disabled={disabled}
+      placeholder={placeholder}
+      rows={rows}
+      className={cn(inputClassName, 'resize-y leading-6')}
+    />
   );
 }
 
-function StudioToolLink({
-  href,
-  icon: Icon,
-  title,
-  description,
+function ProfileSelector({
+  profiles,
+  selectedProfileId,
+  selectedProfile,
+  draftName,
+  loading,
+  onSelectProfile,
 }: {
-  href: string;
-  icon: ElementType;
-  title: string;
-  description: string;
+  profiles: CreatorProfile[];
+  selectedProfileId: string | null;
+  selectedProfile: CreatorProfile | null;
+  draftName: string;
+  loading?: boolean;
+  onSelectProfile: (profile: CreatorProfile) => void;
 }) {
+  const selectedLabel = selectedProfile?.name || draftName.trim() || 'New profile draft';
+  const selectedScope = selectedProfile
+    ? selectedProfile.scope === 'organization' ? 'Team' : 'Private'
+    : 'Draft';
+  const SelectedIcon = selectedProfile?.scope === 'organization' ? Building2 : selectedProfile ? Globe2 : UserRound;
+  const trigger = (
+    <ActionSelectTrigger
+      icon={<SelectedIcon className="h-4 w-4" />}
+      label={loading ? 'Loading profiles' : selectedLabel}
+      scopeLabel={selectedScope}
+      loading={loading}
+      className="h-11 px-3.5 sm:w-[280px]"
+    />
+  );
+
+  if (loading) {
+    return <div className="w-full sm:w-auto">{trigger}</div>;
+  }
+
   return (
-    <Link
-      href={href}
-      className="group flex min-h-[7.25rem] flex-col justify-between rounded-lg border border-slate-200 bg-white p-4 text-left shadow-sm transition-colors hover:border-blue-300 hover:bg-blue-50/50 dark:border-slate-800 dark:bg-slate-950 dark:hover:border-blue-800 dark:hover:bg-blue-950/20"
+    <DropdownMenu
+      align="right"
+      portal
+      className="w-full sm:w-auto"
+      trigger={trigger}
     >
-      <span className="flex items-start gap-3">
-        <span className="flex h-9 w-9 flex-shrink-0 items-center justify-center rounded-lg bg-slate-100 text-slate-600 transition-colors group-hover:bg-blue-100 group-hover:text-blue-700 dark:bg-slate-900 dark:text-slate-300 dark:group-hover:bg-blue-950 dark:group-hover:text-blue-300">
-          <Icon className="h-4 w-4" />
-        </span>
-        <span className="min-w-0">
-          <span className="block text-sm font-semibold text-slate-900 dark:text-slate-100">{title}</span>
-          <span className="mt-1 block text-sm leading-6 text-slate-500 dark:text-slate-400">{description}</span>
-        </span>
-      </span>
-      <span className="mt-4 inline-flex items-center gap-2 text-sm font-semibold text-blue-700 dark:text-blue-300">
-        Open
-        <ArrowRight className="h-4 w-4 transition-transform group-hover:translate-x-0.5" />
-      </span>
-    </Link>
+      <div className="w-[min(22rem,calc(100vw-2rem))]">
+        <DropdownMenuLabel>Select profile</DropdownMenuLabel>
+        {profiles.length === 0 ? (
+          <div className="px-4 py-5 text-sm text-slate-500 dark:text-slate-400">
+            No saved profiles yet.
+          </div>
+        ) : (
+          profiles.map((profile) => {
+            const active = profile.id === selectedProfileId;
+            const ProfileIcon = profile.scope === 'organization' ? Building2 : Globe2;
+
+            return (
+              <DropdownMenuItem
+                key={profile.id}
+                onClick={() => onSelectProfile(profile)}
+                className="items-start gap-3 px-3 py-3"
+              >
+                <span className="mt-0.5 flex h-8 w-8 flex-shrink-0 items-center justify-center rounded-md border border-slate-200 bg-slate-50 text-slate-500 dark:border-slate-800 dark:bg-slate-950 dark:text-slate-300">
+                  <ProfileIcon className="h-4 w-4" />
+                </span>
+                <span className="min-w-0 flex-1">
+                  <span className="flex min-w-0 items-center gap-2">
+                    <span className="truncate font-semibold text-slate-900 dark:text-slate-100">{profile.name}</span>
+                    {profile.isDefault && <Badge variant="info">Default</Badge>}
+                    {active && <Check className="h-4 w-4 flex-shrink-0 text-blue-600 dark:text-blue-300" />}
+                  </span>
+                  <span className="mt-1 flex flex-wrap items-center gap-x-2 gap-y-1 text-xs text-slate-500 dark:text-slate-400">
+                    <span>{profile.scope === 'organization' ? 'Team' : 'Private'}</span>
+                    <span aria-hidden="true">·</span>
+                    <span>Updated {formatUpdatedDate(profile.updatedAt)}</span>
+                  </span>
+                </span>
+              </DropdownMenuItem>
+            );
+          })
+        )}
+      </div>
+    </DropdownMenu>
   );
 }
 
@@ -171,7 +249,7 @@ export default function StudioProfilePage() {
     organization,
     organizationId,
     loading: loadingOrganization,
-  } = useCurrentOrganization();
+  } = useStudioWorkspace();
   const [profiles, setProfiles] = useState<CreatorProfile[]>([]);
   const [selectedProfileId, setSelectedProfileId] = useState<string | null>(null);
   const [form, setForm] = useState<ProfileForm>(emptyProfileForm);
@@ -187,16 +265,13 @@ export default function StudioProfilePage() {
     () => profiles.find((profile) => profile.id === selectedProfileId) || null,
     [profiles, selectedProfileId]
   );
-  const privateProfiles = useMemo(
-    () => profiles.filter((profile) => profile.scope !== 'organization'),
-    [profiles]
-  );
-  const workspaceProfiles = useMemo(
-    () => profiles.filter((profile) => profile.scope === 'organization'),
-    [profiles]
-  );
   const canCreate = !isDemoMode;
   const canEdit = !isDemoMode && (selectedProfile ? Boolean(selectedProfile.canEdit) : true);
+  const isPersonalWorkspace = organization?.type === 'personal_legacy';
+  const shareUnavailableMessage = isPersonalWorkspace ? 'Switch to a team workspace first.' : null;
+  const canShareSelectedProfile = !isDemoMode && Boolean(selectedProfile?.canShare) && !isPersonalWorkspace;
+  const canSaveNewProfilePrivately = !selectedProfileId && !isPersonalWorkspace;
+
   const authHeaders = useMemo<Record<string, string>>(() => {
     const headers: Record<string, string> = {};
     if (session?.access_token) headers.Authorization = `Bearer ${session.access_token}`;
@@ -271,7 +346,7 @@ export default function StudioProfilePage() {
     setMessage(null);
   };
 
-  const saveProfile = async () => {
+  const saveProfile = async (visibility?: StudioSaveVisibility) => {
     if (!canEdit || !organizationId) return;
 
     setSaving(true);
@@ -290,7 +365,7 @@ export default function StudioProfilePage() {
             ...authHeaders,
             'Content-Type': 'application/json',
           },
-          body: JSON.stringify(formToPayload(form, organizationId)),
+          body: JSON.stringify(formToPayload(form, organizationId, isUpdate ? undefined : visibility)),
         }
       );
       const payload = await response.json().catch(() => ({}));
@@ -312,7 +387,11 @@ export default function StudioProfilePage() {
       });
       setSelectedProfileId(savedProfile.id);
       setForm(profileToForm(savedProfile));
-      setMessage(isUpdate ? 'Profile updated.' : 'Profile created.');
+      setMessage(isUpdate
+        ? 'Profile updated.'
+        : savedProfile.scope === 'organization'
+          ? 'Team profile created.'
+          : 'Private profile created.');
     } catch (saveError) {
       setError(saveError instanceof Error ? saveError.message : 'Failed to save profile');
     } finally {
@@ -353,6 +432,10 @@ export default function StudioProfilePage() {
 
   const shareProfile = async () => {
     if (!selectedProfile?.canShare || !organizationId) return;
+    if (isPersonalWorkspace) {
+      setError('Switch to a team workspace before publishing this profile.');
+      return;
+    }
 
     setSharing(true);
     setError(null);
@@ -365,7 +448,7 @@ export default function StudioProfilePage() {
       });
       const payload = await response.json().catch(() => ({}));
       if (!response.ok) {
-        throw new Error(payload.error || 'Failed to share profile');
+        throw new Error(payload.error || 'Failed to publish profile');
       }
 
       const sharedProfile = payload.creatorProfile as CreatorProfile;
@@ -375,9 +458,9 @@ export default function StudioProfilePage() {
       });
       setSelectedProfileId(sharedProfile.id);
       setForm(profileToForm(sharedProfile));
-      setMessage('Profile shared with this workspace.');
+      setMessage('Profile published to your team.');
     } catch (shareError) {
-      setError(shareError instanceof Error ? shareError.message : 'Failed to share profile');
+      setError(shareError instanceof Error ? shareError.message : 'Failed to publish profile');
     } finally {
       setSharing(false);
     }
@@ -397,335 +480,252 @@ export default function StudioProfilePage() {
       });
       const payload = await response.json().catch(() => ({}));
       if (!response.ok) {
-        throw new Error(payload.error || 'Failed to unshare profile');
+        throw new Error(payload.error || 'Failed to move profile to private');
       }
 
+      const privateProfile = payload.creatorProfile as CreatorProfile | null | undefined;
       const remaining = profiles.filter((profile) => profile.id !== selectedProfile.id);
-      const nextProfile = remaining.find((profile) => profile.id === selectedProfile.sharedFromProfileId)
+      const nextProfiles = privateProfile ? [privateProfile, ...remaining] : remaining;
+      const nextProfile = privateProfile
+        || remaining.find((profile) => profile.id === selectedProfile.sharedFromProfileId)
         || remaining.find((profile) => profile.isDefault)
         || remaining[0]
         || null;
-      setProfiles(remaining);
+      setProfiles(nextProfiles);
       setSelectedProfileId(nextProfile?.id || null);
       setForm(nextProfile ? profileToForm(nextProfile) : emptyProfileForm);
-      setMessage('Profile removed from this workspace.');
+      setMessage('Profile moved to private.');
     } catch (shareError) {
-      setError(shareError instanceof Error ? shareError.message : 'Failed to unshare profile');
+      setError(shareError instanceof Error ? shareError.message : 'Failed to move profile to private');
     } finally {
       setSharing(false);
     }
   };
 
-  const renderProfileButton = (profile: CreatorProfile) => {
-    const active = profile.id === selectedProfileId;
-    return (
-      <button
-        key={profile.id}
-        type="button"
-        onClick={() => selectProfile(profile)}
-        className={`w-full rounded-lg border px-3 py-3 text-left transition-colors ${
-          active
-            ? 'border-blue-300 bg-blue-50 text-blue-900 dark:border-blue-800/70 dark:bg-blue-950/30 dark:text-blue-100'
-            : 'border-slate-200 bg-white text-slate-700 hover:bg-slate-50 dark:border-slate-800 dark:bg-slate-950 dark:text-slate-300 dark:hover:bg-slate-900'
-        }`}
-      >
-        <div className="flex items-start gap-3">
-          <UserRound className={`mt-0.5 h-4 w-4 flex-shrink-0 ${active ? 'text-blue-600 dark:text-blue-300' : 'text-slate-400'}`} />
-          <div className="min-w-0 flex-1">
-            <p className="truncate text-sm font-semibold">{profile.name}</p>
-            <p className="mt-1 truncate text-xs text-slate-500 dark:text-slate-400">
-              {profile.audience || profile.contentGoal || profile.positioning || 'No details yet'}
-            </p>
-          </div>
-          <div className="flex flex-shrink-0 flex-col items-end gap-1">
-            <Badge variant={profile.scope === 'organization' ? 'secondary' : 'outline'}>
-              {profile.scope === 'organization' ? 'Workspace' : 'Private'}
-            </Badge>
-            {profile.isDefault && (
-              <Badge variant="success">
-                Default
-              </Badge>
-            )}
-          </div>
-        </div>
-      </button>
-    );
-  };
-
   return (
-    <div className="min-h-screen bg-white dark:bg-slate-950">
-      <div className="mx-auto w-full max-w-7xl px-3 py-4 sm:px-6 sm:py-6">
-        <div className="mb-6 flex flex-col gap-3 sm:flex-row sm:items-end sm:justify-between">
-          <div>
-            <div className="mb-2 inline-flex items-center gap-2 rounded-full border border-blue-200 bg-blue-50 px-3 py-1 text-xs font-semibold text-blue-700 dark:border-blue-900/60 dark:bg-blue-950/40 dark:text-blue-300">
-              <Sparkles className="h-3.5 w-3.5" />
-              Studio
-            </div>
-            <h1 className="text-2xl font-bold text-slate-900 dark:text-slate-50 sm:text-3xl">
-              Profile
-            </h1>
-            <p className="mt-1 max-w-2xl text-sm leading-6 text-slate-500 dark:text-slate-400">
-              Create the creator, channel, or workspace context that should guide generated content.
-            </p>
-          </div>
-          <div className="flex flex-wrap items-center gap-2">
-            {organization && <Badge variant="outline">Workspace: {organization.name}</Badge>}
-            {isDemoMode && <Badge variant="warning">Demo</Badge>}
-          </div>
-        </div>
-
+    <div className="min-h-screen bg-slate-50 pb-24 text-slate-950 md:pb-0 dark:bg-slate-950 dark:text-slate-50">
+      <div className="mx-auto w-full max-w-[1680px] px-4 py-5 sm:px-6 lg:px-8">
+        <DashboardPageHeader
+          density="compact"
+          icon={Building2}
+          title="Profile"
+          description="Manage your account details, preferences, and workspace identity."
+          actions={(
+            <StudioHeaderControls
+              selector={(
+                <ProfileSelector
+                  profiles={profiles}
+                  selectedProfileId={selectedProfileId}
+                  selectedProfile={selectedProfile}
+                  draftName={form.name}
+                  loading={loading || loadingOrganization}
+                  onSelectProfile={selectProfile}
+                />
+              )}
+              action={(
+                <ActionButton
+                  type="button"
+                  onClick={startNewProfile}
+                  disabled={!canCreate || loading || loadingOrganization}
+                  variant="primary"
+                  className="h-11 w-full px-4 sm:w-auto"
+                >
+                  <Plus className="h-4 w-4" />
+                  New profile
+                </ActionButton>
+              )}
+            />
+          )}
+        />
         {(error || message) && (
           <div
-            className={`mb-5 rounded-lg border px-4 py-3 text-sm ${
+            role="status"
+            className={cn(
+              'mb-5 rounded-md border px-4 py-3 text-sm shadow-sm',
               error
                 ? 'border-red-200 bg-red-50 text-red-700 dark:border-red-900/60 dark:bg-red-950/30 dark:text-red-300'
                 : 'border-emerald-200 bg-emerald-50 text-emerald-700 dark:border-emerald-900/60 dark:bg-emerald-950/30 dark:text-emerald-300'
-            }`}
+            )}
           >
             {error || message}
           </div>
         )}
 
         {loading || loadingOrganization ? (
-          <div className="grid gap-4 lg:grid-cols-[24rem_minmax(0,1fr)]">
-            <div className="h-[34rem] animate-pulse rounded-lg bg-slate-100 dark:bg-slate-900" />
-            <div className="h-[34rem] animate-pulse rounded-lg bg-slate-100 dark:bg-slate-900" />
+          <div className="mx-auto w-full max-w-6xl">
+            <div className="h-[42rem] animate-pulse rounded-md border border-slate-200 bg-white shadow-sm dark:border-slate-800 dark:bg-slate-900" />
           </div>
         ) : (
-          <>
-            <div className="grid gap-4 lg:grid-cols-[24rem_minmax(0,1fr)]">
-              <Card>
-                <CardHeader>
-                  <div className="flex items-center justify-between gap-3">
-                    <div>
-                      <CardTitle>Profiles</CardTitle>
-                      <CardDescription>Choose which creator context to edit.</CardDescription>
-                    </div>
-                    <button
-                      type="button"
-                      onClick={startNewProfile}
-                      disabled={!canCreate}
-                      className="inline-flex h-9 w-9 items-center justify-center rounded-lg border border-slate-300 bg-white text-slate-600 transition-colors hover:bg-slate-50 disabled:cursor-not-allowed disabled:opacity-50 dark:border-slate-700 dark:bg-slate-950 dark:text-slate-300 dark:hover:bg-slate-900"
-                      aria-label="Create profile"
-                      title="Create profile"
-                    >
-                      <Plus className="h-4 w-4" />
-                    </button>
+          <div className="mx-auto w-full max-w-6xl">
+            <Card className="rounded-md">
+              <CardHeader className="border-b border-slate-100 p-5 dark:border-slate-800">
+                <div className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
+                  <div className="min-w-0">
+                    <CardTitle className="text-base">
+                      {selectedProfile ? 'Edit content profile' : 'Create content profile'}
+                    </CardTitle>
+                    <CardDescription className="mt-2 leading-5">
+                      Add key context about your brand, audience, and goals to improve every output.
+                    </CardDescription>
                   </div>
+                  <StudioAccessControl
+                    entityLabel="profile"
+                    scope={selectedProfile?.scope ?? null}
+                    canShare={canShareSelectedProfile}
+                    canUnshare={!isDemoMode && Boolean(selectedProfile?.canUnshare)}
+                    loading={sharing}
+                    onShare={() => { void shareProfile(); }}
+                    onUnshare={() => { void unshareProfile(); }}
+                    shareUnavailableMessage={selectedProfile?.canShare ? shareUnavailableMessage : null}
+                    show={!isPersonalWorkspace}
+                    className="w-full sm:w-auto"
+                  />
+                </div>
                 </CardHeader>
-                <CardContent>
-                  {profiles.length === 0 ? (
-                    <div className="rounded-lg border border-dashed border-slate-300 px-4 py-6 text-center dark:border-slate-700">
-                      <div className="mx-auto flex h-10 w-10 items-center justify-center rounded-lg bg-slate-100 text-slate-500 dark:bg-slate-900 dark:text-slate-300">
-                        <UserRound className="h-5 w-5" />
-                      </div>
-                      <h3 className="mt-3 text-sm font-semibold text-slate-900 dark:text-slate-100">
-                        No profiles yet
-                      </h3>
-                      <p className="mx-auto mt-1 max-w-xs text-sm leading-6 text-slate-500 dark:text-slate-400">
-                        Create one profile for yourself, a show, a channel, or a workspace.
-                      </p>
-                      <button
-                        type="button"
-                        onClick={startNewProfile}
-                        disabled={!canCreate}
-                        className="mt-4 inline-flex min-h-10 items-center justify-center gap-2 rounded-lg bg-blue-600 px-3 py-2 text-sm font-semibold text-white transition-colors hover:bg-blue-700 disabled:cursor-not-allowed disabled:opacity-50"
-                      >
-                        <Plus className="h-4 w-4" />
-                        Create Profile
-                      </button>
-                    </div>
-                  ) : (
-                    <div className="space-y-2">
-                      {privateProfiles.length > 0 && (
-                        <div className="space-y-2">
-                          <p className="px-1 text-xs font-semibold uppercase tracking-wide text-slate-400">
-                            My private
-                          </p>
-                          {privateProfiles.map(renderProfileButton)}
-                        </div>
-                      )}
-                      {workspaceProfiles.length > 0 && (
-                        <div className="space-y-2 pt-2">
-                          <p className="px-1 text-xs font-semibold uppercase tracking-wide text-slate-400">
-                            Workspace shared
-                          </p>
-                          {workspaceProfiles.map(renderProfileButton)}
-                        </div>
-                      )}
-                    </div>
-                  )}
-                </CardContent>
-              </Card>
-
-              <Card>
-                <CardHeader>
-                  <div className="flex flex-col gap-4 sm:flex-row sm:items-start sm:justify-between">
-                    <div>
-                      <CardTitle>{selectedProfile ? 'Edit profile' : 'Create profile'}</CardTitle>
-                      <CardDescription>
-                        This is the creator context the generator can use before applying Voice and Plan details.
-                      </CardDescription>
-                    </div>
-                    <div className="flex flex-wrap gap-2">
-                      {selectedProfile?.canShare && (
-                        <button
-                          type="button"
-                          onClick={shareProfile}
-                          disabled={sharing}
-                          className="inline-flex min-h-10 items-center justify-center gap-2 rounded-lg border border-blue-200 bg-white px-3 py-2 text-sm font-semibold text-blue-700 transition-colors hover:bg-blue-50 disabled:cursor-not-allowed disabled:opacity-50 dark:border-blue-900/60 dark:bg-slate-950 dark:text-blue-300 dark:hover:bg-blue-950/30"
-                        >
-                          {sharing ? <Loader2 className="h-4 w-4 animate-spin" /> : <Share2 className="h-4 w-4" />}
-                          Share
-                        </button>
-                      )}
-                      {selectedProfile?.canUnshare && (
-                        <button
-                          type="button"
-                          onClick={unshareProfile}
-                          disabled={sharing}
-                          className="inline-flex min-h-10 items-center justify-center gap-2 rounded-lg border border-slate-300 bg-white px-3 py-2 text-sm font-semibold text-slate-700 transition-colors hover:bg-slate-50 disabled:cursor-not-allowed disabled:opacity-50 dark:border-slate-700 dark:bg-slate-950 dark:text-slate-200 dark:hover:bg-slate-900"
-                        >
-                          {sharing ? <Loader2 className="h-4 w-4 animate-spin" /> : <Share2 className="h-4 w-4" />}
-                          Unshare
-                        </button>
-                      )}
-                      {selectedProfile && (
-                        <button
-                          type="button"
-                          onClick={() => setConfirmDelete(true)}
-                          disabled={!canEdit || deleting}
-                          className="inline-flex min-h-10 items-center justify-center gap-2 rounded-lg border border-red-200 bg-white px-3 py-2 text-sm font-semibold text-red-600 transition-colors hover:bg-red-50 disabled:cursor-not-allowed disabled:opacity-50 dark:border-red-900/60 dark:bg-slate-950 dark:text-red-300 dark:hover:bg-red-950/30"
-                        >
-                          {deleting ? <Loader2 className="h-4 w-4 animate-spin" /> : <Trash2 className="h-4 w-4" />}
-                          Delete
-                        </button>
-                      )}
-                      <button
-                        type="button"
-                        onClick={saveProfile}
-                        disabled={!canEdit || saving || !form.name.trim()}
-                        className="inline-flex min-h-10 items-center justify-center gap-2 rounded-lg bg-blue-600 px-4 py-2 text-sm font-semibold text-white transition-colors hover:bg-blue-700 disabled:cursor-not-allowed disabled:opacity-50"
-                      >
-                        {saving ? <Loader2 className="h-4 w-4 animate-spin" /> : <Save className="h-4 w-4" />}
-                        {selectedProfile ? 'Save changes' : 'Create profile'}
-                      </button>
-                    </div>
-                  </div>
-                </CardHeader>
-                <CardContent>
+                <CardContent className="space-y-5 p-5">
                   {!canEdit && (
-                    <div className="mb-5 rounded-lg border border-slate-200 bg-slate-50 px-4 py-3 text-sm text-slate-600 dark:border-slate-800 dark:bg-slate-900/70 dark:text-slate-300">
+                    <div className="rounded-md border border-amber-200 bg-amber-50 px-4 py-3 text-sm text-amber-800 dark:border-amber-900/60 dark:bg-amber-950/30 dark:text-amber-300">
                       {isDemoMode
                         ? 'Demo accounts can view profiles but cannot change Studio settings.'
                         : 'You can view this profile, but you do not have permission to change it.'}
                     </div>
                   )}
 
-                  <div className="grid gap-5">
-                    <div className="grid gap-4 md:grid-cols-[minmax(0,1fr)_minmax(12rem,16rem)]">
-                      <TextField
+                  <div className="grid gap-4 md:grid-cols-2">
+                    <div>
+                      <FieldLabel htmlFor="profile-name">Profile name *</FieldLabel>
+                      <TextInput
                         id="profile-name"
-                        label="Profile name"
                         value={form.name}
                         onChange={(value) => updateField('name', value)}
                         disabled={!canEdit}
-                        placeholder="Main creator, podcast, product, or channel"
+                        placeholder="Hotspot Profile"
                       />
-                      <TextField
+                    </div>
+                    <div>
+                      <FieldLabel htmlFor="profile-website">Website</FieldLabel>
+                      <TextInput
                         id="profile-website"
-                        label="Website"
                         type="url"
                         value={form.website}
                         onChange={(value) => updateField('website', value)}
                         disabled={!canEdit}
-                        placeholder="https://..."
+                        placeholder="https://example.com"
                       />
                     </div>
+                  </div>
 
-                    <TextAreaField
+                  <div>
+                    <FieldLabel htmlFor="profile-positioning">Positioning *</FieldLabel>
+                    <TextArea
                       id="profile-positioning"
-                      label="Positioning"
                       value={form.positioning}
                       onChange={(value) => updateField('positioning', value)}
                       disabled={!canEdit}
-                      placeholder="What should the generator understand about this creator, show, channel, or workspace?"
+                      placeholder="What should the Studio understand about your value proposition and differentiators?"
                       rows={4}
                     />
+                  </div>
 
-                    <div className="grid gap-4 md:grid-cols-2">
-                      <TextAreaField
+                  <div className="grid gap-4 md:grid-cols-2">
+                    <div>
+                      <FieldLabel htmlFor="profile-audience">Audience *</FieldLabel>
+                      <TextArea
                         id="profile-audience"
-                        label="Audience"
                         value={form.audience}
                         onChange={(value) => updateField('audience', value)}
                         disabled={!canEdit}
-                        placeholder="Who is this content for?"
-                        rows={4}
-                      />
-                      <TextAreaField
-                        id="profile-goal"
-                        label="First content goal"
-                        value={form.contentGoal}
-                        onChange={(value) => updateField('contentGoal', value)}
-                        disabled={!canEdit}
-                        placeholder="What should the next few generated pieces help accomplish?"
+                        placeholder="Who is this content for? Be specific about roles, seniority, and company type."
                         rows={4}
                       />
                     </div>
-
-                    <label className="flex items-start gap-3 rounded-lg border border-slate-200 bg-slate-50 px-4 py-3 text-sm text-slate-700 dark:border-slate-800 dark:bg-slate-900/70 dark:text-slate-200">
-                      <input
-                        type="checkbox"
-                        checked={form.isDefault}
-                        onChange={(event) => updateField('isDefault', event.target.checked)}
+                    <div>
+                      <FieldLabel htmlFor="profile-goal">Content goals *</FieldLabel>
+                      <TextArea
+                        id="profile-goal"
+                        value={form.contentGoal}
+                        onChange={(value) => updateField('contentGoal', value)}
                         disabled={!canEdit}
-                        className="mt-0.5 h-4 w-4 rounded border-slate-300 text-blue-600 focus:ring-blue-500 disabled:cursor-not-allowed disabled:opacity-50"
+                        placeholder="What outcomes should generated content help achieve?"
+                        rows={4}
                       />
-                      <span>
-                        <span className="block font-semibold">Use as the default profile</span>
-                        <span className="mt-1 block text-slate-500 dark:text-slate-400">
-                          New content settings will prefill this profile, but creators can choose None or another profile per content piece.
-                        </span>
+                    </div>
+                  </div>
+
+                  <label className="flex items-start gap-3 rounded-md border border-slate-200 bg-slate-50 px-4 py-3 text-sm text-slate-700 dark:border-slate-800 dark:bg-slate-950 dark:text-slate-200">
+                    <input
+                      type="checkbox"
+                      checked={form.isDefault}
+                      onChange={(event) => updateField('isDefault', event.target.checked)}
+                      disabled={!canEdit}
+                      className="mt-0.5 h-4 w-4 rounded border-slate-300 text-blue-600 focus:ring-blue-500 disabled:cursor-not-allowed disabled:opacity-50"
+                    />
+                    <span>
+                      <span className="block font-semibold">Use as default profile</span>
+                      <span className="mt-1 block text-slate-500 dark:text-slate-400">
+                        New content generated in Studio will use this profile unless a different profile is selected.
                       </span>
-                    </label>
+                    </span>
+                  </label>
+
+                  <div className="flex flex-col gap-3 border-t border-slate-100 pt-5 dark:border-slate-800 sm:flex-row sm:items-center sm:justify-end">
+                    <div className="flex flex-wrap items-center gap-2">
+                      {selectedProfile && (
+                        <ActionButton
+                          variant="danger"
+                          type="button"
+                          onClick={() => setConfirmDelete(true)}
+                          disabled={!canEdit || deleting}
+                        >
+                          {deleting ? <Loader2 className="h-4 w-4 animate-spin" /> : <Trash2 className="h-4 w-4" />}
+                          Delete
+                        </ActionButton>
+                      )}
+                      <ActionButton
+                        variant="secondary"
+                        type="button"
+                        onClick={() => { void saveProfile('private'); }}
+                        disabled={!canSaveNewProfilePrivately || !canEdit || saving || !form.name.trim()}
+                        className={canSaveNewProfilePrivately ? undefined : 'hidden'}
+                      >
+                        {saving ? <Loader2 className="h-4 w-4 animate-spin" /> : <Save className="h-4 w-4" />}
+                        Save privately
+                      </ActionButton>
+                      <ActionButton
+                        variant="primary"
+                        type="button"
+                        onClick={() => { void saveProfile(); }}
+                        disabled={!canEdit || saving || !form.name.trim()}
+                      >
+                        {saving ? <Loader2 className="h-4 w-4 animate-spin" /> : <Save className="h-4 w-4" />}
+                        {!selectedProfileId && !isPersonalWorkspace ? 'Create team profile' : 'Save profile'}
+                      </ActionButton>
+                    </div>
                   </div>
                 </CardContent>
               </Card>
-            </div>
-
-            <div className="mt-4 grid gap-4 md:grid-cols-3">
-              <StudioToolLink
-                href="/dashboard/studio/voice"
-                icon={Palette}
-                title="Voice"
-                description="Tune tone, examples, phrases to avoid, and CTA preferences."
-              />
-              <StudioToolLink
-                href="/dashboard/studio/plans"
-                icon={FolderKanban}
-                title="Plans"
-                description="Set a goal, audience, and channels for launch or recurring content."
-              />
-              <StudioToolLink
-                href="/dashboard/upload"
-                icon={Upload}
-                title="Upload"
-                description="Add source audio, then choose Profile, Voice, Plan, and Library when generating."
-              />
-            </div>
-
-            <div className="mt-4 rounded-lg border border-emerald-200 bg-emerald-50 px-4 py-3 text-sm text-emerald-800 dark:border-emerald-900/60 dark:bg-emerald-950/30 dark:text-emerald-200">
-              <div className="flex items-start gap-3">
-                <CheckCircle2 className="mt-0.5 h-4 w-4 flex-shrink-0" />
-                <p>
-                  Profiles connect Studio to projects at generation time. Upload and transcription stay the same; the selected Profile helps shape the draft when content is generated.
-                </p>
-              </div>
-            </div>
-          </>
+          </div>
         )}
       </div>
+
+      <StudioMobileActionBar
+        primaryLabel={!selectedProfileId && !isPersonalWorkspace ? 'Create team profile' : 'Save profile'}
+        onPrimary={() => { void saveProfile(); }}
+        disabled={!canEdit || !form.name.trim()}
+        loading={saving}
+        primaryIcon={<Save className="h-4 w-4" />}
+        secondary={canSaveNewProfilePrivately ? (
+          <ActionButton
+            type="button"
+            variant="secondary"
+            onClick={() => { void saveProfile('private'); }}
+            disabled={!canEdit || saving || !form.name.trim()}
+            className="h-11"
+          >
+            Private
+          </ActionButton>
+        ) : undefined}
+      />
 
       <ConfirmModal
         isOpen={confirmDelete}

@@ -2,6 +2,7 @@ import {
   CampaignLibraryValidationError,
   canManageCampaignLibrary,
   createCampaign,
+  createContentLibraryItem,
   mapCampaignRow,
   mapContentLibraryItemRow,
   normalizeCampaignInput,
@@ -233,6 +234,80 @@ describe('campaign and content library helpers', () => {
       library_id: 'library-1',
       metadata_json: { source: 'manual' },
     });
+  });
+
+  it('allows content items to reference private studio collections when scoped by the route context', async () => {
+    const insertedPayloads: any[] = [];
+    const referenceBuilder = {
+      select: jest.fn(() => referenceBuilder),
+      eq: jest.fn(() => referenceBuilder),
+      is: jest.fn(() => referenceBuilder),
+      in: jest.fn(() => referenceBuilder),
+      maybeSingle: jest.fn().mockResolvedValue({ data: { id: 'private-library-1' }, error: null }),
+    };
+    const supabase = {
+      from: jest.fn((table: string) => {
+        if (table === 'content_libraries') {
+          return referenceBuilder;
+        }
+
+        if (table === 'content_library_items') {
+          return {
+            insert: jest.fn((payload: any) => {
+              insertedPayloads.push(payload);
+              return {
+                select: jest.fn(() => ({
+                  single: jest.fn().mockResolvedValue({
+                    data: {
+                      id: 'item-1',
+                      organization_id: 'org-1',
+                      client_id: null,
+                      creator_profile_id: null,
+                      library_id: payload.library_id,
+                      campaign_id: null,
+                      brand_voice_id: null,
+                      project_id: null,
+                      output_id: null,
+                      title: payload.title,
+                      content_type: payload.content_type,
+                      platform: null,
+                      status: payload.status || 'draft',
+                      body: null,
+                      excerpt: null,
+                      source_label: null,
+                      tags_json: [],
+                      metadata_json: {},
+                      published_at: null,
+                      created_by: payload.created_by,
+                      created_at: '2026-06-05T00:00:00.000Z',
+                      updated_at: '2026-06-05T00:00:00.000Z',
+                    },
+                    error: null,
+                  }),
+                })),
+              };
+            }),
+          };
+        }
+
+        throw new Error(`Unexpected table ${table}`);
+      }),
+    };
+
+    const created = await createContentLibraryItem(supabase as any, 'org-1', 'user-1', {
+      title: 'Private collection draft',
+      libraryId: 'private-library-1',
+    }, {
+      referenceOrganizationIds: ['personal-1', 'org-1'],
+    });
+
+    expect(referenceBuilder.in).toHaveBeenCalledWith('organization_id', ['personal-1', 'org-1']);
+    expect(insertedPayloads[0]).toMatchObject({
+      organization_id: 'org-1',
+      library_id: 'private-library-1',
+      title: 'Private collection draft',
+    });
+    expect(created.libraryId).toBe('private-library-1');
   });
 
   it('allows partial updates without requiring title or name', () => {

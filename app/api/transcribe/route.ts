@@ -20,7 +20,7 @@ import { ProcessingStage } from '@/lib/tier-progress-config';
 import type { SpeakerSegment, TranscriptionSegment } from '@/lib/types';
 import { estimateTranscriptionCostAsync } from '@/lib/billing/cost-map';
 import { trackAssemblyAIUsage } from '@/lib/billing/track-usage';
-import { InsufficientCreditError, failReservation, settleReservation } from '@/lib/billing/credit';
+import { InsufficientCreditError, failReservation, settleReservationAmount } from '@/lib/billing/credit';
 import { billingErrorResponse } from '@/lib/billing/middleware';
 import { aiRatelimit } from '@/lib/rate-limit';
 import { autoCorrectSpeakers, applySpeakerCorrections } from '@/lib/utils/autoCorrectSpeakers';
@@ -56,13 +56,21 @@ import { recordSubscriptionUsage } from '@/lib/billing/subscription-usage-counte
 import { resolveOrganizationIdForWrite } from '@/lib/authz/organization-context';
 import { assertPlanUploadDuration, createPlanCreditReservation } from '@/lib/billing/plan-credits';
 import { estimateAudioProductCredits } from '@/lib/billing/product-credits';
+import {
+  getUploadProcessingReservationExpiresAt,
+  TRANSCRIPTION_AUDIO_URL_EXPIRES_SECONDS,
+} from '@/lib/billing/plan-upload-limits';
+import {
+  notifyTranscriptFailed,
+  notifyTranscriptReady,
+} from '@/lib/notifications/notification-events';
 
 const sleep = (ms: number) => new Promise<void>(resolve => setTimeout(resolve, ms));
 const TRANSCRIPTION_PREPARING_MESSAGE = 'Preparing your audio for processing...';
 const TRANSCRIPTION_JOB_PREFIX = 'transcribe';
 
-// Allow this function to run for up to 5 minutes (300 seconds)
-export const maxDuration = 300;
+// Long recordings can take several minutes for provider processing and diarization.
+export const maxDuration = 900;
 
 type AIProcessingFlags = {
   nameExtraction?: boolean;
@@ -211,8 +219,10 @@ async function runBackgroundContentTasks(params: {
   userId?: string;
   openaiApiKey?: string;
   reservationId?: string;
+  durationSeconds?: number;
+  tier: TierLevel;
 }) {
-  const { projectId, speakerData, finalTranscription, transcriptionSegments, features, userId, openaiApiKey, reservationId } = params;
+  const { projectId, speakerData, finalTranscription, transcriptionSegments, features, userId, openaiApiKey, reservationId, durationSeconds = 0, tier } = params;
   let workingSpeakerData = speakerData;
 
   const aiProcessing: AIProcessingFlags = {
@@ -411,9 +421,31 @@ async function runBackgroundContentTasks(params: {
   };
   await updateProjectWithSpeakerData(projectId, workingSpeakerData);
 
-  if (reservationId) {
-    await settleReservation(reservationId);
-  }
+  await settleUploadReservationForActualDuration({
+    reservationId,
+    durationSeconds,
+    tier,
+    source: 'background_content_tasks',
+  });
+}
+
+async function settleUploadReservationForActualDuration(params: {
+  reservationId?: string;
+  durationSeconds: number;
+  tier: TierLevel;
+  source: string;
+}) {
+  if (!params.reservationId) return;
+
+  const actualProductCredits = estimateAudioProductCredits({
+    durationSeconds: params.durationSeconds,
+    tier: params.tier,
+  });
+
+  await settleReservationAmount(params.reservationId, actualProductCredits);
+  console.log(
+    `[BILLING] ✅ Settled upload reservation ${params.reservationId} for ${actualProductCredits.toFixed(4)} product credits (${params.source})`
+  );
 }
 
 export async function POST(request: NextRequest) {
@@ -672,7 +704,7 @@ export async function POST(request: NextRequest) {
           Bucket: BUCKET_NAME,
           Key: fileName,
         }),
-        { expiresIn: 7200 } // 2 hours is plenty for transcription
+        { expiresIn: TRANSCRIPTION_AUDIO_URL_EXPIRES_SECONDS }
       );
 
       // Pre-flight credit balance check
@@ -715,7 +747,7 @@ export async function POST(request: NextRequest) {
               analysisOptions,
               estimatedDurationSeconds,
             },
-            expiresAt: new Date(Date.now() + (2 * 60 * 60 * 1000)).toISOString(),
+            expiresAt: getUploadProcessingReservationExpiresAt(),
           });
           uploadReservationId = reservation.id;
           await (supabaseAdmin as any)
@@ -830,6 +862,14 @@ export async function POST(request: NextRequest) {
       speakerSegments = result.speaker_segments || [];
       baseCost = result.metadata?.cost_usd || 0;
       metadata = result.metadata || null;
+
+      if (userId && totalDuration > 0) {
+        await assertPlanUploadDuration({
+          organizationId: existingProject.organization_id || await resolveOrganizationIdForWrite(userId),
+          userId,
+          durationSeconds: totalDuration,
+        });
+      }
 
       // Track usage and debit credits
       if (userId && totalDuration > 0) {
@@ -1667,6 +1707,18 @@ export async function POST(request: NextRequest) {
       message: 'Conversation ready. Generating summaries and insights in the background...'
     });
 
+    await notifyTranscriptReady({
+      organizationId: existingProject.organization_id || null,
+      actorUserId: existingProject.user_id,
+      projectId,
+      projectTitle: existingProject.title || fileName,
+      metadata: {
+        source: 'transcribe',
+        tier,
+        duration: totalDuration,
+      },
+    });
+
     existingProject.metadata = await updateTranscriptionQueueState(
       projectId,
       existingProject.metadata,
@@ -1686,9 +1738,21 @@ export async function POST(request: NextRequest) {
           userId: existingProject?.user_id,
           openaiApiKey: openaiApiKey ?? undefined,
           reservationId: uploadReservationId,
+          durationSeconds: totalDuration,
+          tier,
         })
-          .catch((error) => {
+          .catch(async (error) => {
             console.error('[BACKGROUND] ❌ Failed to run background tasks:', error);
+            if (uploadReservationId) {
+              await settleUploadReservationForActualDuration({
+                reservationId: uploadReservationId,
+                durationSeconds: totalDuration,
+                tier,
+                source: 'background_content_tasks_failure',
+              }).catch((billingError) => {
+                console.error('[BILLING] ❌ Failed to settle upload reservation after background failure:', billingError);
+              });
+            }
           })
           .finally(async () => {
             if (transcriptionHeartbeat) {
@@ -1713,7 +1777,12 @@ export async function POST(request: NextRequest) {
     }
 
     if (uploadReservationId && !selectedContentBlocks.length) {
-      await settleReservation(uploadReservationId);
+      await settleUploadReservationForActualDuration({
+        reservationId: uploadReservationId,
+        durationSeconds: totalDuration,
+        tier,
+        source: 'transcription_completion',
+      });
     }
 
     const totalTime = (Date.now() - startTime) / 1000;
@@ -1751,7 +1820,7 @@ export async function POST(request: NextRequest) {
       try {
         const { data: failedProject } = await supabaseAdmin
           .from('projects')
-          .select('metadata')
+          .select('metadata, user_id, organization_id, title')
           .eq('id', parsedProjectId)
           .maybeSingle() as { data: any };
         const reservationId: string | undefined = failedProject?.metadata?.billing?.uploadReservationId;
@@ -1775,6 +1844,16 @@ export async function POST(request: NextRequest) {
         if (reservationId) {
           await failReservation(reservationId, error.message || 'Transcription failed');
         }
+        await notifyTranscriptFailed({
+          organizationId: failedProject?.organization_id || null,
+          actorUserId: failedProject?.user_id || null,
+          projectId: parsedProjectId,
+          projectTitle: failedProject?.title || null,
+          metadata: {
+            source: 'transcribe',
+            error: error.message || 'Transcription failed',
+          },
+        });
       } catch (billingError) {
         console.error('[TRANSCRIPTION] ❌ Failed to clean up upload reservation:', billingError);
       }
@@ -1793,6 +1872,11 @@ export async function POST(request: NextRequest) {
     if (transcriptionLockHeld && transcriptionLockId) {
       await releaseGlobalJobLock(transcriptionLockId);
       transcriptionLockHeld = false;
+    }
+
+    const billingResponse = billingErrorResponse(error);
+    if (billingResponse.status === 402) {
+      return billingResponse;
     }
 
     return NextResponse.json(

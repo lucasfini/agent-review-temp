@@ -17,8 +17,9 @@ import { resolveOrganizationIdForWrite } from '@/lib/authz/organization-context'
 import { runEntitlementGuard } from '@/lib/billing/entitlement-guards';
 import { recordSubscriptionUsage } from '@/lib/billing/subscription-usage-counters';
 import { uploadRatelimit } from '@/lib/rate-limit';
-import { assertPlanUploadDuration, createPlanCreditReservation } from '@/lib/billing/plan-credits';
+import { createPlanCreditReservation, resolvePlanUploadDuration } from '@/lib/billing/plan-credits';
 import { estimateAudioProductCredits } from '@/lib/billing/product-credits';
+import { getUploadProcessingReservationExpiresAt } from '@/lib/billing/plan-upload-limits';
 
 export const runtime = 'nodejs';
 export const dynamic = 'force-dynamic';
@@ -91,21 +92,22 @@ export async function POST(request: NextRequest) {
       return NextResponse.json({ error: 'URL is required' }, { status: 400 });
     }
 
-    const estimatedDurationSeconds = typeof body?.estimatedDurationSeconds === 'number'
-      ? Math.max(1, Math.round(body.estimatedDurationSeconds))
-      : 60 * 60;
+    const organizationId = await resolveOrganizationIdForWrite(user.id, requestedOrganizationId);
+    const resolvedDuration = await resolvePlanUploadDuration({
+      organizationId,
+      userId: user.id,
+      durationSeconds: typeof body?.estimatedDurationSeconds === 'number'
+        ? body.estimatedDurationSeconds
+        : null,
+    });
+    const estimatedDurationSeconds = resolvedDuration.durationSeconds;
+    const subscription = resolvedDuration.subscription;
     const estimatedCost = await estimateTranscriptionCostAsync({
       durationSeconds: estimatedDurationSeconds,
       tier: processingTier,
       analysisOptions,
     });
 
-    const organizationId = await resolveOrganizationIdForWrite(user.id, requestedOrganizationId);
-    const subscription = await assertPlanUploadDuration({
-      organizationId,
-      userId: user.id,
-      durationSeconds: estimatedDurationSeconds,
-    });
     const entitlementGuard = await runEntitlementGuard({
       organizationId,
       legacyUserId: user.id,
@@ -116,6 +118,7 @@ export async function POST(request: NextRequest) {
         userId: user.id,
         metadata: {
           estimatedDurationSeconds,
+          durationSource: resolvedDuration.durationSource,
           processingTier,
           source: isYouTubeUrl(url) ? 'youtube_url' : 'direct_url',
         },
@@ -172,8 +175,9 @@ export async function POST(request: NextRequest) {
         productCreditWorkflow: processingTier,
         analysisOptions,
         estimatedDurationSeconds,
+        durationSource: resolvedDuration.durationSource,
       },
-      expiresAt: new Date(Date.now() + (2 * 60 * 60 * 1000)).toISOString(),
+      expiresAt: getUploadProcessingReservationExpiresAt(),
     });
 
     let importResult;
@@ -190,6 +194,7 @@ export async function POST(request: NextRequest) {
         reservationId: reservation.id,
         reservationHoldAmount: estimatedProductCredits,
         reservationEstimatedCost: estimatedCost.total,
+        estimatedDurationSeconds,
         speakerCount,
         externalSource: {
           provider: isYouTubeUrl(url) ? 'youtube' : 'direct',

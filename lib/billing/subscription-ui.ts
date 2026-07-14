@@ -21,8 +21,11 @@ export function formatPlanPrice(
   }
 
   if (interval === 'year' && typeof plan.annualPriceCents === 'number') {
-    const monthlyEquivalent = Math.round(plan.annualPriceCents / 12);
-    return `${formatCurrency(monthlyEquivalent, plan.currency)}/mo`;
+    return `${formatCurrency(plan.annualPriceCents, plan.currency)}/year`;
+  }
+
+  if (interval === 'year') {
+    return 'Annual unavailable';
   }
 
   if (plan.monthlyPriceCents === null || plan.monthlyPriceCents === undefined) {
@@ -102,7 +105,7 @@ export function getPlanCreditItems(
     ? `Top-ups enabled; expire after ${plan.topUpCreditExpiryMonths} months`
     : 'Top-ups disabled');
   if (typeof plan.extraSeatPriceCents === 'number') {
-    items.push(`Extra seats ${formatCurrency(plan.extraSeatPriceCents, 'usd')}/user/mo annually`);
+    items.push(`Extra seats ${formatCurrency(plan.extraSeatPriceCents, 'usd')}/user/mo`);
   }
 
   return items;

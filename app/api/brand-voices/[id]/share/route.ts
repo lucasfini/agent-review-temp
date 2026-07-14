@@ -9,10 +9,16 @@ import {
   deleteBrandVoice,
   getBrandVoiceInOrganizations,
   shareBrandVoiceToOrganization,
+  unshareBrandVoiceToPrivateOrganization,
 } from '@/lib/brand-voices';
 import { isDemoUser } from '@/lib/demo-mode';
 import { requireStudioAssetContext } from '@/lib/studio-assets';
+import { assertShareTargetIsTeamOrganization } from '@/lib/studio-sharing';
 import { supabaseAdmin } from '@/lib/supabase/server';
+import {
+  notifyMovedToPrivate,
+  notifySharedWithTeam,
+} from '@/lib/notifications/notification-events';
 
 export const dynamic = 'force-dynamic';
 export const revalidate = 0;
@@ -47,6 +53,11 @@ export async function POST(
     if (isDemoUser(context.user)) {
       return NextResponse.json({ error: 'Demo account is read-only' }, { status: 403 });
     }
+    assertShareTargetIsTeamOrganization({
+      activeOrganizationId: context.activeOrganizationId,
+      privateOrganizationId: context.privateOrganizationId,
+      organizationType: context.organization.type,
+    }, 'brand voice');
 
     const voice = await getBrandVoiceInOrganizations(supabaseAdmin, context.organizationIds, id);
     const scopedVoice = voice ? decorateBrandVoiceScope(voice, {
@@ -61,7 +72,7 @@ export async function POST(
       return NextResponse.json({ error: 'Brand voice not found' }, { status: 404 });
     }
     if (scopedVoice.scope !== 'private' || !scopedVoice.canShare) {
-      return NextResponse.json({ error: 'You do not have permission to share this brand voice' }, { status: 403 });
+      return NextResponse.json({ error: 'You do not have permission to publish this brand voice' }, { status: 403 });
     }
 
     const sharedVoice = decorateBrandVoiceScope(
@@ -93,9 +104,22 @@ export async function POST(
       },
     });
 
+    await notifySharedWithTeam({
+      organizationId: context.activeOrganizationId,
+      actorUserId: context.user.id,
+      name: sharedVoice.name,
+      href: '/dashboard/studio/voice',
+      idempotencyKey: `asset_shared:voice:${sharedVoice.id}`,
+      metadata: {
+        assetType: 'voice',
+        assetId: sharedVoice.id,
+        sourceVoiceId: scopedVoice.id,
+      },
+    });
+
     return NextResponse.json({ success: true, brandVoice: sharedVoice });
   } catch (error) {
-    return errorResponse(error, 'Failed to share brand voice');
+    return errorResponse(error, 'Failed to publish brand voice');
   }
 }
 
@@ -126,12 +150,32 @@ export async function DELETE(
       return NextResponse.json({ error: 'Brand voice not found' }, { status: 404 });
     }
     if (!scopedVoice.canUnshare) {
-      return NextResponse.json({ error: 'You do not have permission to unshare this brand voice' }, { status: 403 });
+      return NextResponse.json({ error: 'You do not have permission to move this brand voice to private' }, { status: 403 });
     }
 
-    const deleted = await deleteBrandVoice(supabaseAdmin, scopedVoice.organizationId, scopedVoice.id);
-    if (!deleted) {
-      return NextResponse.json({ error: 'Brand voice not found' }, { status: 404 });
+    const privateVoice = scopedVoice.sharedFromVoiceId
+      ? null
+      : decorateBrandVoiceScope(
+        await unshareBrandVoiceToPrivateOrganization(
+          supabaseAdmin,
+          scopedVoice,
+          context.privateOrganizationId,
+          context.activeOrganizationId
+        ),
+        {
+          activeOrganizationId: context.activeOrganizationId,
+          privateOrganizationId: context.privateOrganizationId,
+          userId: context.user.id,
+          role: context.membership.role,
+          organizationType: context.organization.type,
+        }
+      );
+
+    if (scopedVoice.sharedFromVoiceId) {
+      const deleted = await deleteBrandVoice(supabaseAdmin, scopedVoice.organizationId, scopedVoice.id);
+      if (!deleted) {
+        return NextResponse.json({ error: 'Brand voice not found' }, { status: 404 });
+      }
     }
 
     await recordOrganizationAuditLog({
@@ -146,8 +190,20 @@ export async function DELETE(
       },
     });
 
-    return NextResponse.json({ success: true });
+    await notifyMovedToPrivate({
+      organizationId: context.activeOrganizationId,
+      actorUserId: context.user.id,
+      name: scopedVoice.name,
+      href: '/dashboard/studio/voice',
+      idempotencyKey: `asset_unshared:voice:${scopedVoice.id}`,
+      metadata: {
+        assetType: 'voice',
+        assetId: scopedVoice.id,
+      },
+    });
+
+    return NextResponse.json({ success: true, brandVoice: privateVoice });
   } catch (error) {
-    return errorResponse(error, 'Failed to unshare brand voice');
+    return errorResponse(error, 'Failed to move brand voice to private');
   }
 }

@@ -290,7 +290,7 @@ VALUES
     0,
     false,
     12,
-    60,
+    30,
     NULL,
     false,
     '{
@@ -300,7 +300,7 @@ VALUES
       "credits_pooled":false,
       "no_credit_card_required":true,
       "content_exports":"1 content export",
-      "feature_items":["Transcript","Speaker labels","Summary","One full 60-minute Repurpose Pack trial","1 content export","60-minute max upload","No credit card required"]
+      "feature_items":["Transcript","Speaker labels","Summary","One full 60-minute Repurpose Pack trial","1 content export","30-minute max upload","No credit card required"]
     }'::jsonb,
     true,
     10
@@ -325,7 +325,7 @@ VALUES
     1,
     true,
     12,
-    60,
+    90,
     NULL,
     false,
     '{
@@ -360,7 +360,7 @@ VALUES
     1,
     true,
     12,
-    60,
+    180,
     NULL,
     true,
     '{
@@ -400,7 +400,7 @@ VALUES
     1,
     true,
     12,
-    60,
+    240,
     2900,
     false,
     '{

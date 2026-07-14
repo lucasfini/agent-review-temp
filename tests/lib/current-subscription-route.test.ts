@@ -162,6 +162,62 @@ describe('GET /api/subscriptions/current', () => {
     expect(mockGetOrCreateCreditSubscription).toHaveBeenCalledWith({ organizationId: 'org-1' });
   });
 
+  it('keeps current subscription readable when plan credit grant reconciliation fails', async () => {
+    const { GET } = await import('@/app/api/subscriptions/current/route');
+    const consoleError = jest.spyOn(console, 'error').mockImplementation(() => {});
+    const subscription = {
+      id: 'subscription-1',
+      organizationId: 'org-1',
+      status: 'active',
+      plan: {
+        id: 'plan-standard',
+        slug: 'standard',
+        name: 'Standard',
+      },
+    };
+    mockRequireAuthenticatedUser.mockResolvedValue({ id: 'user-1', email: 'user@example.com' });
+    mockGetActiveOrganizationForUser.mockResolvedValue({
+      organization: {
+        id: 'org-1',
+        name: 'Member Org',
+        type: 'saas_customer',
+      },
+      membership: {
+        role: 'owner',
+        status: 'active',
+      },
+    });
+    mockGetOrCreateCreditSubscription.mockResolvedValue(subscription);
+    mockEnsureCurrentPlanCreditGrant.mockRejectedValue(new Error('billing_credit_grants is missing'));
+    mockGetEntitlementsForSubscription.mockReturnValue({
+      source: 'subscription',
+      isSubscriptionUsable: true,
+    });
+
+    try {
+      const response = await GET(new Request('http://localhost/api/subscriptions/current') as any);
+      const payload = await response.json();
+
+      expect(response.status).toBe(200);
+      expect(payload.subscription).toEqual(subscription);
+      expect(payload.entitlements).toMatchObject({
+        source: 'subscription',
+        isSubscriptionUsable: true,
+      });
+      expect(mockEnsureCurrentPlanCreditGrant).toHaveBeenCalledWith({
+        organizationId: 'org-1',
+        userId: 'user-1',
+        subscription,
+      });
+      expect(consoleError).toHaveBeenCalledWith(
+        '[SUBSCRIPTIONS_CURRENT] Failed to ensure current plan credit grant:',
+        expect.any(Error)
+      );
+    } finally {
+      consoleError.mockRestore();
+    }
+  });
+
   it('does not query subscriptions when organization access is denied', async () => {
     const { GET } = await import('@/app/api/subscriptions/current/route');
     mockRequireAuthenticatedUser.mockResolvedValue({ id: 'user-1', email: 'user@example.com' });

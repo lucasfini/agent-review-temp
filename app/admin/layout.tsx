@@ -1,76 +1,42 @@
-'use client';
-
-import Link from 'next/link';
-import { useEffect } from 'react';
-import { usePathname, useRouter } from 'next/navigation';
-import { useAuth } from '@/lib/auth/context';
+import { createServerClient } from '@supabase/ssr';
+import { cookies } from 'next/headers';
+import { redirect } from 'next/navigation';
 import { isAdminEmail } from '@/lib/admin-access';
+import AdminShellLayout from './admin-shell-layout';
 
-const ADMIN_LINKS = [
-  { label: 'Overview', href: '/admin' },
-  { label: 'Users', href: '/admin/users' },
-  { label: 'Billing Ops', href: '/admin/billing-ops' },
-  { label: 'Prices', href: '/admin/prices' },
-  { label: 'Monitoring', href: '/admin/monitoring' },
-  { label: 'Payments', href: '/admin/payments' },
-];
-
-export default function AdminShellLayout({
+export default async function AdminLayout({
   children,
 }: {
   children: React.ReactNode;
 }) {
-  const { user, loading } = useAuth();
-  const router = useRouter();
-  const pathname = usePathname();
+  const cookieStore = await cookies();
 
-  useEffect(() => {
-    if (loading) return;
-    if (!user) {
-      router.replace('/auth/login');
-      return;
+  const supabase = createServerClient(
+    process.env.NEXT_PUBLIC_SUPABASE_URL!,
+    process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY!,
+    {
+      cookies: {
+        getAll() {
+          return cookieStore.getAll();
+        },
+        setAll() {
+          // Server component: no cookie writes needed for this auth check.
+        },
+      },
     }
-    if (!isAdminEmail(user.email)) {
-      router.replace('/dashboard/hub');
-    }
-  }, [loading, router, user]);
+  );
 
-  if (loading || !user || !isAdminEmail(user.email)) {
-    return (
-      <div className="min-h-screen flex items-center justify-center bg-slate-950">
-        <div className="text-sm text-slate-400">Loading admin…</div>
-      </div>
-    );
+  const {
+    data: { user },
+  } = await supabase.auth.getUser();
+
+  if (!user) {
+    redirect('/auth/login?redirect_to=/admin');
   }
 
-  return (
-    <div className="min-h-screen bg-slate-950">
-      <header className="sticky top-0 z-40 border-b border-slate-800 bg-slate-950/90 backdrop-blur">
-        <div className="max-w-6xl mx-auto px-6 h-14 flex items-center justify-between">
-          <div className="text-sm font-semibold text-slate-100 tracking-wide">Admin</div>
-          <nav className="flex items-center gap-2">
-            {ADMIN_LINKS.map((item) => {
-              const active = item.href === '/admin'
-                ? pathname === '/admin'
-                : pathname.startsWith(item.href);
-              return (
-                <Link
-                  key={item.href}
-                  href={item.href}
-                  className={`px-3 py-1.5 rounded-md text-xs font-medium transition-colors ${
-                    active
-                      ? 'bg-blue-600/20 text-blue-300 border border-blue-500/30'
-                      : 'text-slate-400 hover:text-slate-200 hover:bg-slate-800'
-                  }`}
-                >
-                  {item.label}
-                </Link>
-              );
-            })}
-          </nav>
-        </div>
-      </header>
-      <main>{children}</main>
-    </div>
-  );
+  if (!isAdminEmail(user.email)) {
+    redirect('/dashboard/hub');
+  }
+
+  return <AdminShellLayout>{children}</AdminShellLayout>;
 }

@@ -3,7 +3,7 @@ import { supabaseAdmin } from '@/lib/supabase/server';
 import { isAuthorizedMaintenanceRequest } from '@/lib/maintenance-auth';
 import { getInternalAppBaseUrl } from '@/lib/app-url';
 import { failReservation, InsufficientCreditError } from '@/lib/billing/credit';
-import { estimateAnalysisJobCostAsync, estimateContentGenerationCostAsync } from '@/lib/billing/cost-map';
+import { estimateAnalysisJobCostAsync } from '@/lib/billing/cost-map';
 import { isDemoUser } from '@/lib/demo-mode';
 import { estimateReservationAmount } from '@/lib/billing/reserve-amount';
 import {
@@ -22,6 +22,12 @@ import {
 import { resolveOrganizationIdForWrite } from '@/lib/authz/organization-context';
 import { createPlanCreditReservation, InsufficientPlanCreditsError } from '@/lib/billing/plan-credits';
 import { estimateDraftProductCredits } from '@/lib/billing/product-credits';
+import {
+  notifyContentGenerationFailed,
+  notifyCreditsDepleted,
+} from '@/lib/notifications/notification-events';
+import { getAnalysisCompatibility } from '@/lib/generation-capabilities';
+import type { AnalysisOptionKey } from '@/lib/analysis-options';
 
 function isMissingFailureNotifiedAtColumn(error: any): boolean {
   return error?.code === 'PGRST204'
@@ -67,6 +73,23 @@ async function failJob(jobId: string, message: string) {
     failure_notified_at: null,
   });
   await releaseGlobalJobLock(jobId);
+}
+
+function readDownstreamGenerationError(data: any, fallback: string): string {
+  const details = Array.isArray(data?.details)
+    ? data.details.filter((detail: unknown): detail is string => typeof detail === 'string' && detail.trim())
+    : [];
+  const baseMessage = typeof data?.message === 'string' && data.message.trim()
+    ? data.message.trim()
+    : typeof data?.error === 'string' && data.error.trim()
+      ? data.error.trim()
+      : fallback;
+
+  if (details.length === 0) return baseMessage;
+  if (/^content generation failed$/i.test(baseMessage)) {
+    return details.join(' | ');
+  }
+  return `${baseMessage}: ${details.join(' | ')}`;
 }
 
 export async function POST(
@@ -234,17 +257,31 @@ export async function POST(
           console.error(`[PROJECT-GENERATE-PROCESS] Heartbeat failed for ${job.id}:`, err)
         );
       }, 5 * 60 * 1000); // Every 5 minutes
+      let jobNotificationContext: {
+        organizationId: string | null;
+        userId: string | null;
+        projectTitle: string | null;
+      } = {
+        organizationId: null,
+        userId: null,
+        projectTitle: null,
+      };
 
       try {
         const { data: project, error: projectError } = await (supabaseAdmin as any)
           .from('projects')
-          .select('id, user_id, organization_id, transcription_text, transcription_segments, speaker_data, metadata')
+          .select('id, user_id, organization_id, title, transcription_text, transcription_segments, speaker_data, metadata')
           .eq('id', projectId)
           .single();
 
         if (projectError || !project || !project.transcription_text) {
           throw new Error('Project transcription not available');
         }
+        jobNotificationContext = {
+          organizationId: project.organization_id || null,
+          userId: project.user_id || null,
+          projectTitle: project.title || null,
+        };
 
         const {
           data: { user: projectOwner },
@@ -254,18 +291,20 @@ export async function POST(
           throw new Error('Demo account is read-only');
         }
 
-        const estimatedCost = job.kind === 'analysis'
-          ? await estimateAnalysisJobCostAsync({
-              targetKey: job.target_key,
-              estimatedTranscriptLength: project.transcription_text.length,
-            })
-          : await estimateContentGenerationCostAsync([job.target_key]);
-
         if (job.kind === 'analysis') {
           if (!isAnalysisJobKey(job.target_key)) {
             throw new Error(`Invalid analysis target: ${job.target_key}`);
           }
 
+          const compatibility = getAnalysisCompatibility(project, job.target_key as AnalysisOptionKey);
+          if (!compatibility.compatible) {
+            throw new Error(compatibility.reason || `Cannot generate ${job.target_key} for this project`);
+          }
+
+          const estimatedCost = await estimateAnalysisJobCostAsync({
+            targetKey: job.target_key,
+            estimatedTranscriptLength: project.transcription_text.length,
+          });
           const reconcileTarget = mapAnalysisJobKeyToReconcileTarget(job.target_key);
           const legacyEstimatedHold = estimateReservationAmount(estimatedCost, 'analysis_job');
           const productCreditAmount = estimateDraftProductCredits(1);
@@ -387,6 +426,7 @@ export async function POST(
             headers: generationHeaders,
             body: JSON.stringify({
               projectId,
+              queuedGenerationJobId: job.id,
               transcription: project.transcription_text,
               segments: project.transcription_segments || [],
               speakerData: project.speaker_data || {},
@@ -400,7 +440,7 @@ export async function POST(
 
           if (!res.ok) {
             const data = await res.json().catch(() => null);
-            throw new Error(data?.message || data?.error || `Failed to generate ${job.target_key}`);
+            throw new Error(readDownstreamGenerationError(data, `Failed to generate ${job.target_key}`));
           }
         }
 
@@ -413,6 +453,38 @@ export async function POST(
             ? `Insufficient credits: need ${error.required.toFixed(4)}, have ${error.available.toFixed(4)}`
           : (error?.message || 'Generation failed');
         await failJob(job.id, message);
+        const notificationOrganizationId = jobNotificationContext.organizationId
+          || job.organization_id
+          || null;
+        if (error instanceof InsufficientPlanCreditsError) {
+          await notifyCreditsDepleted({
+            organizationId: notificationOrganizationId || error.organizationId,
+            actorUserId: jobNotificationContext.userId || job.user_id || null,
+            idempotencyKey: `credits_depleted:project_generation_job:${job.id}`,
+            metadata: {
+              source: 'project_generation_job',
+              jobId: job.id,
+              targetKey: job.target_key,
+              required: error.required,
+              available: error.available,
+            },
+          });
+        }
+        await notifyContentGenerationFailed({
+          organizationId: notificationOrganizationId,
+          actorUserId: jobNotificationContext.userId || job.user_id || null,
+          projectId,
+          projectTitle: jobNotificationContext.projectTitle,
+          count: 1,
+          idempotencyKey: `content_generation_failed:job:${job.id}`,
+          metadata: {
+            source: 'project_generation_job',
+            jobId: job.id,
+            kind: job.kind,
+            targetKey: job.target_key,
+            error: message,
+          },
+        });
       } finally {
         clearInterval(heartbeat);
       }

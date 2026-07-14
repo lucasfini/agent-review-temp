@@ -18,6 +18,8 @@ function plan(overrides: Partial<Plan> = {}): Plan {
     stripePriceId: 'price_live_123456789',
     stripeMonthlyPriceId: 'price_live_monthly',
     stripeAnnualPriceId: 'price_live_annual',
+    stripeExtraSeatMonthlyPriceId: null,
+    stripeExtraSeatAnnualPriceId: null,
     monthlyPriceCents: 29900,
     annualPriceCents: 286800,
     currency: 'usd',
@@ -33,7 +35,7 @@ function plan(overrides: Partial<Plan> = {}): Plan {
     creditRolloverMonths: 1,
     topUpEnabled: true,
     topUpCreditExpiryMonths: 12,
-    maxUploadMinutes: 60,
+    maxUploadMinutes: 90,
     extraSeatPriceCents: null,
     isPopular: false,
     features: {},
@@ -53,6 +55,9 @@ function subscription(overrides: Partial<OrganizationSubscription> = {}): Organi
     plan: null,
     stripeCustomerId: 'cus_123',
     stripeSubscriptionId: 'sub_123',
+    extraSeatCount: 0,
+    stripeExtraSeatSubscriptionItemId: null,
+    stripeExtraSeatPriceId: null,
     status: 'active',
     currentPeriodStart: null,
     currentPeriodEnd: null,
@@ -72,8 +77,9 @@ describe('subscription UI helpers', () => {
     expect(formatPlanPrice(plan({ monthlyPriceCents: null }))).toBe('Custom');
   });
 
-  it('formats annual equivalent and Free plan pricing', () => {
-    expect(formatPlanPrice(plan(), 'year')).toBe('$239/mo');
+  it('formats annual plan pricing and Free plan pricing', () => {
+    expect(formatPlanPrice(plan(), 'year')).toBe('$2,868/year');
+    expect(formatPlanPrice(plan({ annualPriceCents: null }), 'year')).toBe('Annual unavailable');
     expect(formatPlanPrice(plan({ slug: 'free', monthlyPriceCents: 0, annualPriceCents: 0 }))).toBe('$0 forever');
   });
 
@@ -94,11 +100,11 @@ describe('subscription UI helpers', () => {
       creditRolloverMonths: 0,
       topUpEnabled: false,
       features: {
-        credit_label: '300 credits/month, up to 1 full 60-minute Repurpose Pack',
+        credit_label: '300 monthly credits',
       },
     }))).toEqual([
-      '300 credits/month, up to 1 full 60-minute Repurpose Pack',
-      '60-minute max upload',
+      '300 monthly credits',
+      '90-minute max upload',
       '3 seats',
       'Credits reset monthly',
       'Top-ups disabled',

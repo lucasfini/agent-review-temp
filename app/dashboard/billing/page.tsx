@@ -1,7 +1,7 @@
 'use client';
 
-import BillingDashboard from '@/components/billing/billing-dashboard';
+import AccountBillingDashboard from '@/components/billing/account-billing-dashboard';
 
 export default function BillingPage() {
-  return <BillingDashboard />;
+  return <AccountBillingDashboard />;
 }

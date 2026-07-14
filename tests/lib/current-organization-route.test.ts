@@ -225,6 +225,84 @@ describe('current organization route', () => {
     }));
   });
 
+  it('updates guided workspace setup metadata without overwriting existing setup fields', async () => {
+    const { PATCH } = await import('@/app/api/organizations/current/route');
+    mockGetActiveOrganizationForUser.mockResolvedValue({
+      organization: {
+        ...organization,
+        onboarding_metadata_json: {
+          ...organization.onboarding_metadata_json,
+          guidedSetup: {
+            createdAt: '2026-07-01T00:00:00.000Z',
+            completedAt: '2026-07-02T00:00:00.000Z',
+          },
+        },
+      },
+      membership: ownerMembership,
+    });
+
+    const response = await PATCH(new Request('http://localhost/api/organizations/current', {
+      method: 'PATCH',
+      body: JSON.stringify({
+        organization_id: 'org-1',
+        guidedSetup: {
+          roleTitle: ' Marketing lead ',
+          teamSize: ' 6-10 ',
+        },
+      }),
+    }) as any);
+    const payload = await response.json();
+
+    expect(response.status).toBe(200);
+    expect(mockFrom).toHaveBeenCalledWith('organizations');
+    expect(latestUpdatePayload).toEqual({
+      onboarding_metadata_json: expect.objectContaining({
+        source: 'test',
+        updatedAt: expect.any(String),
+        profile: {
+          audience: 'RevOps leaders',
+          contentGoal: 'Launch thought leadership',
+        },
+        guidedSetup: {
+          createdAt: '2026-07-01T00:00:00.000Z',
+          completedAt: '2026-07-02T00:00:00.000Z',
+          roleTitle: 'Marketing lead',
+          teamSize: '6-10',
+        },
+      }),
+    });
+    expect(payload.organization.onboarding.metadata.guidedSetup).toEqual(expect.objectContaining({
+      roleTitle: 'Marketing lead',
+      teamSize: '6-10',
+    }));
+  });
+
+  it('does not allow editing the fixed personal workspace identity', async () => {
+    const { PATCH } = await import('@/app/api/organizations/current/route');
+    mockGetActiveOrganizationForUser.mockResolvedValue({
+      organization: {
+        ...organization,
+        id: 'personal-org',
+        name: 'Personal Workspace',
+        type: 'personal_legacy',
+      },
+      membership: ownerMembership,
+    });
+
+    const response = await PATCH(new Request('http://localhost/api/organizations/current', {
+      method: 'PATCH',
+      body: JSON.stringify({
+        organization_id: 'personal-org',
+        name: 'New Personal Name',
+      }),
+    }) as any);
+    const payload = await response.json();
+
+    expect(response.status).toBe(400);
+    expect(payload.error).toBe('Personal Workspace is fixed. Create or switch to a team workspace to edit workspace settings.');
+    expect(mockFrom).not.toHaveBeenCalled();
+  });
+
   it('blocks non-admin members from updating onboarding', async () => {
     const { PATCH } = await import('@/app/api/organizations/current/route');
     mockGetActiveOrganizationForUser.mockResolvedValue({
@@ -269,6 +347,23 @@ describe('current organization route', () => {
 
     expect(response.status).toBe(400);
     expect(payload.error).toBe('profile must be an object');
+    expect(mockFrom).not.toHaveBeenCalled();
+  });
+
+  it('rejects invalid guided setup payload values', async () => {
+    const { PATCH } = await import('@/app/api/organizations/current/route');
+
+    const response = await PATCH(new Request('http://localhost/api/organizations/current', {
+      method: 'PATCH',
+      body: JSON.stringify({
+        organization_id: 'org-1',
+        guidedSetup: { roleTitle: 42 },
+      }),
+    }) as any);
+    const payload = await response.json();
+
+    expect(response.status).toBe(400);
+    expect(payload.error).toBe('guidedSetup.roleTitle must be a string');
     expect(mockFrom).not.toHaveBeenCalled();
   });
 });

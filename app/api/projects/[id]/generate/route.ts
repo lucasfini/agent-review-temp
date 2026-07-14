@@ -18,11 +18,17 @@ import { runEntitlementGuard } from '@/lib/billing/entitlement-guards';
 import { getOrganizationPlanCreditBalance, InsufficientPlanCreditsError } from '@/lib/billing/plan-credits';
 import { estimateDraftProductCredits } from '@/lib/billing/product-credits';
 import {
+  notifyContentGenerationStarted,
+  notifyCreditsDepleted,
+} from '@/lib/notifications/notification-events';
+import {
   GenerationContextValidationError,
   hasGenerationContextIds,
   readGenerationContextIds,
   resolveGenerationContext,
 } from '@/lib/generation-context';
+import { getAnalysisCompatibility } from '@/lib/generation-capabilities';
+import type { AnalysisOptionKey } from '@/lib/analysis-options';
 
 type GenerateItem = {
   kind: 'analysis' | 'content';
@@ -39,10 +45,62 @@ type GenerateItem = {
   library_id?: string | null;
 };
 
+type GenerationJobInsertRow = {
+  project_id: string;
+  user_id: string;
+  organization_id?: string | null;
+  kind: 'analysis' | 'content';
+  target_key: string;
+  theme_id: string | null;
+  custom_guidance?: string | null;
+  creator_profile_id?: string | null;
+  brand_voice_id?: string | null;
+  campaign_id?: string | null;
+  library_id?: string | null;
+  status: 'queued';
+};
+
+function isProjectGenerationJobsSchemaCacheError(error: any): boolean {
+  const message = typeof error?.message === 'string' ? error.message : '';
+  return error?.code === 'PGRST204'
+    && message.includes('project_generation_jobs')
+    && /column|schema cache/i.test(message);
+}
+
+function stripOptionalGenerationJobColumns(row: GenerationJobInsertRow) {
+  return {
+    project_id: row.project_id,
+    user_id: row.user_id,
+    kind: row.kind,
+    target_key: row.target_key,
+    theme_id: row.theme_id,
+    status: row.status,
+  };
+}
+
+async function insertGenerationJobsWithSchemaFallback(rows: GenerationJobInsertRow[]) {
+  const primary = await (supabaseAdmin as any)
+    .from('project_generation_jobs')
+    .insert(rows);
+
+  if (!primary.error || !isProjectGenerationJobsSchemaCacheError(primary.error)) {
+    return primary;
+  }
+
+  console.warn('[PROJECT-GENERATE] Retrying generation job insert without optional columns after schema cache error:', primary.error);
+  const fallbackRows = rows.map(stripOptionalGenerationJobColumns);
+  return (supabaseAdmin as any)
+    .from('project_generation_jobs')
+    .insert(fallbackRows);
+}
+
 export async function POST(
   request: NextRequest,
   { params }: { params: Promise<{ id: string }> }
 ) {
+  let notificationOrganizationId: string | null = null;
+  let notificationUserId: string | null = null;
+  let notificationProjectTitle: string | null = null;
   try {
     const { id: projectId } = await params;
     const authHeader = request.headers.get('Authorization');
@@ -58,14 +116,29 @@ export async function POST(
     }
 
     let user: { id: string; email?: string | null };
-    let project: { id: string; user_id: string; transcription_text: string | null; organization_id: string | null };
+    let project: {
+      id: string;
+      user_id: string;
+      transcription_text: string | null;
+      transcription_segments?: unknown;
+      speaker_data?: unknown;
+      metadata?: any;
+      organization_id: string | null;
+      title: string | null;
+    };
     try {
       const ownership = await requireProjectOwner<{
         transcription_text: string | null;
+        transcription_segments: unknown;
+        speaker_data: unknown;
+        metadata: any;
         organization_id: string | null;
-      }>(request, projectId, 'id, user_id, transcription_text, organization_id');
+        title: string | null;
+      }>(request, projectId, 'id, user_id, transcription_text, transcription_segments, speaker_data, metadata, organization_id, title');
       user = ownership.user;
       project = ownership.project;
+      notificationUserId = user.id;
+      notificationProjectTitle = project.title || null;
     } catch (error) {
       if (error instanceof RouteAccessError) {
         return NextResponse.json({ error: error.message }, { status: error.status });
@@ -105,6 +178,7 @@ export async function POST(
     }
 
     const projectOrganizationId = project.organization_id || await resolveOrganizationIdForWrite(project.user_id);
+    notificationOrganizationId = projectOrganizationId;
     for (const item of items) {
       if (item?.kind !== 'content') continue;
       const itemGenerationContextIds = readGenerationContextIds(item);
@@ -134,6 +208,29 @@ export async function POST(
 
     if (!normalizedItems.length) {
       return NextResponse.json({ error: 'No valid generation items provided' }, { status: 400 });
+    }
+
+    const incompatibleItems = normalizedItems
+      .filter((item) => item.kind === 'analysis')
+      .map((item) => ({
+        item,
+        compatibility: getAnalysisCompatibility(project, item.targetKey as AnalysisOptionKey),
+      }))
+      .filter(({ compatibility }) => !compatibility.compatible);
+
+    if (incompatibleItems.length > 0) {
+      const invalidItems = incompatibleItems.map(({ item, compatibility }) => ({
+        kind: item.kind,
+        targetKey: item.targetKey,
+        reason: compatibility.reason || 'This analysis cannot run for this project.',
+      }));
+      return NextResponse.json(
+        {
+          error: invalidItems[0]?.reason || 'One or more generation items cannot run for this project.',
+          invalidItems,
+        },
+        { status: 422 }
+      );
     }
 
     const entitlementGuard = await runEntitlementGuard({
@@ -185,7 +282,7 @@ export async function POST(
       ((existingJobs || []) as Array<{ kind: string; target_key: string }>).map((job) => `${job.kind}:${job.target_key}`)
     );
 
-    const rowsToInsert = normalizedItems
+    const rowsToInsert: GenerationJobInsertRow[] = normalizedItems
       .filter((item) => !activeKeys.has(`${item.kind}:${item.targetKey}`))
       .map((item) => {
         const itemGenerationContextIds = item.kind === 'content' ? readGenerationContextIds(item) : bodyGenerationContextIds;
@@ -229,14 +326,26 @@ export async function POST(
     }
 
     if (rowsToInsert.length > 0) {
-      const { error: insertError } = await (supabaseAdmin as any)
-        .from('project_generation_jobs')
-        .insert(rowsToInsert);
+      const { error: insertError } = await insertGenerationJobsWithSchemaFallback(rowsToInsert);
 
       if (insertError) {
         console.error('[PROJECT-GENERATE] Failed to insert jobs:', insertError);
         return NextResponse.json({ error: 'Failed to queue generation' }, { status: 500 });
       }
+
+      await notifyContentGenerationStarted({
+        organizationId: projectOrganizationId,
+        actorUserId: user.id,
+        projectId,
+        projectTitle: notificationProjectTitle,
+        count: rowsToInsert.length,
+        idempotencyKey: `content_generation_started:${projectId}:${Date.now()}`,
+        metadata: {
+          source: 'project_generate',
+          queued: rowsToInsert.length,
+          targetKeys: rowsToInsert.map((row) => row.target_key),
+        },
+      });
     }
 
     const baseUrl = getInternalAppBaseUrl();
@@ -270,6 +379,19 @@ export async function POST(
     }
     const billingResponse = billingErrorResponse(error);
     if (billingResponse.status === 402) {
+      if (error instanceof InsufficientPlanCreditsError) {
+        await notifyCreditsDepleted({
+          organizationId: notificationOrganizationId || error.organizationId,
+          actorUserId: notificationUserId,
+          idempotencyKey: `credits_depleted:project_generate:${notificationOrganizationId || error.organizationId}`,
+          metadata: {
+            source: 'project_generate',
+            required: error.required,
+            available: error.available,
+            projectTitle: notificationProjectTitle,
+          },
+        });
+      }
       return billingResponse;
     }
     console.error('[PROJECT-GENERATE] Error:', error);

@@ -172,11 +172,11 @@ describe('Studio profile and library collection routes', () => {
     );
   });
 
-  it('creates private creator profiles for signed-in users', async () => {
+  it('creates team creator profiles by default in a team workspace', async () => {
     const { POST } = await import('@/app/api/creator-profiles/route');
     mockCreateCreatorProfile.mockResolvedValue({
       ...creatorProfile,
-      organizationId: 'personal-1',
+      organizationId: 'org-1',
     });
 
     const response = await POST(new Request('http://localhost/api/creator-profiles', {
@@ -187,16 +187,16 @@ describe('Studio profile and library collection routes', () => {
 
     expect(response.status).toBe(201);
     expect(payload.creatorProfile).toEqual(expect.objectContaining({
-      organizationId: 'personal-1',
-      scope: 'private',
+      organizationId: 'org-1',
+      scope: 'organization',
       canEdit: true,
     }));
-    expect(mockCreateCreatorProfile).toHaveBeenCalledWith(expect.anything(), 'personal-1', 'user-1', expect.objectContaining({
+    expect(mockCreateCreatorProfile).toHaveBeenCalledWith(expect.anything(), 'org-1', 'user-1', expect.objectContaining({
       name: 'Main profile',
     }));
   });
 
-  it('allows non-admin members to create private creator profiles', async () => {
+  it('allows non-admin members to create private creator profiles when requested', async () => {
     const { POST } = await import('@/app/api/creator-profiles/route');
     mockRequireStudioAssetContext.mockResolvedValue({
       user,
@@ -216,7 +216,7 @@ describe('Studio profile and library collection routes', () => {
 
     const response = await POST(new Request('http://localhost/api/creator-profiles', {
       method: 'POST',
-      body: JSON.stringify({ organization_id: 'org-1', name: 'Member profile' }),
+      body: JSON.stringify({ organization_id: 'org-1', visibility: 'private', name: 'Member profile' }),
     }) as any);
     const payload = await response.json();
 
@@ -360,12 +360,12 @@ describe('Studio profile and library collection routes', () => {
     );
   });
 
-  it('creates content library collections for organization owners', async () => {
+  it('creates team content library collections by default for organization owners', async () => {
     const { POST } = await import('@/app/api/content-libraries/route');
     mockCreateContentLibrary.mockResolvedValue({
       ...contentLibrary,
-      organizationId: 'personal-1',
-      scope: 'private',
+      organizationId: 'org-1',
+      scope: 'organization',
       canEdit: true,
     });
 
@@ -377,11 +377,37 @@ describe('Studio profile and library collection routes', () => {
 
     expect(response.status).toBe(201);
     expect(payload.contentLibrary).toEqual(expect.objectContaining({
+      organizationId: 'org-1',
+      scope: 'organization',
+    }));
+    expect(mockCreateContentLibrary).toHaveBeenCalledWith(expect.anything(), 'org-1', 'user-1', expect.objectContaining({
+      name: 'Launch library',
+    }));
+  });
+
+  it('creates private content library collections when requested from a team workspace', async () => {
+    const { POST } = await import('@/app/api/content-libraries/route');
+    mockCreateContentLibrary.mockResolvedValue({
+      ...contentLibrary,
+      organizationId: 'personal-1',
+      scope: 'private',
+      canEdit: true,
+    });
+
+    const response = await POST(new Request('http://localhost/api/content-libraries', {
+      method: 'POST',
+      body: JSON.stringify({ organization_id: 'org-1', visibility: 'private', name: 'Private research' }),
+    }) as any);
+    const payload = await response.json();
+
+    expect(response.status).toBe(201);
+    expect(payload.contentLibrary).toEqual(expect.objectContaining({
       organizationId: 'personal-1',
       scope: 'private',
     }));
     expect(mockCreateContentLibrary).toHaveBeenCalledWith(expect.anything(), 'personal-1', 'user-1', expect.objectContaining({
-      name: 'Launch library',
+      name: 'Private research',
+      visibility: 'private',
     }));
   });
 
@@ -425,6 +451,32 @@ describe('Studio profile and library collection routes', () => {
       'org-1',
       'user-1'
     );
+  });
+
+  it('does not share content library collections into a personal workspace target', async () => {
+    const { POST } = await import('@/app/api/content-libraries/[id]/share/route');
+    mockRequireStudioAssetContext.mockResolvedValue({
+      user,
+      organization: privateOrganization,
+      membership: ownerMembership,
+      privateOrganization,
+      privateOrganizationId: privateOrganization.id,
+      activeOrganizationId: privateOrganization.id,
+      organizationIds: [privateOrganization.id],
+    });
+
+    const response = await POST(
+      new Request('http://localhost/api/content-libraries/library-1/share?organization_id=personal-1', {
+        method: 'POST',
+      }) as any,
+      { params: Promise.resolve({ id: 'library-1' }) }
+    );
+    const payload = await response.json();
+
+    expect(response.status).toBe(409);
+    expect(payload.error).toBe('Switch to a team workspace before publishing this collection.');
+    expect(mockGetContentLibraryInOrganizations).not.toHaveBeenCalled();
+    expect(mockShareContentLibraryToOrganization).not.toHaveBeenCalled();
   });
 
   it('surfaces organization access errors', async () => {

@@ -1,17 +1,16 @@
 "use client";
 
 import { useCallback, useEffect, useMemo, useState, type ReactNode } from 'react';
-import Link from 'next/link';
 import { useRouter, useSearchParams } from 'next/navigation';
 import {
   Archive,
+  Check,
   FileText,
   FolderOpen,
   Library,
   Loader2,
   Plus,
   Save,
-  Share2,
   Tags,
   Trash2,
   Upload,
@@ -20,7 +19,24 @@ import {
 
 import ConfirmModal from '@/components/ui/confirm-modal';
 import { Badge } from '@/components/ui/badge';
+import { ActionButton, ActionLink, ActionSelectTrigger } from '@/components/dashboard/action-controls';
+import { DashboardHeaderAction, DashboardPageHeader } from '@/components/dashboard/shell';
+import {
+  StudioAccessControl,
+} from '@/components/dashboard/studio/studio-page-header';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
+import {
+  DropdownMenu,
+  DropdownMenuItem,
+  DropdownMenuLabel,
+} from '@/components/ui/dropdown-menu';
+import {
+  Sheet,
+  SheetContent,
+  SheetDescription,
+  SheetHeader,
+  SheetTitle,
+} from '@/components/ui/sheet';
 import { useAuth } from '@/lib/auth/context';
 import {
   CAMPAIGN_STATUSES,
@@ -31,12 +47,16 @@ import {
 } from '@/lib/campaigns-content-library';
 import type { ContentLibrary as ContentLibraryCollection } from '@/lib/content-libraries';
 import { useCurrentOrganization } from '@/lib/hooks/useCurrentOrganization';
+import { emitLibraryMutation } from '@/lib/library-events';
 import { withOrganizationId } from '@/lib/organizations/current-organization';
+import { cn } from '@/lib/utils';
 
 type LibraryFormState = {
   name: string;
   description: string;
 };
+
+type StudioSaveVisibility = 'private' | 'team';
 
 type ItemFormState = {
   title: string;
@@ -87,6 +107,9 @@ const emptyItemForm: ItemFormState = {
   publishedAt: '',
 };
 
+const READY_STATUSES = new Set<ContentLibraryStatus>(['approved', 'published']);
+const ATTENTION_STATUSES = new Set<ContentLibraryStatus>(['in_review', 'needs_revision']);
+
 function listToText(items: string[]): string {
   return items.join('\n');
 }
@@ -128,9 +151,14 @@ function itemToForm(item: ContentLibraryItem): ItemFormState {
   };
 }
 
-function libraryFormToPayload(form: LibraryFormState, organizationId?: string | null) {
+function libraryFormToPayload(
+  form: LibraryFormState,
+  organizationId?: string | null,
+  visibility?: StudioSaveVisibility
+) {
   return {
     organization_id: organizationId || undefined,
+    visibility,
     name: form.name,
     description: form.description,
   };
@@ -157,9 +185,12 @@ function getProjectFallbackName(projectId: string): string {
   return `Project ${projectId.slice(0, 8)}`;
 }
 
+const inputClassName =
+  'mt-1 w-full rounded-md border border-slate-200 bg-white px-3 py-2 text-sm text-slate-950 shadow-sm outline-none transition focus:border-blue-500 focus:ring-2 focus:ring-blue-500/20 disabled:cursor-not-allowed disabled:bg-slate-50 disabled:text-slate-500 dark:border-slate-800 dark:bg-slate-950 dark:text-slate-100 dark:placeholder:text-slate-500 dark:disabled:bg-slate-900';
+
 function FieldLabel({ htmlFor, children }: { htmlFor: string; children: ReactNode }) {
   return (
-    <label htmlFor={htmlFor} className="text-sm font-medium text-slate-700 dark:text-slate-200">
+    <label htmlFor={htmlFor} className="text-xs font-semibold text-slate-700 dark:text-slate-200">
       {children}
     </label>
   );
@@ -188,7 +219,7 @@ function TextInput({
       onChange={(event) => onChange(event.target.value)}
       disabled={disabled}
       placeholder={placeholder}
-      className="mt-1 w-full rounded-lg border border-slate-300 bg-white px-3 py-2 text-sm text-slate-900 shadow-sm outline-none transition focus:border-blue-500 focus:ring-2 focus:ring-blue-500/20 disabled:cursor-not-allowed disabled:bg-slate-100 disabled:text-slate-500 dark:border-slate-700 dark:bg-slate-950 dark:text-slate-100 dark:disabled:bg-slate-900"
+      className={inputClassName}
     />
   );
 }
@@ -216,7 +247,7 @@ function TextArea({
       disabled={disabled}
       placeholder={placeholder}
       rows={rows}
-      className="mt-1 w-full resize-y rounded-lg border border-slate-300 bg-white px-3 py-2 text-sm leading-6 text-slate-900 shadow-sm outline-none transition focus:border-blue-500 focus:ring-2 focus:ring-blue-500/20 disabled:cursor-not-allowed disabled:bg-slate-100 disabled:text-slate-500 dark:border-slate-700 dark:bg-slate-950 dark:text-slate-100 dark:disabled:bg-slate-900"
+      className={cn(inputClassName, 'resize-y leading-6')}
     />
   );
 }
@@ -240,7 +271,7 @@ function SelectInput({
       value={value}
       onChange={(event) => onChange(event.target.value)}
       disabled={disabled}
-      className="mt-1 w-full rounded-lg border border-slate-300 bg-white px-3 py-2 text-sm text-slate-900 shadow-sm outline-none transition focus:border-blue-500 focus:ring-2 focus:ring-blue-500/20 disabled:cursor-not-allowed disabled:bg-slate-100 disabled:text-slate-500 dark:border-slate-700 dark:bg-slate-950 dark:text-slate-100 dark:disabled:bg-slate-900"
+      className={cn(inputClassName, 'cursor-pointer')}
     >
       {children}
     </select>
@@ -259,18 +290,115 @@ function SummaryTile({
   detail: string;
 }) {
   return (
-    <div className="rounded-lg border border-slate-200 bg-white p-4 dark:border-slate-800 dark:bg-slate-900">
+    <div className="rounded-md border border-slate-200 bg-white p-4 dark:border-slate-800 dark:bg-slate-900">
       <div className="flex items-start gap-3">
-        <div className="flex h-9 w-9 flex-shrink-0 items-center justify-center rounded-lg bg-slate-100 text-slate-500 dark:bg-slate-800 dark:text-slate-300">
+        <div className="flex h-9 w-9 flex-shrink-0 items-center justify-center rounded-md bg-slate-100 text-slate-500 dark:bg-slate-800 dark:text-slate-300">
           {icon}
         </div>
         <div className="min-w-0">
-          <p className="text-xs font-semibold uppercase tracking-[0.14em] text-slate-500 dark:text-slate-400">{label}</p>
-          <p className="mt-1 text-xl font-semibold text-slate-900 dark:text-slate-50">{value}</p>
+          <p className="text-xs font-semibold uppercase tracking-wide text-slate-500 dark:text-slate-400">{label}</p>
+          <p className="mt-1 text-2xl font-semibold text-slate-900 dark:text-slate-50">{value}</p>
           <p className="mt-1 text-xs leading-5 text-slate-500 dark:text-slate-400">{detail}</p>
         </div>
       </div>
     </div>
+  );
+}
+
+function LibrarySelector({
+  libraries,
+  items,
+  selectedLibraryId,
+  selectedLibrary,
+  loading,
+  onSelectLibrary,
+}: {
+  libraries: ContentLibraryCollection[];
+  items: ContentLibraryItem[];
+  selectedLibraryId: string | null;
+  selectedLibrary: ContentLibraryCollection | null;
+  loading?: boolean;
+  onSelectLibrary: (library: ContentLibraryCollection | null) => void;
+}) {
+  const selectedLabel = selectedLibrary?.name || 'All saved drafts';
+  const selectedScope = selectedLibrary
+    ? selectedLibrary.scope === 'organization' ? 'Team' : 'Private'
+    : 'All';
+  const trigger = (
+    <ActionSelectTrigger
+      icon={<Library className="h-4 w-4" />}
+      label={loading ? 'Loading collections' : selectedLabel}
+      scopeLabel={selectedScope}
+      loading={loading}
+      className="h-11 px-3.5 sm:w-[300px]"
+    />
+  );
+
+  if (loading) {
+    return <div className="w-full sm:w-auto">{trigger}</div>;
+  }
+
+  return (
+    <DropdownMenu
+      align="right"
+      portal
+      className="w-full sm:w-auto"
+      trigger={trigger}
+    >
+      <div className="w-[min(24rem,calc(100vw-2rem))]">
+        <DropdownMenuLabel>Select collection</DropdownMenuLabel>
+        <DropdownMenuItem
+          onClick={() => onSelectLibrary(null)}
+          className="items-start gap-3 px-3 py-3"
+        >
+          <span className="mt-0.5 flex h-8 w-8 flex-shrink-0 items-center justify-center rounded-md border border-slate-200 bg-slate-50 text-slate-500 dark:border-slate-800 dark:bg-slate-950 dark:text-slate-300">
+            <Library className="h-4 w-4" />
+          </span>
+          <span className="min-w-0 flex-1">
+            <span className="flex min-w-0 items-center gap-2">
+              <span className="truncate font-semibold text-slate-900 dark:text-slate-100">All saved drafts</span>
+              {!selectedLibraryId && <Check className="h-4 w-4 flex-shrink-0 text-blue-600 dark:text-blue-300" />}
+            </span>
+            <span className="mt-1 block text-xs text-slate-500 dark:text-slate-400">
+              {items.length} item{items.length === 1 ? '' : 's'}
+            </span>
+          </span>
+        </DropdownMenuItem>
+        {libraries.length === 0 ? (
+          <div className="px-4 py-4 text-sm text-slate-500 dark:text-slate-400">
+            No collections yet.
+          </div>
+        ) : (
+          libraries.map((library) => {
+            const active = library.id === selectedLibraryId;
+            const count = items.filter((item) => item.libraryId === library.id).length;
+
+            return (
+              <DropdownMenuItem
+                key={library.id}
+                onClick={() => onSelectLibrary(library)}
+                className="items-start gap-3 px-3 py-3"
+              >
+                <span className="mt-0.5 flex h-8 w-8 flex-shrink-0 items-center justify-center rounded-md border border-slate-200 bg-slate-50 text-slate-500 dark:border-slate-800 dark:bg-slate-950 dark:text-slate-300">
+                  <Library className="h-4 w-4" />
+                </span>
+                <span className="min-w-0 flex-1">
+                  <span className="flex min-w-0 items-center gap-2">
+                    <span className="truncate font-semibold text-slate-900 dark:text-slate-100">{library.name}</span>
+                    {active && <Check className="h-4 w-4 flex-shrink-0 text-blue-600 dark:text-blue-300" />}
+                  </span>
+                  <span className="mt-1 flex flex-wrap items-center gap-x-2 gap-y-1 text-xs text-slate-500 dark:text-slate-400">
+                    <span>{library.scope === 'organization' ? 'Team' : 'Private'}</span>
+                    <span aria-hidden="true">·</span>
+                    <span>{count} item{count === 1 ? '' : 's'}</span>
+                  </span>
+                </span>
+              </DropdownMenuItem>
+            );
+          })
+        )}
+      </div>
+    </DropdownMenu>
   );
 }
 
@@ -280,6 +408,7 @@ export default function LibraryPage() {
   const requestedLibraryId = searchParams.get('library');
   const { session, isDemoMode } = useAuth();
   const { organization, organizationId, loading: loadingOrganization } = useCurrentOrganization();
+  const isPersonalWorkspace = organization?.type === 'personal_legacy';
   const [libraries, setLibraries] = useState<ContentLibraryCollection[]>([]);
   const [items, setItems] = useState<ContentLibraryItem[]>([]);
   const [campaigns, setCampaigns] = useState<Campaign[]>([]);
@@ -297,6 +426,7 @@ export default function LibraryPage() {
   const [deletingItem, setDeletingItem] = useState(false);
   const [sharingLibrary, setSharingLibrary] = useState(false);
   const [deleteTarget, setDeleteTarget] = useState<'library' | 'item' | null>(null);
+  const [collectionSheetOpen, setCollectionSheetOpen] = useState(false);
   const [itemSearch, setItemSearch] = useState('');
   const [statusFilter, setStatusFilter] = useState<string>('all');
   const [itemVersions, setItemVersions] = useState<ItemVersion[]>([]);
@@ -320,7 +450,11 @@ export default function LibraryPage() {
         ? true
         : statusFilter === 'unfiled'
           ? !item.libraryId
-          : item.status === statusFilter;
+          : statusFilter === 'ready'
+            ? READY_STATUSES.has(item.status)
+            : statusFilter === 'needs_attention'
+              ? ATTENTION_STATUSES.has(item.status)
+              : item.status === statusFilter;
       if (!matchesStatus) return false;
 
       const query = itemSearch.trim().toLowerCase();
@@ -351,11 +485,37 @@ export default function LibraryPage() {
   const selectedLibraryCanEdit = Boolean(selectedLibrary?.canEdit) && !isDemoMode;
   const selectedItemCanEdit = Boolean(selectedItem?.canEdit) && !isDemoMode;
   const selectedItemCanDelete = Boolean(selectedItem?.canDelete) && !isDemoMode;
+  const canShareSelectedLibrary = !isDemoMode && Boolean(selectedLibrary?.canShare) && !isPersonalWorkspace;
+  const canUnshareSelectedLibrary = !isDemoMode && Boolean(selectedLibrary?.canUnshare);
+  const libraryShareUnavailableMessage = isPersonalWorkspace ? 'Switch to a team workspace first.' : null;
+  const canSaveNewLibraryPrivately = !selectedLibraryId && !isPersonalWorkspace;
   const unfiledCount = useMemo(() => items.filter((item) => !item.libraryId).length, [items]);
   const approvedCount = useMemo(
-    () => items.filter((item) => item.status === 'approved' || item.status === 'published').length,
+    () => items.filter((item) => READY_STATUSES.has(item.status)).length,
     [items]
   );
+  const quickFilters = useMemo(() => [
+    {
+      value: 'all',
+      label: 'All saved',
+      count: filteredItems.length,
+    },
+    {
+      value: 'unfiled',
+      label: 'Unfiled',
+      count: filteredItems.filter((item) => !item.libraryId).length,
+    },
+    {
+      value: 'ready',
+      label: 'Ready',
+      count: filteredItems.filter((item) => READY_STATUSES.has(item.status)).length,
+    },
+    {
+      value: 'needs_attention',
+      label: 'Needs review',
+      count: filteredItems.filter((item) => ATTENTION_STATUSES.has(item.status)).length,
+    },
+  ], [filteredItems]);
 
   const authHeaders = useMemo<Record<string, string>>(() => {
     const headers: Record<string, string> = {};
@@ -507,6 +667,7 @@ export default function LibraryPage() {
   const selectLibrary = (library: ContentLibraryCollection | null) => {
     setSelectedLibraryId(library?.id || null);
     setLibraryForm(library ? libraryToForm(library) : emptyLibraryForm);
+    setStatusFilter('all');
     const nextItems = library ? items.filter((item) => item.libraryId === library.id) : items;
     const nextItem = nextItems[0] || null;
     setSelectedItemId(nextItem?.id || null);
@@ -527,6 +688,15 @@ export default function LibraryPage() {
     setSelectedLibraryId(null);
     setLibraryForm(emptyLibraryForm);
     setLibraryRoute(null);
+    setCollectionSheetOpen(true);
+    setError(null);
+    setMessage(null);
+  };
+
+  const openCollectionSettings = () => {
+    if (!selectedLibrary) return;
+    setLibraryForm(libraryToForm(selectedLibrary));
+    setCollectionSheetOpen(true);
     setError(null);
     setMessage(null);
   };
@@ -551,7 +721,7 @@ export default function LibraryPage() {
     setMessage(null);
   };
 
-  const saveLibrary = async () => {
+  const saveLibrary = async (visibility?: StudioSaveVisibility) => {
     if ((!selectedLibraryId && !canEdit) || (selectedLibraryId && !selectedLibraryCanEdit) || !organizationId) return;
     setSavingLibrary(true);
     setError(null);
@@ -569,7 +739,7 @@ export default function LibraryPage() {
             ...authHeaders,
             'Content-Type': 'application/json',
           },
-          body: JSON.stringify(libraryFormToPayload(libraryForm, organizationId)),
+          body: JSON.stringify(libraryFormToPayload(libraryForm, organizationId, isUpdate ? undefined : visibility)),
         }
       );
       const payload = await response.json().catch(() => ({}));
@@ -584,7 +754,13 @@ export default function LibraryPage() {
       setSelectedLibraryId(savedLibrary.id);
       setLibraryForm(libraryToForm(savedLibrary));
       setLibraryRoute(savedLibrary.id);
-      setMessage(isUpdate ? 'Library updated.' : 'Library created.');
+      setCollectionSheetOpen(false);
+      setMessage(isUpdate
+        ? 'Library updated.'
+        : savedLibrary.scope === 'organization'
+          ? 'Team collection created.'
+          : 'Private collection created.');
+      emitLibraryMutation({ libraryId: savedLibrary.id, action: isUpdate ? 'updated' : 'created' });
     } catch (saveError) {
       setError(saveError instanceof Error ? saveError.message : 'Failed to save library');
     } finally {
@@ -594,6 +770,10 @@ export default function LibraryPage() {
 
   const shareLibrary = async () => {
     if (!canEdit || !organizationId || !selectedLibraryId || !selectedLibrary?.canShare) return;
+    if (isPersonalWorkspace) {
+      setError('Switch to a team workspace before publishing this collection.');
+      return;
+    }
     setSharingLibrary(true);
     setError(null);
     setMessage(null);
@@ -604,12 +784,24 @@ export default function LibraryPage() {
         headers: authHeaders,
       });
       const payload = await response.json().catch(() => ({}));
-      if (!response.ok) throw new Error(payload.error || 'Failed to share library');
+      if (!response.ok) throw new Error(payload.error || 'Failed to publish collection');
 
-      await loadLibrary();
-      setMessage('Library shared to the active workspace.');
+      const sharedLibrary = payload.contentLibrary as ContentLibraryCollection;
+      setLibraries((current) => {
+        const withoutDuplicate = current.filter((library) => library.id !== sharedLibrary.id);
+        return [sharedLibrary, ...withoutDuplicate];
+      });
+      setSelectedLibraryId(sharedLibrary.id);
+      setLibraryForm(libraryToForm(sharedLibrary));
+      setLibraryRoute(sharedLibrary.id);
+      const nextItems = items.filter((item) => item.libraryId === sharedLibrary.id);
+      const nextItem = nextItems[0] || null;
+      setSelectedItemId(nextItem?.id || null);
+      setItemForm(nextItem ? itemToForm(nextItem) : { ...emptyItemForm, libraryId: sharedLibrary.id });
+      setMessage('Collection published to your team.');
+      emitLibraryMutation({ libraryId: sharedLibrary.id, action: 'shared' });
     } catch (shareError) {
-      setError(shareError instanceof Error ? shareError.message : 'Failed to share library');
+      setError(shareError instanceof Error ? shareError.message : 'Failed to publish collection');
     } finally {
       setSharingLibrary(false);
     }
@@ -631,10 +823,23 @@ export default function LibraryPage() {
         headers: authHeaders,
       });
       const payload = await response.json().catch(() => ({}));
-      if (!response.ok) throw new Error(payload.error || 'Failed to unshare library');
+      if (!response.ok) throw new Error(payload.error || 'Failed to move collection to private');
 
-      await loadLibrary();
-      if (sourceLibrary) {
+      const unsharedLibraryId = selectedLibraryId;
+      const privateLibrary = payload.contentLibrary as ContentLibraryCollection | null | undefined;
+      const remainingLibraries = libraries.filter((library) => library.id !== unsharedLibraryId);
+      const nextLibraries = privateLibrary ? [privateLibrary, ...remainingLibraries] : remainingLibraries;
+      setLibraries(nextLibraries);
+      setItems((current) => current.map((item) => (
+        item.libraryId === unsharedLibraryId ? { ...item, libraryId: null } : item
+      )));
+      if (privateLibrary) {
+        setSelectedLibraryId(privateLibrary.id);
+        setLibraryForm(libraryToForm(privateLibrary));
+        setLibraryRoute(privateLibrary.id);
+        setSelectedItemId(null);
+        setItemForm({ ...emptyItemForm, libraryId: privateLibrary.id });
+      } else if (sourceLibrary) {
         setSelectedLibraryId(sourceLibrary.id);
         setLibraryForm(libraryToForm(sourceLibrary));
         setLibraryRoute(sourceLibrary.id);
@@ -647,9 +852,11 @@ export default function LibraryPage() {
         setLibraryForm(emptyLibraryForm);
         setLibraryRoute(null);
       }
-      setMessage('Library removed from the active workspace.');
+      setCollectionSheetOpen(false);
+      setMessage('Collection moved to private.');
+      emitLibraryMutation({ libraryId: unsharedLibraryId, action: 'unshared' });
     } catch (shareError) {
-      setError(shareError instanceof Error ? shareError.message : 'Failed to unshare library');
+      setError(shareError instanceof Error ? shareError.message : 'Failed to move collection to private');
     } finally {
       setSharingLibrary(false);
     }
@@ -717,7 +924,9 @@ export default function LibraryPage() {
       setSelectedLibraryId(null);
       setLibraryForm(emptyLibraryForm);
       setLibraryRoute(null);
+      setCollectionSheetOpen(false);
       setMessage('Library deleted. Its saved drafts are now unfiled.');
+      emitLibraryMutation({ libraryId: deletedId, action: 'deleted' });
     } catch (deleteError) {
       setError(deleteError instanceof Error ? deleteError.message : 'Failed to delete library');
     } finally {
@@ -760,42 +969,98 @@ export default function LibraryPage() {
   return (
     <div className="min-h-screen bg-white dark:bg-slate-950">
       <div className="mx-auto w-full max-w-7xl px-3 py-4 sm:px-6 sm:py-6">
-        <div className="mb-6 flex flex-col gap-3 sm:flex-row sm:items-end sm:justify-between">
-          <div>
-            <div className="mb-2 inline-flex items-center gap-2 rounded-full border border-blue-200 bg-blue-50 px-3 py-1 text-xs font-semibold text-blue-700 dark:border-blue-900/60 dark:bg-blue-950/40 dark:text-blue-300">
-              <Library className="h-3.5 w-3.5" />
-              Library
+        <DashboardPageHeader
+          density="compact"
+          icon={Library}
+          title="Library"
+          description="Browse saved outputs, collections, and reusable content assets."
+          actions={(
+            <div className="flex w-full min-w-0 flex-col gap-1.5 sm:w-auto sm:flex-row sm:flex-wrap sm:items-center lg:justify-end">
+              <LibrarySelector
+                libraries={libraries}
+                items={items}
+                selectedLibraryId={selectedLibraryId}
+                selectedLibrary={selectedLibrary}
+                loading={loading || loadingOrganization}
+                onSelectLibrary={selectLibrary}
+              />
+              <DashboardHeaderAction
+                type="button"
+                onClick={startNewLibrary}
+                disabled={!canEdit || loading || loadingOrganization}
+                icon={Plus}
+                variant="primary"
+                className="h-11 px-4"
+              >
+                New Collection
+              </DashboardHeaderAction>
             </div>
-            <h1 className="text-2xl font-bold text-slate-900 dark:text-slate-50 sm:text-3xl">
-              Library
-            </h1>
-            <p className="mt-1 max-w-2xl text-sm leading-6 text-slate-500 dark:text-slate-400">
-              Organize saved drafts, review status, and source context without losing the plan, profile, voice, or project that shaped the output.
-            </p>
-          </div>
-          <div className="flex flex-wrap items-center gap-2">
-            {organization && <Badge variant="outline">{organization.name}</Badge>}
-            {!canManage && !loading && <Badge variant="secondary">Read only</Badge>}
-            {isDemoMode && <Badge variant="warning">Demo</Badge>}
+          )}
+        />
+        <div className="mb-4 rounded-lg border border-slate-200 bg-white p-3 shadow-sm dark:border-slate-800 dark:bg-slate-900">
+          <div className="flex flex-col gap-3 lg:flex-row lg:items-center lg:justify-between">
+            <div className="flex min-w-0 flex-wrap items-center gap-1.5" role="group" aria-label="Library filters">
+              {quickFilters.map((filter) => {
+                const active = statusFilter === filter.value;
+                return (
+                  <button
+                    key={filter.value}
+                    type="button"
+                    onClick={() => setStatusFilter(filter.value)}
+                    className={cn(
+                      'inline-flex h-9 items-center gap-2 rounded-md px-3 text-sm font-semibold transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-blue-500/20',
+                      active
+                        ? 'bg-blue-600 text-white shadow-sm'
+                        : 'text-slate-600 hover:bg-slate-100 hover:text-slate-950 dark:text-slate-300 dark:hover:bg-white/10 dark:hover:text-white'
+                    )}
+                  >
+                    <span>{filter.label}</span>
+                    <span
+                      className={cn(
+                        'rounded-md px-1.5 py-0.5 text-xs',
+                        active
+                          ? 'bg-white/15 text-white'
+                          : 'bg-slate-100 text-slate-500 dark:bg-slate-800 dark:text-slate-300'
+                      )}
+                    >
+                      {filter.count}
+                    </span>
+                  </button>
+                );
+              })}
+            </div>
+            <div className="flex flex-wrap items-center gap-2 lg:justify-end">
+              <ActionButton
+                type="button"
+                onClick={startNewItem}
+                disabled={!canEdit || loading || loadingOrganization}
+                variant="primary"
+              >
+                <Plus className="h-4 w-4" />
+                New draft
+              </ActionButton>
+              {!canManage && !loading && <Badge variant="secondary">Read only</Badge>}
+              {isDemoMode && <Badge variant="warning">Demo</Badge>}
+            </div>
           </div>
         </div>
 
         {(error || message) && (
           <div
-            className={`mb-5 rounded-lg border px-4 py-3 text-sm ${
+            className={cn(
+              'mb-5 rounded-md border px-4 py-3 text-sm shadow-sm',
               error
                 ? 'border-red-200 bg-red-50 text-red-700 dark:border-red-900/60 dark:bg-red-950/30 dark:text-red-300'
                 : 'border-emerald-200 bg-emerald-50 text-emerald-700 dark:border-emerald-900/60 dark:bg-emerald-950/30 dark:text-emerald-300'
-            }`}
+            )}
           >
             {error || message}
           </div>
         )}
 
         {loading || loadingOrganization ? (
-          <div className="grid gap-4 xl:grid-cols-2">
-            <div className="h-[42rem] animate-pulse rounded-lg bg-slate-100 dark:bg-slate-900" />
-            <div className="h-[42rem] animate-pulse rounded-lg bg-slate-100 dark:bg-slate-900" />
+          <div className="mx-auto w-full max-w-6xl">
+            <div className="h-[42rem] animate-pulse rounded-md bg-slate-100 dark:bg-slate-900" />
           </div>
         ) : (
           <>
@@ -820,187 +1085,16 @@ export default function LibraryPage() {
               />
             </div>
 
-            <div className="grid gap-4 xl:grid-cols-[24rem_minmax(0,1fr)]">
-              <div className="grid gap-4">
-                <Card>
+            <div className="mx-auto grid w-full max-w-7xl gap-4 xl:grid-cols-[minmax(0,0.95fr)_minmax(0,1.35fr)] xl:items-start">
+                <Card className="overflow-hidden">
                   <CardHeader>
-                    <div className="flex items-center justify-between gap-3">
-                      <div>
-                        <CardTitle>Collections</CardTitle>
-                        <CardDescription>Filter saved drafts by Library.</CardDescription>
-                      </div>
-                      <button
-                        type="button"
-                        onClick={startNewLibrary}
-                        disabled={!canEdit}
-                        className="inline-flex h-9 w-9 items-center justify-center rounded-lg border border-slate-300 bg-white text-slate-600 transition-colors hover:bg-slate-50 disabled:cursor-not-allowed disabled:opacity-50 dark:border-slate-700 dark:bg-slate-950 dark:text-slate-300 dark:hover:bg-slate-900"
-                        aria-label="Create library"
-                        title="Create library"
-                      >
-                        <Plus className="h-4 w-4" />
-                      </button>
-                    </div>
-                  </CardHeader>
-                  <CardContent>
-                    <div className="space-y-2">
-                      <button
-                        type="button"
-                        onClick={() => selectLibrary(null)}
-                        className={`w-full rounded-lg border px-3 py-3 text-left transition-colors ${
-                          !selectedLibraryId
-                            ? 'border-blue-300 bg-blue-50 text-blue-900 dark:border-blue-800/70 dark:bg-blue-950/30 dark:text-blue-100'
-                            : 'border-slate-200 bg-white text-slate-700 hover:bg-slate-50 dark:border-slate-800 dark:bg-slate-950 dark:text-slate-300 dark:hover:bg-slate-900'
-                        }`}
-                      >
-                        <div className="flex items-center justify-between gap-3">
-                          <span className="flex min-w-0 items-center gap-3">
-                            <Library className="h-4 w-4 flex-shrink-0 text-slate-400" />
-                            <span className="min-w-0">
-                              <span className="block truncate text-sm font-semibold">All saved</span>
-                              <span className="mt-1 block text-xs text-slate-500 dark:text-slate-400">{items.length} item{items.length === 1 ? '' : 's'}</span>
-                            </span>
-                          </span>
-                        </div>
-                      </button>
-
-                      {libraries.map((library) => {
-                        const active = library.id === selectedLibraryId;
-                        const count = items.filter((item) => item.libraryId === library.id).length;
-                        return (
-                          <button
-                            key={library.id}
-                            type="button"
-                            onClick={() => selectLibrary(library)}
-                            className={`w-full rounded-lg border px-3 py-3 text-left transition-colors ${
-                              active
-                                ? 'border-blue-300 bg-blue-50 text-blue-900 dark:border-blue-800/70 dark:bg-blue-950/30 dark:text-blue-100'
-                                : 'border-slate-200 bg-white text-slate-700 hover:bg-slate-50 dark:border-slate-800 dark:bg-slate-950 dark:text-slate-300 dark:hover:bg-slate-900'
-                            }`}
-                          >
-                            <div className="flex items-start gap-3">
-                              <Library className={`mt-0.5 h-4 w-4 flex-shrink-0 ${active ? 'text-blue-600 dark:text-blue-300' : 'text-slate-400'}`} />
-                              <div className="min-w-0 flex-1">
-                                <p className="truncate text-sm font-semibold">{library.name}</p>
-                                <div className="mt-1 flex flex-wrap items-center gap-1.5">
-                                  {library.scope && (
-                                    <Badge variant={library.scope === 'private' ? 'secondary' : 'info'}>
-                                      {library.scope === 'private' ? 'Private' : 'Workspace'}
-                                    </Badge>
-                                  )}
-                                  {library.canShare && <Badge variant="warning">Shareable</Badge>}
-                                  {library.canUnshare && <Badge variant="success">Shared</Badge>}
-                                </div>
-                                <p className="mt-1 truncate text-xs text-slate-500 dark:text-slate-400">
-                                  {count} item{count === 1 ? '' : 's'}{library.description ? ` · ${library.description}` : ''}
-                                </p>
-                              </div>
-                            </div>
-                          </button>
-                        );
-                      })}
-                    </div>
-                  </CardContent>
-                </Card>
-
-                <Card>
-                  <CardHeader>
-                    <div className="flex items-center justify-between gap-3">
-                      <div>
-                        <CardTitle>{selectedLibrary ? 'Edit collection' : 'Create collection'}</CardTitle>
-                        <CardDescription>Collections are save destinations in content settings.</CardDescription>
-                      </div>
-                    </div>
-                  </CardHeader>
-                  <CardContent>
-                    <div className="grid gap-4">
-                      <div>
-                        <FieldLabel htmlFor="library-name">Library name</FieldLabel>
-                        <TextInput
-                          id="library-name"
-                          value={libraryForm.name}
-                          onChange={(value) => updateLibraryField('name', value)}
-                          disabled={selectedLibrary ? !selectedLibraryCanEdit : !canEdit}
-                        />
-                      </div>
-                      <div>
-                        <FieldLabel htmlFor="library-description">Description</FieldLabel>
-                        <TextArea
-                          id="library-description"
-                          value={libraryForm.description}
-                          onChange={(value) => updateLibraryField('description', value)}
-                          disabled={selectedLibrary ? !selectedLibraryCanEdit : !canEdit}
-                          rows={3}
-                        />
-                      </div>
-                      <div className="flex flex-wrap gap-2">
-                        {selectedLibrary?.canShare && (
-                          <button
-                            type="button"
-                            onClick={shareLibrary}
-                            disabled={!canEdit || sharingLibrary}
-                            className="inline-flex min-h-10 items-center justify-center gap-2 rounded-lg border border-amber-200 bg-white px-3 py-2 text-sm font-semibold text-amber-700 transition-colors hover:bg-amber-50 disabled:cursor-not-allowed disabled:opacity-50 dark:border-amber-900/60 dark:bg-slate-950 dark:text-amber-300 dark:hover:bg-amber-950/30"
-                          >
-                            {sharingLibrary ? <Loader2 className="h-4 w-4 animate-spin" /> : <Share2 className="h-4 w-4" />}
-                            Share
-                          </button>
-                        )}
-                        {selectedLibrary?.canUnshare && (
-                          <button
-                            type="button"
-                            onClick={unshareLibrary}
-                            disabled={!canEdit || sharingLibrary}
-                            className="inline-flex min-h-10 items-center justify-center gap-2 rounded-lg border border-slate-300 bg-white px-3 py-2 text-sm font-semibold text-slate-700 transition-colors hover:bg-slate-50 disabled:cursor-not-allowed disabled:opacity-50 dark:border-slate-700 dark:bg-slate-950 dark:text-slate-200 dark:hover:bg-slate-900"
-                          >
-                            {sharingLibrary ? <Loader2 className="h-4 w-4 animate-spin" /> : <Share2 className="h-4 w-4" />}
-                            Unshare
-                          </button>
-                        )}
-                        {selectedLibrary && (
-                          <button
-                            type="button"
-                            onClick={() => setDeleteTarget('library')}
-                            disabled={!selectedLibraryCanEdit || deletingLibrary}
-                            className="inline-flex min-h-10 items-center justify-center gap-2 rounded-lg border border-red-200 bg-white px-3 py-2 text-sm font-semibold text-red-600 transition-colors hover:bg-red-50 disabled:cursor-not-allowed disabled:opacity-50 dark:border-red-900/60 dark:bg-slate-950 dark:text-red-300 dark:hover:bg-red-950/30"
-                          >
-                            {deletingLibrary ? <Loader2 className="h-4 w-4 animate-spin" /> : <Trash2 className="h-4 w-4" />}
-                            Delete
-                          </button>
-                        )}
-                        <button
-                          type="button"
-                          onClick={saveLibrary}
-                          disabled={(selectedLibrary ? !selectedLibraryCanEdit : !canEdit) || savingLibrary || !libraryForm.name.trim()}
-                          className="inline-flex min-h-10 items-center justify-center gap-2 rounded-lg bg-blue-600 px-4 py-2 text-sm font-semibold text-white transition-colors hover:bg-blue-700 disabled:cursor-not-allowed disabled:opacity-50"
-                        >
-                          {savingLibrary ? <Loader2 className="h-4 w-4 animate-spin" /> : <Save className="h-4 w-4" />}
-                          {selectedLibrary ? 'Save collection' : 'Create collection'}
-                        </button>
-                      </div>
-                    </div>
-                  </CardContent>
-                </Card>
-              </div>
-
-              <div className="grid gap-4">
-                <Card>
-                  <CardHeader>
-                    <div className="flex items-center justify-between gap-3">
-                      <div>
+                    <div className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
+                      <div className="min-w-0">
                         <CardTitle>{selectedLibrary ? selectedLibrary.name : 'All saved drafts'}</CardTitle>
                         <CardDescription>
                           Generated content saves here when a content piece uses Save to Library.
                         </CardDescription>
                       </div>
-                      <button
-                        type="button"
-                        onClick={startNewItem}
-                        disabled={!canEdit}
-                        className="inline-flex h-9 w-9 items-center justify-center rounded-lg border border-slate-300 bg-white text-slate-600 transition-colors hover:bg-slate-50 disabled:cursor-not-allowed disabled:opacity-50 dark:border-slate-700 dark:bg-slate-950 dark:text-slate-300 dark:hover:bg-slate-900"
-                        aria-label="Create saved draft"
-                        title="Create saved draft"
-                      >
-                        <Plus className="h-4 w-4" />
-                      </button>
                     </div>
                   </CardHeader>
                   <CardContent>
@@ -1018,14 +1112,16 @@ export default function LibraryPage() {
                       >
                         <option value="all">All statuses</option>
                         <option value="unfiled">Unfiled only</option>
+                        <option value="ready">Ready</option>
+                        <option value="needs_attention">Needs review</option>
                         {CONTENT_LIBRARY_STATUSES.map((status) => (
                           <option key={status} value={status}>{formatLabel(status)}</option>
                         ))}
                       </SelectInput>
                     </div>
                     {visibleItems.length === 0 ? (
-                      <div className="rounded-lg border border-dashed border-slate-300 px-4 py-6 text-center dark:border-slate-700">
-                        <div className="mx-auto flex h-10 w-10 items-center justify-center rounded-lg bg-slate-100 text-slate-500 dark:bg-slate-900 dark:text-slate-300">
+                      <div className="rounded-md border border-dashed border-slate-300 px-4 py-6 text-center dark:border-slate-700">
+                        <div className="mx-auto flex h-10 w-10 items-center justify-center rounded-md bg-slate-100 text-slate-500 dark:bg-slate-900 dark:text-slate-300">
                           <FileText className="h-5 w-5" />
                         </div>
                         <h3 className="mt-3 text-sm font-semibold text-slate-900 dark:text-slate-100">
@@ -1035,26 +1131,26 @@ export default function LibraryPage() {
                           Pick this Library in content settings before generating, or create a draft manually.
                         </p>
                         <div className="mt-4 flex flex-col gap-2 sm:flex-row sm:justify-center">
-                          <button
+                          <ActionButton
                             type="button"
                             onClick={startNewItem}
                             disabled={!canEdit}
-                            className="inline-flex min-h-10 items-center justify-center gap-2 rounded-lg bg-blue-600 px-3 py-2 text-sm font-semibold text-white transition-colors hover:bg-blue-700 disabled:cursor-not-allowed disabled:opacity-50"
+                            variant="primary"
                           >
                             <Plus className="h-4 w-4" />
                             Create Draft
-                          </button>
-                          <Link
+                          </ActionButton>
+                          <ActionLink
                             href="/dashboard/upload"
-                            className="inline-flex min-h-10 items-center justify-center gap-2 rounded-lg border border-slate-300 bg-white px-3 py-2 text-sm font-medium text-slate-700 transition-colors hover:bg-slate-100 dark:border-slate-700 dark:bg-slate-950 dark:text-slate-200 dark:hover:bg-slate-900"
+                            variant="secondary"
                           >
                             <Upload className="h-4 w-4" />
                             Upload Source
-                          </Link>
+                          </ActionLink>
                         </div>
                       </div>
                     ) : (
-                      <div className="grid gap-2 md:grid-cols-2">
+                      <div className="grid gap-2 lg:grid-cols-2 xl:grid-cols-1">
                         {visibleItems.map((item) => {
                           const active = item.id === selectedItemId;
                           const campaign = campaigns.find((entry) => entry.id === item.campaignId);
@@ -1065,7 +1161,7 @@ export default function LibraryPage() {
                               key={item.id}
                               type="button"
                               onClick={() => selectItem(item)}
-                              className={`rounded-lg border px-3 py-3 text-left transition-colors ${
+                              className={`rounded-md border px-3 py-3 text-left transition-colors ${
                                 active
                                   ? 'border-blue-300 bg-blue-50 text-blue-900 dark:border-blue-800/70 dark:bg-blue-950/30 dark:text-blue-100'
                                   : 'border-slate-200 bg-white text-slate-700 hover:bg-slate-50 dark:border-slate-800 dark:bg-slate-950 dark:text-slate-300 dark:hover:bg-slate-900'
@@ -1082,10 +1178,11 @@ export default function LibraryPage() {
                                     {library ? ` · ${library.name}` : ' · Unfiled'}
                                     {item.projectId ? ` · ${sourceProject?.title || getProjectFallbackName(item.projectId)}` : ''}
                                   </p>
-                                  <div className="mt-2 flex flex-wrap items-center gap-1.5">
-                                    <Badge variant="outline">Workspace</Badge>
-                                    {item.locked && <Badge variant="warning">Locked</Badge>}
-                                  </div>
+                                  {item.locked && (
+                                    <div className="mt-2 flex flex-wrap items-center gap-1.5">
+                                      <Badge variant="warning">Locked</Badge>
+                                    </div>
+                                  )}
                                 </div>
                                 <Badge variant={item.status === 'approved' || item.status === 'published' ? 'success' : 'secondary'} className="flex-shrink-0">
                                   {formatLabel(item.status)}
@@ -1097,9 +1194,48 @@ export default function LibraryPage() {
                       </div>
                     )}
                   </CardContent>
+                  <div className="flex flex-col gap-3 border-t border-slate-100 p-5 dark:border-slate-800 sm:flex-row sm:items-center sm:justify-between">
+                    <div className="flex flex-wrap items-center gap-2">
+                      <StudioAccessControl
+                        entityLabel="collection"
+                        scope={selectedLibrary?.scope ?? null}
+                        canShare={canShareSelectedLibrary}
+                        canUnshare={canUnshareSelectedLibrary}
+                        loading={sharingLibrary}
+                        onShare={() => { void shareLibrary(); }}
+                        onUnshare={() => { void unshareLibrary(); }}
+                        shareUnavailableMessage={selectedLibrary?.canShare ? libraryShareUnavailableMessage : null}
+                        show={Boolean(selectedLibrary) && !isPersonalWorkspace}
+                        className="w-full sm:w-60"
+                      />
+                    </div>
+                    <div className="flex flex-wrap gap-2 sm:justify-end">
+                      {selectedLibrary && (
+                        <ActionButton
+                          type="button"
+                          onClick={openCollectionSettings}
+                          variant="secondary"
+                        >
+                          <Library className="h-4 w-4" />
+                          Collection settings
+                        </ActionButton>
+                      )}
+                      <ActionButton
+                        type="button"
+                        onClick={startNewItem}
+                        disabled={!canEdit}
+                        variant="secondary"
+                        aria-label="Create saved draft"
+                        title="Create saved draft"
+                      >
+                        <Plus className="h-4 w-4" />
+                        Create draft
+                      </ActionButton>
+                    </div>
+                  </div>
                 </Card>
 
-                <Card>
+                <Card className="overflow-hidden xl:sticky xl:top-6">
                   <CardHeader>
                     <div className="flex flex-col gap-4 sm:flex-row sm:items-start sm:justify-between">
                       <div>
@@ -1108,33 +1244,11 @@ export default function LibraryPage() {
                           Saved drafts can belong to a Library, Plan, source project, or all three.
                         </CardDescription>
                       </div>
-                      <div className="flex flex-wrap gap-2">
-                        {selectedItem && (
-                          <button
-                            type="button"
-                            onClick={() => setDeleteTarget('item')}
-                            disabled={!selectedItemCanDelete || deletingItem}
-                            className="inline-flex min-h-10 items-center justify-center gap-2 rounded-lg border border-red-200 bg-white px-3 py-2 text-sm font-semibold text-red-600 transition-colors hover:bg-red-50 disabled:cursor-not-allowed disabled:opacity-50 dark:border-red-900/60 dark:bg-slate-950 dark:text-red-300 dark:hover:bg-red-950/30"
-                          >
-                            {deletingItem ? <Loader2 className="h-4 w-4 animate-spin" /> : <Trash2 className="h-4 w-4" />}
-                            Delete
-                          </button>
-                        )}
-                        <button
-                          type="button"
-                          onClick={saveItem}
-                          disabled={(selectedItem ? !selectedItemCanEdit : !canEdit) || savingItem || !itemForm.title.trim()}
-                          className="inline-flex min-h-10 items-center justify-center gap-2 rounded-lg bg-blue-600 px-4 py-2 text-sm font-semibold text-white transition-colors hover:bg-blue-700 disabled:cursor-not-allowed disabled:opacity-50"
-                        >
-                          {savingItem ? <Loader2 className="h-4 w-4 animate-spin" /> : <Save className="h-4 w-4" />}
-                          {selectedItem ? 'Save draft' : 'Create draft'}
-                        </button>
-                      </div>
                     </div>
                   </CardHeader>
                   <CardContent>
                     {!canEdit && (
-                      <div className="mb-5 rounded-lg border border-slate-200 bg-slate-50 px-4 py-3 text-sm text-slate-600 dark:border-slate-800 dark:bg-slate-900/70 dark:text-slate-300">
+                      <div className="mb-5 rounded-md border border-amber-200 bg-amber-50 px-4 py-3 text-sm text-amber-800 dark:border-amber-900/60 dark:bg-amber-950/30 dark:text-amber-300">
                         {membershipRole === 'reader'
                           ? 'You can view shared Library items, but readers cannot create, edit, approve, or delete drafts.'
                           : 'You can view Library items, but this selected draft or collection is not editable in your current role.'}
@@ -1142,7 +1256,7 @@ export default function LibraryPage() {
                     )}
 
                     {selectedItem?.projectId && (
-                      <div className="mb-5 rounded-lg border border-blue-100 bg-blue-50/70 px-4 py-3 dark:border-blue-900/50 dark:bg-blue-950/20">
+                      <div className="mb-5 rounded-md border border-blue-100 bg-blue-50/70 px-4 py-3 dark:border-blue-900/50 dark:bg-blue-950/20">
                         <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
                           <div className="flex min-w-0 items-start gap-3">
                             <FolderOpen className="mt-0.5 h-4 w-4 flex-shrink-0 text-blue-600 dark:text-blue-300" />
@@ -1160,12 +1274,12 @@ export default function LibraryPage() {
                               )}
                             </div>
                           </div>
-                          <Link
+                          <ActionLink
                             href={`/dashboard/projects?id=${encodeURIComponent(selectedItem.projectId)}`}
-                            className="inline-flex min-h-9 items-center justify-center rounded-lg border border-blue-200 bg-white px-3 py-2 text-sm font-semibold text-blue-700 transition-colors hover:bg-blue-50 dark:border-blue-800 dark:bg-slate-950 dark:text-blue-300 dark:hover:bg-blue-950/30"
+                            variant="secondary"
                           >
                             Open project
-                          </Link>
+                          </ActionLink>
                         </div>
                       </div>
                     )}
@@ -1173,7 +1287,6 @@ export default function LibraryPage() {
                     {selectedItem && (
                       <div className="mb-5 flex flex-wrap gap-2">
                         <Badge variant="secondary">{formatLabel(selectedItem.status)}</Badge>
-                        <Badge variant="outline">Workspace</Badge>
                         {selectedItem.locked && <Badge variant="warning">Locked</Badge>}
                         {!selectedItem.libraryId && <Badge variant="outline">Unfiled</Badge>}
                       </div>
@@ -1320,7 +1433,7 @@ export default function LibraryPage() {
                       </div>
 
                       {selectedItem?.generationContextSnapshot && Object.keys(selectedItem.generationContextSnapshot).length > 0 && (
-                        <div className="rounded-lg border border-slate-200 bg-slate-50 p-4 dark:border-slate-800 dark:bg-slate-900/60">
+                        <div className="rounded-md border border-slate-200 bg-slate-50 p-4 dark:border-slate-800 dark:bg-slate-900/60">
                           <div className="mb-3 flex items-center gap-2">
                             <Library className="h-4 w-4 text-slate-400" />
                             <h3 className="text-sm font-semibold text-slate-900 dark:text-slate-100">Generation context</h3>
@@ -1355,7 +1468,7 @@ export default function LibraryPage() {
                       )}
 
                       {selectedItem && (
-                        <div className="rounded-lg border border-slate-200 bg-white p-4 dark:border-slate-800 dark:bg-slate-950/60">
+                        <div className="rounded-md border border-slate-200 bg-white p-4 dark:border-slate-800 dark:bg-slate-950/60">
                           <div className="mb-3 flex items-center gap-2">
                             <History className="h-4 w-4 text-slate-400" />
                             <h3 className="text-sm font-semibold text-slate-900 dark:text-slate-100">Version history</h3>
@@ -1370,7 +1483,7 @@ export default function LibraryPage() {
                           ) : (
                             <div className="space-y-3">
                               {itemVersions.map((version) => (
-                                <div key={version.id} className="rounded-lg border border-slate-200 px-3 py-3 dark:border-slate-800">
+                                <div key={version.id} className="rounded-md border border-slate-200 px-3 py-3 dark:border-slate-800">
                                   <div className="flex flex-wrap items-center justify-between gap-2">
                                     <p className="text-sm font-semibold text-slate-900 dark:text-slate-100">
                                       Version {version.versionNumber}
@@ -1389,12 +1502,116 @@ export default function LibraryPage() {
                       )}
                     </div>
                   </CardContent>
+                  <div className="flex flex-col gap-3 border-t border-slate-100 p-5 dark:border-slate-800 sm:flex-row sm:items-center sm:justify-end">
+                    <div className="flex flex-wrap items-center gap-2">
+                      {selectedItem && (
+                        <ActionButton
+                          type="button"
+                          onClick={() => setDeleteTarget('item')}
+                          disabled={!selectedItemCanDelete || deletingItem}
+                          variant="danger"
+                        >
+                          {deletingItem ? <Loader2 className="h-4 w-4 animate-spin" /> : <Trash2 className="h-4 w-4" />}
+                          Delete
+                        </ActionButton>
+                      )}
+                      <ActionButton
+                        type="button"
+                        onClick={saveItem}
+                        disabled={(selectedItem ? !selectedItemCanEdit : !canEdit) || savingItem || !itemForm.title.trim()}
+                        variant="primary"
+                      >
+                        {savingItem ? <Loader2 className="h-4 w-4 animate-spin" /> : <Save className="h-4 w-4" />}
+                        {selectedItem ? 'Save draft' : 'Create draft'}
+                      </ActionButton>
+                    </div>
+                  </div>
                 </Card>
-              </div>
             </div>
           </>
         )}
       </div>
+
+      <Sheet open={collectionSheetOpen} onOpenChange={setCollectionSheetOpen}>
+        <SheetContent side="right" className="w-full overflow-y-auto sm:max-w-xl">
+          <SheetHeader className="pr-8">
+            <SheetTitle>{selectedLibrary ? 'Collection settings' : 'New collection'}</SheetTitle>
+            <SheetDescription>
+              {selectedLibrary
+                ? 'Update this collection and manage who can use it. Drafts stay on the main Library page.'
+                : 'Create a collection for related saved drafts. You can choose it from the Library selector after saving.'}
+            </SheetDescription>
+          </SheetHeader>
+
+          <div className="mt-6 grid gap-5">
+            <div>
+              <FieldLabel htmlFor="library-name">Collection name</FieldLabel>
+              <TextInput
+                id="library-name"
+                value={libraryForm.name}
+                onChange={(value) => updateLibraryField('name', value)}
+                disabled={selectedLibrary ? !selectedLibraryCanEdit : !canEdit}
+              />
+            </div>
+
+            <div>
+              <FieldLabel htmlFor="library-description">Description</FieldLabel>
+              <TextArea
+                id="library-description"
+                value={libraryForm.description}
+                onChange={(value) => updateLibraryField('description', value)}
+                disabled={selectedLibrary ? !selectedLibraryCanEdit : !canEdit}
+                placeholder="Optional notes about what belongs in this collection"
+                rows={4}
+              />
+            </div>
+
+            <div className="flex flex-col-reverse gap-2 border-t border-slate-200 pt-5 sm:flex-row sm:items-center sm:justify-between dark:border-slate-800">
+              <div>
+                {selectedLibrary && (
+                  <ActionButton
+                    type="button"
+                    onClick={() => setDeleteTarget('library')}
+                    disabled={!selectedLibraryCanEdit || deletingLibrary}
+                    variant="danger"
+                  >
+                    {deletingLibrary ? <Loader2 className="h-4 w-4 animate-spin" /> : <Trash2 className="h-4 w-4" />}
+                    Delete collection
+                  </ActionButton>
+                )}
+              </div>
+              <div className="flex flex-col gap-2 sm:flex-row sm:justify-end">
+                <ActionButton
+                  type="button"
+                  variant="secondary"
+                  onClick={() => setCollectionSheetOpen(false)}
+                >
+                  Cancel
+                </ActionButton>
+                <ActionButton
+                  type="button"
+                  onClick={() => { void saveLibrary('private'); }}
+                  disabled={!canSaveNewLibraryPrivately || !canEdit || savingLibrary || !libraryForm.name.trim()}
+                  variant="secondary"
+                  className={canSaveNewLibraryPrivately ? undefined : 'hidden'}
+                >
+                  {savingLibrary ? <Loader2 className="h-4 w-4 animate-spin" /> : <Save className="h-4 w-4" />}
+                  Save privately
+                </ActionButton>
+                <ActionButton
+                  type="button"
+                  onClick={() => { void saveLibrary(); }}
+                  disabled={(selectedLibrary ? !selectedLibraryCanEdit : !canEdit) || savingLibrary || !libraryForm.name.trim()}
+                  variant="primary"
+                >
+                  {savingLibrary ? <Loader2 className="h-4 w-4 animate-spin" /> : <Save className="h-4 w-4" />}
+                  {selectedLibrary ? 'Save collection' : isPersonalWorkspace ? 'Create collection' : 'Create team collection'}
+                </ActionButton>
+              </div>
+            </div>
+          </div>
+        </SheetContent>
+      </Sheet>
 
       <ConfirmModal
         isOpen={deleteTarget === 'library'}

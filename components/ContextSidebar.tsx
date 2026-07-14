@@ -40,12 +40,14 @@ import { cn } from '@/lib/utils';
 import { getSpeakerDisplayName, getSpeakerColor } from '@/lib/name-extraction';
 import { formatReviewReason, type SpeakerSuggestion } from '@/lib/speaker-review';
 import { InsightsSidebar, type Insight } from '@/components/insights';
+import { FeatureHelp } from '@/components/ui/feature-help';
 import InlineContentStudio, {
   type StudioContentContext,
   type StudioContextOption,
 } from '@/components/project/InlineContentStudio';
 import { ANALYSIS_OPTION_CONFIG, type AnalysisOptionKey } from '@/lib/analysis-options';
 import { CONTENT_TYPES } from '@/lib/content-types';
+import type { SingleOutputExportFormat } from '@/lib/export-utils';
 
 type TabId = 'speakers' | 'review' | 'generate' | 'content';
 type ContentSectionId = 'analysis' | 'outputs';
@@ -262,6 +264,7 @@ interface ContextSidebarProps {
   isOpen?: boolean;
   onClose?: () => void;
   mobileSheet?: boolean;
+  requestedTab?: TabId | null;
 
   // Review tab — segment review workflow
   segments?: SpeakerSegment[];
@@ -295,8 +298,10 @@ interface ContextSidebarProps {
   // Content tab — generated outputs
   outputs?: Output[];
   onCopyOutput?: (output: Output) => void;
-  onDownloadOutput?: (output: Output) => void;
+  onSaveOutputLocally?: (output: Output, format: SingleOutputExportFormat) => Promise<void> | void;
+  onSaveOutputToLibrary?: (output: Output, libraryId: string) => Promise<void> | void;
   onDeleteOutput?: (outputId: string) => void;
+  savingOutputToLibrary?: string | null;
   deletingOutput?: string | null;
   generatingContentTypes?: Set<string>;
   onGenerateContentBlock?: (block: any) => Promise<void>;
@@ -309,8 +314,14 @@ interface ContextSidebarProps {
   brandVoices?: StudioContextOption[];
   campaigns?: StudioContextOption[];
   contentLibraries?: StudioContextOption[];
-  analysisStates?: Partial<Record<AnalysisOptionKey, { available: boolean; generating: boolean }>>;
+  analysisStates?: Partial<Record<AnalysisOptionKey, {
+    available: boolean;
+    generating: boolean;
+    disabled?: boolean;
+    disabledReason?: string;
+  }>>;
   onGenerateAnalysisOption?: (key: AnalysisOptionKey) => Promise<void> | void;
+  generationNotice?: string | null;
   /** When true, hides all write actions (demo mode) */
   readOnly?: boolean;
 }
@@ -369,6 +380,7 @@ export function ContextSidebar({
   isOpen = true,
   onClose,
   mobileSheet = true,
+  requestedTab = null,
   segments = [],
   reviewItems = [],
   speakerSuggestions = [],
@@ -391,8 +403,10 @@ export function ContextSidebar({
   onDismissPreview,
   outputs = [],
   onCopyOutput,
-  onDownloadOutput,
+  onSaveOutputLocally,
+  onSaveOutputToLibrary,
   onDeleteOutput,
+  savingOutputToLibrary,
   deletingOutput,
   generatingContentTypes = new Set(),
   onGenerateContentBlock,
@@ -407,6 +421,7 @@ export function ContextSidebar({
   contentLibraries = [],
   analysisStates = {},
   onGenerateAnalysisOption,
+  generationNotice = null,
   readOnly = false,
 }: ContextSidebarProps) {
   const [isMobileViewport, setIsMobileViewport] = useState(false);
@@ -518,6 +533,12 @@ export function ContextSidebar({
       setMobileExpanded(false);
     }
   }, [isOpen]);
+
+  useEffect(() => {
+    if (requestedTab) {
+      setActiveTab(requestedTab);
+    }
+  }, [projectId, requestedTab]);
 
   const handleDeleteSubmit = async (speakerId: string, action: 'reassign' | 'delete') => {
     if (!onSpeakerDelete) return;
@@ -788,6 +809,46 @@ export function ContextSidebar({
   const hasInsights = insights && insights.length > 0;
   const activeAnalysisLabel = availableAnalysisViews.find((view) => view.id === activeAnalysisView)?.label ?? 'Analysis';
   const activeOutputLabel = availableOutputViews.find((view) => view.id === activeOutputType)?.label ?? 'Output';
+  const renderContentSelectorButton = (
+    view: { id: string; label: string; count?: number; icon: React.ComponentType<{ className?: string }> },
+    isActive: boolean,
+    onClick: () => void
+  ) => {
+    const Icon = view.icon;
+
+    return (
+      <button
+        key={view.id}
+        type="button"
+        onClick={onClick}
+        aria-label={view.label}
+        title={view.label}
+        className={cn(
+          'flex min-h-[4.35rem] w-full flex-col items-center justify-center gap-1 rounded-lg border border-transparent bg-transparent px-1 py-1.5 text-slate-700 transition-colors dark:text-slate-200',
+          isActive
+            ? 'text-blue-600 dark:text-blue-400'
+            : 'text-slate-500 hover:text-slate-900 dark:text-slate-400 dark:hover:text-slate-100'
+        )}
+      >
+        <span className="relative flex h-5 items-center justify-center">
+          <Icon className="h-4 w-4" />
+          {view.count !== undefined && view.count > 0 ? (
+            <span className={cn(
+              'absolute -right-2 -top-1 min-w-3.5 rounded-full px-1 py-0.5 text-[9px] font-semibold leading-none',
+              isActive
+                ? 'bg-blue-50 text-blue-600 dark:bg-blue-950/40 dark:text-blue-300'
+                : 'bg-slate-200 text-slate-700 dark:bg-slate-700 dark:text-slate-200'
+            )}>
+              {view.count}
+            </span>
+          ) : null}
+        </span>
+        <span className="line-clamp-3 max-w-full break-words text-center text-[7px] font-light uppercase leading-[0.72rem]">
+          {view.label}
+        </span>
+      </button>
+    );
+  };
 
   return (
     <aside
@@ -855,25 +916,28 @@ export function ContextSidebar({
                   : undefined
               }
               className={cn(
-                'flex min-w-0 flex-1 items-center justify-center gap-1 rounded-lg px-1 py-2 text-[11px] font-medium transition-all',
+                'flex min-w-0 flex-1 flex-col items-center justify-center gap-1 rounded-lg px-1 py-2 text-[11px] transition-all',
                 activeTab === tab.id
                   ? 'text-blue-600 dark:text-blue-400'
                   : 'text-slate-500 dark:text-slate-400 hover:text-slate-900 dark:hover:text-white'
               )}
             >
-              <span className="flex items-center justify-center [&_svg]:h-4.5 [&_svg]:w-4.5">
+              <span className="relative flex h-5 items-center justify-center [&_svg]:h-4.5 [&_svg]:w-4.5">
                 {tab.icon}
+                {tab.count !== undefined && tab.count > 0 && (
+                  <span className={cn(
+                    'absolute -right-2 -top-1 min-w-3.5 rounded-full px-1 py-0.5 text-[9px] font-semibold leading-none',
+                    activeTab === tab.id
+                      ? 'bg-blue-50 text-blue-600 dark:bg-blue-950/40 dark:text-blue-300'
+                      : 'bg-slate-200 dark:bg-slate-700 text-slate-700 dark:text-slate-200'
+                  )}>
+                    {tab.count}
+                  </span>
+                )}
               </span>
-              {tab.count !== undefined && tab.count > 0 && (
-                <span className={cn(
-                  'ml-0.5 rounded-full px-1 py-0.5 text-[9px] font-semibold',
-                  activeTab === tab.id
-                    ? 'bg-blue-50 text-blue-600 dark:bg-blue-950/40 dark:text-blue-300'
-                    : 'bg-slate-200 dark:bg-slate-700 text-slate-700 dark:text-slate-200'
-                )}>
-                  {tab.count}
-                </span>
-              )}
+              <span className="text-[8px] font-light uppercase leading-none">
+                {tab.label}
+              </span>
             </button>
           );
 
@@ -1240,42 +1304,102 @@ export function ContextSidebar({
         {activeTab === 'generate' && (
           <div className="p-3">
             <div className="space-y-4">
+              {generationNotice ? (
+                <div className="rounded-xl border border-amber-200 bg-amber-50 px-3 py-2 text-xs leading-5 text-amber-800 dark:border-amber-900/50 dark:bg-amber-950/30 dark:text-amber-200">
+                  {generationNotice}
+                </div>
+              ) : null}
               <div className="rounded-2xl border border-slate-200 dark:border-slate-800 bg-slate-100/60 dark:bg-slate-900/50 p-3">
-                <button
-                  type="button"
-                  onClick={() => toggleContentSection('addons')}
-                  className="flex w-full items-center justify-between gap-3 text-left"
-                >
-                  <div className="flex items-center gap-2">
-                    <Layers className="h-4 w-4 text-blue-600 dark:text-blue-400" />
-                    <p className="text-sm font-semibold text-slate-900 dark:text-slate-50">Add-ons</p>
+                <div className="flex items-center justify-between gap-3">
+                  <div className="flex min-w-0 items-center gap-2">
+                    <button
+                      type="button"
+                      onClick={() => toggleContentSection('addons')}
+                      className="flex min-w-0 items-center gap-2 text-left"
+                      aria-expanded={expandedContentSections.has('addons')}
+                    >
+                      <Layers className="h-4 w-4 shrink-0 text-blue-600 dark:text-blue-400" />
+                      <p className="text-sm font-semibold text-slate-900 dark:text-slate-50">Add-ons</p>
+                    </button>
+                    <FeatureHelp
+                      title="Add-ons"
+                      description="Add-ons are optional analysis passes you can run after a project is processed. They do not create social posts or publishable drafts. They enrich the project with structured material that appears in the Content tab and can make later drafts more useful."
+                      side="bottom"
+                      align="start"
+                      contentClassName="max-h-[min(32rem,calc(100vh-2rem))] w-[min(28rem,calc(100vw-2rem))] overflow-y-auto"
+                    >
+                      <div className="space-y-3">
+                        <div>
+                          <p className="text-xs font-semibold uppercase tracking-wide text-slate-500 dark:text-slate-400">What each add-on creates</p>
+                          <ul className="mt-2 space-y-1.5 text-xs leading-5 text-slate-600 dark:text-slate-300">
+                            <li><span className="font-semibold text-slate-800 dark:text-slate-100">Named speakers:</span> replaces generic labels with likely names and host/guest roles when the transcript supports it.</li>
+                            <li><span className="font-semibold text-slate-800 dark:text-slate-100">Summary:</span> creates a concise project summary for quick review and reuse.</li>
+                            <li><span className="font-semibold text-slate-800 dark:text-slate-100">Insights:</span> extracts people, concepts, tools, and context worth understanding before writing content.</li>
+                            <li><span className="font-semibold text-slate-800 dark:text-slate-100">Chapters:</span> breaks the conversation into timestamped sections.</li>
+                            <li><span className="font-semibold text-slate-800 dark:text-slate-100">Takeaways:</span> pulls out the strongest ideas, lessons, or claims.</li>
+                            <li><span className="font-semibold text-slate-800 dark:text-slate-100">Quotes:</span> finds reusable lines from the transcript with speaker context.</li>
+                          </ul>
+                        </div>
+                        <div className="rounded-lg border border-slate-200 bg-white/80 p-2.5 text-xs leading-5 text-slate-600 dark:border-slate-800 dark:bg-slate-950/60 dark:text-slate-300">
+                          A sparkle means the add-on is ready to run, a spinner means it is generating, and a check means that artifact already exists for this project. Completed add-ons are disabled so you do not accidentally rerun the same item from this panel.
+                        </div>
+                        <p className="text-xs leading-5 text-slate-500 dark:text-slate-400">
+                          Use add-ons when the project needs better structure before writing: clearer speaker names, stronger source notes, timestamped chapters, or quotable material.
+                        </p>
+                      </div>
+                    </FeatureHelp>
                   </div>
-                  {expandedContentSections.has('addons') ? (
-                    <ChevronUp className="h-4 w-4 text-slate-500" />
-                  ) : (
-                    <ChevronDown className="h-4 w-4 text-slate-500" />
-                  )}
-                </button>
+                  <button
+                    type="button"
+                    onClick={() => toggleContentSection('addons')}
+                    className="rounded-lg p-1 text-slate-500 transition-colors hover:bg-white hover:text-slate-900 dark:hover:bg-slate-800 dark:hover:text-slate-100"
+                    aria-label={expandedContentSections.has('addons') ? 'Collapse add-ons' : 'Expand add-ons'}
+                    aria-expanded={expandedContentSections.has('addons')}
+                  >
+                    {expandedContentSections.has('addons') ? (
+                      <ChevronUp className="h-4 w-4" />
+                    ) : (
+                      <ChevronDown className="h-4 w-4" />
+                    )}
+                  </button>
+                </div>
                 {expandedContentSections.has('addons') ? (
                   <div className="mt-3 grid grid-cols-3 gap-2">
                     {ANALYSIS_OPTION_CONFIG.map((option) => {
                       const state = analysisStates[option.key] || { available: false, generating: false };
                       const style = ANALYSIS_CARD_STYLES[option.key];
+                      const disabled = readOnly || state.available || state.generating || Boolean(state.disabled);
                       return (
                         <button
                           key={option.key}
                           type="button"
                           onClick={() => onGenerateAnalysisOption?.(option.key)}
-                          disabled={readOnly || state.available || state.generating}
-                          className={`rounded-xl border px-2.5 py-3 text-left transition-colors hover:shadow-sm disabled:cursor-not-allowed disabled:opacity-70 ${style.cardClass}`}
+                          disabled={disabled}
+                          title={state.disabledReason}
+                          aria-label={state.disabledReason ? `${option.label}: ${state.disabledReason}` : option.label}
+                          className={`rounded-xl border px-2.5 py-3 text-left transition-colors disabled:cursor-not-allowed ${
+                            state.disabled
+                              ? 'border-slate-200 bg-slate-100 text-slate-400 opacity-80 dark:border-slate-800 dark:bg-slate-900/60 dark:text-slate-500'
+                              : `${style.cardClass} hover:shadow-sm disabled:opacity-70`
+                          }`}
                         >
                           <div className="flex min-h-[84px] flex-col justify-between gap-2">
-                            <span className={`inline-flex h-8 w-8 items-center justify-center rounded-xl border ${style.badgeClass}`}>
+                            <span className={`inline-flex h-8 w-8 items-center justify-center rounded-xl border ${
+                              state.disabled
+                                ? 'border-slate-300 bg-slate-200 text-slate-500 dark:border-slate-700 dark:bg-slate-800 dark:text-slate-500'
+                                : style.badgeClass
+                            }`}>
                               {style.icon}
                             </span>
-                            <p className="text-xs font-semibold leading-4 text-slate-900 dark:text-slate-50">{option.label}</p>
+                            <p className={`text-xs font-semibold leading-4 ${
+                              state.disabled
+                                ? 'text-slate-500 dark:text-slate-500'
+                                : 'text-slate-900 dark:text-slate-50'
+                            }`}>{option.label}</p>
                             <span className={`inline-flex h-6 w-6 items-center justify-center rounded-full ${
-                              state.available
+                              state.disabled
+                                ? 'bg-slate-200 text-slate-500 dark:bg-slate-800 dark:text-slate-500'
+                                : state.available
                                 ? 'bg-emerald-50 text-emerald-700 dark:bg-emerald-900/20 dark:text-emerald-300'
                                 : state.generating
                                   ? 'bg-blue-50 text-blue-700 dark:bg-blue-900/20 dark:text-blue-300'
@@ -1283,6 +1407,11 @@ export function ContextSidebar({
                             }`}>
                               {state.generating ? <Loader2 className="h-3 w-3 animate-spin" /> : state.available ? <CheckCircle className="h-3 w-3" /> : <Sparkles className="h-3 w-3" />}
                             </span>
+                            {state.disabledReason ? (
+                              <span className="line-clamp-2 text-[10px] leading-3 text-slate-500 dark:text-slate-500">
+                                {state.disabledReason}
+                              </span>
+                            ) : null}
                           </div>
                         </button>
                       );
@@ -1292,18 +1421,66 @@ export function ContextSidebar({
               </div>
 
               <div className="rounded-2xl border border-slate-200 dark:border-slate-800 bg-slate-100/60 dark:bg-slate-900/50 p-3" data-tour="content-output">
-                <button
-                  type="button"
-                  onClick={() => toggleContentSection('contentTypes')}
-                  className="flex w-full items-center justify-between gap-3 text-left"
-                >
-                  <p className="text-sm font-semibold text-slate-900 dark:text-slate-50">Content Types</p>
-                  {expandedContentSections.has('contentTypes') ? (
-                    <ChevronUp className="h-4 w-4 text-slate-500" />
-                  ) : (
-                    <ChevronDown className="h-4 w-4 text-slate-500" />
-                  )}
-                </button>
+                <div className="flex items-center justify-between gap-3">
+                  <div className="flex min-w-0 items-center gap-2">
+                    <button
+                      type="button"
+                      onClick={() => toggleContentSection('contentTypes')}
+                      className="min-w-0 text-left"
+                      aria-expanded={expandedContentSections.has('contentTypes')}
+                    >
+                      <p className="text-sm font-semibold text-slate-900 dark:text-slate-50">Content Types</p>
+                    </button>
+                    <FeatureHelp
+                      title="Content types"
+                      description="Content types create publishable drafts from this project's transcript and available context. Each card is a specific output format, and each format keeps its own settings before you generate."
+                      side="left"
+                      align="start"
+                      contentClassName="max-h-[min(34rem,calc(100vh-2rem))] w-[min(30rem,calc(100vw-2rem))] overflow-y-auto"
+                    >
+                      <div className="space-y-3">
+                        <div>
+                          <p className="text-xs font-semibold uppercase tracking-wide text-slate-500 dark:text-slate-400">How generation works</p>
+                          <ul className="mt-2 space-y-1.5 text-xs leading-5 text-slate-600 dark:text-slate-300">
+                            <li>Clicking a content card immediately generates one draft for that format, such as an X thread, LinkedIn post, blog post, newsletter, show notes, YouTube description, podcast description, short-form video script, Facebook post, Instagram carousel, or quote graphic.</li>
+                            <li>The draft uses the project transcript plus any available add-ons, such as summary, chapters, takeaways, quotes, insights, and named speaker context.</li>
+                            <li>Generated drafts appear in the Content tab and are also saved as library items with source and generation context attached.</li>
+                          </ul>
+                        </div>
+                        <div>
+                          <p className="text-xs font-semibold uppercase tracking-wide text-slate-500 dark:text-slate-400">What the pencil settings control</p>
+                          <ul className="mt-2 space-y-1.5 text-xs leading-5 text-slate-600 dark:text-slate-300">
+                            <li><span className="font-semibold text-slate-800 dark:text-slate-100">Tone:</span> chooses the style theme for that content type. It changes diction, rhythm, framing, and CTA style while preserving the format rules for the platform.</li>
+                            <li><span className="font-semibold text-slate-800 dark:text-slate-100">Profile:</span> applies the selected creator or company profile, including audience, positioning, offer context, and default creator perspective.</li>
+                            <li><span className="font-semibold text-slate-800 dark:text-slate-100">Voice:</span> applies the brand voice so the draft follows the right vocabulary, point of view, level of polish, and voice guardrails.</li>
+                            <li><span className="font-semibold text-slate-800 dark:text-slate-100">Plan:</span> applies campaign context such as the objective, intended channels, CTA, content angle, and strategic direction.</li>
+                            <li><span className="font-semibold text-slate-800 dark:text-slate-100">Save to Library:</span> chooses the library collection where the generated draft should be stored and organized after generation.</li>
+                            <li><span className="font-semibold text-slate-800 dark:text-slate-100">Extra Guidance:</span> adds a short instruction for this one content type, up to 240 characters. Use it for a hook, audience, angle, CTA, thing to avoid, or detail that should be emphasized.</li>
+                          </ul>
+                        </div>
+                        <div className="rounded-lg border border-slate-200 bg-white/80 p-2.5 text-xs leading-5 text-slate-600 dark:border-slate-800 dark:bg-slate-950/60 dark:text-slate-300">
+                          These settings are per content type on this project. For example, you can make LinkedIn use a professional tone and campaign plan, while a short-form video script uses a sharper hook and different guidance.
+                        </div>
+                        <p className="text-xs leading-5 text-slate-500 dark:text-slate-400">
+                          Add-ons help understand the source. Content types turn that source into reusable drafts. Use the pencil before generating when the output needs a specific voice, campaign, library destination, or instruction.
+                        </p>
+                      </div>
+                    </FeatureHelp>
+                  </div>
+                  <button
+                    type="button"
+                    onClick={() => toggleContentSection('contentTypes')}
+                    className="rounded-lg p-1 text-slate-500 transition-colors hover:bg-white hover:text-slate-900 dark:hover:bg-slate-800 dark:hover:text-slate-100"
+                    aria-label={expandedContentSections.has('contentTypes') ? 'Collapse content types' : 'Expand content types'}
+                    aria-expanded={expandedContentSections.has('contentTypes')}
+                  >
+                    {expandedContentSections.has('contentTypes') ? (
+                      <ChevronUp className="h-4 w-4" />
+                    ) : (
+                      <ChevronDown className="h-4 w-4" />
+                    )}
+                  </button>
+                </div>
                 {expandedContentSections.has('contentTypes') ? (
                   <div className="mt-3">
                     <InlineContentStudio
@@ -1312,8 +1489,10 @@ export function ContextSidebar({
                       deletingOutput={deletingOutput ?? null}
                       onGenerate={async (block) => { await onGenerateContentBlock?.(block); }}
                       onCopyOutput={async (output) => { onCopyOutput?.(output); }}
-                      onDownloadOutput={(output) => { onDownloadOutput?.(output); }}
+                      onSaveOutputLocally={async (output, format) => { await onSaveOutputLocally?.(output, format); }}
+                      onSaveOutputToLibrary={async (output, libraryId) => { await onSaveOutputToLibrary?.(output, libraryId); }}
                       onDeleteOutput={async (outputId) => { await onDeleteOutput?.(outputId); }}
+                      savingOutputToLibrary={savingOutputToLibrary}
                       guidanceByType={contentGuidanceByType}
                       onGuidanceChange={onContentGuidanceChange}
                       contextByType={contentContextByType}
@@ -1374,82 +1553,32 @@ export function ContextSidebar({
                   availableAnalysisViews.length > 0 ? (
                     <div className="grid grid-cols-5 gap-1">
                       {availableAnalysisViews.map((view) => {
-                        const Icon = view.icon;
-                        return (
-                          <button
-                            key={view.id}
-                            type="button"
-                            onClick={() => {
-                              setActiveContentSection('analysis');
-                              setActiveAnalysisView(view.id);
-                            }}
-                            aria-label={view.label}
-                            title={view.label}
-                            className={cn(
-                              'flex h-10 w-full items-center justify-center gap-1 rounded-lg border border-transparent bg-transparent text-slate-700 transition-colors dark:text-slate-200',
-                              activeContentSection === 'analysis' && activeAnalysisView === view.id
-                                ? 'text-blue-600 dark:text-blue-400'
-                                : 'text-slate-500 hover:text-slate-900 dark:text-slate-400 dark:hover:text-slate-100'
-                            )}
-                          >
-                            <span className="flex items-center justify-center">
-                              <Icon className="h-4 w-4" />
-                            </span>
-                            {view.count ? (
-                              <span className={cn(
-                                'rounded-full px-1 py-0.5 text-[9px] font-semibold leading-none',
-                                activeContentSection === 'analysis' && activeAnalysisView === view.id
-                                  ? 'bg-blue-50 text-blue-600 dark:bg-blue-950/40 dark:text-blue-300'
-                                  : 'bg-slate-200 text-slate-700 dark:bg-slate-700 dark:text-slate-200'
-                              )}>
-                                {view.count}
-                              </span>
-                            ) : null}
-                          </button>
+                        return renderContentSelectorButton(
+                          view,
+                          activeContentSection === 'analysis' && activeAnalysisView === view.id,
+                          () => {
+                            setActiveContentSection('analysis');
+                            setActiveAnalysisView(view.id);
+                          }
                         );
                       })}
                     </div>
                   ) : availableOutputViews.length > 0 ? (
                     <div className="grid grid-cols-5 gap-1">
                       {availableOutputViews.map((view) => {
-                        const Icon = view.icon;
-                        return (
-                          <button
-                            key={view.id}
-                            type="button"
-                            onClick={() => {
-                              setActiveContentSection('outputs');
-                              setActiveOutputType(view.id);
-                            }}
-                            aria-label={view.label}
-                            title={view.label}
-                            className={cn(
-                              'flex h-10 w-full items-center justify-center gap-1 rounded-lg border border-transparent bg-transparent text-slate-700 transition-colors dark:text-slate-200',
-                              activeContentSection === 'outputs' && activeOutputType === view.id
-                                ? 'text-blue-600 dark:text-blue-400'
-                                : 'text-slate-500 hover:text-slate-900 dark:text-slate-400 dark:hover:text-slate-100'
-                            )}
-                          >
-                            <span className="flex items-center justify-center">
-                              <Icon className="h-4 w-4" />
-                            </span>
-                            {view.count ? (
-                              <span className={cn(
-                                'rounded-full px-1 py-0.5 text-[9px] font-semibold leading-none',
-                                activeContentSection === 'outputs' && activeOutputType === view.id
-                                  ? 'bg-blue-50 text-blue-600 dark:bg-blue-950/40 dark:text-blue-300'
-                                  : 'bg-slate-200 text-slate-700 dark:bg-slate-700 dark:text-slate-200'
-                              )}>
-                                {view.count}
-                              </span>
-                            ) : null}
-                          </button>
+                        return renderContentSelectorButton(
+                          view,
+                          activeContentSection === 'outputs' && activeOutputType === view.id,
+                          () => {
+                            setActiveContentSection('outputs');
+                            setActiveOutputType(view.id);
+                          }
                         );
                       })}
                     </div>
                   ) : (
                     <p className="px-1 text-xs text-slate-500 dark:text-slate-400">
-                      Generate summaries, insights, chapters, takeaways, or quotes to populate this section.
+                      Go to Generate and choose an option to create content.
                     </p>
                   )
                 ) : (
@@ -1457,44 +1586,19 @@ export function ContextSidebar({
                     {availableAnalysisViews.length > 0 ? (
                       <div className="grid grid-cols-5 gap-1">
                         {availableAnalysisViews.map((view) => {
-                          const Icon = view.icon;
-                          return (
-                            <button
-                              key={view.id}
-                              type="button"
-                              onClick={() => {
-                                setActiveContentSection('analysis');
-                                setActiveAnalysisView(view.id);
-                              }}
-                              aria-label={view.label}
-                              title={view.label}
-                              className={cn(
-                                'flex h-10 w-full items-center justify-center gap-1 rounded-lg border border-transparent bg-transparent text-slate-700 transition-colors dark:text-slate-200',
-                                activeContentSection === 'analysis' && activeAnalysisView === view.id
-                                  ? 'text-blue-600 dark:text-blue-400'
-                                  : 'text-slate-500 hover:text-slate-900 dark:text-slate-400 dark:hover:text-slate-100'
-                              )}
-                            >
-                              <span className="flex items-center justify-center">
-                                <Icon className="h-4 w-4" />
-                              </span>
-                              {view.count ? (
-                                <span className={cn(
-                                  'rounded-full px-1 py-0.5 text-[9px] font-semibold leading-none',
-                                  activeContentSection === 'analysis' && activeAnalysisView === view.id
-                                    ? 'bg-blue-50 text-blue-600 dark:bg-blue-950/40 dark:text-blue-300'
-                                    : 'bg-slate-200 text-slate-700 dark:bg-slate-700 dark:text-slate-200'
-                                )}>
-                                  {view.count}
-                                </span>
-                              ) : null}
-                            </button>
+                          return renderContentSelectorButton(
+                            view,
+                            activeContentSection === 'analysis' && activeAnalysisView === view.id,
+                            () => {
+                              setActiveContentSection('analysis');
+                              setActiveAnalysisView(view.id);
+                            }
                           );
                         })}
                       </div>
                     ) : (
                       <p className="px-1 text-xs text-slate-500 dark:text-slate-400">
-                        Generate summaries, insights, chapters, takeaways, or quotes to populate this section.
+                        Go to Generate and choose an option to create content.
                       </p>
                     )}
 
@@ -1505,45 +1609,20 @@ export function ContextSidebar({
                         ) : null}
                         <div className="grid grid-cols-5 gap-1">
                           {availableOutputViews.map((view) => {
-                            const Icon = view.icon;
-                            return (
-                              <button
-                                key={view.id}
-                                type="button"
-                                onClick={() => {
-                                  setActiveContentSection('outputs');
-                                  setActiveOutputType(view.id);
-                                }}
-                                aria-label={view.label}
-                                title={view.label}
-                                className={cn(
-                                  'flex h-10 w-full items-center justify-center gap-1 rounded-lg border border-transparent bg-transparent text-slate-700 transition-colors dark:text-slate-200',
-                                  activeContentSection === 'outputs' && activeOutputType === view.id
-                                    ? 'text-blue-600 dark:text-blue-400'
-                                    : 'text-slate-500 hover:text-slate-900 dark:text-slate-400 dark:hover:text-slate-100'
-                                )}
-                              >
-                                <span className="flex items-center justify-center">
-                                  <Icon className="h-4 w-4" />
-                                </span>
-                                {view.count ? (
-                                  <span className={cn(
-                                    'rounded-full px-1 py-0.5 text-[9px] font-semibold leading-none',
-                                    activeContentSection === 'outputs' && activeOutputType === view.id
-                                      ? 'bg-blue-50 text-blue-600 dark:bg-blue-950/40 dark:text-blue-300'
-                                      : 'bg-slate-200 text-slate-700 dark:bg-slate-700 dark:text-slate-200'
-                                  )}>
-                                    {view.count}
-                                  </span>
-                                ) : null}
-                              </button>
+                            return renderContentSelectorButton(
+                              view,
+                              activeContentSection === 'outputs' && activeOutputType === view.id,
+                              () => {
+                                setActiveContentSection('outputs');
+                                setActiveOutputType(view.id);
+                              }
                             );
                           })}
                         </div>
                       </>
                     ) : availableAnalysisViews.length > 0 ? null : (
                       <p className="px-1 text-xs text-slate-500 dark:text-slate-400">
-                        Generate a content type from the Generate tab to populate this section.
+                        Go to Generate and choose a content type to create your first draft.
                       </p>
                     )}
                   </div>
@@ -2061,16 +2140,16 @@ export function ContextSidebar({
             ) : contentLoading ? (
               <div className="flex flex-col items-center justify-center py-16 px-4">
                 <div className="w-8 h-8 border-2 border-purple-800/30 border-t-purple-500 rounded-full animate-spin mb-4" />
-                <p className="text-sm text-slate-500 dark:text-slate-400">Generating summary...</p>
-                <p className="text-xs text-slate-500 mt-1">This may take a moment</p>
+                <p className="text-sm text-slate-500 dark:text-slate-400">Preparing content...</p>
+                <p className="text-xs text-slate-500 mt-1">Go to Generate and choose an option to create content.</p>
               </div>
             ) : (
               <div className="flex flex-col items-center justify-center py-16 px-6 text-center">
                 <div className="w-14 h-14 rounded-full bg-purple-50 dark:bg-purple-900/20 flex items-center justify-center mb-4">
                   <Sparkles className="w-7 h-7 text-purple-500 dark:text-purple-300" />
                 </div>
-                <h3 className="text-sm font-medium text-slate-700 dark:text-slate-200 mb-1">Summary not ready yet</h3>
-                <p className="text-xs text-slate-500 max-w-[200px]">It will appear here automatically once processing finishes.</p>
+                <h3 className="text-sm font-medium text-slate-700 dark:text-slate-200 mb-1">No content yet</h3>
+                <p className="text-xs text-slate-500 max-w-[220px]">Go to Generate and choose an option to create content.</p>
               </div>
             )}
           </div>
@@ -2235,8 +2314,10 @@ export function ContextSidebar({
               deletingOutput={deletingOutput ?? null}
               onGenerate={async (block) => { await onGenerateContentBlock?.(block); }}
               onCopyOutput={async (output) => { onCopyOutput?.(output); }}
-              onDownloadOutput={(output) => { onDownloadOutput?.(output); }}
+              onSaveOutputLocally={async (output, format) => { await onSaveOutputLocally?.(output, format); }}
+              onSaveOutputToLibrary={async (output, libraryId) => { await onSaveOutputToLibrary?.(output, libraryId); }}
               onDeleteOutput={async (outputId) => { await onDeleteOutput?.(outputId); }}
+              savingOutputToLibrary={savingOutputToLibrary}
               guidanceByType={contentGuidanceByType}
               onGuidanceChange={onContentGuidanceChange}
               contextByType={contentContextByType}

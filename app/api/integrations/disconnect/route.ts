@@ -1,11 +1,11 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { supabaseAdmin } from '@/lib/supabase/server';
-import { getUserFromRequest } from '../_utils';
+import { integrationErrorResponse, getUserFromRequest, signedOutIntegrationResponse, type IntegrationProvider } from '../_utils';
 
 export async function POST(request: NextRequest) {
-  const { user, error } = await getUserFromRequest(request);
+  const { user } = await getUserFromRequest(request);
   if (!user) {
-    return NextResponse.json({ error: error || 'Unauthorized' }, { status: 401 });
+    return signedOutIntegrationResponse();
   }
 
   const body = await request.json().catch(() => ({}));
@@ -14,13 +14,13 @@ export async function POST(request: NextRequest) {
     provider !== 'zoom'
     && provider !== 'microsoft'
     && provider !== 'youtube'
-    && provider !== 'stripe'
+    && provider !== 'notion'
     && provider !== 'onedrive'
     && provider !== 'google_drive'
     && provider !== 'granola'
     && provider !== 'slack'
   ) {
-    return NextResponse.json({ error: 'Invalid provider' }, { status: 400 });
+    return integrationErrorResponse({ code: 'BAD_REQUEST', action: 'disconnect', status: 400 });
   }
 
   const { error: updateError } = await supabaseAdmin
@@ -30,7 +30,14 @@ export async function POST(request: NextRequest) {
     .eq('provider', provider);
 
   if (updateError) {
-    return NextResponse.json({ error: updateError.message || 'Failed to disconnect' }, { status: 500 });
+    return integrationErrorResponse({
+      provider: provider as IntegrationProvider,
+      code: 'DISCONNECT_FAILED',
+      action: 'disconnect',
+      status: 500,
+      logPrefix: '[INTEGRATION DISCONNECT] Failed:',
+      cause: updateError,
+    });
   }
 
   return NextResponse.json({ success: true });

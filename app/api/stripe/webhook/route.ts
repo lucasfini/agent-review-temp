@@ -10,6 +10,11 @@ import { supabaseAdmin } from '@/lib/supabase/server';
 import { getTotalCredits, resolveCreditPackage } from '@/lib/billing/credit-packages';
 import { isSubscriptionUsable, upsertOrganizationSubscriptionFromStripe } from '@/lib/billing/subscriptions';
 import { ensureCurrentPlanCreditGrant, grantTopUpCredits } from '@/lib/billing/plan-credits';
+import {
+  notifyCreditsAdded,
+  notifyPaymentFailed,
+  notifyPlanUpdated,
+} from '@/lib/notifications/notification-events';
 
 const stripe = new Stripe(process.env.STRIPE_SECRET_KEY!, {
   apiVersion: '2025-10-29.clover',
@@ -292,6 +297,30 @@ async function syncSubscriptionFromStripe(
       subscription: synced,
     });
   }
+
+  if (synced) {
+    const metadata = {
+      eventType,
+      subscriptionId: synced.id,
+      stripeSubscriptionId: synced.stripeSubscriptionId,
+      planSlug: synced.plan?.slug || null,
+      status: synced.status,
+    };
+    if (eventType === 'invoice.payment_failed') {
+      await notifyPaymentFailed({
+        organizationId: synced.organizationId,
+        idempotencyKey: `payment_failed:${eventType}:${synced.stripeSubscriptionId || synced.id}`,
+        metadata,
+      });
+    } else {
+      await notifyPlanUpdated({
+        organizationId: synced.organizationId,
+        planName: synced.plan?.name || 'Your plan',
+        idempotencyKey: `plan_changed:${eventType}:${synced.stripeSubscriptionId || synced.id}`,
+        metadata,
+      });
+    }
+  }
 }
 
 async function handleSubscriptionCheckoutComplete(session: Stripe.Checkout.Session) {
@@ -425,6 +454,18 @@ async function handleCheckoutComplete(session: Stripe.Checkout.Session) {
     });
 
     console.log(`Successfully granted ${creditsAmount} top-up credits to organization ${organizationId}. Grant: ${grant.id}`);
+    await notifyCreditsAdded({
+      organizationId,
+      actorUserId: userId,
+      credits: creditsAmount,
+      idempotencyKey: `top_up:${paymentIntentId || session.id}`,
+      metadata: {
+        sessionId: session.id,
+        packageId,
+        paymentIntentId: paymentIntentId || null,
+        credits: creditsAmount,
+      },
+    });
   } catch (error) {
     console.error('Error in handleCheckoutComplete:', error);
     throw error;

@@ -17,10 +17,55 @@ const RECOMMENDED_ENV = [
   'STRIPE_BILLING_PORTAL_RETURN_URL',
 ];
 
+const BILLING_TEST_MODE_VALUES = new Set(['1', 'true', 'yes', 'on', 'enabled', 'enable']);
+
 function isFilled(value) {
   return typeof value === 'string'
     && value.trim().length > 0
     && !value.toLowerCase().includes('replace-me');
+}
+
+function isBillingTestModeEnabled(value) {
+  return typeof value === 'string' && BILLING_TEST_MODE_VALUES.has(value.trim().toLowerCase());
+}
+
+function stripeKeyMode(value, testPrefix, livePrefix) {
+  if (!isFilled(value)) return null;
+
+  const normalized = value.trim();
+  if (normalized.startsWith(testPrefix)) return 'test';
+  if (normalized.startsWith(livePrefix)) return 'live';
+  return 'invalid';
+}
+
+function collectStripeEnvironmentErrors(env = process.env) {
+  const errors = [];
+  const secretKeyMode = stripeKeyMode(env.STRIPE_SECRET_KEY, 'sk_test_', 'sk_live_');
+  const publishableKeyMode = stripeKeyMode(env.NEXT_PUBLIC_STRIPE_PUBLISHABLE_KEY, 'pk_test_', 'pk_live_');
+
+  if (secretKeyMode === 'invalid') {
+    errors.push('STRIPE_SECRET_KEY must start with sk_test_ or sk_live_.');
+  }
+  if (publishableKeyMode === 'invalid') {
+    errors.push('NEXT_PUBLIC_STRIPE_PUBLISHABLE_KEY must start with pk_test_ or pk_live_.');
+  }
+  if (isFilled(env.STRIPE_WEBHOOK_SECRET) && !env.STRIPE_WEBHOOK_SECRET.trim().startsWith('whsec_')) {
+    errors.push('STRIPE_WEBHOOK_SECRET must be a webhook signing secret that starts with whsec_.');
+  }
+  if (
+    secretKeyMode
+    && publishableKeyMode
+    && secretKeyMode !== 'invalid'
+    && publishableKeyMode !== 'invalid'
+    && secretKeyMode !== publishableKeyMode
+  ) {
+    errors.push('STRIPE_SECRET_KEY and NEXT_PUBLIC_STRIPE_PUBLISHABLE_KEY must both use the same Stripe mode.');
+  }
+  if (isBillingTestModeEnabled(env.BILLING_TEST_MODE)) {
+    errors.push('BILLING_TEST_MODE is enabled; hosted Stripe Checkout will be bypassed.');
+  }
+
+  return errors;
 }
 
 function loadEnvFiles() {
@@ -41,6 +86,7 @@ function collectStaticChecks(env = process.env) {
   const invalidEnforcementMode = isFilled(rawEnforcementMode)
     && rawEnforcementMode !== 'dry_run'
     && rawEnforcementMode !== 'enforce';
+  const stripeEnvironmentErrors = collectStripeEnvironmentErrors(env);
 
   return {
     missingRequiredEnv,
@@ -48,6 +94,7 @@ function collectStaticChecks(env = process.env) {
     rawEnforcementMode: rawEnforcementMode || '(unset)',
     enforcementMode,
     invalidEnforcementMode,
+    stripeEnvironmentErrors,
   };
 }
 
@@ -199,6 +246,7 @@ async function runCli(argv = process.argv.slice(2), env = process.env) {
   if (staticChecks.invalidEnforcementMode) {
     warnings.push(`Invalid SUBSCRIPTION_ENFORCEMENT_MODE (${staticChecks.rawEnforcementMode}); app will use dry_run.`);
   }
+  failures.push(...staticChecks.stripeEnvironmentErrors);
   if (staticChecks.missingRecommendedEnv.length) {
     warnings.push(`Missing recommended env vars: ${staticChecks.missingRecommendedEnv.join(', ')}`);
   }
@@ -279,7 +327,9 @@ module.exports = {
   REQUIRED_ENV,
   RECOMMENDED_ENV,
   collectStaticChecks,
+  collectStripeEnvironmentErrors,
   isFilled,
+  isBillingTestModeEnabled,
   loadEnvFiles,
   loadReadOnlyDatabaseChecks,
   normalizeEnforcementMode,

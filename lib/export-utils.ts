@@ -13,6 +13,7 @@ interface ExportOutput {
   content: string;
   platform: string;
   type: string;
+  status?: string;
   created_at: string;
   metadata?: {
     platform?: string;
@@ -90,8 +91,14 @@ export interface ExportManifestItem {
 }
 
 export type ExportFormat = 'markdown' | 'pdf' | 'json' | 'plaintext';
+export type SingleOutputExportFormat = 'zip' | 'pdf' | 'json' | 'plaintext';
 export interface ExportOptions {
   debug?: boolean;
+}
+
+export interface SingleOutputExportProject {
+  id: string;
+  title: string;
 }
 
 interface SpeakerRosterEntry {
@@ -174,6 +181,27 @@ ${output.content}
 ${'-'.repeat(40)}
 Exported from AudioRepurpose
 `;
+}
+
+function buildSingleOutputJson(project: SingleOutputExportProject, output: ExportOutput): string {
+  return JSON.stringify({
+    exportedAt: new Date().toISOString(),
+    source: 'AudioRepurpose',
+    project: {
+      id: project.id,
+      title: project.title,
+    },
+    output: {
+      id: output.id,
+      title: output.title,
+      content: output.content,
+      platform: output.metadata?.platform || output.platform,
+      type: output.type,
+      status: output.status,
+      createdAt: output.created_at,
+      metadata: output.metadata || {},
+    },
+  }, null, 2);
 }
 
 /**
@@ -1312,6 +1340,133 @@ async function exportAsPDF(
   void maybeSaveExportLocally(filename, 'pdf', arrayBuffer);
   const pdfBlob = new Blob([arrayBuffer], { type: 'application/pdf' });
   await saveBlob(pdfBlob, filename);
+}
+
+async function exportSingleOutputAsPdf(
+  project: SingleOutputExportProject,
+  output: ExportOutput
+): Promise<void> {
+  const doc = new jsPDF({
+    orientation: 'portrait',
+    unit: 'mm',
+    format: 'a4',
+  });
+
+  const pageWidth = doc.internal.pageSize.getWidth();
+  const pageHeight = doc.internal.pageSize.getHeight();
+  const margin = 20;
+  const contentWidth = pageWidth - margin * 2;
+  let yPosition = margin;
+
+  const checkPageBreak = (requiredSpace: number) => {
+    if (yPosition + requiredSpace > pageHeight - margin) {
+      doc.addPage();
+      yPosition = margin;
+    }
+  };
+
+  const addWrappedText = (text: string, fontSize: number, isBold = false) => {
+    doc.setFontSize(fontSize);
+    doc.setFont('helvetica', isBold ? 'bold' : 'normal');
+    const lines = doc.splitTextToSize(text, contentWidth);
+    const lineHeight = fontSize * 0.4;
+
+    for (const line of lines) {
+      checkPageBreak(lineHeight + 2);
+      doc.text(line, margin, yPosition);
+      yPosition += lineHeight + 1;
+    }
+  };
+
+  const platform = output.metadata?.platform || output.platform || output.type;
+  const theme = output.metadata?.theme ? ` (${output.metadata.theme})` : '';
+  const date = new Date(output.created_at).toLocaleDateString();
+
+  doc.setTextColor(30, 64, 175);
+  addWrappedText(output.title, 18, true);
+  yPosition += 4;
+
+  doc.setTextColor(100, 100, 100);
+  doc.setFontSize(10);
+  doc.setFont('helvetica', 'normal');
+  doc.text(`Project: ${project.title}`, margin, yPosition);
+  yPosition += 5;
+  doc.text(`Platform: ${platform}${theme}`, margin, yPosition);
+  yPosition += 5;
+  doc.text(`Generated: ${date}`, margin, yPosition);
+  yPosition += 8;
+
+  doc.setDrawColor(200, 200, 200);
+  doc.line(margin, yPosition, pageWidth - margin, yPosition);
+  yPosition += 8;
+
+  doc.setTextColor(0, 0, 0);
+  addWrappedText(output.content, 11);
+  yPosition += 10;
+
+  checkPageBreak(15);
+  doc.setDrawColor(200, 200, 200);
+  doc.line(margin, yPosition, pageWidth - margin, yPosition);
+  yPosition += 5;
+  doc.setTextColor(150, 150, 150);
+  doc.setFontSize(8);
+  doc.setFont('helvetica', 'italic');
+  doc.text('Exported from AudioRepurpose', margin, yPosition);
+
+  const timestamp = new Date().toISOString().split('T')[0];
+  const filename = `${sanitizeFilename(output.title)}-${timestamp}.pdf`;
+  const arrayBuffer = doc.output('arraybuffer');
+  void maybeSaveExportLocally(filename, 'pdf', arrayBuffer);
+  await saveBlob(new Blob([arrayBuffer], { type: 'application/pdf' }), filename);
+}
+
+export async function exportSingleOutput(
+  project: SingleOutputExportProject,
+  output: ExportOutput,
+  format: SingleOutputExportFormat
+): Promise<{ success: boolean; message: string }> {
+  try {
+    const timestamp = new Date().toISOString().split('T')[0];
+    const baseFilename = `${sanitizeFilename(output.title)}-${timestamp}`;
+
+    switch (format) {
+      case 'zip': {
+        const zip = new JSZip();
+        zip.file(`${sanitizeFilename(output.title)}.txt`, formatAsPlainText(output, project.title));
+        zip.file(`${sanitizeFilename(output.title)}.json`, buildSingleOutputJson(project, output));
+        const blob = await zip.generateAsync({ type: 'blob' });
+        await saveBlob(blob, `${baseFilename}.zip`);
+        break;
+      }
+      case 'json': {
+        const content = buildSingleOutputJson(project, output);
+        await saveBlob(new Blob([content], { type: 'application/json' }), `${baseFilename}.json`);
+        void maybeSaveExportLocally(`${baseFilename}.json`, 'json', content);
+        break;
+      }
+      case 'plaintext': {
+        const content = formatAsPlainText(output, project.title);
+        await saveBlob(new Blob([content], { type: 'text/plain' }), `${baseFilename}.txt`);
+        break;
+      }
+      case 'pdf':
+        await exportSingleOutputAsPdf(project, output);
+        break;
+      default:
+        return { success: false, message: `Unknown format: ${format}` };
+    }
+
+    return {
+      success: true,
+      message: `Saved ${output.title} as ${format === 'plaintext' ? 'plain text' : format.toUpperCase()}`,
+    };
+  } catch (error) {
+    console.error('[EXPORT] Single output export failed:', error);
+    return {
+      success: false,
+      message: error instanceof Error ? error.message : 'Export failed',
+    };
+  }
 }
 
 function shouldSaveExportLocally(): boolean {

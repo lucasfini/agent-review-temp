@@ -14,6 +14,11 @@ import {
   completeGenerationProgress,
   failGenerationProgress
 } from '@/lib/generation-progress';
+import {
+  notifyContentGenerated,
+  notifyContentGenerationFailed,
+  notifyContentGenerationStarted,
+} from '@/lib/notifications/notification-events';
 import { getAICompletion, type AIMessage } from '@/lib/ai-providers/multi-provider';
 import { getOpenAIApiKeyForUser } from '@/lib/openai/consent';
 import { failReservation, settleReservationAmount } from '@/lib/billing/credit';
@@ -554,6 +559,57 @@ Return JSON format:
 // DEPRECATED: buildUniversalPrompt has been replaced by buildMasterPrompt
 // All generators now use the new Master Prompt system
 
+function readQueuedGenerationJobId(payload: any): string | null {
+  const value = payload?.queuedGenerationJobId || payload?.queued_generation_job_id;
+  return typeof value === 'string' && value.trim() ? value.trim() : null;
+}
+
+async function isAuthorizedQueuedGenerationJobRequest(params: {
+  payload: any;
+  projectId: string;
+  userId: string;
+  blocks: ContentBlock[];
+}): Promise<boolean> {
+  const queuedGenerationJobId = readQueuedGenerationJobId(params.payload);
+  if (!queuedGenerationJobId) return false;
+
+  const enabledBlocks = params.blocks.filter((block) => block.enabled !== false);
+  if (enabledBlocks.length !== 1) {
+    console.warn('[GENERATION] Ignoring queued job rate-limit bypass for non-single-block request', {
+      queuedGenerationJobId,
+      blockCount: enabledBlocks.length,
+    });
+    return false;
+  }
+
+  const { data: job, error } = await (supabaseAdmin as any)
+    .from('project_generation_jobs')
+    .select('id, project_id, user_id, kind, target_key, status')
+    .eq('id', queuedGenerationJobId)
+    .eq('project_id', params.projectId)
+    .eq('user_id', params.userId)
+    .eq('kind', 'content')
+    .eq('status', 'running')
+    .maybeSingle();
+
+  if (error) {
+    console.warn('[GENERATION] Failed to validate queued generation job for rate-limit bypass:', error);
+    return false;
+  }
+
+  if (!job || job.target_key !== enabledBlocks[0].contentTypeId) {
+    console.warn('[GENERATION] Ignoring queued job rate-limit bypass for mismatched job context', {
+      queuedGenerationJobId,
+      projectId: params.projectId,
+      contentTypeId: enabledBlocks[0].contentTypeId,
+      targetKey: job?.target_key || null,
+    });
+    return false;
+  }
+
+  return true;
+}
+
 export async function POST(request: NextRequest) {
   const startTime = Date.now();
   const errors: string[] = [];
@@ -561,6 +617,10 @@ export async function POST(request: NextRequest) {
   let projectId: string | undefined;
   let contentReservationId: string | undefined;
   let savedOutputIds: string[] = [];
+  let projectOrganizationIdForNotification: string | null = null;
+  let projectUserIdForNotification: string | null = null;
+  let projectTitleForNotification: string | null = null;
+  let requestedBlockCountForNotification = 0;
 
   try {
     // Auth: internal maintenance requests or authenticated users only
@@ -584,6 +644,9 @@ export async function POST(request: NextRequest) {
     const payloadContextIds = readGenerationContextIds(payload);
     const payloadHasGenerationContext = hasGenerationContextIds(payloadContextIds);
     const { transcription, segments, blocks, speakerData, modelId, outputStyleModifier } = payload;
+    requestedBlockCountForNotification = Array.isArray(blocks)
+      ? blocks.filter((block: ContentBlock) => block.enabled !== false).length || blocks.length
+      : 0;
 
     if (!projectId || !transcription) {
       return NextResponse.json(
@@ -606,13 +669,15 @@ export async function POST(request: NextRequest) {
         const ownership = await requireProjectOwner<{
           user_id: string;
           organization_id: string | null;
+          title: string | null;
         }>(
           request,
           projectId,
-          'id, user_id, organization_id'
+          'id, user_id, organization_id, title'
         );
         userId = ownership.project.user_id;
         projectOrganizationId = ownership.project.organization_id;
+        projectTitleForNotification = ownership.project.title || null;
       } catch (error) {
         if (error instanceof RouteAccessError) {
           return NextResponse.json({ error: error.message }, { status: error.status });
@@ -622,18 +687,29 @@ export async function POST(request: NextRequest) {
     } else {
       const { data: project } = await supabaseAdmin
         .from('projects')
-        .select('user_id, organization_id')
+        .select('user_id, organization_id, title')
         .eq('id', projectId)
-        .single() as { data: { user_id: string; organization_id: string | null } | null };
+        .single() as { data: { user_id: string; organization_id: string | null; title: string | null } | null };
 
       if (!project) {
         return NextResponse.json({ error: 'Project not found' }, { status: 404 });
       }
       userId = project.user_id;
       projectOrganizationId = project.organization_id;
+      projectTitleForNotification = project.title || null;
     }
+    projectUserIdForNotification = userId || null;
 
-    if (!isMaintenance && userId) {
+    const isQueuedGenerationJobRequest = !isMaintenance && userId
+      ? await isAuthorizedQueuedGenerationJobRequest({
+          payload,
+          projectId,
+          userId,
+          blocks: blocks as ContentBlock[],
+        })
+      : false;
+
+    if (!isMaintenance && userId && !isQueuedGenerationJobRequest) {
       const { success } = await aiRatelimit.limit(userId);
       if (!success) {
         return NextResponse.json(
@@ -656,6 +732,7 @@ export async function POST(request: NextRequest) {
     if (!projectOrganizationId && !isMaintenance && userId) {
       projectOrganizationId = await resolveOrganizationIdForWrite(userId);
     }
+    projectOrganizationIdForNotification = projectOrganizationId || null;
 
     if (!isMaintenance && projectOrganizationId) {
       const { membership, organization } = await getActiveOrganizationForUser(
@@ -784,6 +861,20 @@ export async function POST(request: NextRequest) {
 
     console.log(`[GENERATION] 🚀 Starting Universal Content Engine for project ${projectId}`);
     console.log(`[GENERATION] 📦 Processing ${blocks.length} blocks with ${modelToUse}`);
+
+    await notifyContentGenerationStarted({
+      organizationId: projectOrganizationIdForNotification,
+      actorUserId: projectUserIdForNotification,
+      projectId,
+      projectTitle: projectTitleForNotification,
+      count: requestedBlockCountForNotification,
+      idempotencyKey: `content_generation_started:${projectId}:${startTime}`,
+      metadata: {
+        source: 'generate_content',
+        blockCount: blocks.length,
+        enabledBlockCount: requestedBlockCountForNotification,
+      },
+    });
 
     // Initialize progress tracking
     await initializeGenerationProgress(projectId, blocks.length);
@@ -937,6 +1028,25 @@ export async function POST(request: NextRequest) {
     // Mark generation as complete
     await completeGenerationProgress(projectId, blocks.length);
 
+    await notifyContentGenerated({
+      organizationId: projectOrganizationIdForNotification,
+      actorUserId: projectUserIdForNotification,
+      projectId,
+      projectTitle: projectTitleForNotification,
+      count: savedContentCount,
+      idempotencyKey: contentReservationId
+        ? `content_generated:reservation:${contentReservationId}`
+        : savedOutputIds.length
+          ? `content_generated:outputs:${savedOutputIds.slice(0, 10).join(':')}`
+          : `content_generated:${projectId}:${startTime}`,
+      metadata: {
+        source: 'generate_content',
+        savedContentCount,
+        outputIds: savedOutputIds.slice(0, 20),
+        reservationId: contentReservationId || null,
+      },
+    });
+
     const totalProcessingTime = Date.now() - startTime;
     console.log(`[COMPLETE] 🎉 Total time: ${totalProcessingTime}ms`);
 
@@ -971,6 +1081,21 @@ export async function POST(request: NextRequest) {
         projectId,
         error instanceof Error ? error.message : 'Content generation failed'
       );
+      await notifyContentGenerationFailed({
+        organizationId: projectOrganizationIdForNotification,
+        actorUserId: projectUserIdForNotification,
+        projectId,
+        projectTitle: projectTitleForNotification,
+        count: requestedBlockCountForNotification,
+        idempotencyKey: contentReservationId
+          ? `content_generation_failed:reservation:${contentReservationId}`
+          : `content_generation_failed:${projectId}:${startTime}`,
+        metadata: {
+          source: 'generate_content',
+          error: error instanceof Error ? error.message : 'Content generation failed',
+          reservationId: contentReservationId || null,
+        },
+      });
     }
 
     return NextResponse.json(

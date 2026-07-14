@@ -384,3 +384,235 @@ describe('getExistingContentCounts – maps all 11 original output types', () =>
     });
   });
 });
+
+describe('/api/generate-content queued job rate limiting', () => {
+  let POST;
+  let aiRatelimit;
+  let supabaseAdmin;
+
+  function buildProjectGenerationJobQuery(job) {
+    const builder = {
+      select: jest.fn(() => builder),
+      eq: jest.fn(() => builder),
+      maybeSingle: jest.fn().mockResolvedValue({ data: job, error: null }),
+    };
+    return builder;
+  }
+
+  async function loadRoute({ queuedJob = null } = {}) {
+    jest.resetModules();
+    jest.clearAllMocks();
+
+    jest.doMock('../../lib/supabase/server', () => {
+      const mock = {
+        auth: {
+          getUser: jest.fn().mockResolvedValue({ data: { user: { id: 'user-1' } }, error: null }),
+          admin: {
+            getUserById: jest.fn().mockResolvedValue({ data: { user: { id: 'user-1' } }, error: null }),
+          },
+        },
+        from: jest.fn((table) => {
+          if (table === 'project_generation_jobs') {
+            return buildProjectGenerationJobQuery(queuedJob);
+          }
+          throw new Error(`Unexpected table ${table}`);
+        }),
+      };
+      return { supabaseAdmin: mock };
+    });
+
+    jest.doMock('../../lib/maintenance-auth', () => ({
+      isAuthorizedMaintenanceRequest: jest.fn(() => false),
+    }));
+
+    jest.doMock('../../lib/api/route-auth', () => ({
+      RouteAccessError: class RouteAccessError extends Error {
+        constructor(status, message) {
+          super(message);
+          this.status = status;
+        }
+      },
+      requireProjectOwner: jest.fn().mockResolvedValue({
+        user: { id: 'user-1' },
+        project: {
+          id: 'project-1',
+          user_id: 'user-1',
+          organization_id: 'org-1',
+          title: 'Sales Call',
+        },
+      }),
+    }));
+
+    jest.doMock('../../lib/rate-limit', () => ({
+      aiRatelimit: {
+        limit: jest.fn().mockResolvedValue({ success: false }),
+      },
+    }));
+
+    jest.doMock('../../lib/openai/consent', () => ({
+      getOpenAIApiKeyForUser: jest.fn().mockResolvedValue(null),
+    }));
+
+    jest.doMock('../../lib/demo-mode', () => ({
+      isDemoUser: jest.fn(() => false),
+    }));
+
+    jest.doMock('../../lib/authz/organization-context', () => ({
+      getActiveOrganizationForUser: jest.fn().mockResolvedValue({
+        membership: { role: 'owner' },
+        organization: { id: 'org-1', type: 'saas_customer' },
+      }),
+      resolveOrganizationIdForWrite: jest.fn().mockResolvedValue('org-1'),
+    }));
+
+    jest.doMock('../../lib/authz/permissions', () => ({
+      can: jest.fn(() => true),
+    }));
+
+    jest.doMock('../../lib/billing/entitlement-guards', () => ({
+      runEntitlementGuard: jest.fn().mockResolvedValue({ response: null }),
+    }));
+
+    jest.doMock('../../lib/billing/cost-map', () => ({
+      estimateContentBlocksCostAsync: jest.fn().mockResolvedValue(0),
+    }));
+
+    jest.doMock('../../lib/billing/middleware', () => ({
+      billingErrorResponse: jest.fn(() => ({ status: 500 })),
+    }));
+
+    jest.doMock('../../lib/billing/credit', () => ({
+      failReservation: jest.fn().mockResolvedValue(undefined),
+      settleReservationAmount: jest.fn().mockResolvedValue(undefined),
+      InsufficientCreditError: class InsufficientCreditError extends Error {},
+    }));
+
+    jest.doMock('../../lib/billing/plan-credits', () => ({
+      createPlanCreditReservation: jest.fn().mockResolvedValue({ id: 'reservation-1' }),
+    }));
+
+    jest.doMock('../../lib/billing/subscription-usage-counters', () => ({
+      recordSubscriptionUsage: jest.fn().mockResolvedValue(undefined),
+    }));
+
+    jest.doMock('../../lib/billing/track-usage', () => ({
+      trackOpenAIUsage: jest.fn().mockResolvedValue({ usageEventId: 'usage-1', billedCost: 0 }),
+    }));
+
+    jest.doMock('../../lib/generation-progress', () => ({
+      initializeGenerationProgress: jest.fn().mockResolvedValue(undefined),
+      updateGenerationProgress: jest.fn().mockResolvedValue(undefined),
+      completeBlock: jest.fn().mockResolvedValue(undefined),
+      completeGenerationProgress: jest.fn().mockResolvedValue(undefined),
+      failGenerationProgress: jest.fn().mockResolvedValue(undefined),
+    }));
+
+    jest.doMock('../../lib/notifications/notification-events', () => ({
+      notifyContentGenerated: jest.fn().mockResolvedValue(null),
+      notifyContentGenerationFailed: jest.fn().mockResolvedValue(null),
+      notifyContentGenerationStarted: jest.fn().mockResolvedValue(null),
+    }));
+
+    jest.doMock('../../lib/content-generators/pre-processor', () => ({
+      preProcessTranscript: jest.fn().mockRejectedValue(new Error('Reached generation after rate-limit check')),
+    }));
+
+    jest.doMock('../../lib/ai-providers/multi-provider', () => ({
+      getAICompletion: jest.fn(),
+    }));
+
+    jest.doMock('../../lib/generation-context', () => {
+      const actual = jest.requireActual('../../lib/generation-context');
+      return {
+        ...actual,
+        resolveGenerationContext: jest.fn().mockResolvedValue({
+          creatorProfile: null,
+          brandVoice: null,
+          campaign: null,
+          library: null,
+        }),
+      };
+    });
+
+    ({ supabaseAdmin } = require('../../lib/supabase/server'));
+    ({ aiRatelimit } = require('../../lib/rate-limit'));
+    ({ POST } = await import('../../app/api/generate-content/route'));
+  }
+
+  function buildRequest(extraBody = {}) {
+    const { NextRequest } = require('next/server');
+    return new NextRequest('http://localhost/api/generate-content', {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        Authorization: 'Bearer token-1',
+      },
+      body: JSON.stringify({
+        projectId: 'project-1',
+        transcription: 'Sample transcript text for content generation testing.',
+        segments: [],
+        blocks: [
+          {
+            id: 'twitter_threads_1',
+            contentTypeId: 'twitter_threads',
+            blockNumber: 1,
+            name: 'X Thread',
+            enabled: true,
+            theme: 'professional',
+          },
+        ],
+        ...extraBody,
+      }),
+    });
+  }
+
+  it('keeps normal user requests behind the AI rate limit', async () => {
+    await loadRoute();
+
+    const response = await POST(buildRequest());
+    const data = await response.json();
+
+    expect(response.status).toBe(429);
+    expect(data.error).toMatch(/Rate limit exceeded/i);
+    expect(aiRatelimit.limit).toHaveBeenCalledWith('user-1');
+  });
+
+  it('skips duplicate rate limiting for a verified running queued content job', async () => {
+    await loadRoute({
+      queuedJob: {
+        id: 'job-1',
+        project_id: 'project-1',
+        user_id: 'user-1',
+        kind: 'content',
+        target_key: 'twitter_threads',
+        status: 'running',
+      },
+    });
+
+    const response = await POST(buildRequest({ queuedGenerationJobId: 'job-1' }));
+    const data = await response.json();
+
+    expect(response.status).toBe(500);
+    expect(data.details?.join(' ')).toMatch(/Reached generation after rate-limit check/);
+    expect(aiRatelimit.limit).not.toHaveBeenCalled();
+    expect(supabaseAdmin.from).toHaveBeenCalledWith('project_generation_jobs');
+  });
+
+  it('does not skip rate limiting when the queued job context does not match the block', async () => {
+    await loadRoute({
+      queuedJob: {
+        id: 'job-1',
+        project_id: 'project-1',
+        user_id: 'user-1',
+        kind: 'content',
+        target_key: 'linkedin_posts',
+        status: 'running',
+      },
+    });
+
+    const response = await POST(buildRequest({ queuedGenerationJobId: 'job-1' }));
+
+    expect(response.status).toBe(429);
+    expect(aiRatelimit.limit).toHaveBeenCalledWith('user-1');
+  });
+});

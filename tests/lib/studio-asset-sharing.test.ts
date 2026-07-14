@@ -2,6 +2,11 @@ import { decorateBrandVoiceScope } from '@/lib/brand-voices';
 import { decorateCampaignScope } from '@/lib/campaigns-content-library';
 import { decorateContentLibraryScope } from '@/lib/content-libraries';
 import { decorateCreatorProfileScope } from '@/lib/creator-profiles';
+import {
+  assertShareTargetIsTeamOrganization,
+  normalizeStudioAssetWriteVisibility,
+  resolveStudioAssetWriteOrganizationId,
+} from '@/lib/studio-sharing';
 
 describe('studio asset sharing permissions', () => {
   const context = {
@@ -11,6 +16,41 @@ describe('studio asset sharing permissions', () => {
     role: 'editor',
     organizationType: 'saas_customer',
   } as const;
+
+  it('rejects personal workspaces as team share targets', () => {
+    expect(() => assertShareTargetIsTeamOrganization({
+      activeOrganizationId: 'personal-1',
+      privateOrganizationId: 'personal-1',
+      organizationType: 'personal_legacy',
+    }, 'collection')).toThrow('Switch to a team workspace before publishing this collection.');
+  });
+
+  it('normalizes write visibility aliases', () => {
+    expect(normalizeStudioAssetWriteVisibility('private')).toBe('private');
+    expect(normalizeStudioAssetWriteVisibility('team')).toBe('team');
+    expect(normalizeStudioAssetWriteVisibility('organization')).toBe('team');
+    expect(normalizeStudioAssetWriteVisibility('workspace')).toBeNull();
+  });
+
+  it('writes new assets to the active team workspace unless private is requested', () => {
+    const target = {
+      activeOrganizationId: 'org-1',
+      privateOrganizationId: 'personal-1',
+      organizationType: 'saas_customer',
+    } as const;
+
+    expect(resolveStudioAssetWriteOrganizationId(target)).toBe('org-1');
+    expect(resolveStudioAssetWriteOrganizationId(target, 'team')).toBe('org-1');
+    expect(resolveStudioAssetWriteOrganizationId(target, 'private')).toBe('personal-1');
+  });
+
+  it('writes new assets to private organization in personal workspace contexts', () => {
+    expect(resolveStudioAssetWriteOrganizationId({
+      activeOrganizationId: 'personal-1',
+      privateOrganizationId: 'personal-1',
+      organizationType: 'personal_legacy',
+    })).toBe('personal-1');
+  });
 
   it('allows the creator to share and unshare their own private assets', () => {
     const creatorProfile = decorateCreatorProfileScope({

@@ -6,6 +6,7 @@ import {
   type OrganizationMemberRole,
   type OrganizationType,
 } from '@/lib/authz/types';
+import { getAvailableStudioAssetName, hideLegacySharedSources } from '@/lib/studio-sharing';
 
 export const CAMPAIGN_STATUSES = ['draft', 'active', 'paused', 'completed', 'archived'] as const;
 export const CONTENT_LIBRARY_STATUSES = ['draft', 'in_review', 'approved', 'scheduled', 'published', 'archived', 'needs_revision'] as const;
@@ -183,6 +184,10 @@ export type ContentLibraryItemInput = {
   locked?: unknown;
 };
 
+type ContentLibraryReferenceOptions = {
+  referenceOrganizationIds?: string[];
+};
+
 export class CampaignLibraryValidationError extends Error {
   constructor(message: string) {
     super(message);
@@ -350,19 +355,31 @@ function isUniqueViolation(error: any): boolean {
 
 async function validateScopedReference(
   supabase: SupabaseClient<any>,
-  organizationId: string,
+  organizationIds: string | string[],
   table: string,
   id: unknown,
   field: string
 ): Promise<void> {
   if (typeof id !== 'string' || !id.trim()) return;
 
-  const { data, error } = await supabase
+  const ids = Array.from(new Set(
+    (Array.isArray(organizationIds) ? organizationIds : [organizationIds]).filter(Boolean)
+  ));
+  if (ids.length === 0) {
+    throw new CampaignLibraryValidationError(`${field} must reference a record in this organization`);
+  }
+
+  let query = supabase
     .from(table)
     .select('id')
-    .eq('organization_id', organizationId)
     .eq('id', id)
-    .is('client_id', null)
+    .is('client_id', null) as any;
+
+  query = ids.length === 1
+    ? query.eq('organization_id', ids[0])
+    : query.in('organization_id', ids);
+
+  const { data, error } = await query
     .maybeSingle() as { data: { id: string } | null; error: any };
 
   if (error) {
@@ -376,12 +393,19 @@ async function validateScopedReference(
 async function validateContentLibraryReferences(
   supabase: SupabaseClient<any>,
   organizationId: string,
-  payload: Record<string, unknown>
+  payload: Record<string, unknown>,
+  options: {
+    referenceOrganizationIds?: string[];
+  } = {}
 ): Promise<void> {
-  await validateScopedReference(supabase, organizationId, 'campaigns', payload.campaign_id, 'campaignId');
-  await validateScopedReference(supabase, organizationId, 'brand_voices', payload.brand_voice_id, 'brandVoiceId');
-  await validateScopedReference(supabase, organizationId, 'creator_profiles', payload.creator_profile_id, 'creatorProfileId');
-  await validateScopedReference(supabase, organizationId, 'content_libraries', payload.library_id, 'libraryId');
+  const referenceOrganizationIds = options.referenceOrganizationIds?.length
+    ? options.referenceOrganizationIds
+    : [organizationId];
+
+  await validateScopedReference(supabase, referenceOrganizationIds, 'campaigns', payload.campaign_id, 'campaignId');
+  await validateScopedReference(supabase, referenceOrganizationIds, 'brand_voices', payload.brand_voice_id, 'brandVoiceId');
+  await validateScopedReference(supabase, referenceOrganizationIds, 'creator_profiles', payload.creator_profile_id, 'creatorProfileId');
+  await validateScopedReference(supabase, referenceOrganizationIds, 'content_libraries', payload.library_id, 'libraryId');
 }
 
 async function validateCampaignReferences(
@@ -692,7 +716,10 @@ export async function listCampaigns(
     throw new Error(error.message || 'Failed to load campaigns');
   }
 
-  return (data || []).map(mapCampaignRow);
+  return hideLegacySharedSources(
+    (data || []).map(mapCampaignRow),
+    (campaign) => campaign.sharedFromCampaignId
+  );
 }
 
 export async function listCampaignsForOrganizations(
@@ -852,17 +879,6 @@ export async function shareCampaignToOrganization(
   targetOrganizationId: string,
   userId: string
 ): Promise<Campaign> {
-  const sharedPayload = {
-    name: source.name,
-    status: source.status,
-    objective: source.objective,
-    audience: source.audience,
-    channels_json: source.channels,
-    start_date: source.startDate,
-    end_date: source.endDate,
-    brand_voice_id: null,
-  };
-
   const { data: existing, error: existingError } = await supabase
     .from('campaigns')
     .select('*')
@@ -874,6 +890,31 @@ export async function shareCampaignToOrganization(
   if (existingError) {
     throw new Error(existingError.message || 'Failed to load shared plan');
   }
+
+  const { data: siblingCampaigns, error: siblingError } = await supabase
+    .from('campaigns')
+    .select('id, name')
+    .eq('organization_id', targetOrganizationId)
+    .is('client_id', null) as { data: Array<{ id: string; name: string }> | null; error: any };
+
+  if (siblingError) {
+    throw new Error(siblingError.message || 'Failed to load team plan names');
+  }
+
+  const sharedPayload = {
+    name: getAvailableStudioAssetName(source.name, siblingCampaigns || [], {
+      excludeId: existing?.id || source.id,
+      maxNameLength: MAX_NAME_LENGTH,
+      suffixLabel: 'team',
+    }),
+    status: source.status,
+    objective: source.objective,
+    audience: source.audience,
+    channels_json: source.channels,
+    start_date: source.startDate,
+    end_date: source.endDate,
+    brand_voice_id: null,
+  };
 
   if (existing) {
     const { data, error } = await supabase
@@ -895,22 +936,86 @@ export async function shareCampaignToOrganization(
 
   const { data, error } = await supabase
     .from('campaigns')
-    .insert({
+    .update({
       ...sharedPayload,
       organization_id: targetOrganizationId,
       client_id: null,
-      created_by: userId,
-      owner_user_id: userId,
-      shared_from_campaign_id: source.id,
+      owner_user_id: source.ownerUserId || source.createdBy || userId,
+      shared_from_campaign_id: null,
     } as any)
+    .eq('id', source.id)
+    .eq('organization_id', source.organizationId)
+    .is('client_id', null)
     .select('*')
-    .single() as { data: CampaignRow | null; error: any };
+    .maybeSingle() as { data: CampaignRow | null; error: any };
 
   if (error || !data) {
     if (isUniqueViolation(error)) {
       throw new CampaignLibraryValidationError('A shared plan with this name already exists');
     }
     throw new Error(error?.message || 'Failed to share plan');
+  }
+
+  return mapCampaignRow(data);
+}
+
+export async function unshareCampaignToPrivateOrganization(
+  supabase: SupabaseClient<any>,
+  source: Campaign,
+  privateOrganizationId: string,
+  activeOrganizationId: string
+): Promise<Campaign> {
+  const { data: siblingCampaigns, error: siblingError } = await supabase
+    .from('campaigns')
+    .select('id, name')
+    .eq('organization_id', privateOrganizationId)
+    .is('client_id', null) as { data: Array<{ id: string; name: string }> | null; error: any };
+
+  if (siblingError) {
+    throw new Error(siblingError.message || 'Failed to load private plan names');
+  }
+
+  const referenceUpdates = [
+    supabase
+      .from('content_library_items')
+      .update({ campaign_id: null } as any)
+      .eq('organization_id', activeOrganizationId)
+      .eq('campaign_id', source.id)
+      .is('client_id', null),
+    supabase
+      .from('project_generation_jobs')
+      .update({ campaign_id: null } as any)
+      .eq('organization_id', activeOrganizationId)
+      .eq('campaign_id', source.id),
+  ];
+  const referenceResults = await Promise.all(referenceUpdates);
+  const referenceError = referenceResults.find((result) => result.error)?.error;
+  if (referenceError) {
+    throw new Error(referenceError.message || 'Failed to remove team plan references');
+  }
+
+  const { data, error } = await supabase
+    .from('campaigns')
+    .update({
+      organization_id: privateOrganizationId,
+      name: getAvailableStudioAssetName(source.name, siblingCampaigns || [], {
+        excludeId: source.id,
+        maxNameLength: MAX_NAME_LENGTH,
+        suffixLabel: 'private',
+      }),
+      shared_from_campaign_id: null,
+    } as any)
+    .eq('id', source.id)
+    .eq('organization_id', source.organizationId)
+    .is('client_id', null)
+    .select('*')
+    .maybeSingle() as { data: CampaignRow | null; error: any };
+
+  if (error || !data) {
+    if (isUniqueViolation(error)) {
+      throw new CampaignLibraryValidationError('Could not find an available private plan name');
+    }
+    throw new Error(error?.message || 'Failed to make plan private');
   }
 
   return mapCampaignRow(data);
@@ -989,10 +1094,11 @@ export async function createContentLibraryItem(
   supabase: SupabaseClient<any>,
   organizationId: string,
   createdBy: string,
-  input: ContentLibraryItemInput
+  input: ContentLibraryItemInput,
+  options: ContentLibraryReferenceOptions = {}
 ): Promise<ContentLibraryItem> {
   const normalized = normalizeContentLibraryItemInput(input);
-  await validateContentLibraryReferences(supabase, organizationId, normalized);
+  await validateContentLibraryReferences(supabase, organizationId, normalized, options);
 
   const payload = {
     ...normalized,
@@ -1019,13 +1125,14 @@ export async function updateContentLibraryItem(
   supabase: SupabaseClient<any>,
   organizationId: string,
   id: string,
-  input: ContentLibraryItemInput
+  input: ContentLibraryItemInput,
+  options: ContentLibraryReferenceOptions = {}
 ): Promise<ContentLibraryItem | null> {
   const payload = normalizeContentLibraryItemInput(input, { partial: true });
   if (Object.keys(payload).length === 0) {
     throw new CampaignLibraryValidationError('No content library fields provided');
   }
-  await validateContentLibraryReferences(supabase, organizationId, payload);
+  await validateContentLibraryReferences(supabase, organizationId, payload, options);
 
   const { data, error } = await supabase
     .from('content_library_items')

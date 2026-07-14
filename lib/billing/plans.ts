@@ -1,5 +1,6 @@
 import type { SupabaseClient } from '@supabase/supabase-js';
 
+import { getCanonicalPlanMaxUploadMinutes } from '@/lib/billing/plan-upload-limits';
 import { supabaseAdmin } from '@/lib/supabase/server';
 
 export const PLAN_SLUGS = ['free', 'standard', 'pro', 'teams'] as const;
@@ -26,6 +27,8 @@ export interface Plan {
   stripePriceId: string | null;
   stripeMonthlyPriceId: string | null;
   stripeAnnualPriceId: string | null;
+  stripeExtraSeatMonthlyPriceId: string | null;
+  stripeExtraSeatAnnualPriceId: string | null;
   monthlyPriceCents: number | null;
   annualPriceCents: number | null;
   currency: string;
@@ -52,6 +55,8 @@ export interface PlanRow {
   stripe_price_id: string | null;
   stripe_monthly_price_id?: string | null;
   stripe_annual_price_id?: string | null;
+  stripe_extra_seat_monthly_price_id?: string | null;
+  stripe_extra_seat_annual_price_id?: string | null;
   monthly_price_cents: number | null;
   annual_price_cents?: number | null;
   currency: string;
@@ -137,6 +142,8 @@ export function mapPlanRow(row: PlanRow): Plan {
     stripePriceId: row.stripe_price_id ?? stripeMonthlyPriceId,
     stripeMonthlyPriceId,
     stripeAnnualPriceId: row.stripe_annual_price_id ?? null,
+    stripeExtraSeatMonthlyPriceId: row.stripe_extra_seat_monthly_price_id ?? null,
+    stripeExtraSeatAnnualPriceId: row.stripe_extra_seat_annual_price_id ?? null,
     monthlyPriceCents: row.monthly_price_cents,
     annualPriceCents: row.annual_price_cents ?? null,
     currency: row.currency,
@@ -152,7 +159,7 @@ export function mapPlanRow(row: PlanRow): Plan {
     creditRolloverMonths: row.credit_rollover_months ?? 0,
     topUpEnabled: Boolean(row.top_up_enabled),
     topUpCreditExpiryMonths: row.top_up_credit_expiry_months ?? 12,
-    maxUploadMinutes: row.max_upload_minutes ?? null,
+    maxUploadMinutes: getCanonicalPlanMaxUploadMinutes(row.slug) ?? row.max_upload_minutes ?? null,
     extraSeatPriceCents: row.extra_seat_price_cents ?? null,
     isPopular: Boolean(row.is_popular),
     features: normalizeFeatures(row.features_json),

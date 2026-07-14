@@ -1,18 +1,19 @@
 import { NextRequest, NextResponse } from 'next/server';
 
 import { RouteAccessError } from '@/lib/api/route-auth';
-import { can, requirePermissionContext } from '@/lib/authz/permissions';
+import { can } from '@/lib/authz/permissions';
 import { OrganizationAccessError } from '@/lib/authz/types';
 import {
   CampaignLibraryValidationError,
   decorateContentLibraryItemAccess,
-  getCampaign,
   deleteContentLibraryItem,
   getContentLibraryItem,
   updateContentLibraryItem,
 } from '@/lib/campaigns-content-library';
+import { isDemoUser } from '@/lib/demo-mode';
 import { recordOrganizationAuditLog } from '@/lib/organizations/audit';
 import { createResourceVersion } from '@/lib/resource-versions';
+import { requireStudioAssetContext } from '@/lib/studio-assets';
 import { supabaseAdmin } from '@/lib/supabase/server';
 
 export const dynamic = 'force-dynamic';
@@ -36,16 +37,6 @@ function requestedOrganizationIdFrom(request: NextRequest, body?: any): string |
   if (typeof body?.organization_id === 'string') return body.organization_id;
   return new URL(request.url).searchParams.get('organization_id');
 }
-
-const CONTENT_STATUS_TRANSITIONS: Record<string, string[]> = {
-  draft: ['draft', 'in_review', 'archived'],
-  in_review: ['draft', 'in_review', 'approved', 'archived'],
-  approved: ['approved', 'scheduled', 'published', 'archived'],
-  scheduled: ['scheduled', 'published', 'archived'],
-  published: ['published'],
-  archived: ['archived', 'draft'],
-  needs_revision: ['needs_revision', 'draft', 'in_review', 'archived'],
-};
 
 function buildVersionSnapshot(item: any) {
   return {
@@ -107,56 +98,14 @@ function getChangeSummary(previousStatus: string, nextStatus: string, changedFie
   return `Updated ${changedFields.slice(0, 4).join(', ')}`;
 }
 
-async function getApprovalRequiredForItem(
-  organizationId: string,
-  existingItem: any,
-  body: Record<string, unknown>
-): Promise<boolean> {
-  const nextCampaignId = typeof body.campaignId === 'string'
-    ? body.campaignId
-    : typeof body.campaign_id === 'string'
-      ? body.campaign_id
-      : existingItem.campaignId;
-
-  if (!nextCampaignId) return false;
-  const campaign = await getCampaign(supabaseAdmin, organizationId, nextCampaignId);
-  return Boolean(campaign?.approvalRequired);
-}
-
 function applyStatusWorkflow(params: {
   body: Record<string, unknown>;
   existingItem: any;
-  role: string;
   userId: string;
-  approvalRequired: boolean;
 }) {
   const now = new Date().toISOString();
   const nextBody: Record<string, unknown> = { ...params.body };
   const nextStatus = typeof nextBody.status === 'string' ? nextBody.status : params.existingItem.status;
-  const currentStatus = params.existingItem.status;
-  const allowedStatuses = CONTENT_STATUS_TRANSITIONS[currentStatus] || [currentStatus];
-
-  if (!allowedStatuses.includes(nextStatus)) {
-    throw new CampaignLibraryValidationError(`Cannot move draft from ${currentStatus} to ${nextStatus}`);
-  }
-
-  if (
-    params.role === 'editor'
-    && (nextStatus === 'approved' || nextStatus === 'scheduled' || nextStatus === 'published')
-  ) {
-    throw new CampaignLibraryValidationError(
-      params.approvalRequired
-        ? 'This draft requires owner or admin approval before it can be approved or published'
-        : 'Editors cannot approve or publish drafts'
-    );
-  }
-
-  if (nextStatus === 'scheduled') {
-    const scheduledFor = nextBody.scheduledFor ?? nextBody.scheduled_for ?? params.existingItem.scheduledFor;
-    if (!scheduledFor) {
-      throw new CampaignLibraryValidationError('scheduledFor is required when status is scheduled');
-    }
-  }
 
   if (nextStatus === 'draft' || nextStatus === 'in_review' || nextStatus === 'needs_revision') {
     nextBody.approvedByUserId = null;
@@ -222,10 +171,11 @@ export async function GET(
 ) {
   try {
     const { id } = await params;
-    const { user, organization, membership } = await requirePermissionContext(request, {
+    const context = await requireStudioAssetContext(request, {
       requestedOrganizationId: requestedOrganizationIdFrom(request),
     });
-    const contentItem = await getContentLibraryItem(supabaseAdmin, organization.id, id);
+    const { user, organization, membership } = context;
+    const contentItem = await getContentLibraryItem(supabaseAdmin, context.activeOrganizationId, id);
 
     if (!contentItem) {
       return NextResponse.json({ error: 'Content library item not found' }, { status: 404 });
@@ -238,13 +188,13 @@ export async function GET(
         status: membership.status,
         canManageCampaignLibrary: can({
           userId: user.id,
-          organizationId: organization.id,
+          organizationId: context.activeOrganizationId,
           organizationType: organization.type,
           role: membership.role,
-        }, 'library_item.create', { organizationId: organization.id, visibility: 'workspace' }),
+        }, 'library_item.create', { organizationId: context.activeOrganizationId, visibility: 'workspace' }),
       },
       contentItem: decorateContentLibraryItemAccess(contentItem, {
-        organizationId: organization.id,
+        organizationId: context.activeOrganizationId,
         userId: user.id,
         role: membership.role,
         organizationType: organization.type,
@@ -262,21 +212,29 @@ export async function PATCH(
   try {
     const { id } = await params;
     const body = await request.json().catch(() => ({}));
-    const { user, organization, membership, permissionContext } = await requirePermissionContext(request, {
+    const context = await requireStudioAssetContext(request, {
       requestedOrganizationId: requestedOrganizationIdFrom(request, body),
     });
+    const { user, organization, membership } = context;
+    const permissionContext = {
+      userId: user.id,
+      organizationId: context.activeOrganizationId,
+      organizationType: organization.type,
+      role: membership.role,
+      isDemo: isDemoUser(user),
+    };
 
     if (permissionContext.isDemo) {
       return NextResponse.json({ error: 'Demo account is read-only' }, { status: 403 });
     }
-    const existingItem = await getContentLibraryItem(supabaseAdmin, organization.id, id);
+    const existingItem = await getContentLibraryItem(supabaseAdmin, context.activeOrganizationId, id);
     if (!existingItem) {
       return NextResponse.json({ error: 'Content library item not found' }, { status: 404 });
     }
     const decorated = decorateContentLibraryItemAccess(
       { ...existingItem, status: body.status || existingItem.status },
       {
-        organizationId: organization.id,
+        organizationId: context.activeOrganizationId,
         userId: user.id,
         role: membership.role,
         organizationType: organization.type,
@@ -286,15 +244,18 @@ export async function PATCH(
       return NextResponse.json({ error: 'You do not have permission to update this draft' }, { status: 403 });
     }
 
-    const approvalRequired = await getApprovalRequiredForItem(organization.id, existingItem, body);
     const nextBody = applyStatusWorkflow({
       body,
       existingItem,
-      role: membership.role,
       userId: user.id,
-      approvalRequired,
     });
-    const contentItem = await updateContentLibraryItem(supabaseAdmin, organization.id, id, nextBody);
+    const contentItem = await updateContentLibraryItem(
+      supabaseAdmin,
+      context.activeOrganizationId,
+      id,
+      nextBody,
+      { referenceOrganizationIds: context.organizationIds }
+    );
 
     if (!contentItem) {
       return NextResponse.json({ error: 'Content library item not found' }, { status: 404 });
@@ -307,7 +268,7 @@ export async function PATCH(
 
     await recordOrganizationAuditLog({
       supabase: supabaseAdmin,
-      organizationId: organization.id,
+      organizationId: context.activeOrganizationId,
       actorUserId: user.id,
       action: getAuditAction(existingItem.status, contentItem.status),
       resourceType: 'library_item',
@@ -326,7 +287,7 @@ export async function PATCH(
       try {
         await createResourceVersion({
           supabase: supabaseAdmin,
-          organizationId: organization.id,
+          organizationId: context.activeOrganizationId,
           resourceType: 'library_item',
           resourceId: contentItem.id,
           changedByUserId: user.id,
@@ -354,19 +315,27 @@ export async function DELETE(
 ) {
   try {
     const { id } = await params;
-    const { user, organization, membership, permissionContext } = await requirePermissionContext(request, {
+    const context = await requireStudioAssetContext(request, {
       requestedOrganizationId: requestedOrganizationIdFrom(request),
     });
+    const { user, organization, membership } = context;
+    const permissionContext = {
+      userId: user.id,
+      organizationId: context.activeOrganizationId,
+      organizationType: organization.type,
+      role: membership.role,
+      isDemo: isDemoUser(user),
+    };
 
     if (permissionContext.isDemo) {
       return NextResponse.json({ error: 'Demo account is read-only' }, { status: 403 });
     }
-    const existingItem = await getContentLibraryItem(supabaseAdmin, organization.id, id);
+    const existingItem = await getContentLibraryItem(supabaseAdmin, context.activeOrganizationId, id);
     if (!existingItem) {
       return NextResponse.json({ error: 'Content library item not found' }, { status: 404 });
     }
     const decorated = decorateContentLibraryItemAccess(existingItem, {
-      organizationId: organization.id,
+      organizationId: context.activeOrganizationId,
       userId: user.id,
       role: membership.role,
       organizationType: organization.type,
@@ -375,7 +344,7 @@ export async function DELETE(
       return NextResponse.json({ error: 'You do not have permission to delete this draft' }, { status: 403 });
     }
 
-    const deleted = await deleteContentLibraryItem(supabaseAdmin, organization.id, id);
+    const deleted = await deleteContentLibraryItem(supabaseAdmin, context.activeOrganizationId, id);
 
     if (!deleted) {
       return NextResponse.json({ error: 'Content library item not found' }, { status: 404 });
@@ -383,7 +352,7 @@ export async function DELETE(
 
     await recordOrganizationAuditLog({
       supabase: supabaseAdmin,
-      organizationId: organization.id,
+      organizationId: context.activeOrganizationId,
       actorUserId: user.id,
       action: 'library_item.deleted',
       resourceType: 'library_item',

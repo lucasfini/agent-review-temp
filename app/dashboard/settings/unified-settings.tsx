@@ -2,6 +2,7 @@
 
 import { Fragment, useState, useEffect, useMemo, useCallback, type ChangeEvent } from 'react';
 import Image from 'next/image';
+import Link from 'next/link';
 import { useRouter, useSearchParams } from 'next/navigation';
 import {
   BarChart3,
@@ -11,6 +12,7 @@ import {
   Loader2,
   Download,
   Search,
+  CalendarDays,
   ChevronLeft,
   ChevronRight,
   ChevronDown,
@@ -22,8 +24,8 @@ import {
   Users,
   MessageSquare,
   Youtube,
-  CreditCard,
   Cloud,
+  FileText,
   FolderOpen,
   Bot,
   Building2,
@@ -55,7 +57,7 @@ import { formatSiteCreditDeltaFromUsd, formatSiteCreditsFromUsd } from '@/lib/bi
 import { formatProductCredits } from '@/lib/billing/product-credits';
 import { isIntegrationEnabled } from '@/lib/integrations/availability';
 import { isValidEmail } from '@/lib/auth/validation';
-import { withOrganizationId } from '@/lib/organizations/current-organization';
+import { type CurrentOrganizationType, withOrganizationId } from '@/lib/organizations/current-organization';
 
 // ============================================================================
 // TYPES
@@ -68,6 +70,16 @@ interface Balance {
   reservedPending?: number;
   lifetimeCreditsAdded: number;
   lifetimeCreditsSpent: number;
+  creditUnit?: string;
+  planSlug?: string | null;
+  monthlyCreditGrant?: number;
+  rolloverCredits?: number;
+  currentPlanCredits?: number;
+  topUpCredits?: number;
+  legacyBalance?: number;
+  legacyAvailableBalance?: number;
+  legacyReservedPending?: number;
+  legacyFormatted?: string;
 }
 
 interface GroupedTransaction {
@@ -101,16 +113,38 @@ interface UsageEvent {
   projectTitle?: string;
 }
 
+interface UsageCreditProject {
+  id: string;
+  title: string;
+  credits: number;
+  events: number;
+  workflowCount: number;
+  serviceCount: number;
+  isDeleted: boolean;
+}
+
+interface UsageCreditSummary {
+  creditUnit: 'plan_credit';
+  totalCredits: number;
+  pendingCredits: number;
+  apiCallCount: number;
+  projectCount: number;
+  averageCreditsPerProject: number;
+  projects: UsageCreditProject[];
+  trend: Array<{ date: string; cost: number; events: number }>;
+}
+
 interface UnifiedSettingsProps {
   userEmail: string;
   forcedSection?: 'preferences' | 'workspace' | 'integrations' | 'billing' | 'usage';
+  organizationType?: CurrentOrganizationType;
 }
 
 type IntegrationProvider =
   | 'zoom'
   | 'microsoft'
   | 'youtube'
-  | 'stripe'
+  | 'notion'
   | 'onedrive'
   | 'google_drive'
   | 'granola'
@@ -119,11 +153,25 @@ type IntegrationProvider =
 interface IntegrationStatus {
   provider: IntegrationProvider;
   connected: boolean;
-  metadata?: { email?: string; name?: string; channelTitle?: string } | null;
+  healthStatus?: 'connected' | 'review' | 'disconnected';
+  needsReview?: boolean;
+  issue?: string | null;
+  metadata?: { email?: string; name?: string; channelTitle?: string; workspaceName?: string; teamName?: string } | null;
   updatedAt?: string | null;
 }
 
 type WorkspaceRole = 'owner' | 'admin' | 'editor' | 'reader';
+
+const EMPTY_USAGE_CREDIT_SUMMARY: UsageCreditSummary = {
+  creditUnit: 'plan_credit',
+  totalCredits: 0,
+  pendingCredits: 0,
+  apiCallCount: 0,
+  projectCount: 0,
+  averageCreditsPerProject: 0,
+  projects: [],
+  trend: [],
+};
 
 interface WorkspaceMember {
   id: string;
@@ -153,6 +201,11 @@ interface WorkspaceSeats {
   limit: number;
   available: number;
   isFull: boolean;
+}
+
+interface WorkspaceGuidedSetup {
+  roleTitle: string | null;
+  teamSize: string | null;
 }
 
 interface WorkspaceAuditLog {
@@ -187,7 +240,7 @@ const SETTINGS_INTEGRATIONS: Array<{
   },
   {
     provider: 'microsoft',
-    name: 'Teams',
+    name: 'Microsoft Teams',
     detail: 'Call recordings',
     Icon: Users,
     accent: 'text-indigo-600 dark:text-indigo-300',
@@ -197,20 +250,20 @@ const SETTINGS_INTEGRATIONS: Array<{
   {
     provider: 'youtube',
     name: 'YouTube',
-    detail: 'Channel access',
+    detail: 'Your channel uploads',
     Icon: Youtube,
     accent: 'text-red-600 dark:text-red-300',
     bg: 'bg-red-50 dark:bg-red-500/10',
     border: 'border-red-100 dark:border-red-400/20',
   },
   {
-    provider: 'stripe',
-    name: 'Stripe',
-    detail: 'Customer and payment events',
-    Icon: CreditCard,
-    accent: 'text-violet-600 dark:text-violet-300',
-    bg: 'bg-violet-50 dark:bg-violet-500/10',
-    border: 'border-violet-100 dark:border-violet-400/20',
+    provider: 'notion',
+    name: 'Notion',
+    detail: 'Pages, notes, and transcripts',
+    Icon: FileText,
+    accent: 'text-slate-700 dark:text-slate-200',
+    bg: 'bg-slate-50 dark:bg-slate-500/10',
+    border: 'border-slate-200 dark:border-slate-400/20',
   },
   {
     provider: 'onedrive',
@@ -233,7 +286,7 @@ const SETTINGS_INTEGRATIONS: Array<{
   {
     provider: 'granola',
     name: 'Granola AI',
-    detail: 'Meeting notes and transcripts',
+    detail: 'Paste notes or transcripts',
     Icon: Bot,
     accent: 'text-amber-600 dark:text-amber-300',
     bg: 'bg-amber-50 dark:bg-amber-500/10',
@@ -253,7 +306,7 @@ const SETTINGS_INTEGRATIONS: Array<{
 const integrationLabel = (provider: IntegrationProvider) => {
   if (provider === 'zoom') return 'Zoom';
   if (provider === 'microsoft') return 'Microsoft Teams';
-  if (provider === 'stripe') return 'Stripe';
+  if (provider === 'notion') return 'Notion';
   if (provider === 'onedrive') return 'OneDrive';
   if (provider === 'google_drive') return 'Google Drive';
   if (provider === 'granola') return 'Granola AI';
@@ -346,6 +399,31 @@ function friendlyError(fallback: string, error: unknown) {
   return fallback;
 }
 
+async function readApiErrorMessage(response: Response, fallback: string) {
+  try {
+    const payload = await response.json();
+    if (typeof payload?.message === 'string' && payload.message.trim()) return payload.message;
+    if (typeof payload?.error === 'string' && payload.error.trim()) return payload.error;
+    return fallback;
+  } catch {
+    return fallback;
+  }
+}
+
+function IntegrationSettingsErrorNotice({ message }: { message: string }) {
+  return (
+    <div className="rounded-lg border border-amber-200 bg-amber-50 px-4 py-3 text-amber-900 shadow-sm dark:border-amber-500/30 dark:bg-amber-500/10 dark:text-amber-100">
+      <div className="flex items-start gap-2.5">
+        <AlertTriangle className="mt-0.5 h-4 w-4 shrink-0 text-amber-600 dark:text-amber-300" />
+        <div className="min-w-0">
+          <p className="text-sm font-semibold">Integration issue</p>
+          <p className="mt-1 text-sm leading-5 text-amber-800 dark:text-amber-100/90">{message}</p>
+        </div>
+      </div>
+    </div>
+  );
+}
+
 // ============================================================================
 // SUB-COMPONENTS
 // ============================================================================
@@ -372,10 +450,25 @@ function TransactionTypeBadge({ type }: { type: string }) {
 
 function BalanceBanner({ balance }: { balance: Balance | null }) {
   const current = balance?.balance || 0;
-  const total = balance?.lifetimeCreditsAdded || 1;
-  const spent = balance?.lifetimeCreditsSpent || 0;
-  const pctRemaining = total > 0 ? Math.min(100, Math.round((current / total) * 100)) : 0;
-  const isLow = current < 2;
+  const isPlanCredit = balance?.creditUnit === 'plan_credit';
+  const monthlyGrant = Number(balance?.monthlyCreditGrant || 0);
+  const currentPlanCredits = Number(balance?.currentPlanCredits || 0);
+  const usedMonthlyCredits = isPlanCredit && monthlyGrant > 0
+    ? Math.max(0, monthlyGrant - currentPlanCredits)
+    : 0;
+  const total = isPlanCredit
+    ? Math.max(monthlyGrant, currentPlanCredits)
+    : balance?.lifetimeCreditsAdded || 1;
+  const spent = isPlanCredit ? usedMonthlyCredits : balance?.lifetimeCreditsSpent || 0;
+  const pctRemaining = isPlanCredit
+    ? monthlyGrant > 0 ? Math.min(100, Math.round((currentPlanCredits / monthlyGrant) * 100)) : 0
+    : total > 0 ? Math.min(100, Math.round((current / total) * 100)) : 0;
+  const isLow = isPlanCredit ? current < 25 : current < 2;
+  const formatBalanceAmount = (amount: number) => (
+    isPlanCredit
+      ? `${formatProductCredits(amount)} credits`
+      : formatSiteCreditsFromUsd(amount)
+  );
 
   return (
     <div className={cn(
@@ -385,16 +478,18 @@ function BalanceBanner({ balance }: { balance: Balance | null }) {
       <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-4">
         <div>
           <p className="text-sm font-medium text-slate-500 dark:text-slate-400 mb-1">Credit Balance</p>
-          <p className="text-4xl font-bold text-slate-900 dark:text-slate-50">{formatSiteCreditsFromUsd(current)}</p>
+          <p className="text-4xl font-bold text-slate-900 dark:text-slate-50">{balance?.formatted || formatBalanceAmount(current)}</p>
           <p className="text-sm text-slate-500 dark:text-slate-400 mt-1">
-            {formatSiteCreditsFromUsd(spent)} spent of {formatSiteCreditsFromUsd(total)} total
+            {isPlanCredit && monthlyGrant > 0
+              ? `${formatBalanceAmount(spent)} used of ${formatBalanceAmount(monthlyGrant)} this period. ${formatBalanceAmount(current)} total available.`
+              : `${formatBalanceAmount(spent)} used of ${formatBalanceAmount(total)} available this period`}
           </p>
         </div>
 
         <div className="flex-1 max-w-xs">
           <div className="flex items-center justify-between text-xs text-slate-500 dark:text-slate-400 mb-1.5">
-            <span>{pctRemaining}% remaining</span>
-            <span>{formatSiteCreditsFromUsd(current)} left</span>
+            <span>{isPlanCredit ? `${pctRemaining}% of monthly grant remaining` : `${pctRemaining}% remaining`}</span>
+            <span>{formatBalanceAmount(isPlanCredit ? currentPlanCredits : current)} left</span>
           </div>
           <div className="h-2.5 bg-slate-200 dark:bg-slate-700 rounded-full overflow-hidden">
             <div
@@ -417,7 +512,7 @@ function BalanceBanner({ balance }: { balance: Balance | null }) {
 
       {!!balance?.reservedPending && balance.reservedPending > 0 && (
         <div className="mt-4 text-sm text-slate-500 dark:text-slate-400">
-          Temporary reservation holds stay hidden here until the final charge posts.
+          {formatBalanceAmount(balance.reservedPending)} is currently held for work in progress.
         </div>
       )}
     </div>
@@ -453,7 +548,7 @@ function UsageAreaChart({ data }: { data: Array<{ date: string; cost: number; ev
           tick={{ fill: '#64748b', fontSize: 11 }}
           tickLine={false}
           axisLine={false}
-          tickFormatter={(value) => formatSiteCreditsFromUsd(Number(value))}
+          tickFormatter={(value) => formatProductCredits(Number(value))}
         />
         <Tooltip
           contentStyle={{
@@ -465,7 +560,7 @@ function UsageAreaChart({ data }: { data: Array<{ date: string; cost: number; ev
           }}
           formatter={(value: number | undefined, name: string | undefined) => {
             const isCost = name === 'cost';
-            return [isCost ? formatAmount(value ?? 0) : (value ?? 0), isCost ? 'Cost' : 'Events'];
+            return [isCost ? `${formatProductCredits(value ?? 0)} credits` : (value ?? 0), isCost ? 'Credits' : 'API calls'];
           }}
         />
         <Area
@@ -485,9 +580,14 @@ function UsageAreaChart({ data }: { data: Array<{ date: string; cost: number; ev
 // MAIN COMPONENT
 // ============================================================================
 
-export default function UnifiedSettings({ userEmail, forcedSection }: UnifiedSettingsProps) {
+export default function UnifiedSettings({ userEmail, forcedSection, organizationType }: UnifiedSettingsProps) {
   const { session, isDemoMode } = useAuth();
-  const { organization, organizationId, refresh: refreshOrganization } = useCurrentOrganization();
+  const {
+    organization,
+    organizationId,
+    loading: loadingOrganization,
+    refresh: refreshOrganization,
+  } = useCurrentOrganization(organizationType ? { organizationType } : {});
   const router = useRouter();
   const searchParams = useSearchParams();
   const rawSection = searchParams.get('section');
@@ -521,6 +621,8 @@ export default function UnifiedSettings({ userEmail, forcedSection }: UnifiedSet
   const [workspaceName, setWorkspaceName] = useState('');
   const [workspaceWebsite, setWorkspaceWebsite] = useState('');
   const [workspaceDescription, setWorkspaceDescription] = useState('');
+  const [workspaceRoleTitle, setWorkspaceRoleTitle] = useState('');
+  const [workspaceTeamSize, setWorkspaceTeamSize] = useState('');
   const [workspaceMembers, setWorkspaceMembers] = useState<WorkspaceMember[]>([]);
   const [workspaceInvitations, setWorkspaceInvitations] = useState<WorkspaceInvitation[]>([]);
   const [workspaceSeats, setWorkspaceSeats] = useState<WorkspaceSeats | null>(null);
@@ -536,6 +638,11 @@ export default function UnifiedSettings({ userEmail, forcedSection }: UnifiedSet
   const [latestInviteLink, setLatestInviteLink] = useState<string | null>(null);
   const [workspaceAuditLogs, setWorkspaceAuditLogs] = useState<WorkspaceAuditLog[]>([]);
   const [loadingWorkspaceAuditLogs, setLoadingWorkspaceAuditLogs] = useState(false);
+  const [workspaceMemberSearch, setWorkspaceMemberSearch] = useState('');
+  const [workspaceMemberRoleFilter, setWorkspaceMemberRoleFilter] = useState<'all' | WorkspaceRole>('all');
+  const [workspaceAuditPage, setWorkspaceAuditPage] = useState(1);
+  const [newTeamWorkspaceName, setNewTeamWorkspaceName] = useState('');
+  const [creatingTeamWorkspace, setCreatingTeamWorkspace] = useState(false);
 
   // Billing tab state
   const [balance, setBalance] = useState<Balance | null>(null);
@@ -550,18 +657,31 @@ export default function UnifiedSettings({ userEmail, forcedSection }: UnifiedSet
   // Usage tab state
   const [usageEvents, setUsageEvents] = useState<UsageEvent[]>([]);
   const [usageTrend, setUsageTrend] = useState<Array<{ date: string; cost: number; events: number }>>([]);
+  const [usageCreditSummary, setUsageCreditSummary] = useState<UsageCreditSummary>(EMPTY_USAGE_CREDIT_SUMMARY);
   const [loadingUsage, setLoadingUsage] = useState(true);
   const [showDeletedUsageProjects, setShowDeletedUsageProjects] = useState(false);
+  const [usageExportOpen, setUsageExportOpen] = useState(false);
+  const [usageExportFrom, setUsageExportFrom] = useState('');
+  const [usageExportTo, setUsageExportTo] = useState('');
   const [integrations, setIntegrations] = useState<IntegrationStatus[]>([]);
   const [integrationsLoading, setIntegrationsLoading] = useState(false);
   const [integrationsError, setIntegrationsError] = useState<string | null>(null);
+  const [integrationsManagerOpen, setIntegrationsManagerOpen] = useState(false);
 
   const TRANSACTIONS_PER_PAGE = 10;
+  const AUDIT_LOGS_PER_PAGE = 10;
   const deleteTarget = username.trim() || email.trim();
   const deleteTargetLabel = username.trim() ? 'username' : 'email';
   const isDeleteConfirmationValid = username.trim()
     ? deleteConfirmation.trim() === username.trim()
     : deleteConfirmation.trim().toLowerCase() === email.trim().toLowerCase();
+  const setUsageExportRangeToThisMonth = useCallback(() => {
+    const now = new Date();
+    const start = new Date(now.getFullYear(), now.getMonth(), 1);
+    const end = new Date(now.getFullYear(), now.getMonth() + 1, 0);
+    setUsageExportFrom(start.toISOString().slice(0, 10));
+    setUsageExportTo(end.toISOString().slice(0, 10));
+  }, []);
 
   const copyInviteLink = useCallback(async (inviteLink: string) => {
     try {
@@ -577,6 +697,18 @@ export default function UnifiedSettings({ userEmail, forcedSection }: UnifiedSet
   }, []);
 
   const fetchWorkspaceTeam = useCallback(async () => {
+    if (organizationType && !organizationId) {
+      setWorkspaceMembers([]);
+      setWorkspaceInvitations([]);
+      setWorkspaceSeats(null);
+      setCanManageWorkspace(false);
+      setWorkspaceMembershipRole(null);
+      setWorkspaceAuditLogs([]);
+      setLoadingWorkspaceAuditLogs(false);
+      setLoadingWorkspace(false);
+      return;
+    }
+
     if (!session?.access_token) {
       setLoadingWorkspace(false);
       return;
@@ -597,9 +729,12 @@ export default function UnifiedSettings({ userEmail, forcedSection }: UnifiedSet
         throw new Error(payload.error || 'Failed to load workspace');
       }
 
+      const guidedSetup = payload.organization?.guidedSetup as WorkspaceGuidedSetup | undefined;
       setWorkspaceName(payload.organization?.name || organization?.name || '');
       setWorkspaceWebsite(payload.organization?.profile?.website || '');
       setWorkspaceDescription(payload.organization?.profile?.description || '');
+      setWorkspaceRoleTitle(guidedSetup?.roleTitle || '');
+      setWorkspaceTeamSize(guidedSetup?.teamSize || '');
       setWorkspaceMembers(Array.isArray(payload.members) ? payload.members : []);
       setWorkspaceInvitations(Array.isArray(payload.invitations) ? payload.invitations : []);
       setWorkspaceSeats(payload.seats || null);
@@ -643,10 +778,18 @@ export default function UnifiedSettings({ userEmail, forcedSection }: UnifiedSet
     } finally {
       setLoadingWorkspace(false);
     }
-  }, [organization?.name, organizationId, session?.access_token]);
+  }, [organization?.name, organizationId, organizationType, session?.access_token]);
 
   useEffect(() => {
     const fetchDashboardSettings = async () => {
+      if (organizationType && !organizationId) {
+        setLoadingBilling(false);
+        setLoadingTransactions(false);
+        setIntegrationsLoading(false);
+        setLoadingUsage(false);
+        return;
+      }
+
       if (!session?.access_token) {
         setLoadingBilling(false);
         setLoadingTransactions(false);
@@ -688,7 +831,8 @@ export default function UnifiedSettings({ userEmail, forcedSection }: UnifiedSet
         setLastName(data.preferences?.lastName || '');
         setAvatarUrl(data.preferences?.avatarUrl || '');
         setUsageEvents(data.usageEvents || []);
-        setUsageTrend(data.usageTrend || []);
+        setUsageCreditSummary(data.usageCreditSummary || EMPTY_USAGE_CREDIT_SUMMARY);
+        setUsageTrend(data.usageCreditSummary?.trend || data.usageTrend || []);
       } catch (error) {
         console.error('Error fetching settings data:', error);
         setIntegrationsError(friendlyError('Failed to load integrations', error));
@@ -701,7 +845,7 @@ export default function UnifiedSettings({ userEmail, forcedSection }: UnifiedSet
     };
 
     fetchDashboardSettings();
-  }, [organizationId, session?.access_token]);
+  }, [organizationId, organizationType, session?.access_token]);
 
   useEffect(() => {
     fetchWorkspaceTeam();
@@ -709,6 +853,11 @@ export default function UnifiedSettings({ userEmail, forcedSection }: UnifiedSet
 
   useEffect(() => {
     const fetchTransactions = async () => {
+      if (organizationType && !organizationId) {
+        setLoadingTransactions(false);
+        return;
+      }
+
       if (!session?.access_token) {
         setLoadingTransactions(false);
         return;
@@ -744,7 +893,35 @@ export default function UnifiedSettings({ userEmail, forcedSection }: UnifiedSet
     };
 
     fetchTransactions();
-  }, [organizationId, session?.access_token, transactionPage]);
+  }, [organizationId, organizationType, session?.access_token, transactionPage]);
+
+  useEffect(() => {
+    setWorkspaceAuditPage(1);
+  }, [workspaceAuditLogs.length]);
+
+  useEffect(() => {
+    const handleThisMonth = () => {
+      setUsageExportRangeToThisMonth();
+      toast.success('Usage date range set to this month.');
+    };
+    const handleExportOpen = () => {
+      setUsageExportRangeToThisMonth();
+      setUsageExportOpen(true);
+    };
+    const handleIntegrationsManagerOpen = () => {
+      setIntegrationsManagerOpen(true);
+    };
+
+    window.addEventListener('audiorepurpose:usage-this-month', handleThisMonth);
+    window.addEventListener('audiorepurpose:usage-export-open', handleExportOpen);
+    window.addEventListener('audiorepurpose:integrations-manager-open', handleIntegrationsManagerOpen);
+
+    return () => {
+      window.removeEventListener('audiorepurpose:usage-this-month', handleThisMonth);
+      window.removeEventListener('audiorepurpose:usage-export-open', handleExportOpen);
+      window.removeEventListener('audiorepurpose:integrations-manager-open', handleIntegrationsManagerOpen);
+    };
+  }, [setUsageExportRangeToThisMonth]);
 
   useEffect(() => {
     if (!avatarFile) {
@@ -771,32 +948,18 @@ export default function UnifiedSettings({ userEmail, forcedSection }: UnifiedSet
 
   // Usage grouped by project
   const usageByProject = useMemo(() => {
-    if (!usageEvents || usageEvents.length === 0) return [];
-
-    const projectMap = new Map<string, { title: string; cost: number; events: number; services: Set<string> }>();
-
-    usageEvents.forEach(e => {
-      const pid = e.projectId || (e.projectTitle ? `deleted-${e.projectTitle}` : 'unknown');
-      const baseTitle = e.projectTitle || (pid === 'unknown' ? 'Unassigned' : pid);
-      const title = !e.projectId && e.projectTitle ? `${baseTitle} (Deleted)` : baseTitle;
-      const existing = projectMap.get(pid) || { title, cost: 0, events: 0, services: new Set<string>() };
-      existing.cost += Number(e.billedCost || 0);
-      existing.events += 1;
-      if (e.serviceName) existing.services.add(e.serviceName);
-      projectMap.set(pid, existing);
-    });
-
-    return Array.from(projectMap.entries())
-      .map(([id, data]) => ({
-        id,
-        title: data.title,
-        cost: data.cost,
-        events: data.events,
-        serviceCount: data.services.size,
-        isDeleted: id.startsWith('deleted-'),
+    return (usageCreditSummary.projects || [])
+      .map((project) => ({
+        id: project.id,
+        title: project.title,
+        cost: project.credits,
+        events: project.events,
+        workflowCount: project.workflowCount,
+        serviceCount: project.serviceCount,
+        isDeleted: project.isDeleted,
       }))
       .sort((a, b) => b.cost - a.cost);
-  }, [usageEvents]);
+  }, [usageCreditSummary.projects]);
 
   const visibleUsageByProject = useMemo(() => {
     if (showDeletedUsageProjects) return usageByProject;
@@ -805,19 +968,30 @@ export default function UnifiedSettings({ userEmail, forcedSection }: UnifiedSet
 
   // Usage stats
   const usageStats = useMemo(() => {
-    if (!usageEvents || usageEvents.length === 0) {
-      return { totalCost: 0, totalEvents: 0, projectCount: 0 };
-    }
-
-    const totalCost = usageEvents.reduce((sum, e) => sum + Number(e.billedCost || 0), 0);
-    const projectIds = new Set(usageEvents.map(e => e.projectId).filter(Boolean));
-
     return {
-      totalCost,
-      totalEvents: usageEvents.length,
-      projectCount: projectIds.size,
+      totalCredits: Number(usageCreditSummary.totalCredits || 0),
+      pendingCredits: Number(usageCreditSummary.pendingCredits || 0),
+      totalEvents: Number(usageCreditSummary.apiCallCount || usageEvents.length || 0),
+      projectCount: Number(usageCreditSummary.projectCount || 0),
+      averageCreditsPerProject: Number(usageCreditSummary.averageCreditsPerProject || 0),
     };
-  }, [usageEvents]);
+  }, [usageCreditSummary, usageEvents.length]);
+  const filteredWorkspaceMembers = useMemo(() => {
+    const search = workspaceMemberSearch.trim().toLowerCase();
+    return workspaceMembers.filter((member) => {
+      const matchesSearch = !search
+        || (member.name || '').toLowerCase().includes(search)
+        || (member.email || '').toLowerCase().includes(search)
+        || member.role.toLowerCase().includes(search);
+      const matchesRole = workspaceMemberRoleFilter === 'all' || member.role === workspaceMemberRoleFilter;
+      return matchesSearch && matchesRole;
+    });
+  }, [workspaceMemberRoleFilter, workspaceMemberSearch, workspaceMembers]);
+  const workspaceAuditTotalPages = Math.max(1, Math.ceil(workspaceAuditLogs.length / AUDIT_LOGS_PER_PAGE));
+  const paginatedWorkspaceAuditLogs = useMemo(() => {
+    const start = (workspaceAuditPage - 1) * AUDIT_LOGS_PER_PAGE;
+    return workspaceAuditLogs.slice(start, start + AUDIT_LOGS_PER_PAGE);
+  }, [workspaceAuditLogs, workspaceAuditPage]);
 
   // Handlers
   const handleSaveProfile = async () => {
@@ -1114,6 +1288,48 @@ export default function UnifiedSettings({ userEmail, forcedSection }: UnifiedSet
     URL.revokeObjectURL(url);
   };
 
+  const handleExportUsage = () => {
+    if (!usageExportFrom || !usageExportTo) {
+      toast.error('Choose both from and to dates.');
+      return;
+    }
+
+    const from = new Date(`${usageExportFrom}T00:00:00`);
+    const to = new Date(`${usageExportTo}T23:59:59`);
+    if (Number.isNaN(from.getTime()) || Number.isNaN(to.getTime()) || from > to) {
+      toast.error('Choose a valid date range.');
+      return;
+    }
+
+    const rows = usageEvents
+      .filter((event) => {
+        const eventDate = new Date(event.createdAt);
+        return eventDate >= from && eventDate <= to;
+      })
+      .map((event) => [
+        new Date(event.createdAt).toISOString(),
+        event.projectTitle || '',
+        event.serviceName,
+        event.provider,
+        String(event.units),
+        formatProductCredits(event.billedCost),
+      ]);
+
+    const csv = [
+      ['Date', 'Project', 'Service', 'Provider', 'Units', 'Credits'],
+      ...rows,
+    ].map((row) => row.map((value) => `"${String(value).replace(/"/g, '""')}"`).join(',')).join('\n');
+
+    const blob = new Blob([csv], { type: 'text/csv' });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    a.href = url;
+    a.download = `usage-${usageExportFrom}-to-${usageExportTo}.csv`;
+    a.click();
+    URL.revokeObjectURL(url);
+    setUsageExportOpen(false);
+  };
+
   const toggleGroup = (id: string) => {
     setExpandedGroups(prev => {
       const next = new Set(prev);
@@ -1137,7 +1353,7 @@ export default function UnifiedSettings({ userEmail, forcedSection }: UnifiedSet
         headers: { Authorization: `Bearer ${session.access_token}` }
       });
       if (!res.ok) {
-        throw new Error(`Unable to connect ${integrationLabel(provider)} right now.`);
+        throw new Error(await readApiErrorMessage(res, `Unable to connect ${integrationLabel(provider)} right now.`));
       }
       const data = await res.json();
       if (!data?.url) {
@@ -1165,10 +1381,10 @@ export default function UnifiedSettings({ userEmail, forcedSection }: UnifiedSet
         body: JSON.stringify({ provider })
       });
       if (!res.ok) {
-        throw new Error(`Unable to disconnect ${integrationLabel(provider)}.`);
+        throw new Error(await readApiErrorMessage(res, `Unable to disconnect ${integrationLabel(provider)}.`));
       }
       setIntegrations(prev =>
-        prev.map(i => i.provider === provider ? { ...i, connected: false } : i)
+        prev.map(i => i.provider === provider ? { ...i, connected: false, healthStatus: 'disconnected', needsReview: false, issue: null } : i)
       );
       toast.success(`${integrationLabel(provider)} disconnected`);
     } catch (error) {
@@ -1210,6 +1426,10 @@ export default function UnifiedSettings({ userEmail, forcedSection }: UnifiedSet
             website: workspaceWebsite.trim() || null,
             description: workspaceDescription.trim() || null,
           },
+          guidedSetup: {
+            roleTitle: workspaceRoleTitle.trim() || null,
+            teamSize: workspaceTeamSize.trim() || null,
+          },
         }),
         cache: 'no-store',
       });
@@ -1220,6 +1440,8 @@ export default function UnifiedSettings({ userEmail, forcedSection }: UnifiedSet
       }
 
       setWorkspaceName(payload.organization?.name || workspaceName.trim());
+      setWorkspaceRoleTitle(workspaceRoleTitle.trim());
+      setWorkspaceTeamSize(workspaceTeamSize.trim());
       setWorkspaceMessage({ type: 'success', text: 'Workspace updated.' });
       await refreshOrganization();
       await fetchWorkspaceTeam();
@@ -1227,6 +1449,43 @@ export default function UnifiedSettings({ userEmail, forcedSection }: UnifiedSet
       setWorkspaceMessage({ type: 'error', text: friendlyError('Failed to update workspace.', error) });
     } finally {
       setSavingWorkspace(false);
+    }
+  };
+
+  const createTeamWorkspace = async () => {
+    const name = newTeamWorkspaceName.trim();
+    if (!name) {
+      setWorkspaceMessage({ type: 'error', text: 'Team workspace name is required.' });
+      return;
+    }
+    if (!session?.access_token) {
+      setWorkspaceMessage({ type: 'error', text: 'You need to be signed in to create a team workspace.' });
+      return;
+    }
+
+    setCreatingTeamWorkspace(true);
+    setWorkspaceMessage(null);
+    try {
+      const response = await fetch('/api/organizations/team', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          Authorization: `Bearer ${session.access_token}`,
+        },
+        body: JSON.stringify({ name }),
+        cache: 'no-store',
+      });
+      const payload = await response.json().catch(() => ({}));
+      if (!response.ok) {
+        throw new Error(payload.error || 'Failed to create team workspace');
+      }
+      setNewTeamWorkspaceName('');
+      setWorkspaceMessage({ type: 'success', text: 'Team workspace created.' });
+      await refreshOrganization();
+    } catch (error) {
+      setWorkspaceMessage({ type: 'error', text: friendlyError('Failed to create team workspace.', error) });
+    } finally {
+      setCreatingTeamWorkspace(false);
     }
   };
 
@@ -1460,9 +1719,124 @@ export default function UnifiedSettings({ userEmail, forcedSection }: UnifiedSet
   const workspaceAtLimit = Boolean(workspaceSeats?.isFull || availableSeatCount <= 0);
   const canTransferOwnership = canManageWorkspace && workspaceMembershipRole === 'owner';
   const availableInviteRoles = inviteRoleOptions(workspaceMembershipRole);
+  const renderIntegrationCards = () => (
+    <div className="grid gap-2 lg:grid-cols-3">
+      {SETTINGS_INTEGRATIONS.filter(({ provider }) => provider && isIntegrationEnabled(provider)).map(({ provider, name, detail, Icon, accent, bg, border }) => {
+        const status = provider ? integrations.find(i => i.provider === provider) : undefined;
+        const needsReview = Boolean(status?.needsReview || status?.healthStatus === 'review');
+        const connected = Boolean(status?.connected) && !needsReview;
+        const providerEnabled = provider ? isIntegrationEnabled(provider) : false;
+        const connectedLabel = status?.metadata?.channelTitle || status?.metadata?.workspaceName || status?.metadata?.teamName || status?.metadata?.email || status?.metadata?.name;
+        const connectedDetail = connectedLabel ? `Connected - ${connectedLabel}` : 'Connected';
+        const reviewDetail = connectedLabel ? `Review - ${connectedLabel}` : 'Review connection';
+        const showAction = Boolean(provider && !isDemoMode && (providerEnabled || connected) && !integrationsLoading && !integrationsError);
+
+        return (
+          <div
+            key={name}
+            className={`rounded-lg border ${border} ${bg} p-3`}
+          >
+            <div className="flex items-start justify-between gap-3">
+              <div className="flex min-w-0 items-center gap-2">
+                <span className="inline-flex h-8 w-8 shrink-0 items-center justify-center rounded-md bg-white/80 shadow-sm dark:bg-slate-900/80">
+                  <Icon className={`h-4 w-4 ${accent}`} />
+                </span>
+                <div className="min-w-0">
+                  <p className="text-sm font-semibold text-slate-900 dark:text-slate-50">{name}</p>
+                  <p className="truncate text-xs text-slate-500 dark:text-slate-400">
+                    {needsReview ? reviewDetail : connected ? connectedDetail : detail}
+                  </p>
+                </div>
+              </div>
+              {needsReview ? (
+                <span className="shrink-0 rounded-full bg-amber-100 px-2 py-0.5 text-xs font-medium text-amber-800 dark:bg-amber-400/10 dark:text-amber-200">
+                  Review
+                </span>
+              ) : connected && (
+                <span className="shrink-0 rounded-full bg-emerald-100 px-2 py-0.5 text-xs font-medium text-emerald-700 dark:bg-emerald-400/10 dark:text-emerald-300">
+                  Connected
+                </span>
+              )}
+            </div>
+            {showAction && provider && (
+              <button
+                type="button"
+                onClick={() => connected ? disconnectProvider(provider) : startOAuth(provider)}
+                disabled={!providerEnabled && !connected}
+                className="mt-3 inline-flex w-fit rounded-md bg-slate-900 px-3 py-1.5 text-xs font-medium text-white transition-colors hover:bg-slate-800 disabled:cursor-not-allowed disabled:opacity-60 dark:bg-white dark:text-slate-950 dark:hover:bg-slate-200"
+              >
+                {provider === 'granola' && !connected ? 'Manual import' : connected ? 'Disconnect' : needsReview ? 'Reconnect' : 'Connect'}
+              </button>
+            )}
+          </div>
+        );
+      })}
+    </div>
+  );
 
   return (
     <div className="py-6">
+      <Dialog open={integrationsManagerOpen} onOpenChange={setIntegrationsManagerOpen}>
+        <DialogContent className="max-w-4xl">
+          <DialogHeader>
+            <DialogTitle>Manage integrations</DialogTitle>
+            <DialogDescription>Connect or disconnect available apps for this workspace.</DialogDescription>
+          </DialogHeader>
+          {integrationsLoading ? (
+            <div className="py-8 text-center text-sm text-slate-400">Loading integrations...</div>
+          ) : integrationsError ? (
+            <IntegrationSettingsErrorNotice message={integrationsError} />
+          ) : (
+            renderIntegrationCards()
+          )}
+        </DialogContent>
+      </Dialog>
+      <Dialog open={usageExportOpen} onOpenChange={setUsageExportOpen}>
+        <DialogContent className="max-w-md">
+          <DialogHeader>
+            <DialogTitle>Export usage</DialogTitle>
+            <DialogDescription>Select the date range to include in the CSV export.</DialogDescription>
+          </DialogHeader>
+          <div className="grid gap-4 sm:grid-cols-2">
+            <label className="text-sm font-medium text-slate-700 dark:text-slate-200">
+              From
+              <input
+                type="date"
+                value={usageExportFrom}
+                onChange={(event) => setUsageExportFrom(event.target.value)}
+                className="mt-1 w-full rounded-lg border border-slate-300 bg-white px-3 py-2 text-sm text-slate-900 focus:outline-none focus:ring-2 focus:ring-blue-500 dark:border-slate-700 dark:bg-slate-900 dark:text-slate-100"
+              />
+            </label>
+            <label className="text-sm font-medium text-slate-700 dark:text-slate-200">
+              To
+              <input
+                type="date"
+                value={usageExportTo}
+                onChange={(event) => setUsageExportTo(event.target.value)}
+                className="mt-1 w-full rounded-lg border border-slate-300 bg-white px-3 py-2 text-sm text-slate-900 focus:outline-none focus:ring-2 focus:ring-blue-500 dark:border-slate-700 dark:bg-slate-900 dark:text-slate-100"
+              />
+            </label>
+          </div>
+          <div className="flex flex-col gap-2 sm:flex-row sm:justify-between">
+            <button
+              type="button"
+              onClick={setUsageExportRangeToThisMonth}
+              className="inline-flex min-h-10 items-center justify-center gap-2 rounded-lg border border-slate-200 bg-white px-4 py-2 text-sm font-semibold text-slate-700 hover:bg-slate-50 dark:border-slate-700 dark:bg-slate-900 dark:text-slate-200 dark:hover:bg-slate-800"
+            >
+              <CalendarDays className="h-4 w-4" />
+              This month
+            </button>
+            <button
+              type="button"
+              onClick={handleExportUsage}
+              className="inline-flex min-h-10 items-center justify-center gap-2 rounded-lg bg-blue-600 px-4 py-2 text-sm font-semibold text-white hover:bg-blue-700"
+            >
+              <Download className="h-4 w-4" />
+              Export CSV
+            </button>
+          </div>
+        </DialogContent>
+      </Dialog>
       {!forcedSection && (
         <div className="mb-6 overflow-x-auto">
           <div className="inline-flex min-w-full gap-1 rounded-lg border border-slate-200 bg-slate-50 p-1 dark:border-slate-800 dark:bg-slate-900 sm:min-w-0">
@@ -1926,104 +2300,16 @@ export default function UnifiedSettings({ userEmail, forcedSection }: UnifiedSet
                   <div className="mt-4 text-sm text-slate-400">Loading integrations...</div>
                 )}
                 {!integrationsLoading && integrationsError && (
-                  <div className="mt-4 text-sm text-red-400">{integrationsError}</div>
+                  <div className="mt-4">
+                    <IntegrationSettingsErrorNotice message={integrationsError} />
+                  </div>
                 )}
 
                 <h3 className="mt-4 text-xs font-semibold uppercase tracking-wide text-slate-500 dark:text-slate-400">Live</h3>
-                <div className="mt-2 grid gap-2 lg:grid-cols-3">
-                  {SETTINGS_INTEGRATIONS.filter(({ provider }) => provider && isIntegrationEnabled(provider)).map(({ provider, name, detail, Icon, accent, bg, border }) => {
-                    const status = provider ? integrations.find(i => i.provider === provider) : undefined;
-                    const connected = Boolean(status?.connected);
-                    const providerEnabled = provider ? isIntegrationEnabled(provider) : false;
-                    const connectedLabel = status?.metadata?.channelTitle || status?.metadata?.email || status?.metadata?.name;
-                    const connectedDetail = connectedLabel ? `Connected - ${connectedLabel}` : 'Connected';
-                    const showAction = Boolean(provider && !isDemoMode && (providerEnabled || connected) && !integrationsLoading && !integrationsError);
-
-                    return (
-                      <div
-                        key={name}
-                        className={`rounded-lg border ${border} ${bg} p-3`}
-                      >
-                        <div className="flex items-start justify-between gap-3">
-                          <div className="flex min-w-0 items-center gap-2">
-                            <span className="inline-flex h-8 w-8 shrink-0 items-center justify-center rounded-md bg-white/80 shadow-sm dark:bg-slate-900/80">
-                              <Icon className={`h-4 w-4 ${accent}`} />
-                            </span>
-                            <div className="min-w-0">
-                              <p className="text-sm font-semibold text-slate-900 dark:text-slate-50">{name}</p>
-                              <p className="truncate text-xs text-slate-500 dark:text-slate-400">
-                                {connected ? connectedDetail : detail}
-                              </p>
-                            </div>
-                          </div>
-                          {connected && (
-                            <span className="shrink-0 rounded-full bg-emerald-100 px-2 py-0.5 text-xs font-medium text-emerald-700 dark:bg-emerald-400/10 dark:text-emerald-300">
-                              Connected
-                            </span>
-                          )}
-                        </div>
-                        {showAction && provider && (
-                          <button
-                            type="button"
-                            onClick={() => connected ? disconnectProvider(provider) : startOAuth(provider)}
-                            disabled={!providerEnabled && !connected}
-                            className="mt-3 inline-flex w-fit rounded-md bg-slate-900 px-3 py-1.5 text-xs font-medium text-white transition-colors hover:bg-slate-800 disabled:cursor-not-allowed disabled:opacity-60 dark:bg-white dark:text-slate-950 dark:hover:bg-slate-200"
-                          >
-                            {connected ? 'Disconnect' : 'Connect'}
-                          </button>
-                        )}
-                      </div>
-                    );
-                  })}
+                <div className="mt-2">
+                  {renderIntegrationCards()}
                 </div>
 
-                <h3 className="mt-4 text-xs font-semibold uppercase tracking-wide text-slate-500 dark:text-slate-400">Coming soon</h3>
-                <div className="mt-2 grid gap-2 lg:grid-cols-3">
-                  {SETTINGS_INTEGRATIONS.filter(({ provider }) => provider && !isIntegrationEnabled(provider)).map(({ provider, name, detail, Icon, accent, bg, border }) => {
-                    const status = provider ? integrations.find(i => i.provider === provider) : undefined;
-                    const connected = Boolean(status?.connected);
-                    const providerEnabled = provider ? isIntegrationEnabled(provider) : false;
-                    const connectedLabel = status?.metadata?.channelTitle || status?.metadata?.email || status?.metadata?.name;
-                    const connectedDetail = connectedLabel ? `Connected - ${connectedLabel}` : 'Connected';
-                    const showAction = Boolean(provider && !isDemoMode && (providerEnabled || connected) && !integrationsLoading && !integrationsError);
-
-                    return (
-                      <div
-                        key={name}
-                        className={`rounded-lg border ${border} ${bg} p-3`}
-                      >
-                        <div className="flex items-start justify-between gap-3">
-                          <div className="flex min-w-0 items-center gap-2">
-                            <span className="inline-flex h-8 w-8 shrink-0 items-center justify-center rounded-md bg-white/80 shadow-sm dark:bg-slate-900/80">
-                              <Icon className={`h-4 w-4 ${accent}`} />
-                            </span>
-                            <div className="min-w-0">
-                              <p className="text-sm font-semibold text-slate-900 dark:text-slate-50">{name}</p>
-                              <p className="truncate text-xs text-slate-500 dark:text-slate-400">
-                                {connected ? connectedDetail : detail}
-                              </p>
-                            </div>
-                          </div>
-                          {connected && (
-                            <span className="shrink-0 rounded-full bg-emerald-100 px-2 py-0.5 text-xs font-medium text-emerald-700 dark:bg-emerald-400/10 dark:text-emerald-300">
-                              Connected
-                            </span>
-                          )}
-                        </div>
-                        {showAction && provider && (
-                          <button
-                            type="button"
-                            onClick={() => connected ? disconnectProvider(provider) : startOAuth(provider)}
-                            disabled={!providerEnabled && !connected}
-                            className="mt-3 inline-flex w-fit rounded-md bg-slate-900 px-3 py-1.5 text-xs font-medium text-white transition-colors hover:bg-slate-800 disabled:cursor-not-allowed disabled:opacity-60 dark:bg-white dark:text-slate-950 dark:hover:bg-slate-200"
-                          >
-                            {connected ? 'Disconnect' : 'Connect'}
-                          </button>
-                        )}
-                      </div>
-                    );
-                  })}
-                </div>
               </div>
             </CardContent>
           </Card>
@@ -2034,15 +2320,70 @@ export default function UnifiedSettings({ userEmail, forcedSection }: UnifiedSet
       {/* WORKSPACE */}
       {/* ================================================================ */}
       {section === 'workspace' && (
-        loadingWorkspace ? (
+        loadingOrganization || loadingWorkspace ? (
           <div className="animate-pulse space-y-6">
-            <div className="grid gap-4 md:grid-cols-3">
-              {[1, 2, 3].map((item) => (
+            <div className="grid gap-4 md:grid-cols-4">
+              {[1, 2, 3, 4].map((item) => (
                 <div key={item} className="h-28 rounded-lg bg-slate-200 dark:bg-slate-800" />
               ))}
             </div>
             <div className="h-64 rounded-lg bg-slate-200 dark:bg-slate-800" />
             <div className="h-80 rounded-lg bg-slate-200 dark:bg-slate-800" />
+          </div>
+        ) : organizationType === 'saas_customer' && !organizationId ? (
+          <div className="space-y-6">
+            {workspaceMessage && (
+              <div className={cn(
+                "rounded-lg px-4 py-3 text-sm",
+                workspaceMessage.type === 'success'
+                  ? "border border-green-200 bg-green-50 text-green-700 dark:border-green-900/40 dark:bg-green-900/20 dark:text-green-300"
+                  : "border border-red-200 bg-red-50 text-red-700 dark:border-red-900/40 dark:bg-red-900/20 dark:text-red-300"
+              )}>
+                {workspaceMessage.text}
+              </div>
+            )}
+            <Card>
+              <CardHeader>
+                <div className="flex items-start gap-3">
+                  <span className="inline-flex h-10 w-10 items-center justify-center rounded-lg bg-blue-50 text-blue-600 dark:bg-blue-500/10 dark:text-blue-300">
+                    <Users className="h-5 w-5" />
+                  </span>
+                  <div>
+                    <CardTitle>Create team workspace</CardTitle>
+                    <CardDescription>
+                      Your personal workspace stays private. Create a team workspace to manage members, seats, shared billing, and team settings.
+                    </CardDescription>
+                  </div>
+                </div>
+              </CardHeader>
+              <CardContent className="space-y-4">
+                <div>
+                  <label htmlFor="new-team-workspace-name" className="mb-1 block text-sm font-medium text-slate-700 dark:text-slate-300">
+                    Team workspace name
+                  </label>
+                  <input
+                    id="new-team-workspace-name"
+                    type="text"
+                    value={newTeamWorkspaceName}
+                    onChange={(event) => setNewTeamWorkspaceName(event.target.value)}
+                    disabled={creatingTeamWorkspace}
+                    placeholder="Acme Content Team"
+                    className="w-full rounded-lg border border-slate-300 bg-white px-3 py-2 text-sm text-slate-900 focus:border-transparent focus:outline-none focus:ring-2 focus:ring-blue-500 disabled:cursor-not-allowed disabled:opacity-50 dark:border-slate-700 dark:bg-slate-800 dark:text-slate-200"
+                  />
+                </div>
+                <div className="flex justify-end">
+                  <button
+                    type="button"
+                    onClick={() => void createTeamWorkspace()}
+                    disabled={creatingTeamWorkspace || !newTeamWorkspaceName.trim()}
+                    className="inline-flex min-h-10 items-center justify-center gap-2 rounded-lg bg-blue-600 px-4 py-2 text-sm font-semibold text-white transition-colors hover:bg-blue-700 disabled:cursor-not-allowed disabled:opacity-50"
+                  >
+                    {creatingTeamWorkspace ? <Loader2 className="h-4 w-4 animate-spin" /> : <UserPlus className="h-4 w-4" />}
+                    Create team workspace
+                  </button>
+                </div>
+              </CardContent>
+            </Card>
           </div>
         ) : (
           <div className="space-y-6">
@@ -2069,7 +2410,7 @@ export default function UnifiedSettings({ userEmail, forcedSection }: UnifiedSet
               </div>
             )}
 
-            <div className="grid gap-4 md:grid-cols-3">
+            <div className="grid gap-4 md:grid-cols-4">
               <Card>
                 <CardContent className="pt-6">
                   <p className="text-sm font-medium text-slate-500 dark:text-slate-400">Active Seats</p>
@@ -2094,6 +2435,15 @@ export default function UnifiedSettings({ userEmail, forcedSection }: UnifiedSet
                   )}>
                     {workspaceAtLimit ? 'No seats available' : `${availableSeatCount} seats available`}
                   </p>
+                </CardContent>
+              </Card>
+              <Card>
+                <CardContent className="pt-6">
+                  <p className="text-sm font-medium text-slate-500 dark:text-slate-400">Team Size</p>
+                  <p className="mt-1 break-words text-2xl font-bold text-slate-900 dark:text-slate-50">
+                    {workspaceTeamSize || 'Not set'}
+                  </p>
+                  <p className="mt-1 text-xs text-slate-400 dark:text-slate-500">Captured during workspace setup</p>
                 </CardContent>
               </Card>
             </div>
@@ -2126,6 +2476,20 @@ export default function UnifiedSettings({ userEmail, forcedSection }: UnifiedSet
                     />
                   </div>
                   <div>
+                    <label htmlFor="workspace-role-title" className="mb-1 block text-sm font-medium text-slate-700 dark:text-slate-300">
+                      Owner/job title
+                    </label>
+                    <input
+                      id="workspace-role-title"
+                      type="text"
+                      value={workspaceRoleTitle}
+                      onChange={(event) => setWorkspaceRoleTitle(event.target.value)}
+                      disabled={isDemoMode || !canManageWorkspace || savingWorkspace}
+                      placeholder="Marketing lead"
+                      className="w-full rounded-lg border border-slate-300 bg-white px-3 py-2 text-sm text-slate-900 focus:border-transparent focus:outline-none focus:ring-2 focus:ring-blue-500 disabled:cursor-not-allowed disabled:opacity-50 dark:border-slate-700 dark:bg-slate-800 dark:text-slate-200"
+                    />
+                  </div>
+                  <div>
                     <label htmlFor="workspace-website" className="mb-1 block text-sm font-medium text-slate-700 dark:text-slate-300">
                       Website
                     </label>
@@ -2136,6 +2500,20 @@ export default function UnifiedSettings({ userEmail, forcedSection }: UnifiedSet
                       onChange={(event) => setWorkspaceWebsite(event.target.value)}
                       disabled={isDemoMode || !canManageWorkspace || savingWorkspace}
                       placeholder="https://example.com"
+                      className="w-full rounded-lg border border-slate-300 bg-white px-3 py-2 text-sm text-slate-900 focus:border-transparent focus:outline-none focus:ring-2 focus:ring-blue-500 disabled:cursor-not-allowed disabled:opacity-50 dark:border-slate-700 dark:bg-slate-800 dark:text-slate-200"
+                    />
+                  </div>
+                  <div>
+                    <label htmlFor="workspace-team-size" className="mb-1 block text-sm font-medium text-slate-700 dark:text-slate-300">
+                      Team size
+                    </label>
+                    <input
+                      id="workspace-team-size"
+                      type="text"
+                      value={workspaceTeamSize}
+                      onChange={(event) => setWorkspaceTeamSize(event.target.value)}
+                      disabled={isDemoMode || !canManageWorkspace || savingWorkspace}
+                      placeholder="1-5"
                       className="w-full rounded-lg border border-slate-300 bg-white px-3 py-2 text-sm text-slate-900 focus:border-transparent focus:outline-none focus:ring-2 focus:ring-blue-500 disabled:cursor-not-allowed disabled:opacity-50 dark:border-slate-700 dark:bg-slate-800 dark:text-slate-200"
                     />
                   </div>
@@ -2218,7 +2596,14 @@ export default function UnifiedSettings({ userEmail, forcedSection }: UnifiedSet
                 </div>
                 {workspaceAtLimit && (
                   <p className="mt-3 text-sm text-amber-600 dark:text-amber-300">
-                    Active members and pending invites have reached the current plan seat limit.
+                    Active members and pending invites have reached the current plan seat limit.{' '}
+                    <Link
+                      href={withOrganizationId('/dashboard/billing', organizationId)}
+                      className="font-semibold underline underline-offset-2"
+                    >
+                      Add seats in billing
+                    </Link>
+                    .
                   </p>
                 )}
                 <div className="mt-4 grid gap-2 text-xs text-slate-500 dark:text-slate-400 md:grid-cols-2">
@@ -2259,13 +2644,45 @@ export default function UnifiedSettings({ userEmail, forcedSection }: UnifiedSet
 
             <Card>
               <CardHeader>
-                <CardTitle>Members</CardTitle>
-                <CardDescription>People with active access to this workspace</CardDescription>
+                <div className="flex flex-col gap-3 lg:flex-row lg:items-end lg:justify-between">
+                  <div>
+                    <CardTitle>Members</CardTitle>
+                    <CardDescription>People with active access to this workspace</CardDescription>
+                  </div>
+                  <div className="flex flex-col gap-2 sm:flex-row">
+                    <div className="relative">
+                      <Search className="pointer-events-none absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-slate-400" />
+                      <input
+                        type="search"
+                        value={workspaceMemberSearch}
+                        onChange={(event) => setWorkspaceMemberSearch(event.target.value)}
+                        placeholder="Search users..."
+                        className="h-10 w-full rounded-lg border border-slate-300 bg-white pl-9 pr-3 text-sm text-slate-900 focus:outline-none focus:ring-2 focus:ring-blue-500 dark:border-slate-700 dark:bg-slate-900 dark:text-slate-100 sm:w-56"
+                      />
+                    </div>
+                    <select
+                      value={workspaceMemberRoleFilter}
+                      onChange={(event) => setWorkspaceMemberRoleFilter(event.target.value as 'all' | WorkspaceRole)}
+                      className="h-10 rounded-lg border border-slate-300 bg-white px-3 text-sm text-slate-900 focus:outline-none focus:ring-2 focus:ring-blue-500 dark:border-slate-700 dark:bg-slate-900 dark:text-slate-100"
+                      aria-label="Filter members by role"
+                    >
+                      <option value="all">All users</option>
+                      <option value="owner">Owners</option>
+                      <option value="admin">Admins</option>
+                      <option value="editor">Editors</option>
+                      <option value="reader">Readers</option>
+                    </select>
+                  </div>
+                </div>
               </CardHeader>
               <CardContent className="p-0">
                 {workspaceMembers.length === 0 ? (
                   <div className="px-6 py-10 text-center text-sm text-slate-400">
                     No active members found
+                  </div>
+                ) : filteredWorkspaceMembers.length === 0 ? (
+                  <div className="px-6 py-10 text-center text-sm text-slate-400">
+                    No members match the current search or filter
                   </div>
                 ) : (
                   <div className="overflow-x-auto">
@@ -2274,12 +2691,13 @@ export default function UnifiedSettings({ userEmail, forcedSection }: UnifiedSet
                         <tr className="border-b border-slate-200 bg-slate-50 dark:border-slate-800 dark:bg-slate-800/30">
                           <th className="px-4 py-3 text-left font-medium text-slate-500 dark:text-slate-400">Member</th>
                           <th className="px-4 py-3 text-left font-medium text-slate-500 dark:text-slate-400">Role</th>
+                          <th className="hidden px-4 py-3 text-left font-medium text-slate-500 dark:text-slate-400 lg:table-cell">Job title</th>
                           <th className="hidden px-4 py-3 text-left font-medium text-slate-500 dark:text-slate-400 md:table-cell">Joined</th>
                           <th className="px-4 py-3 text-right font-medium text-slate-500 dark:text-slate-400">Actions</th>
                         </tr>
                       </thead>
                       <tbody className="divide-y divide-slate-200 dark:divide-slate-800">
-                        {workspaceMembers.map((member) => {
+                        {filteredWorkspaceMembers.map((member) => {
                           const isOwner = member.role === 'owner';
                           const isBusy = workspaceActionId === member.id;
                           return (
@@ -2291,6 +2709,9 @@ export default function UnifiedSettings({ userEmail, forcedSection }: UnifiedSet
                                   </p>
                                   {member.email && (
                                     <p className="truncate text-xs text-slate-500 dark:text-slate-400">{member.email}</p>
+                                  )}
+                                  {isOwner && workspaceRoleTitle && (
+                                    <p className="truncate text-xs text-slate-500 dark:text-slate-400 lg:hidden">{workspaceRoleTitle}</p>
                                   )}
                                 </div>
                               </td>
@@ -2319,6 +2740,9 @@ export default function UnifiedSettings({ userEmail, forcedSection }: UnifiedSet
                                     );
                                   })()
                                 )}
+                              </td>
+                              <td className="hidden px-4 py-3 text-slate-500 dark:text-slate-400 lg:table-cell">
+                                {isOwner && workspaceRoleTitle ? workspaceRoleTitle : '-'}
                               </td>
                               <td className="hidden px-4 py-3 text-slate-500 dark:text-slate-400 md:table-cell">
                                 {formatShortDate(member.joinedAt || member.createdAt)}
@@ -2448,30 +2872,60 @@ export default function UnifiedSettings({ userEmail, forcedSection }: UnifiedSet
                       No audit events yet
                     </div>
                   ) : (
-                    <div className="divide-y divide-slate-200 dark:divide-slate-800">
-                      {workspaceAuditLogs.map((entry) => (
-                        <div key={entry.id} className="px-6 py-4">
-                          <div className="flex flex-col gap-2 sm:flex-row sm:items-start sm:justify-between">
-                            <div className="min-w-0">
-                              <p className="text-sm font-semibold text-slate-900 dark:text-slate-50">
-                                {formatLabel(entry.action.replace('.', '_'))}
-                              </p>
-                              <p className="mt-1 text-xs text-slate-500 dark:text-slate-400">
-                                {(entry.actorName || entry.actorEmail || 'System')} · {formatLabel(entry.resourceType)}
-                              </p>
-                              {typeof entry.metadata?.email === 'string' && (
-                                <p className="mt-1 text-xs text-slate-500 dark:text-slate-400">
-                                  {entry.metadata.email as string}
+                    <>
+                      <div className="divide-y divide-slate-200 dark:divide-slate-800">
+                        {paginatedWorkspaceAuditLogs.map((entry) => (
+                          <div key={entry.id} className="px-6 py-4">
+                            <div className="flex flex-col gap-2 sm:flex-row sm:items-start sm:justify-between">
+                              <div className="min-w-0">
+                                <p className="text-sm font-semibold text-slate-900 dark:text-slate-50">
+                                  {formatLabel(entry.action.replace('.', '_'))}
                                 </p>
-                              )}
+                                <p className="mt-1 text-xs text-slate-500 dark:text-slate-400">
+                                  {(entry.actorName || entry.actorEmail || 'System')} · {formatLabel(entry.resourceType)}
+                                </p>
+                                {typeof entry.metadata?.email === 'string' && (
+                                  <p className="mt-1 text-xs text-slate-500 dark:text-slate-400">
+                                    {entry.metadata.email as string}
+                                  </p>
+                                )}
+                              </div>
+                              <p className="text-xs text-slate-400 dark:text-slate-500">
+                                {formatShortDate(entry.createdAt)}
+                              </p>
                             </div>
-                            <p className="text-xs text-slate-400 dark:text-slate-500">
-                              {formatShortDate(entry.createdAt)}
-                            </p>
                           </div>
+                        ))}
+                      </div>
+                      <div className="flex flex-col gap-3 border-t border-slate-200 bg-slate-50 px-6 py-3 dark:border-slate-800 dark:bg-slate-800/30 sm:flex-row sm:items-center sm:justify-between">
+                        <span className="text-sm text-slate-500 dark:text-slate-400">
+                          Showing {((workspaceAuditPage - 1) * AUDIT_LOGS_PER_PAGE) + 1} to {Math.min(workspaceAuditPage * AUDIT_LOGS_PER_PAGE, workspaceAuditLogs.length)} of {workspaceAuditLogs.length}
+                        </span>
+                        <div className="flex items-center gap-1">
+                          <button
+                            type="button"
+                            onClick={() => setWorkspaceAuditPage((page) => Math.max(1, page - 1))}
+                            disabled={workspaceAuditPage === 1}
+                            className="rounded p-1 hover:bg-slate-200 disabled:cursor-not-allowed disabled:opacity-50 dark:hover:bg-slate-700"
+                            aria-label="Previous audit log page"
+                          >
+                            <ChevronLeft className="h-5 w-5" />
+                          </button>
+                          <span className="min-w-16 text-center text-sm text-slate-500 dark:text-slate-400">
+                            {workspaceAuditPage} / {workspaceAuditTotalPages}
+                          </span>
+                          <button
+                            type="button"
+                            onClick={() => setWorkspaceAuditPage((page) => Math.min(workspaceAuditTotalPages, page + 1))}
+                            disabled={workspaceAuditPage >= workspaceAuditTotalPages}
+                            className="rounded p-1 hover:bg-slate-200 disabled:cursor-not-allowed disabled:opacity-50 dark:hover:bg-slate-700"
+                            aria-label="Next audit log page"
+                          >
+                            <ChevronRight className="h-5 w-5" />
+                          </button>
                         </div>
-                      ))}
-                    </div>
+                      </div>
+                    </>
                   )}
                 </CardContent>
               </Card>
@@ -2771,7 +3225,7 @@ export default function UnifiedSettings({ userEmail, forcedSection }: UnifiedSet
             </div>
             <div className="h-80 bg-slate-200 dark:bg-slate-700 rounded-lg" />
           </div>
-        ) : usageEvents.length === 0 ? (
+        ) : usageStats.totalCredits <= 0 && usageStats.pendingCredits <= 0 && usageStats.totalEvents === 0 ? (
           <Card>
             <CardContent className="py-16">
               <div className="text-center">
@@ -2789,9 +3243,14 @@ export default function UnifiedSettings({ userEmail, forcedSection }: UnifiedSet
             <div className="grid gap-4 md:grid-cols-3">
               <Card>
                 <CardContent className="pt-6">
-                  <p className="text-sm font-medium text-slate-500 dark:text-slate-400">Total Cost</p>
-                  <p className="text-2xl font-bold text-slate-900 dark:text-slate-50 mt-1">{formatAmount(usageStats.totalCost)}</p>
-                  <p className="text-xs text-slate-400 dark:text-slate-500 mt-1">{usageStats.totalEvents} API calls</p>
+                  <p className="text-sm font-medium text-slate-500 dark:text-slate-400">Credits Used</p>
+                  <p className="text-2xl font-bold text-slate-900 dark:text-slate-50 mt-1">
+                    {formatProductCredits(usageStats.totalCredits)} credits
+                  </p>
+                  <p className="text-xs text-slate-400 dark:text-slate-500 mt-1">
+                    {usageStats.totalEvents} API calls
+                    {usageStats.pendingCredits > 0 ? ` · ${formatProductCredits(usageStats.pendingCredits)} credits held` : ''}
+                  </p>
                 </CardContent>
               </Card>
               <Card>
@@ -2803,11 +3262,11 @@ export default function UnifiedSettings({ userEmail, forcedSection }: UnifiedSet
               </Card>
               <Card>
                 <CardContent className="pt-6">
-                  <p className="text-sm font-medium text-slate-500 dark:text-slate-400">Avg Cost / Project</p>
+                  <p className="text-sm font-medium text-slate-500 dark:text-slate-400">Avg Credits / Project</p>
                   <p className="text-2xl font-bold text-slate-900 dark:text-slate-50 mt-1">
                     {usageStats.projectCount > 0
-                      ? formatAmount(usageStats.totalCost / usageStats.projectCount)
-                      : '$0.00'}
+                      ? `${formatProductCredits(usageStats.averageCreditsPerProject)} credits`
+                      : '0 credits'}
                   </p>
                   <p className="text-xs text-slate-400 dark:text-slate-500 mt-1">Per project average</p>
                 </CardContent>
@@ -2818,7 +3277,7 @@ export default function UnifiedSettings({ userEmail, forcedSection }: UnifiedSet
             <Card>
               <CardHeader>
                 <CardTitle>Usage Trends</CardTitle>
-                <CardDescription>Your spending over the last 30 days</CardDescription>
+                <CardDescription>Product credits consumed over the current billing period</CardDescription>
               </CardHeader>
               <CardContent>
                 <UsageAreaChart data={usageTrend} />
@@ -2829,8 +3288,8 @@ export default function UnifiedSettings({ userEmail, forcedSection }: UnifiedSet
             <Card>
               <CardHeader className="gap-3">
                 <div>
-                  <CardTitle>Cost by Project</CardTitle>
-                  <CardDescription>Spending breakdown per project</CardDescription>
+                  <CardTitle>Credits by Project</CardTitle>
+                  <CardDescription>Credit charges grouped by project and workflow</CardDescription>
                 </div>
                 <label className="flex items-center gap-2 text-sm text-slate-600 dark:text-slate-300">
                   <input
@@ -2869,11 +3328,11 @@ export default function UnifiedSettings({ userEmail, forcedSection }: UnifiedSet
                                   {project.title}
                                 </span>
                                 <span className="text-xs text-slate-400 dark:text-slate-500">
-                                  {project.events} calls, {project.serviceCount} services
+                                  {project.events} API calls, {project.workflowCount} workflows
                                 </span>
                               </div>
                               <span className="text-sm font-semibold text-slate-900 dark:text-slate-50">
-                                {formatAmount(project.cost)}
+                                {formatProductCredits(project.cost)} credits
                               </span>
                             </div>
                             <div className="h-1.5 bg-slate-200 dark:bg-slate-800 rounded-full overflow-hidden">

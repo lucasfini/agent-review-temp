@@ -7,6 +7,7 @@ import {
   type PlanSlug,
 } from '@/lib/billing/plans';
 import {
+  getSubscriptionSeatLimit,
   getOrganizationSubscription,
   isSubscriptionUsable,
   type OrganizationSubscription,
@@ -117,7 +118,10 @@ export function getEntitlementsForSubscription(
     subscription: summarizeSubscription(subscription),
     isSubscriptionUsable: true,
     legacyCreditsEnabled: true,
-    limits: getPlanLimits(plan),
+    limits: {
+      ...getPlanLimits(plan),
+      seatLimit: getSubscriptionSeatLimit(subscription),
+    },
     features: {
       ...plan.features,
       monthlyCreditGrant: plan.monthlyCreditGrant,

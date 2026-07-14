@@ -1,27 +1,28 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { supabaseAdmin } from '@/lib/supabase/server';
-import { INTEGRATIONS_COMING_SOON_MESSAGE, INTEGRATIONS_ENABLED } from '@/lib/integrations/availability';
+import { INTEGRATIONS_COMING_SOON_MESSAGE, ZOOM_INTEGRATION_ENABLED } from '@/lib/integrations/availability';
+import { integrationErrorResponse, signedOutIntegrationResponse } from '../../_utils';
 
 export async function GET(request: NextRequest) {
-  if (!INTEGRATIONS_ENABLED) {
+  if (!ZOOM_INTEGRATION_ENABLED) {
     return NextResponse.json({ error: INTEGRATIONS_COMING_SOON_MESSAGE }, { status: 503 });
   }
 
   const authHeader = request.headers.get('authorization');
   if (!authHeader) {
-    return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
+    return signedOutIntegrationResponse();
   }
   const token = authHeader.replace('Bearer ', '');
   const { data: { user } } = await supabaseAdmin.auth.getUser(token);
   if (!user) {
-    return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
+    return signedOutIntegrationResponse();
   }
 
   const clientId = process.env.ZOOM_CLIENT_ID;
   const redirectUri = process.env.ZOOM_REDIRECT_URI;
 
   if (!clientId || !redirectUri) {
-    return NextResponse.json({ error: 'Zoom OAuth not configured' }, { status: 500 });
+    return integrationErrorResponse({ provider: 'zoom', code: 'INTEGRATION_NOT_CONFIGURED', action: 'connect', status: 500 });
   }
 
   const state = crypto.randomUUID();

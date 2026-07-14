@@ -22,7 +22,7 @@ function RightPanel() {
   const [mounted, setMounted] = useState(false);
 
   useEffect(() => setMounted(true), []);
-  const logoTheme = mounted && resolvedTheme === 'dark' ? 'dark' : 'light';
+  const logoTheme = mounted && resolvedTheme === 'light' ? 'light' : 'dark';
 
   return (
     <div className="relative hidden overflow-hidden bg-gradient-to-br from-slate-100 via-blue-50 to-indigo-100 lg:flex lg:w-1/2 lg:flex-col lg:items-center lg:justify-center dark:from-slate-900 dark:via-blue-950 dark:to-indigo-950">

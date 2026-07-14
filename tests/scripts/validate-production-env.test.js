@@ -17,9 +17,9 @@ function completeEnv(overrides = {}) {
     NEXT_PUBLIC_SUPABASE_URL: 'https://prod.supabase.co',
     NEXT_PUBLIC_SUPABASE_ANON_KEY: 'supabase-anon-key',
     SUPABASE_SERVICE_ROLE_KEY: 'supabase-service-role-value',
-    STRIPE_SECRET_KEY: 'stripe-secret-key-value',
-    NEXT_PUBLIC_STRIPE_PUBLISHABLE_KEY: 'stripe-publishable-key-value',
-    STRIPE_WEBHOOK_SECRET: 'stripe-webhook-secret-value',
+    STRIPE_SECRET_KEY: 'sk_live_stripe_secret_key_value',
+    NEXT_PUBLIC_STRIPE_PUBLISHABLE_KEY: 'pk_live_stripe_publishable_key_value',
+    STRIPE_WEBHOOK_SECRET: 'whsec_stripe_webhook_secret_value',
     RESEND_API_KEY: 'resend-api-key-value',
     AGENCY_LEAD_FROM_EMAIL: '',
     AGENCY_LEAD_NOTIFICATION_EMAIL: '',
@@ -136,6 +136,22 @@ describe('production env validator', () => {
 
     const invalid = collectProductionEnvChecks(completeEnv({ SUBSCRIPTION_ENFORCEMENT_MODE: 'ENFORCE' }));
     expect(invalid.configurationErrors).toContain('SUBSCRIPTION_ENFORCEMENT_MODE must be dry_run or enforce');
+  });
+
+  it('rejects production Stripe keys that are not live-mode webhook-safe values', () => {
+    const report = collectProductionEnvChecks(completeEnv({
+      STRIPE_SECRET_KEY: 'sk_test_secret_key_value',
+      NEXT_PUBLIC_STRIPE_PUBLISHABLE_KEY: 'pk_test_publishable_key_value',
+      STRIPE_WEBHOOK_SECRET: 'sk_live_not_a_webhook_secret',
+      BILLING_TEST_MODE: 'true',
+    }));
+
+    expect(report.configurationErrors).toEqual(expect.arrayContaining([
+      'STRIPE_SECRET_KEY must be a live Stripe secret key that starts with sk_live_.',
+      'NEXT_PUBLIC_STRIPE_PUBLISHABLE_KEY must be a live Stripe publishable key that starts with pk_live_.',
+      'STRIPE_WEBHOOK_SECRET must be a webhook signing secret that starts with whsec_.',
+      'BILLING_TEST_MODE must not be enabled in production.',
+    ]));
   });
 
   it('parses env-file and default-loading arguments', () => {

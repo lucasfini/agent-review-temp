@@ -12,6 +12,11 @@ type CheckoutInput = {
 
 type CheckoutResponse = {
   url?: string;
+  subscriptionChange?: {
+    status?: string;
+    message?: string;
+    effectiveAt?: string | null;
+  };
   error?: string;
 };
 
@@ -77,11 +82,19 @@ export function useSubscriptionCheckout(organizationId?: string | null): UseSubs
       }
 
       const payload = await response.json() as CheckoutResponse;
-      if (!payload.url) {
-        throw new Error('No checkout URL returned');
+      if (payload.url) {
+        window.location.href = payload.url;
+        return;
       }
 
-      window.location.href = payload.url;
+      if (payload.subscriptionChange) {
+        const nextUrl = new URL('/dashboard/billing', window.location.origin);
+        nextUrl.searchParams.set('subscription', payload.subscriptionChange.status || 'updated');
+        window.location.href = nextUrl.toString();
+        return;
+      }
+
+      throw new Error('No checkout URL returned');
     } catch (checkoutError) {
       setError(checkoutError instanceof Error ? checkoutError.message : 'Failed to start subscription checkout');
       setCheckoutPlanId(null);

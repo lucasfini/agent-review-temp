@@ -198,6 +198,76 @@ describe('speaker review trust helpers', () => {
     expect(speakerData.speakers.speaker_4.finalName).toBe('Speaker 4');
   });
 
+  test('drops persisted speaker suggestions after the suggested name is confirmed', () => {
+    const initial = attachSpeakerAssignmentMetadata({
+      segments: [
+        {
+          speakerId: 'speaker_1',
+          finalSpeakerId: 'speaker_1',
+          startTime: 0,
+          endTime: 18,
+          text: 'This is the intro clip used as evidence for the suggested identity.',
+          status: 'confirmed',
+        },
+      ],
+      speakers: {
+        speaker_1: {
+          id: 'speaker_1',
+          finalName: 'Speaker 1',
+          fallbackName: 'Speaker 1',
+          role: 'unknown',
+          assignmentConfidence: 0.66,
+          requiresReview: true,
+        },
+      },
+      detectionMetadata: {
+        pipelineDiagnostics: {
+          speakerVerification: {
+            rejectedRepairs: [
+              {
+                reason: 'proposal_confidence_below_threshold',
+                proposal: {
+                  repairType: 'bindIntroName',
+                  targetSpeakerId: 'speaker_1',
+                  proposedName: 'Pablo',
+                  proposedRole: 'quoted_audio',
+                  confidence: 0.66,
+                  reason: 'Verifier intro binding matched the quoted audio cue.',
+                  evidenceSegmentIndices: [0],
+                },
+              },
+            ],
+          },
+        },
+      },
+    });
+
+    expect(getSpeakerSuggestionsFromSpeakerData(initial)).toEqual([
+      expect.objectContaining({
+        speakerId: 'speaker_1',
+        suggestedName: 'Pablo',
+        suggestedRole: 'quoted_audio',
+      }),
+    ]);
+
+    const confirmed = attachSpeakerAssignmentMetadata({
+      ...initial,
+      speakers: {
+        ...initial.speakers,
+        speaker_1: {
+          ...initial.speakers.speaker_1,
+          finalName: 'Pablo',
+          customName: 'Pablo',
+          fallbackName: 'Pablo',
+          role: 'quoted_audio',
+        },
+      },
+    });
+
+    expect(confirmed.detectionMetadata.speakerAssignmentBreakdown.speakerSuggestions).toEqual([]);
+    expect(getSpeakerSuggestionsFromSpeakerData(confirmed)).toEqual([]);
+  });
+
   test('surfaces unmatched preset roster names as pending suggestions without promoting final speakers', () => {
     const speakerData = attachSpeakerAssignmentMetadata({
       segments: [
@@ -430,6 +500,171 @@ describe('speaker review trust helpers', () => {
     );
     expect(getReviewSegmentIndicesFromSpeakerData(unconfirmed)).toContain(0);
     expect(getReviewSegmentIndicesFromSpeakerData(confirmed)).not.toContain(0);
+  });
+
+  test('stored review metadata ignores segments that were already confirmed by review', () => {
+    const speakerData = {
+      segments: [
+        {
+          speakerId: 'speaker_1',
+          finalSpeakerId: 'speaker_1',
+          startTime: 0,
+          endTime: 8,
+          text: 'Previously reviewed segment.',
+          status: 'confirmed',
+          reviewStatus: 'confirmed',
+        },
+        {
+          speakerId: 'speaker_1',
+          finalSpeakerId: 'speaker_1',
+          startTime: 8,
+          endTime: 18,
+          text: 'Still unresolved segment.',
+          status: 'uncertain',
+          confidenceReason: 'acoustic_only',
+        },
+      ],
+      speakers: {
+        speaker_1: {
+          finalName: 'Speaker 1',
+          assignmentConfidence: 0.4,
+          assignmentContradictions: [],
+          requiresReview: true,
+        },
+      },
+      detectionMetadata: {
+        speakerAssignmentBreakdown: {
+          segmentReviewIndices: [0, 1],
+          reviewItems: [
+            { index: 0, speakerId: 'speaker_1', reasons: ['anchor_turn'], primaryReason: 'anchor_turn' },
+            { index: 1, speakerId: 'speaker_1', reasons: ['uncertain:acoustic_only'], primaryReason: 'uncertain:acoustic_only' },
+          ],
+        },
+      },
+    };
+
+    expect(getReviewSegmentIndicesFromSpeakerData(speakerData)).toEqual([1]);
+    expect(getReviewItemsFromSpeakerData(speakerData)).toEqual([
+      expect.objectContaining({ index: 1, primaryReason: 'uncertain:acoustic_only' }),
+    ]);
+    expect(isReviewSegment(speakerData, speakerData.segments[0], 0)).toBe(false);
+  });
+
+  test('stored review indices ignore confirmed segments when review items are absent', () => {
+    const speakerData = {
+      segments: [
+        {
+          speakerId: 'speaker_1',
+          finalSpeakerId: 'speaker_1',
+          startTime: 0,
+          endTime: 8,
+          text: 'Confirmed segment.',
+          status: 'confirmed',
+          reviewStatus: 'confirmed',
+        },
+        {
+          speakerId: 'speaker_1',
+          finalSpeakerId: 'speaker_1',
+          startTime: 8,
+          endTime: 18,
+          text: 'Pending segment.',
+          status: 'uncertain',
+          confidenceReason: 'acoustic_only',
+        },
+      ],
+      speakers: {},
+      detectionMetadata: {
+        speakerAssignmentBreakdown: {
+          segmentReviewIndices: [0, 1],
+        },
+      },
+    };
+
+    expect(getReviewSegmentIndicesFromSpeakerData(speakerData)).toEqual([1]);
+  });
+
+  test('anchor turns do not create review items for otherwise stable speakers', () => {
+    const speakerData = attachSpeakerAssignmentMetadata({
+      segments: [
+        {
+          speakerId: 'speaker_1',
+          finalSpeakerId: 'speaker_1',
+          startTime: 0,
+          endTime: 8,
+          text: 'Scott, what do you make of this?',
+          status: 'confirmed',
+        },
+        {
+          speakerId: 'speaker_1',
+          finalSpeakerId: 'speaker_1',
+          startTime: 8,
+          endTime: 18,
+          text: 'Another normal question?',
+          status: 'confirmed',
+        },
+      ],
+      speakers: {
+        speaker_1: {
+          finalName: 'Ed Elson',
+          role: 'host',
+          assignmentConfidence: 0.94,
+          assignmentContradictions: [],
+          requiresReview: false,
+        },
+      },
+      detectionMetadata: {},
+    });
+
+    expect(getReviewSegmentIndicesFromSpeakerData(speakerData)).toEqual([]);
+    expect(getReviewItemsFromSpeakerData(speakerData)).toEqual([]);
+  });
+
+  test('confirmed speaker review coverage stops low-confidence anchor backfill', () => {
+    const reviewed = attachSpeakerAssignmentMetadata({
+      segments: [
+        {
+          speakerId: 'speaker_1',
+          finalSpeakerId: 'speaker_1',
+          startTime: 0,
+          endTime: 16,
+          text: 'This longer segment was manually reviewed and confirmed.',
+          status: 'confirmed',
+          confidence: 1,
+          confidenceReason: 'user_reassigned',
+          reviewStatus: 'confirmed',
+          reviewConfirmedAt: '2026-04-20T12:00:00.000Z',
+        },
+        {
+          speakerId: 'speaker_1',
+          finalSpeakerId: 'speaker_1',
+          startTime: 16,
+          endTime: 24,
+          text: 'Scott, is this another anchor turn?',
+          status: 'confirmed',
+        },
+        {
+          speakerId: 'speaker_1',
+          finalSpeakerId: 'speaker_1',
+          startTime: 24,
+          endTime: 34,
+          text: 'What happens on the next question?',
+          status: 'confirmed',
+        },
+      ],
+      speakers: {
+        speaker_1: {
+          finalName: 'Speaker 1',
+          role: 'unknown',
+          assignmentConfidence: 0.32,
+          assignmentContradictions: [],
+          requiresReview: true,
+        },
+      },
+      detectionMetadata: {},
+    });
+
+    expect(getReviewSegmentIndicesFromSpeakerData(reviewed)).toEqual([]);
+    expect(getReviewItemsFromSpeakerData(reviewed)).toEqual([]);
   });
 
   test('targeted review selector does not include an entire low-confidence speaker cluster', () => {

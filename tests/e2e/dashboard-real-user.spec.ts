@@ -543,7 +543,7 @@ test.describe('Authenticated Real User Flows', () => {
     });
 
     await loginAsUser(page, account.email, account.password);
-    await page.goto('/dashboard/settings');
+    await page.goto('/dashboard/integrations');
 
     const responsePromise = page.waitForResponse(resp =>
       resp.url().includes('/api/integrations/zoom/start?mode=json') && resp.status() === 200
@@ -561,11 +561,11 @@ test.describe('Authenticated Real User Flows', () => {
     await seedConnectedIntegration(account.userId, 'zoom');
 
     await loginAsUser(page, account.email, account.password);
-    await page.goto('/dashboard/settings');
+    await page.goto('/dashboard/integrations');
 
-    await expect(page.getByText('Connected • host@zoom.example')).toBeVisible();
+    await expect(page.getByText('Connected - host@zoom.example')).toBeVisible();
     await page.getByRole('button', { name: 'Disconnect' }).click();
     await expect.poll(async () => fetchIntegrationStatus(account.userId, 'zoom')).toBe('revoked');
-    await expect(page.getByText('Not connected').first()).toBeVisible();
+    await expect(page.getByRole('button', { name: 'Connect' }).first()).toBeVisible();
   });
 });

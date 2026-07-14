@@ -5,6 +5,7 @@ describe('/api/projects/[id]/generate/process', () => {
   let supabaseAdmin;
   let createPlanCreditReservation;
   let failReservation;
+  let notifyContentGenerationFailed;
 
   beforeEach(async () => {
     jest.resetModules();
@@ -75,9 +76,15 @@ describe('/api/projects/[id]/generate/process', () => {
       heartbeatGlobalJobLock: jest.fn().mockResolvedValue(undefined),
     }));
 
+    jest.doMock('../../lib/notifications/notification-events', () => ({
+      notifyContentGenerationFailed: jest.fn().mockResolvedValue(null),
+      notifyCreditsDepleted: jest.fn().mockResolvedValue(null),
+    }));
+
     ({ supabaseAdmin } = require('../../lib/supabase/server'));
     ({ failReservation } = require('../../lib/billing/credit'));
     ({ createPlanCreditReservation } = require('../../lib/billing/plan-credits'));
+    ({ notifyContentGenerationFailed } = require('../../lib/notifications/notification-events'));
     ({ POST } = await import('../../app/api/projects/[id]/generate/process/route'));
   });
 
@@ -222,6 +229,7 @@ describe('/api/projects/[id]/generate/process', () => {
       })
     );
     expect(JSON.parse(global.fetch.mock.calls[0][1].body)).toMatchObject({
+      queuedGenerationJobId: 'job-1',
       creator_profile_id: 'profile-1',
       brand_voice_id: 'voice-1',
       campaign_id: 'campaign-1',
@@ -236,6 +244,7 @@ describe('/api/projects/[id]/generate/process', () => {
       id: 'project-1',
       user_id: 'user-1',
       organization_id: 'org-1',
+      title: 'Sales Call',
       transcription_text: 'hello world',
       transcription_segments: [],
       speaker_data: {},
@@ -274,6 +283,74 @@ describe('/api/projects/[id]/generate/process', () => {
           payload: expect.objectContaining({
             status: 'failed',
             error_message: 'Provider timeout',
+          }),
+        }),
+      ])
+    );
+    expect(notifyContentGenerationFailed).toHaveBeenCalledWith({
+      organizationId: 'org-1',
+      actorUserId: 'user-1',
+      projectId: 'project-1',
+      projectTitle: 'Sales Call',
+      count: 1,
+      idempotencyKey: 'content_generation_failed:job:job-2',
+      metadata: {
+        source: 'project_generation_job',
+        jobId: 'job-2',
+        kind: 'content',
+        targetKey: 'twitter_threads',
+        error: 'Provider timeout',
+      },
+    });
+  });
+
+  it('persists downstream content job detail failures when the wrapper message is generic', async () => {
+    const project = {
+      id: 'project-1',
+      user_id: 'user-1',
+      organization_id: 'org-1',
+      title: 'Sales Call',
+      transcription_text: 'hello world',
+      transcription_segments: [],
+      speaker_data: {},
+      metadata: {},
+    };
+    const updates = buildJobState({
+      running: [],
+      queued: [
+        {
+          id: 'job-detail',
+          kind: 'content',
+          target_key: 'newsletter',
+          theme_id: 'professional',
+          status: 'queued',
+        },
+      ],
+      project,
+    });
+
+    global.fetch.mockResolvedValue({
+      ok: false,
+      json: jest.fn().mockResolvedValue({
+        error: 'Content generation failed',
+        details: ['Failed to generate Newsletter: AI failed to generate any valid content for the newsletter.'],
+      }),
+    });
+
+    const request = new NextRequest('http://localhost/api/projects/project-1/generate/process', {
+      method: 'POST',
+    });
+
+    const response = await POST(request, { params: Promise.resolve({ id: 'project-1' }) });
+    await response.json();
+
+    expect(updates).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          id: 'job-detail',
+          payload: expect.objectContaining({
+            status: 'failed',
+            error_message: 'Failed to generate Newsletter: AI failed to generate any valid content for the newsletter.',
           }),
         }),
       ])
@@ -346,5 +423,66 @@ describe('/api/projects/[id]/generate/process', () => {
         }),
       ])
     );
+  });
+
+  it('fails stale named speaker jobs for text-only imports before reserving credits', async () => {
+    const project = {
+      id: 'project-1',
+      user_id: 'user-1',
+      organization_id: 'org-1',
+      title: 'Notion checklist',
+      transcription_text: 'Reply to Alex. Book dentist. Send Jamie the deck.',
+      transcription_segments: [],
+      speaker_data: null,
+      metadata: { source: 'notion' },
+    };
+    const updates = buildJobState({
+      running: [],
+      queued: [
+        {
+          id: 'job-4',
+          kind: 'analysis',
+          target_key: 'namedSpeakers',
+          theme_id: null,
+          status: 'queued',
+          user_id: 'user-1',
+        },
+      ],
+      project,
+    });
+
+    const request = new NextRequest('http://localhost/api/projects/project-1/generate/process', {
+      method: 'POST',
+    });
+
+    const response = await POST(request, { params: Promise.resolve({ id: 'project-1' }) });
+    await response.json();
+
+    expect(createPlanCreditReservation).not.toHaveBeenCalled();
+    expect(failReservation).not.toHaveBeenCalled();
+    expect(global.fetch).not.toHaveBeenCalled();
+    expect(updates).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          id: 'job-4',
+          payload: expect.objectContaining({
+            status: 'failed',
+            error_message: expect.stringContaining('diarized speaker segments'),
+          }),
+        }),
+      ])
+    );
+    expect(notifyContentGenerationFailed).toHaveBeenCalledWith(expect.objectContaining({
+      organizationId: 'org-1',
+      actorUserId: 'user-1',
+      projectId: 'project-1',
+      projectTitle: 'Notion checklist',
+      metadata: expect.objectContaining({
+        jobId: 'job-4',
+        kind: 'analysis',
+        targetKey: 'namedSpeakers',
+        error: expect.stringContaining('diarized speaker segments'),
+      }),
+    }));
   });
 });

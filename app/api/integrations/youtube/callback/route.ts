@@ -1,5 +1,5 @@
 import { NextRequest, NextResponse } from 'next/server';
-import { upsertConnection } from '../../_utils';
+import { integrationErrorResponse, signedOutIntegrationResponse, upsertConnection } from '../../_utils';
 
 type GoogleUserInfo = {
   sub?: string;
@@ -27,12 +27,12 @@ export async function GET(request: NextRequest) {
   const state = searchParams.get('state');
 
   if (!code || !state) {
-    return NextResponse.json({ error: 'Missing code or state' }, { status: 400 });
+    return integrationErrorResponse({ provider: 'youtube', code: 'OAUTH_LINK_EXPIRED', action: 'callback', status: 400 });
   }
 
   const storedState = request.cookies.get('youtube_oauth_state')?.value;
   if (!storedState || storedState !== state) {
-    return NextResponse.json({ error: 'Invalid OAuth state' }, { status: 400 });
+    return integrationErrorResponse({ provider: 'youtube', code: 'OAUTH_LINK_EXPIRED', action: 'callback', status: 400 });
   }
 
   const clientId = process.env.GOOGLE_OAUTH_CLIENT_ID;
@@ -40,7 +40,7 @@ export async function GET(request: NextRequest) {
   const redirectUri = process.env.YOUTUBE_REDIRECT_URI;
 
   if (!clientId || !clientSecret || !redirectUri) {
-    return NextResponse.json({ error: 'YouTube OAuth not configured' }, { status: 500 });
+    return integrationErrorResponse({ provider: 'youtube', code: 'INTEGRATION_NOT_CONFIGURED', action: 'connect', status: 500 });
   }
 
   const tokenRes = await fetch('https://oauth2.googleapis.com/token', {
@@ -57,7 +57,14 @@ export async function GET(request: NextRequest) {
 
   if (!tokenRes.ok) {
     const text = await tokenRes.text();
-    return NextResponse.json({ error: `YouTube token error: ${text}` }, { status: 500 });
+    return integrationErrorResponse({
+      provider: 'youtube',
+      code: 'RECONNECT_REQUIRED',
+      action: 'connect',
+      status: 401,
+      logPrefix: '[YOUTUBE CALLBACK] Token exchange failed:',
+      cause: text,
+    });
   }
 
   const tokenData = await tokenRes.json();
@@ -66,7 +73,7 @@ export async function GET(request: NextRequest) {
   const expiresIn = tokenData.expires_in as number | undefined;
 
   if (!accessToken) {
-    return NextResponse.json({ error: 'YouTube OAuth did not return an access token' }, { status: 500 });
+    return integrationErrorResponse({ provider: 'youtube', code: 'RECONNECT_REQUIRED', action: 'connect', status: 401 });
   }
 
   const [userInfoRes, channelRes] = await Promise.all([
@@ -79,12 +86,19 @@ export async function GET(request: NextRequest) {
   ]);
 
   if (!userInfoRes.ok) {
-    return NextResponse.json({ error: 'Failed to fetch Google user info' }, { status: 500 });
+    return integrationErrorResponse({ provider: 'youtube', code: 'RECONNECT_REQUIRED', action: 'connect', status: 401 });
   }
 
   if (!channelRes.ok) {
     const text = await channelRes.text();
-    return NextResponse.json({ error: `Failed to fetch YouTube channel: ${text}` }, { status: 500 });
+    return integrationErrorResponse({
+      provider: 'youtube',
+      code: channelRes.status === 401 || channelRes.status === 403 ? 'RECONNECT_REQUIRED' : 'LIST_FAILED',
+      action: 'connect',
+      status: channelRes.status === 401 || channelRes.status === 403 ? 401 : 500,
+      logPrefix: '[YOUTUBE CALLBACK] Channel lookup failed:',
+      cause: text,
+    });
   }
 
   const userInfo = await userInfoRes.json() as GoogleUserInfo;
@@ -93,7 +107,7 @@ export async function GET(request: NextRequest) {
 
   const userId = request.cookies.get('youtube_oauth_user')?.value;
   if (!userId) {
-    return NextResponse.json({ error: 'Missing OAuth user context' }, { status: 401 });
+    return signedOutIntegrationResponse();
   }
 
   await upsertConnection({
@@ -123,7 +137,7 @@ export async function GET(request: NextRequest) {
     process.env.NEXT_PUBLIC_APP_URL ||
     (process.env.APP_DOMAIN ? `https://${process.env.APP_DOMAIN}` : null);
   const redirectBase = configuredAppUrl || new URL(request.url).origin;
-  const response = NextResponse.redirect(new URL('/dashboard/settings', redirectBase));
+  const response = NextResponse.redirect(new URL('/dashboard/integrations', redirectBase));
   response.cookies.delete('youtube_oauth_state');
   response.cookies.delete('youtube_oauth_user');
   return response;

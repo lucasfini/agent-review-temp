@@ -1,14 +1,14 @@
 "use client";
 
 import { useState, useEffect, Suspense } from 'react';
-import { usePathname, useRouter, useSearchParams } from 'next/navigation';
+import { usePathname, useRouter } from 'next/navigation';
 import { useAuth } from '@/lib/auth/context';
-import { supabase } from '@/lib/supabase/client';
 import DashboardNav from '@/components/dashboard/nav';
+import DashboardTopBar from '@/components/dashboard/top-bar';
 import { Loader2 } from 'lucide-react';
 import { CoverageProgressProvider } from '@/lib/context/coverage-progress';
 import { CoverageBanner } from '@/app/dashboard/_banners/coverage-banner';
-import { FirstLoginWelcomeModal } from '@/components/dashboard/first-login-welcome-modal';
+import { GuidedOnboardingModal } from '@/components/dashboard/guided-onboarding-modal';
 import CompactFooter from '@/components/site/CompactFooter';
 import { calculateOverallProgress, getUserFacingProcessingMessage } from '@/lib/tier-progress-config';
 import { normalizeTier } from '@/lib/tier-config';
@@ -29,12 +29,9 @@ function DashboardLayoutContent({
   const { syncedUploads } = useUploadProgressSync();
 
   const { user, loading, isDemoMode } = useAuth();
-  const [showFirstLoginWelcome, setShowFirstLoginWelcome] = useState(false);
   const router = useRouter();
   const pathname = usePathname();
-  const searchParams = useSearchParams();
   const [isSidebarCollapsed, setIsSidebarCollapsed] = useState(false);
-  const forceWelcomePreview = searchParams.get('welcome') === '1';
   const isUploadRoute = pathname === '/dashboard/upload';
   const isProjectsRoute = pathname === '/dashboard/projects';
   const { activeProjects: activeUploads } = useActiveProcessingProjects(user?.id, 5, {
@@ -43,8 +40,11 @@ function DashboardLayoutContent({
   });
 
   const usesDocumentFlow = pathname === '/dashboard/settings'
-    || pathname === '/dashboard/billing'
+    || pathname.startsWith('/dashboard/billing')
+    || pathname === '/dashboard/notifications'
     || pathname === '/dashboard/usage'
+    || pathname === '/dashboard/team'
+    || pathname === '/dashboard/integrations'
     || pathname === '/dashboard/contact'
     || pathname.startsWith('/dashboard/studio')
     || pathname.startsWith('/dashboard/library')
@@ -66,15 +66,6 @@ function DashboardLayoutContent({
       router.push('/auth/login');
     }
   }, [user, loading, router]);
-
-  useEffect(() => {
-    if (loading || !user || isDemoMode) return;
-    const meta = (user.user_metadata || {}) as Record<string, unknown>;
-    const hasSeenWelcome = typeof meta.dashboard_welcome_seen_at === 'string' && meta.dashboard_welcome_seen_at.length > 0;
-    if (!hasSeenWelcome || forceWelcomePreview) {
-      setShowFirstLoginWelcome(true);
-    }
-  }, [loading, user, isDemoMode, forceWelcomePreview]);
 
   if (loading) {
     return (
@@ -98,20 +89,6 @@ function DashboardLayoutContent({
     );
   }
 
-  const dismissFirstLoginWelcome = async () => {
-    try {
-      await supabase.auth.updateUser({
-        data: {
-          dashboard_welcome_seen_at: new Date().toISOString(),
-        },
-      });
-    } catch (error) {
-      console.warn('Failed to persist welcome modal dismissal:', error);
-    } finally {
-      setShowFirstLoginWelcome(false);
-    }
-  };
-
   return (
     <CoverageProgressProvider>
       <div className={`${usesDocumentFlow ? 'min-h-screen' : 'h-screen'} flex flex-col ${usesDocumentFlow ? 'overflow-visible' : 'overflow-hidden'} bg-slate-50 dark:bg-slate-950`}>
@@ -127,6 +104,7 @@ function DashboardLayoutContent({
           <div
             className={`flex flex-col min-w-0 w-full md:w-0 flex-1 transition-[margin] duration-200 ease-out ${usesDocumentFlow ? 'overflow-visible' : 'overflow-hidden'} ${isSidebarCollapsed ? 'md:ml-20' : 'md:ml-64'}`}
           >
+            <DashboardTopBar />
             <main className={`${usesDocumentFlow ? 'overflow-visible' : (isProjectsRoute ? 'flex-1 overflow-hidden' : 'flex-1 overflow-y-auto')} relative focus:outline-none${displayedUploads.length > 0 && !isProjectsRoute ? ' pb-24 md:pb-16' : ''}`}>
               {children}
             </main>
@@ -242,18 +220,7 @@ function DashboardLayoutContent({
         </div>
       </div>
       {!isDemoMode && (
-        <FirstLoginWelcomeModal
-          isOpen={showFirstLoginWelcome}
-          onClose={dismissFirstLoginWelcome}
-          onGoToUpload={async () => {
-            await dismissFirstLoginWelcome();
-            router.push('/dashboard/upload');
-          }}
-          onGoToOnboarding={async () => {
-            await dismissFirstLoginWelcome();
-            router.push('/dashboard/studio/profile');
-          }}
-        />
+        <GuidedOnboardingModal />
       )}
 
     </CoverageProgressProvider>

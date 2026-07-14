@@ -11,6 +11,7 @@
     "lint": "eslint",
     "validate:production-env": "node scripts/validate-production-env.js",
     "validate:subscription-launch": "node scripts/verify-subscription-launch-readiness.js",
+    "stripe:listen": "stripe listen --forward-to http://localhost:3000/api/stripe/webhook",
     "screenshots": "PW_TEST_SCREENSHOT_NO_FONTS_READY=1 playwright test tests/e2e/marketing-screenshots.spec.ts --project=chromium",
     "test": "jest",
     "test:full": "RUN_FULL_TEST_SUITE=1 jest",

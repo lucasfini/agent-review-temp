@@ -17,6 +17,8 @@ const starterPlan: Plan = {
   stripePriceId: null,
   stripeMonthlyPriceId: null,
   stripeAnnualPriceId: null,
+  stripeExtraSeatMonthlyPriceId: null,
+  stripeExtraSeatAnnualPriceId: null,
   monthlyPriceCents: 29900,
   annualPriceCents: null,
   currency: 'usd',
@@ -32,7 +34,7 @@ const starterPlan: Plan = {
   creditRolloverMonths: 0,
   topUpEnabled: false,
   topUpCreditExpiryMonths: 12,
-  maxUploadMinutes: 60,
+  maxUploadMinutes: 90,
   extraSeatPriceCents: null,
   isPopular: false,
   features: {
@@ -54,6 +56,9 @@ function buildSubscription(
     plan: starterPlan,
     stripeCustomerId: null,
     stripeSubscriptionId: null,
+    extraSeatCount: 0,
+    stripeExtraSeatSubscriptionItemId: null,
+    stripeExtraSeatPriceId: null,
     status: 'active',
     currentPeriodStart: '2026-06-01T00:00:00.000Z',
     currentPeriodEnd: '2026-07-01T00:00:00.000Z',
@@ -141,6 +146,14 @@ describe('subscription entitlement helpers', () => {
     expect(limits).toEqual(starterPlan.limits);
     expect(limits).not.toBe(starterPlan.limits);
   });
+
+  it('includes paid extra seats in subscription entitlement limits', () => {
+    const entitlements = getEntitlementsForSubscription(buildSubscription({
+      extraSeatCount: 2,
+    }));
+
+    expect(entitlements.limits.seatLimit).toBe(5);
+  });
 });
 
 describe('subscription data helpers', () => {
@@ -204,7 +217,7 @@ describe('subscription data helpers', () => {
           credit_rollover_months: 1,
           top_up_enabled: true,
           top_up_credit_expiry_months: 12,
-          max_upload_minutes: 60,
+          max_upload_minutes: 180,
           extra_seat_price_cents: null,
           is_popular: true,
           features_json: { credit_label: '10,000 credits/month, about 33 Repurpose Pack hours' },
@@ -227,7 +240,7 @@ describe('subscription data helpers', () => {
       creditRolloverMonths: 1,
       topUpEnabled: true,
       topUpCreditExpiryMonths: 12,
-      maxUploadMinutes: 60,
+      maxUploadMinutes: 180,
       isPopular: true,
     }));
     expect(plans[0].limits.seatLimit).toBe(3);

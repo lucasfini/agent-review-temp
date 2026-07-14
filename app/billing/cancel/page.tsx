@@ -63,11 +63,11 @@ export default function PaymentCancelPage() {
 
         {/* Support Link */}
         <div className="mt-6 text-center">
-          <p className="text-sm text-slate-500">
+          <p className="text-sm text-slate-500 dark:text-slate-400">
             Questions?{' '}
             <a
               href="mailto:support@audiorepurpose.com"
-              className="text-blue-500 hover:text-blue-400 font-medium"
+              className="font-medium text-blue-600 hover:text-blue-700 dark:text-blue-400 dark:hover:text-blue-300"
             >
               Contact Support
             </a>

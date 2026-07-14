@@ -27,6 +27,12 @@ export async function DELETE(
     const { organization, permissionContext } = await requirePermissionContext(request, {
       requestedOrganizationId: requestedOrganizationIdFrom(request),
     });
+    if (organization.type !== 'saas_customer') {
+      return NextResponse.json(
+        { error: 'Team workspace settings are only available for team workspaces' },
+        { status: 400 }
+      );
+    }
 
     if (permissionContext.isDemo) {
       return NextResponse.json({ error: 'Demo account is read-only' }, { status: 403 });

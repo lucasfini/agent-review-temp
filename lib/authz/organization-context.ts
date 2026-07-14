@@ -11,12 +11,24 @@ import type {
 import { OrganizationAccessError } from '@/lib/authz/types';
 import { normalizeOrganizationMemberRole } from '@/lib/authz/types';
 
+export const PERSONAL_WORKSPACE_NAME = 'Personal Workspace';
+
+export function displayOrganizationName(organization: Pick<OrganizationRecord, 'type' | 'name'>): string {
+  return organization.type === 'personal_legacy' ? PERSONAL_WORKSPACE_NAME : organization.name;
+}
+
+function displayOrganization(organization: OrganizationRecord): OrganizationRecord {
+  return organization.type === 'personal_legacy'
+    ? { ...organization, name: PERSONAL_WORKSPACE_NAME }
+    : organization;
+}
+
 function deterministicPersonalSlug(userId: string): string {
   return `personal-${createHash('md5').update(userId).digest('hex').slice(0, 20)}`;
 }
 
-function defaultOrganizationName(userId: string): string {
-  return `User ${userId.slice(0, 8)} Workspace`;
+function defaultOrganizationName(): string {
+  return PERSONAL_WORKSPACE_NAME;
 }
 
 async function getActiveMembership(
@@ -69,7 +81,7 @@ async function getActiveOrganizationContextById(
     throw new OrganizationAccessError(404, 'Organization not found');
   }
 
-  return { organization, membership };
+  return { organization: displayOrganization(organization), membership };
 }
 
 async function getPreferredActiveOrganizationId(
@@ -138,7 +150,7 @@ async function getFirstActiveOrganizationContextByTypeOrNull(
   }
 
   return {
-    organization,
+    organization: displayOrganization(organization),
     membership: {
       ...membership,
       role: normalizeOrganizationMemberRole(membership.role),
@@ -179,7 +191,7 @@ export async function ensureDefaultOrganizationForUser(
   const { data, error } = await supabase
     .from('organizations')
     .insert({
-      name: defaultOrganizationName(userId),
+      name: defaultOrganizationName(),
       slug,
       type: 'personal_legacy',
       owner_user_id: userId,
@@ -262,7 +274,67 @@ export async function getActiveOrganizationForUser(
     throw new OrganizationAccessError(500, 'Default organization membership is missing or inactive');
   }
 
-  return { organization, membership };
+  return {
+    organization: displayOrganization(organization),
+    membership,
+  };
+}
+
+export async function listActiveOrganizationsForUser(
+  supabase: SupabaseClient<any>,
+  userId: string
+): Promise<ActiveOrganizationContext[]> {
+  const { data: memberships, error: membershipsError } = await supabase
+    .from('organization_members')
+    .select('*')
+    .eq('user_id', userId)
+    .eq('status', 'active')
+    .order('created_at', { ascending: true }) as {
+      data: OrganizationMemberRecord[] | null;
+      error: any;
+    };
+
+  if (membershipsError) {
+    throw new OrganizationAccessError(500, membershipsError.message || 'Failed to resolve organization memberships');
+  }
+
+  const membershipByOrganizationId = new Map(
+    (memberships || [])
+      .filter((membership) => Boolean(membership.organization_id))
+      .map((membership) => [
+        membership.organization_id,
+        {
+          ...membership,
+          role: normalizeOrganizationMemberRole(membership.role),
+        },
+      ])
+  );
+
+  const organizationIds = Array.from(membershipByOrganizationId.keys());
+  if (organizationIds.length === 0) return [];
+
+  const { data: organizations, error: organizationsError } = await supabase
+    .from('organizations')
+    .select('*')
+    .in('id', organizationIds) as {
+      data: OrganizationRecord[] | null;
+      error: any;
+    };
+
+  if (organizationsError) {
+    throw new OrganizationAccessError(500, organizationsError.message || 'Failed to resolve organizations');
+  }
+
+  const organizationById = new Map((organizations || []).map((organization) => [organization.id, organization]));
+  return organizationIds
+    .map((organizationId) => {
+      const organization = organizationById.get(organizationId);
+      const membership = membershipByOrganizationId.get(organizationId);
+      return organization && membership
+        ? { organization: displayOrganization(organization), membership }
+        : null;
+    })
+    .filter((context): context is ActiveOrganizationContext => Boolean(context));
 }
 
 export async function setActiveOrganizationForUser(

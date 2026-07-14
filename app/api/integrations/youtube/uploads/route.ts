@@ -1,5 +1,5 @@
 import { NextRequest, NextResponse } from 'next/server';
-import { getConnection, getDecryptedTokens, getUserFromRequest, upsertConnection } from '../../_utils';
+import { getConnection, getDecryptedTokens, getUserFromRequest, integrationErrorResponse, signedOutIntegrationResponse, upsertConnection } from '../../_utils';
 import { supabaseAdmin } from '@/lib/supabase/server';
 
 const parseYouTubeDurationSeconds = (value?: string): number | null => {
@@ -63,14 +63,14 @@ async function refreshYouTubeToken(connection: any) {
 }
 
 export async function GET(request: NextRequest) {
-  const { user, error } = await getUserFromRequest(request);
+  const { user } = await getUserFromRequest(request);
   if (!user) {
-    return NextResponse.json({ error: error || 'Unauthorized' }, { status: 401 });
+    return signedOutIntegrationResponse();
   }
 
   let connection = await getConnection(user.id, 'youtube');
   if (!connection) {
-    return NextResponse.json({ error: 'YouTube not connected' }, { status: 404 });
+    return integrationErrorResponse({ provider: 'youtube', code: 'RECONNECT_REQUIRED', action: 'list', status: 404, userId: user.id });
   }
 
   const expiresAt = connection.expires_at ? new Date(connection.expires_at).getTime() : null;
@@ -80,7 +80,7 @@ export async function GET(request: NextRequest) {
 
   let { accessToken } = getDecryptedTokens(connection);
   if (!accessToken) {
-    return NextResponse.json({ error: 'YouTube token missing' }, { status: 401 });
+    return integrationErrorResponse({ provider: 'youtube', code: 'RECONNECT_REQUIRED', action: 'list', status: 401, userId: user.id });
   }
 
   const maxResults = Math.min(50, Math.max(1, Number(new URL(request.url).searchParams.get('limit') || 20)));
@@ -103,7 +103,15 @@ export async function GET(request: NextRequest) {
 
   if (!channelsRes.ok) {
     const text = await channelsRes.text();
-    return NextResponse.json({ error: `Failed to fetch YouTube channel details: ${text}` }, { status: 500 });
+    return integrationErrorResponse({
+      provider: 'youtube',
+      code: channelsRes.status === 401 || channelsRes.status === 403 ? 'RECONNECT_REQUIRED' : 'LIST_FAILED',
+      action: 'list',
+      status: channelsRes.status === 401 || channelsRes.status === 403 ? 401 : 500,
+      logPrefix: '[YOUTUBE UPLOADS] Provider channel error:',
+      cause: text,
+      userId: user.id,
+    });
   }
 
   const channelsData = await channelsRes.json() as any;
@@ -122,7 +130,15 @@ export async function GET(request: NextRequest) {
 
   if (!playlistRes.ok) {
     const text = await playlistRes.text();
-    return NextResponse.json({ error: `Failed to fetch YouTube uploads: ${text}` }, { status: 500 });
+    return integrationErrorResponse({
+      provider: 'youtube',
+      code: playlistRes.status === 401 || playlistRes.status === 403 ? 'RECONNECT_REQUIRED' : 'LIST_FAILED',
+      action: 'list',
+      status: playlistRes.status === 401 || playlistRes.status === 403 ? 401 : 500,
+      logPrefix: '[YOUTUBE UPLOADS] Provider playlist error:',
+      cause: text,
+      userId: user.id,
+    });
   }
 
   const playlistData = await playlistRes.json() as any;
@@ -144,7 +160,15 @@ export async function GET(request: NextRequest) {
 
   if (!detailsRes.ok) {
     const text = await detailsRes.text();
-    return NextResponse.json({ error: `Failed to fetch YouTube video details: ${text}` }, { status: 500 });
+    return integrationErrorResponse({
+      provider: 'youtube',
+      code: detailsRes.status === 401 || detailsRes.status === 403 ? 'RECONNECT_REQUIRED' : 'LIST_FAILED',
+      action: 'list',
+      status: detailsRes.status === 401 || detailsRes.status === 403 ? 401 : 500,
+      logPrefix: '[YOUTUBE UPLOADS] Provider details error:',
+      cause: text,
+      userId: user.id,
+    });
   }
 
   const detailsData = await detailsRes.json() as any;
@@ -154,13 +178,13 @@ export async function GET(request: NextRequest) {
     .map((videoId: string) => {
       const item = detailsById.get(videoId);
       if (!item) return null;
-      if (item?.status?.privacyStatus !== 'public') return null;
 
       return {
         videoId,
         title: item?.snippet?.title || 'Untitled video',
         channelTitle: item?.snippet?.channelTitle || null,
         publishedAt: item?.snippet?.publishedAt || null,
+        privacyStatus: item?.status?.privacyStatus || null,
         thumbnailUrl:
           item?.snippet?.thumbnails?.medium?.url ||
           item?.snippet?.thumbnails?.default?.url ||

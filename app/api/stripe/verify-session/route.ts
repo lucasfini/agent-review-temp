@@ -9,8 +9,34 @@ import { supabaseAdmin } from '@/lib/supabase/server';
 import { isDemoUser } from '@/lib/demo-mode';
 import { addStripePurchaseCredit } from '@/lib/billing/credit';
 import { getTotalCredits, resolveCreditPackage } from '@/lib/billing/credit-packages';
-import { grantTopUpCredits } from '@/lib/billing/plan-credits';
+import { ensureCurrentPlanCreditGrant, grantTopUpCredits } from '@/lib/billing/plan-credits';
+import { upsertOrganizationSubscriptionFromStripe } from '@/lib/billing/subscriptions';
 import { getStripeClient } from '@/lib/billing/stripe-runtime';
+import {
+  notifyCreditsAdded,
+  notifyPlanUpdated,
+} from '@/lib/notifications/notification-events';
+
+function metadataString(metadata: Record<string, unknown> | null | undefined, keys: string[]): string | null {
+  if (!metadata) return null;
+
+  for (const key of keys) {
+    const value = metadata[key];
+    if (typeof value === 'string' && value.trim()) {
+      return value.trim();
+    }
+  }
+
+  return null;
+}
+
+function stripeIdFromValue(value: unknown): string | null {
+  if (typeof value === 'string' && value.trim()) return value.trim();
+  if (value && typeof value === 'object' && typeof (value as { id?: unknown }).id === 'string') {
+    return (value as { id: string }).id;
+  }
+  return null;
+}
 
 export async function POST(request: NextRequest) {
   try {
@@ -45,21 +71,93 @@ export async function POST(request: NextRequest) {
     // Retrieve session from Stripe
     const stripe = getStripeClient('top-up verification');
     const session = await stripe.checkout.sessions.retrieve(sessionId);
+    const metadata = session.metadata || {};
+    const metadataUserId = metadataString(metadata, ['userId', 'user_id']);
+    const metadataOrganizationId = metadataString(metadata, ['organizationId', 'organization_id']);
+    const metadataPackageId = metadataString(metadata, ['packageId', 'package_id']);
+    const metadataCreditUnit = metadataString(metadata, ['creditUnit', 'credit_unit']);
+    const metadataPlanId = metadataString(metadata, ['planId', 'plan_id']);
+    const metadataPlanSlug = metadataString(metadata, ['planSlug', 'plan_slug']);
+    const isSubscriptionCheckout = session.mode === 'subscription'
+      || Boolean(metadataPlanId || metadataPlanSlug) && !metadataPackageId;
 
     // Verify session belongs to this user
-    if (session.metadata?.userId !== user.id) {
+    if (!metadataUserId || metadataUserId !== user.id) {
       return NextResponse.json(
         { error: 'Session does not belong to this user' },
         { status: 403 }
       );
     }
 
+    const paymentStatus = typeof session.payment_status === 'string' ? session.payment_status : null;
+    const sessionStatus = typeof session.status === 'string' ? session.status : null;
+    const paymentComplete = paymentStatus === 'paid'
+      || paymentStatus === 'no_payment_required'
+      || (isSubscriptionCheckout && sessionStatus === 'complete');
+
     // Check if payment was successful
-    if (session.payment_status !== 'paid') {
+    if (!paymentComplete) {
       return NextResponse.json(
         { error: 'Payment not completed', paymentStatus: session.payment_status },
         { status: 400 }
       );
+    }
+
+    if (isSubscriptionCheckout) {
+      const subscriptionId = stripeIdFromValue(session.subscription);
+      if (!subscriptionId) {
+        return NextResponse.json(
+          { error: 'Subscription checkout is still being confirmed' },
+          { status: 202 }
+        );
+      }
+
+      const subscription = await stripe.subscriptions.retrieve(subscriptionId, {
+        expand: ['items.data.price'],
+      });
+      const syncedSubscription = await upsertOrganizationSubscriptionFromStripe(
+        supabaseAdmin,
+        subscription,
+        {
+          organizationId: metadataOrganizationId,
+          planId: metadataPlanId,
+          planSlug: metadataPlanSlug,
+          checkoutSessionId: session.id,
+          eventType: 'checkout.session.verified',
+          source: 'success_page_verify',
+        }
+      );
+
+      if (syncedSubscription && metadataOrganizationId) {
+        await ensureCurrentPlanCreditGrant({
+          organizationId: metadataOrganizationId,
+          userId: user.id,
+          subscription: syncedSubscription,
+        });
+        await notifyPlanUpdated({
+          organizationId: metadataOrganizationId,
+          actorUserId: user.id,
+          planName: syncedSubscription.plan?.name || metadataPlanSlug || 'Your plan',
+          idempotencyKey: `plan_changed:verify_session:${session.id}`,
+          metadata: {
+            source: 'success_page_verify',
+            sessionId: session.id,
+            subscriptionId,
+            planSlug: metadataPlanSlug || syncedSubscription.plan?.slug || null,
+          },
+        });
+      }
+
+      return NextResponse.json({
+        success: true,
+        alreadyProcessed: true,
+        checkoutType: 'subscription',
+        message: 'Subscription checkout confirmed',
+        organizationId: metadataOrganizationId || syncedSubscription?.organizationId || null,
+        subscriptionId,
+        planSlug: metadataPlanSlug || syncedSubscription?.plan?.slug || null,
+        creditUnit: 'plan_credit',
+      });
     }
 
     // Dedup: check if this payment_intent was already processed (by webhook or prior verify call)
@@ -81,15 +179,41 @@ export async function POST(request: NextRequest) {
           success: true,
           alreadyProcessed: true,
           message: 'Credits already added',
-          creditUnit: session.metadata?.creditUnit === 'plan_credit' || session.metadata?.organizationId
+          creditUnit: metadataCreditUnit === 'plan_credit' || metadataOrganizationId
             ? 'plan_credit'
             : 'legacy_usd',
+          organizationId: metadataOrganizationId || null,
+        });
+      }
+    }
+
+    if (metadataOrganizationId) {
+      const { data: existingGrant, error: existingGrantError } = await supabaseAdmin
+        .from('billing_credit_grants')
+        .select('id')
+        .eq('idempotency_key', `top_up:${paymentIntentId || session.id}`)
+        .limit(1)
+        .maybeSingle();
+
+      if (existingGrantError) {
+        throw new Error(existingGrantError.message || 'Failed to check existing top-up credit grant');
+      }
+
+      if (existingGrant) {
+        console.log(`Top-up credits already granted for session ${sessionId}. Grant: ${existingGrant.id}`);
+        return NextResponse.json({
+          success: true,
+          alreadyProcessed: true,
+          message: 'Credits already added',
+          grantId: existingGrant.id,
+          creditUnit: 'plan_credit',
+          organizationId: metadataOrganizationId,
         });
       }
     }
 
     // Add credits
-    const packageId = session.metadata?.packageId;
+    const packageId = metadataPackageId;
     const pkg = resolveCreditPackage(packageId || '');
 
     if (!pkg) {
@@ -122,15 +246,16 @@ export async function POST(request: NextRequest) {
       }
     }
 
-    const organizationId = session.metadata?.organizationId;
+    const organizationId = metadataOrganizationId;
     if (organizationId) {
+      const idempotencyKey = `top_up:${paymentIntentId || session.id}`;
       const grant = await grantTopUpCredits({
         organizationId,
         userId: user.id,
         credits: creditsAmount,
         paymentId: paymentIntentId,
         invoiceNumber,
-        idempotencyKey: `top_up:${paymentIntentId || session.id}`,
+        idempotencyKey,
         metadata: {
           sessionId: session.id,
           packageId,
@@ -141,12 +266,26 @@ export async function POST(request: NextRequest) {
       });
 
       console.log(`Successfully granted ${creditsAmount} top-up credits to organization ${organizationId}. Grant: ${grant.id}`);
+      await notifyCreditsAdded({
+        organizationId,
+        actorUserId: user.id,
+        credits: creditsAmount,
+        idempotencyKey,
+        metadata: {
+          source: 'success_page_verify',
+          sessionId: session.id,
+          packageId,
+          paymentIntentId: paymentIntentId || null,
+          credits: creditsAmount,
+        },
+      });
       return NextResponse.json({
         success: true,
         alreadyProcessed: false,
         creditsAdded: creditsAmount,
         grantId: grant.id,
         creditUnit: 'plan_credit',
+        organizationId,
       });
     }
 

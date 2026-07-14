@@ -812,6 +812,9 @@ export type Database = {
           full_name: string | null
           id: string
           last_name: string | null
+          onboarding_completed_at: string | null
+          onboarding_metadata_json: Json
+          onboarding_status: string | null
           processing_hours_limit: number | null
           processing_hours_used: number | null
           stripe_customer_id: string | null
@@ -829,6 +832,9 @@ export type Database = {
           full_name?: string | null
           id: string
           last_name?: string | null
+          onboarding_completed_at?: string | null
+          onboarding_metadata_json?: Json
+          onboarding_status?: string | null
           processing_hours_limit?: number | null
           processing_hours_used?: number | null
           stripe_customer_id?: string | null
@@ -846,6 +852,9 @@ export type Database = {
           full_name?: string | null
           id?: string
           last_name?: string | null
+          onboarding_completed_at?: string | null
+          onboarding_metadata_json?: Json
+          onboarding_status?: string | null
           processing_hours_limit?: number | null
           processing_hours_used?: number | null
           stripe_customer_id?: string | null
@@ -1623,6 +1632,7 @@ export const createMockSupabaseClient = (): SupabaseClient<any> => {
     auth: {
       signUp: createMockFunction(authResponse),
       signInWithPassword: createMockFunction(authResponse),
+      setSession: createMockFunction(authResponse),
       signOut: createMockFunction(async () => ({ error: null })),
       getSession: createMockFunction(sessionResponse),
       onAuthStateChange: createMockFunction(() => ({

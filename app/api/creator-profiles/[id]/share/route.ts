@@ -9,10 +9,16 @@ import {
   deleteCreatorProfile,
   getCreatorProfileInOrganizations,
   shareCreatorProfileToOrganization,
+  unshareCreatorProfileToPrivateOrganization,
 } from '@/lib/creator-profiles';
 import { isDemoUser } from '@/lib/demo-mode';
 import { requireStudioAssetContext } from '@/lib/studio-assets';
+import { assertShareTargetIsTeamOrganization } from '@/lib/studio-sharing';
 import { supabaseAdmin } from '@/lib/supabase/server';
+import {
+  notifyMovedToPrivate,
+  notifySharedWithTeam,
+} from '@/lib/notifications/notification-events';
 
 export const dynamic = 'force-dynamic';
 export const revalidate = 0;
@@ -47,6 +53,11 @@ export async function POST(
     if (isDemoUser(context.user)) {
       return NextResponse.json({ error: 'Demo account is read-only' }, { status: 403 });
     }
+    assertShareTargetIsTeamOrganization({
+      activeOrganizationId: context.activeOrganizationId,
+      privateOrganizationId: context.privateOrganizationId,
+      organizationType: context.organization.type,
+    }, 'profile');
 
     const profile = await getCreatorProfileInOrganizations(supabaseAdmin, context.organizationIds, id);
     const scopedProfile = profile ? decorateCreatorProfileScope(profile, {
@@ -61,7 +72,7 @@ export async function POST(
       return NextResponse.json({ error: 'Profile not found' }, { status: 404 });
     }
     if (scopedProfile.scope !== 'private' || !scopedProfile.canShare) {
-      return NextResponse.json({ error: 'You do not have permission to share this profile' }, { status: 403 });
+      return NextResponse.json({ error: 'You do not have permission to publish this profile' }, { status: 403 });
     }
 
     const sharedProfile = decorateCreatorProfileScope(
@@ -93,9 +104,22 @@ export async function POST(
       },
     });
 
+    await notifySharedWithTeam({
+      organizationId: context.activeOrganizationId,
+      actorUserId: context.user.id,
+      name: sharedProfile.name,
+      href: '/dashboard/studio/profile',
+      idempotencyKey: `asset_shared:profile:${sharedProfile.id}`,
+      metadata: {
+        assetType: 'profile',
+        assetId: sharedProfile.id,
+        sourceProfileId: scopedProfile.id,
+      },
+    });
+
     return NextResponse.json({ success: true, creatorProfile: sharedProfile });
   } catch (error) {
-    return errorResponse(error, 'Failed to share profile');
+    return errorResponse(error, 'Failed to publish profile');
   }
 }
 
@@ -126,12 +150,32 @@ export async function DELETE(
       return NextResponse.json({ error: 'Profile not found' }, { status: 404 });
     }
     if (!scopedProfile.canUnshare) {
-      return NextResponse.json({ error: 'You do not have permission to unshare this profile' }, { status: 403 });
+      return NextResponse.json({ error: 'You do not have permission to move this profile to private' }, { status: 403 });
     }
 
-    const deleted = await deleteCreatorProfile(supabaseAdmin, scopedProfile.organizationId, scopedProfile.id);
-    if (!deleted) {
-      return NextResponse.json({ error: 'Profile not found' }, { status: 404 });
+    const privateProfile = scopedProfile.sharedFromProfileId
+      ? null
+      : decorateCreatorProfileScope(
+        await unshareCreatorProfileToPrivateOrganization(
+          supabaseAdmin,
+          scopedProfile,
+          context.privateOrganizationId,
+          context.activeOrganizationId
+        ),
+        {
+          activeOrganizationId: context.activeOrganizationId,
+          privateOrganizationId: context.privateOrganizationId,
+          userId: context.user.id,
+          role: context.membership.role,
+          organizationType: context.organization.type,
+        }
+      );
+
+    if (scopedProfile.sharedFromProfileId) {
+      const deleted = await deleteCreatorProfile(supabaseAdmin, scopedProfile.organizationId, scopedProfile.id);
+      if (!deleted) {
+        return NextResponse.json({ error: 'Profile not found' }, { status: 404 });
+      }
     }
 
     await recordOrganizationAuditLog({
@@ -146,8 +190,20 @@ export async function DELETE(
       },
     });
 
-    return NextResponse.json({ success: true });
+    await notifyMovedToPrivate({
+      organizationId: context.activeOrganizationId,
+      actorUserId: context.user.id,
+      name: scopedProfile.name,
+      href: '/dashboard/studio/profile',
+      idempotencyKey: `asset_unshared:profile:${scopedProfile.id}`,
+      metadata: {
+        assetType: 'profile',
+        assetId: scopedProfile.id,
+      },
+    });
+
+    return NextResponse.json({ success: true, creatorProfile: privateProfile });
   } catch (error) {
-    return errorResponse(error, 'Failed to unshare profile');
+    return errorResponse(error, 'Failed to move profile to private');
   }
 }

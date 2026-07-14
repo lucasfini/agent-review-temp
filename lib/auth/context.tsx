@@ -5,6 +5,8 @@ import { User, Session } from '@supabase/supabase-js';
 import { supabase } from '@/lib/supabase/client';
 import { isDemoUser } from '@/lib/demo-mode';
 
+const devConfirmedSignupEnabled = process.env.NEXT_PUBLIC_ENABLE_DEV_CONFIRMED_SIGNUP === 'true';
+
 interface AuthContextType {
   user: User | null;
   session: Session | null;
@@ -131,6 +133,47 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
 
   const signUp = async (email: string, password: string, name?: string, nextPath?: string | null) => {
     const now = new Date().toISOString();
+    if (devConfirmedSignupEnabled) {
+      try {
+        const response = await fetch('/api/auth/dev-signup', {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json',
+          },
+          body: JSON.stringify({ email, password, name }),
+        });
+        const payload = await response.json().catch(() => ({}));
+
+        if (!response.ok) {
+          return {
+            data: null,
+            error: new Error(payload?.error || 'Failed to create confirmed development account'),
+          };
+        }
+
+        if (payload?.session?.access_token && payload?.session?.refresh_token) {
+          const { data, error } = await supabase.auth.setSession({
+            access_token: payload.session.access_token,
+            refresh_token: payload.session.refresh_token,
+          });
+          return {
+            data: {
+              user: data.user || payload.user,
+              session: data.session || payload.session,
+            },
+            error,
+          };
+        }
+
+        return { data: payload, error: null };
+      } catch (error) {
+        return {
+          data: null,
+          error: error instanceof Error ? error : new Error('Failed to create confirmed development account'),
+        };
+      }
+    }
+
     const { data, error } = await supabase.auth.signUp({
       email,
       password,
@@ -140,6 +183,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
           ...(name ? { full_name: name } : {}),
           terms_accepted_at: now,
           privacy_accepted_at: now,
+          onboarding_status: 'profile_pending',
         },
       },
     });

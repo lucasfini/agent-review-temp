@@ -15,14 +15,28 @@ export type BillingStripeClient = {
   };
   customers: {
     create: (payload: Record<string, unknown>) => Promise<any>;
+    retrieve: (customerId: string, payload?: Record<string, unknown>) => Promise<any>;
+  };
+  paymentMethods: {
+    list: (payload: Record<string, unknown>) => Promise<any>;
   };
   billingPortal: {
     sessions: {
       create: (payload: Record<string, unknown>) => Promise<any>;
     };
   };
+  subscriptions: {
+    retrieve: (subscriptionId: string, payload?: Record<string, unknown>) => Promise<any>;
+    update: (subscriptionId: string, payload: Record<string, unknown>) => Promise<any>;
+  };
+  subscriptionSchedules: {
+    create: (payload: Record<string, unknown>) => Promise<any>;
+    retrieve: (scheduleId: string) => Promise<any>;
+    update: (scheduleId: string, payload: Record<string, unknown>) => Promise<any>;
+  };
   invoices: {
     retrieve: (invoiceId: string) => Promise<any>;
+    list: (payload: Record<string, unknown>) => Promise<any>;
   };
 };
 
@@ -44,6 +58,8 @@ type MockSession = {
 
 const mockCheckoutSessions = new Map<string, MockSession>();
 const mockCustomers = new Map<string, string>();
+const mockSubscriptions = new Map<string, any>();
+const mockSubscriptionSchedules = new Map<string, any>();
 
 function isEnabled(value: string | undefined): boolean {
   if (!value) {
@@ -134,6 +150,27 @@ function createMockCheckoutSession(payload: Record<string, unknown>): MockSessio
   };
 
   mockCheckoutSessions.set(id, session);
+  if (subscriptionId) {
+    mockSubscriptions.set(subscriptionId, {
+      id: subscriptionId,
+      object: 'subscription',
+      customer,
+      status: 'active',
+      cancel_at_period_end: false,
+      metadata: parseSessionMetadata((payload.subscription_data as Record<string, unknown> | undefined)?.metadata || payload.metadata),
+      items: {
+        data: (lineItems || []).map((item, index) => ({
+          id: makeMockId(`si${index + 1}`),
+          quantity: typeof item.quantity === 'number' && Number.isFinite(item.quantity) ? item.quantity : 1,
+          current_period_start: Math.floor(Date.now() / 1000),
+          current_period_end: Math.floor(Date.now() / 1000) + (30 * 24 * 60 * 60),
+          price: {
+            id: typeof item.price === 'string' ? item.price : null,
+          },
+        })),
+      },
+    });
+  }
   return session;
 }
 
@@ -175,6 +212,36 @@ function createMockInvoice(invoiceId: string) {
   };
 }
 
+function createMockSubscriptionSchedule(payload: Record<string, unknown>) {
+  const id = makeMockId('sub_sched');
+  const subscriptionId = typeof payload.from_subscription === 'string'
+    ? payload.from_subscription
+    : null;
+  const subscription = subscriptionId ? mockSubscriptions.get(subscriptionId) : null;
+  const firstItem = Array.isArray(subscription?.items?.data) ? subscription.items.data[0] : null;
+  const currentPeriodStart = Number(firstItem?.current_period_start || Math.floor(Date.now() / 1000));
+  const currentPeriodEnd = Number(firstItem?.current_period_end || currentPeriodStart + (30 * 24 * 60 * 60));
+  const schedule = {
+    id,
+    object: 'subscription_schedule',
+    subscription: subscriptionId,
+    current_phase: {
+      start_date: currentPeriodStart,
+      end_date: currentPeriodEnd,
+    },
+    phases: [],
+    metadata: {},
+  };
+
+  mockSubscriptionSchedules.set(id, schedule);
+  if (subscription) {
+    subscription.schedule = id;
+    mockSubscriptions.set(subscription.id, subscription);
+  }
+
+  return schedule;
+}
+
 function createMockStripeClient(): BillingStripeClient {
   return {
     checkout: {
@@ -196,6 +263,19 @@ function createMockStripeClient(): BillingStripeClient {
         name?: string;
         metadata?: Record<string, unknown>;
       }),
+      retrieve: async (customerId: string) => ({
+        id: customerId,
+        object: 'customer',
+        email: mockCustomers.get(customerId) || null,
+        invoice_settings: {
+          default_payment_method: null,
+        },
+      }),
+    },
+    paymentMethods: {
+      list: async () => ({
+        data: [],
+      }),
     },
     billingPortal: {
       sessions: {
@@ -205,8 +285,87 @@ function createMockStripeClient(): BillingStripeClient {
         },
       },
     },
+    subscriptions: {
+      retrieve: async (subscriptionId: string) => {
+        const subscription = mockSubscriptions.get(subscriptionId);
+        if (!subscription) {
+          throw new Error(`Unknown mock subscription: ${subscriptionId}`);
+        }
+        return subscription;
+      },
+      update: async (subscriptionId: string, payload: Record<string, unknown>) => {
+        const subscription = mockSubscriptions.get(subscriptionId);
+        if (!subscription) {
+          throw new Error(`Unknown mock subscription: ${subscriptionId}`);
+        }
+
+        const items = Array.isArray(payload.items) ? payload.items as Array<Record<string, unknown>> : [];
+        for (const item of items) {
+          const quantity = typeof item.quantity === 'number' && Number.isFinite(item.quantity)
+            ? item.quantity
+            : 1;
+          const existing = typeof item.id === 'string'
+            ? subscription.items.data.find((subscriptionItem: any) => subscriptionItem.id === item.id)
+            : null;
+
+          if (existing) {
+            existing.quantity = quantity;
+          } else if (typeof item.price === 'string') {
+            subscription.items.data.push({
+              id: makeMockId('si'),
+              quantity,
+              current_period_start: Math.floor(Date.now() / 1000),
+              current_period_end: Math.floor(Date.now() / 1000) + (30 * 24 * 60 * 60),
+              price: { id: item.price },
+            });
+          }
+        }
+
+        if (payload.metadata && typeof payload.metadata === 'object') {
+          subscription.metadata = {
+            ...(subscription.metadata || {}),
+            ...(payload.metadata as Record<string, unknown>),
+          };
+        }
+
+        mockSubscriptions.set(subscriptionId, subscription);
+        return subscription;
+      },
+    },
+    subscriptionSchedules: {
+      create: async (payload: Record<string, unknown>) => createMockSubscriptionSchedule(payload),
+      retrieve: async (scheduleId: string) => {
+        const schedule = mockSubscriptionSchedules.get(scheduleId);
+        if (!schedule) {
+          throw new Error(`Unknown mock subscription schedule: ${scheduleId}`);
+        }
+        return schedule;
+      },
+      update: async (scheduleId: string, payload: Record<string, unknown>) => {
+        const schedule = mockSubscriptionSchedules.get(scheduleId);
+        if (!schedule) {
+          throw new Error(`Unknown mock subscription schedule: ${scheduleId}`);
+        }
+
+        const updated = {
+          ...schedule,
+          ...payload,
+          id: schedule.id,
+          object: 'subscription_schedule',
+          metadata: {
+            ...(schedule.metadata || {}),
+            ...((payload.metadata as Record<string, unknown> | undefined) || {}),
+          },
+        };
+        mockSubscriptionSchedules.set(scheduleId, updated);
+        return updated;
+      },
+    },
     invoices: {
       retrieve: async (invoiceId: string) => createMockInvoice(invoiceId),
+      list: async () => ({
+        data: [],
+      }),
     },
   };
 }

@@ -9,12 +9,17 @@ import {
   InsufficientCreditError,
   ConcurrentUpdateError,
   CreditAccountNotFoundError,
+  estimateCompletedUploadReservationCredits,
 } from '@/lib/billing/credit';
 import {
+  assertPlanUploadDuration,
   createPlanCreditReservation,
+  ensureCurrentPlanCreditGrant,
+  filterSpendablePlanCreditGrants,
   InsufficientPlanCreditsError,
   PlanUploadLimitError,
 } from '@/lib/billing/plan-credits';
+import { billingErrorResponse } from '@/lib/billing/middleware';
 
 describe('Credit Error Types', () => {
   describe('InsufficientCreditError', () => {
@@ -72,13 +77,136 @@ describe('Credit Error Types', () => {
     });
 
     test('should create upload limit error with requested and max minutes', () => {
-      const error = new PlanUploadLimitError('org-123', 61, 60, 'free');
+      const error = new PlanUploadLimitError('org-123', 30.0167, 30, 'free', 1801);
 
       expect(error.name).toBe('PlanUploadLimitError');
-      expect(error.requestedMinutes).toBe(61);
-      expect(error.maxUploadMinutes).toBe(60);
+      expect(error.requestedSeconds).toBe(1801);
+      expect(error.maxUploadMinutes).toBe(30);
       expect(error.planSlug).toBe('free');
     });
+
+    test('formats paid top-up metadata for insufficient plan credits', async () => {
+      const response = billingErrorResponse(new InsufficientPlanCreditsError('org-123', 500, 100, 'standard', true));
+      const payload = await response.json();
+
+      expect(response.status).toBe(402);
+      expect(payload.code).toBe('INSUFFICIENT_PLAN_CREDITS');
+      expect(payload.topUpsEnabled).toBe(true);
+      expect(payload.topUpPath).toBe('/dashboard/billing');
+      expect(payload.message).toBe('This recording requires about 500 credits. You have 100 credits available.');
+    });
+
+    test('does not expose a paid top-up path when top-ups are disabled', async () => {
+      const response = billingErrorResponse(new InsufficientPlanCreditsError('org-123', 500, 100, 'free', false));
+      const payload = await response.json();
+
+      expect(response.status).toBe(402);
+      expect(payload.topUpsEnabled).toBe(false);
+      expect(payload.topUpPath).toBeNull();
+      expect(payload.upgradeRequired).toBe(true);
+    });
+  });
+});
+
+describe('Plan upload duration limits', () => {
+  const planConfigs = [
+    ['free', 1_800],
+    ['standard', 5_400],
+    ['pro', 10_800],
+    ['teams', 14_400],
+  ] as const;
+
+  function planRow(slug: typeof planConfigs[number][0]) {
+    const names = {
+      free: 'Free',
+      standard: 'Standard',
+      pro: 'Pro',
+      teams: 'Teams',
+    };
+
+    return {
+      id: `plan-${slug}`,
+      name: names[slug],
+      slug,
+      description: null,
+      stripe_price_id: null,
+      stripe_monthly_price_id: null,
+      stripe_annual_price_id: null,
+      monthly_price_cents: slug === 'free' ? 0 : 4999,
+      annual_price_cents: slug === 'free' ? 0 : 50388,
+      currency: 'usd',
+      seat_limit: 1,
+      monthly_generation_limit: null,
+      monthly_transcription_minute_limit: null,
+      monthly_import_limit: null,
+      monthly_storage_mb_limit: null,
+      integration_limit: null,
+      monthly_credit_grant: slug === 'free' ? 300 : 3000,
+      credit_rollover_months: 1,
+      top_up_enabled: slug !== 'free',
+      top_up_credit_expiry_months: 12,
+      max_upload_minutes: 90,
+      extra_seat_price_cents: null,
+      is_popular: false,
+      features_json: {},
+      is_active: true,
+      display_order: 10,
+      created_at: '2026-07-01T00:00:00.000Z',
+      updated_at: '2026-07-01T00:00:00.000Z',
+    };
+  }
+
+  function subscriptionRow(slug: typeof planConfigs[number][0]) {
+    return {
+      id: `subscription-${slug}`,
+      organization_id: 'org-1',
+      plan_id: `plan-${slug}`,
+      plan: planRow(slug),
+      stripe_customer_id: null,
+      stripe_subscription_id: null,
+      status: 'active',
+      current_period_start: '2026-07-01T00:00:00.000Z',
+      current_period_end: '2026-08-01T00:00:00.000Z',
+      cancel_at_period_end: false,
+      trial_start: null,
+      trial_end: null,
+      metadata_json: {},
+      created_at: '2026-07-01T00:00:00.000Z',
+      updated_at: '2026-07-01T00:00:00.000Z',
+    };
+  }
+
+  function buildSubscriptionSupabase(slug: typeof planConfigs[number][0]) {
+    const query: any = {
+      select: jest.fn(() => query),
+      eq: jest.fn(() => query),
+      order: jest.fn(() => query),
+      limit: jest.fn(async () => ({ data: [subscriptionRow(slug)], error: null })),
+    };
+
+    return {
+      from: jest.fn(() => query),
+    };
+  }
+
+  test.each(planConfigs)('%s accepts its exact max upload duration', async (slug, maxSeconds) => {
+    await expect(assertPlanUploadDuration({
+      supabase: buildSubscriptionSupabase(slug) as any,
+      organizationId: 'org-1',
+      userId: 'user-1',
+      durationSeconds: maxSeconds,
+    })).resolves.toEqual(expect.objectContaining({
+      plan: expect.objectContaining({ slug }),
+    }));
+  });
+
+  test.each(planConfigs)('%s rejects one second over its max upload duration', async (slug, maxSeconds) => {
+    await expect(assertPlanUploadDuration({
+      supabase: buildSubscriptionSupabase(slug) as any,
+      organizationId: 'org-1',
+      userId: 'user-1',
+      durationSeconds: maxSeconds + 1,
+    })).rejects.toBeInstanceOf(PlanUploadLimitError);
   });
 });
 
@@ -128,6 +256,47 @@ describe('Credit Balance Calculations', () => {
 
     // Use toBeCloseTo to handle floating point precision
     expect(balance).toBeCloseTo(9.7, 2);
+  });
+});
+
+describe('Completed upload reservation repair', () => {
+  const baseReservation = {
+    id: 'reservation-1',
+    userId: 'user-1',
+    organizationId: 'org-1',
+    projectId: 'project-1',
+    workflowType: 'upload_processing',
+    status: 'active' as const,
+    reservedAmount: 239.2,
+    settledAmount: 0,
+    releasedAmount: 0,
+    currency: 'CREDITS',
+    creditUnit: 'plan_credit',
+    metadata: { productCreditWorkflow: 'content_kit' },
+    createdAt: '2026-07-06T00:00:00.000Z',
+    updatedAt: '2026-07-06T00:00:00.000Z',
+  };
+
+  test('uses actual completed project duration instead of the estimated hold', () => {
+    const actualCredits = estimateCompletedUploadReservationCredits(baseReservation, {
+      status: 'completed',
+      audio_duration_seconds: 1196,
+      performance_level: 'content_kit',
+      metadata: {},
+    });
+
+    expect(actualCredits).toBe(59.8);
+  });
+
+  test('does not repair incomplete projects', () => {
+    const actualCredits = estimateCompletedUploadReservationCredits(baseReservation, {
+      status: 'processing',
+      audio_duration_seconds: 1196,
+      performance_level: 'content_kit',
+      metadata: {},
+    });
+
+    expect(actualCredits).toBeNull();
   });
 });
 
@@ -350,7 +519,7 @@ describe('Plan Credit Reservations', () => {
       credit_rollover_months: 1,
       top_up_enabled: true,
       top_up_credit_expiry_months: 12,
-      max_upload_minutes: 60,
+      max_upload_minutes: 90,
       extra_seat_price_cents: null,
       is_popular: false,
       features_json: {},
@@ -529,5 +698,313 @@ describe('Plan Credit Reservations', () => {
       status: 'failed',
       released_amount: 60,
     }));
+  });
+
+  test('blocks upload reservation when duration is valid but credits are insufficient', async () => {
+    const { supabase } = buildSupabaseMock({
+      grantUpdateResult: { data: { id: 'grant-1' }, error: null },
+    });
+
+    await expect(createPlanCreditReservation({
+      supabase: supabase as any,
+      userId: 'user-1',
+      organizationId: 'org-1',
+      projectId: 'project-1',
+      workflowType: 'upload_processing',
+      amount: 101,
+      now: new Date('2026-06-15T00:00:00.000Z'),
+    })).rejects.toBeInstanceOf(InsufficientPlanCreditsError);
+  });
+
+  test('duration-limit failure takes precedence before credit reservation', async () => {
+    const { supabase } = buildSupabaseMock({
+      grantUpdateResult: { data: { id: 'grant-1' }, error: null },
+    });
+
+    await expect((async () => {
+      const subscription = await assertPlanUploadDuration({
+        supabase: supabase as any,
+        organizationId: 'org-1',
+        userId: 'user-1',
+        durationSeconds: 5_401,
+      });
+
+      await createPlanCreditReservation({
+        supabase: supabase as any,
+        userId: 'user-1',
+        organizationId: 'org-1',
+        projectId: 'project-1',
+        workflowType: 'upload_processing',
+        amount: 1,
+        subscription,
+        now: new Date('2026-06-15T00:00:00.000Z'),
+      });
+    })()).rejects.toBeInstanceOf(PlanUploadLimitError);
+
+    expect(supabase.from).not.toHaveBeenCalledWith('billing_reservations');
+  });
+});
+
+describe('Plan Credit Grant Reconciliation', () => {
+  function planRow(overrides: Record<string, any> = {}) {
+    return {
+      id: 'plan-pro',
+      name: 'Pro',
+      slug: 'pro',
+      description: null,
+      stripe_price_id: null,
+      stripe_monthly_price_id: null,
+      stripe_annual_price_id: null,
+      monthly_price_cents: 9900,
+      annual_price_cents: 99000,
+      currency: 'usd',
+      seat_limit: 3,
+      monthly_generation_limit: null,
+      monthly_transcription_minute_limit: 1200,
+      monthly_import_limit: 25,
+      monthly_storage_mb_limit: 10000,
+      integration_limit: 5,
+      monthly_credit_grant: 10000,
+      credit_rollover_months: 1,
+      top_up_enabled: true,
+      top_up_credit_expiry_months: 12,
+      max_upload_minutes: 180,
+      extra_seat_price_cents: null,
+      is_popular: false,
+      features_json: {},
+      is_active: true,
+      display_order: 30,
+      created_at: '2026-06-01T00:00:00.000Z',
+      updated_at: '2026-06-01T00:00:00.000Z',
+      ...overrides,
+    };
+  }
+
+  function subscriptionRow(overrides: Record<string, any> = {}) {
+    return {
+      id: 'subscription-1',
+      organization_id: 'org-1',
+      plan_id: 'plan-pro',
+      plan: planRow(),
+      stripe_customer_id: 'cus_123',
+      stripe_subscription_id: 'sub_123',
+      status: 'active',
+      current_period_start: '2026-06-01T00:00:00.000Z',
+      current_period_end: '2026-07-01T00:00:00.000Z',
+      cancel_at_period_end: false,
+      trial_start: null,
+      trial_end: null,
+      metadata_json: {},
+      created_at: '2026-06-01T00:00:00.000Z',
+      updated_at: '2026-06-01T00:00:00.000Z',
+      ...overrides,
+    };
+  }
+
+  function grantRow(overrides: Record<string, any> = {}) {
+    return {
+      id: 'grant-standard',
+      organization_id: 'org-1',
+      user_id: 'user-1',
+      subscription_id: 'subscription-1',
+      plan_id: 'plan-standard',
+      source_type: 'plan_grant',
+      credits_granted: 3000,
+      credits_remaining: 2500,
+      period_start: '2026-06-01T00:00:00.000Z',
+      period_end: '2026-07-01T00:00:00.000Z',
+      expires_at: '2026-08-01T00:00:00.000Z',
+      idempotency_key: 'plan_grant:org-1:subscription-1:plan-standard:2026-06-01T00:00:00.000Z:2026-07-01T00:00:00.000Z',
+      stripe_payment_id: null,
+      metadata_json: { planSlug: 'standard' },
+      created_at: '2026-06-01T00:00:00.000Z',
+      updated_at: '2026-06-15T00:00:00.000Z',
+      ...overrides,
+    };
+  }
+
+  it('reconciles an existing same-period grant instead of inserting a second plan grant', async () => {
+    const queries: any[] = [];
+    const updatedGrant = grantRow({
+      plan_id: 'plan-pro',
+      credits_granted: 10000,
+      credits_remaining: 9500,
+      idempotency_key: 'plan_grant:org-1:subscription-1:plan-pro:2026-06-01T00:00:00.000Z:2026-07-01T00:00:00.000Z',
+      metadata_json: { planSlug: 'pro' },
+      updated_at: '2026-06-15T00:00:01.000Z',
+    });
+    const supabase = {
+      from: jest.fn((table: string) => {
+        const query: any = {
+          table,
+          operation: null,
+          payload: null,
+          data: null,
+          error: null,
+          select: jest.fn(() => query),
+          eq: jest.fn(() => query),
+          order: jest.fn(() => query),
+          limit: jest.fn(() => query),
+          update: jest.fn((payload) => {
+            query.operation = 'update';
+            query.payload = payload;
+            return query;
+          }),
+          insert: jest.fn((payload) => {
+            query.operation = 'insert';
+            query.payload = payload;
+            return query;
+          }),
+          maybeSingle: jest.fn(async () => {
+            if (table === 'billing_credit_grants' && query.operation === 'update') {
+              return { data: updatedGrant, error: null };
+            }
+            return { data: null, error: null };
+          }),
+          single: jest.fn(async () => ({ data: null, error: null })),
+        };
+
+        if (table === 'organization_subscriptions') {
+          query.data = [subscriptionRow()];
+        }
+
+        if (table === 'billing_credit_grants') {
+          query.data = [grantRow()];
+        }
+
+        queries.push(query);
+        return query;
+      }),
+    };
+
+    const result = await ensureCurrentPlanCreditGrant({
+      supabase: supabase as any,
+      organizationId: 'org-1',
+      userId: 'user-1',
+      now: new Date('2026-06-15T12:00:00.000Z'),
+    });
+
+    const grantUpdate = queries.find((query) => query.table === 'billing_credit_grants' && query.operation === 'update');
+    const grantInsert = queries.find((query) => query.table === 'billing_credit_grants' && query.operation === 'insert');
+
+    expect(result.grant?.creditsGranted).toBe(10000);
+    expect(result.grant?.creditsRemaining).toBe(9500);
+    expect(grantInsert).toBeUndefined();
+    expect(grantUpdate.payload).toEqual(expect.objectContaining({
+      plan_id: 'plan-pro',
+      credits_granted: 10000,
+      credits_remaining: 9500,
+    }));
+  });
+
+  it('keeps only one current-period plan grant spendable while preserving top-ups', () => {
+    const subscription = {
+      id: 'subscription-1',
+      organizationId: 'org-1',
+      planId: 'plan-teams',
+    } as any;
+    const grants = [
+      grantRow({ id: 'standard-grant', plan_id: 'plan-standard', credits_remaining: 3000 }),
+      grantRow({ id: 'teams-grant', plan_id: 'plan-teams', credits_granted: 35000, credits_remaining: 35000 }),
+      grantRow({
+        id: 'top-up',
+        source_type: 'top_up',
+        plan_id: null,
+        subscription_id: null,
+        credits_granted: 5000,
+        credits_remaining: 5000,
+        period_start: null,
+        period_end: null,
+      }),
+    ].map((row) => ({
+      id: row.id,
+      organizationId: row.organization_id,
+      userId: row.user_id,
+      subscriptionId: row.subscription_id,
+      planId: row.plan_id,
+      sourceType: row.source_type,
+      creditsGranted: Number(row.credits_granted),
+      creditsRemaining: Number(row.credits_remaining),
+      periodStart: row.period_start,
+      periodEnd: row.period_end,
+      expiresAt: row.expires_at,
+      idempotencyKey: row.idempotency_key,
+      stripePaymentId: row.stripe_payment_id,
+      metadata: row.metadata_json,
+      createdAt: row.created_at,
+      updatedAt: row.updated_at,
+    }));
+
+    const spendable = filterSpendablePlanCreditGrants(
+      grants as any,
+      subscription,
+      new Date('2026-06-15T00:00:00.000Z')
+    );
+
+    expect(spendable.map((grant) => grant.id).sort()).toEqual(['teams-grant', 'top-up']);
+  });
+
+  it('does not carry free current or rollover grants into a paid subscription balance', () => {
+    const subscription = {
+      id: 'pro-subscription',
+      organizationId: 'org-1',
+      planId: 'plan-pro',
+      plan: { slug: 'pro' },
+    } as any;
+    const grants = [
+      grantRow({
+        id: 'free-current',
+        subscription_id: 'free-subscription',
+        plan_id: 'plan-free',
+        credits_granted: 300,
+        credits_remaining: 300,
+        metadata_json: { planSlug: 'free' },
+      }),
+      grantRow({
+        id: 'free-rollover',
+        subscription_id: 'free-subscription',
+        plan_id: 'plan-free',
+        credits_granted: 300,
+        credits_remaining: 125,
+        period_start: '2026-05-01T00:00:00.000Z',
+        period_end: '2026-06-01T00:00:00.000Z',
+        expires_at: '2026-08-01T00:00:00.000Z',
+        metadata_json: { planSlug: 'free' },
+      }),
+      grantRow({
+        id: 'pro-current',
+        subscription_id: 'pro-subscription',
+        plan_id: 'plan-pro',
+        credits_granted: 10000,
+        credits_remaining: 10000,
+        idempotency_key: 'plan_grant:org-1:pro-subscription:plan-pro:2026-06-01T00:00:00.000Z:2026-07-01T00:00:00.000Z',
+        metadata_json: { planSlug: 'pro' },
+      }),
+    ].map((row) => ({
+      id: row.id,
+      organizationId: row.organization_id,
+      userId: row.user_id,
+      subscriptionId: row.subscription_id,
+      planId: row.plan_id,
+      sourceType: row.source_type,
+      creditsGranted: Number(row.credits_granted),
+      creditsRemaining: Number(row.credits_remaining),
+      periodStart: row.period_start,
+      periodEnd: row.period_end,
+      expiresAt: row.expires_at,
+      idempotencyKey: row.idempotency_key,
+      stripePaymentId: row.stripe_payment_id,
+      metadata: row.metadata_json,
+      createdAt: row.created_at,
+      updatedAt: row.updated_at,
+    }));
+
+    const spendable = filterSpendablePlanCreditGrants(
+      grants as any,
+      subscription,
+      new Date('2026-06-15T00:00:00.000Z')
+    );
+
+    expect(spendable.map((grant) => grant.id)).toEqual(['pro-current']);
   });
 });

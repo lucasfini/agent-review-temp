@@ -5,6 +5,10 @@ import { supabaseAdmin } from '@/lib/supabase/server';
 import { getDisplayBalance, getUsageHistory } from '@/lib/billing/credit';
 import { formatSiteCreditsFromUsd } from '@/lib/billing/display';
 import { getGroupedTransactions } from '@/lib/billing/grouped-transactions';
+import { getOrganizationPlanCreditBalance } from '@/lib/billing/plan-credits';
+import { formatProductCredits, roundProductCredits } from '@/lib/billing/product-credits';
+import { getPlanCreditUsageSummary } from '@/lib/billing/usage-summary';
+import { getIntegrationConnectionHealth, INTEGRATION_HEALTH_PROVIDERS } from '@/lib/integrations/connection-health';
 
 export const dynamic = 'force-dynamic';
 export const revalidate = 0;
@@ -18,7 +22,7 @@ export async function GET(request: NextRequest) {
     const usageLimit = Math.max(1, Math.min(500, Number(searchParams.get('usageLimit') || '200')));
     const { organizationId } = await getBillingOrganizationContext(request, user.id);
 
-    const [profileResult, integrationsResult, balanceResult, transactionsResult, usageResult] = await Promise.all([
+    const [profileResult, integrationsResult, legacyBalanceResult, planCreditResult, transactionsResult, usageResult] = await Promise.all([
       supabaseAdmin
         .from('profiles')
         .select('username, first_name, last_name, full_name, email, avatar_url')
@@ -26,12 +30,25 @@ export async function GET(request: NextRequest) {
         .maybeSingle(),
       supabaseAdmin
         .from('integration_connections')
-        .select('provider,status,metadata,created_at,updated_at,external_account_id')
+        .select('provider,status,metadata,created_at,updated_at,external_account_id,access_token_enc,refresh_token_enc,expires_at')
         .eq('user_id', user.id),
       getDisplayBalance(user.id),
+      getOrganizationPlanCreditBalance({
+        organizationId,
+        userId: user.id,
+        ensureGrant: true,
+      }),
       getGroupedTransactions(user.id, transactionLimit, transactionOffset, { organizationId }),
       getUsageHistory(user.id, { organizationId, limit: usageLimit, offset: 0 }),
     ]);
+
+    const usageCreditSummary = await getPlanCreditUsageSummary({
+      organizationId,
+      userId: user.id,
+      startDate: planCreditResult.subscription?.currentPeriodStart || null,
+      endDate: planCreditResult.subscription?.currentPeriodEnd || null,
+      limit: usageLimit,
+    });
 
     if (profileResult.error) {
       throw new Error(profileResult.error.message || 'Failed to load profile');
@@ -59,43 +76,20 @@ export async function GET(request: NextRequest) {
         ? meta.last_name
         : fullName.split(' ').slice(1).join(' ');
 
-    const integrations = ['zoom', 'microsoft', 'youtube'].map((provider) => {
-      const row = integrationsResult.data?.find((connection: any) => connection.provider === provider && connection.status === 'connected');
+    const integrations = INTEGRATION_HEALTH_PROVIDERS.map((provider) => {
+      const row = integrationsResult.data?.find((connection: any) => connection.provider === provider && connection.status !== 'revoked');
+      const health = getIntegrationConnectionHealth(row);
       return {
         provider,
-        connected: Boolean(row),
+        connected: health.connected,
+        healthStatus: health.healthStatus,
+        needsReview: health.needsReview,
+        issue: health.issue,
         metadata: row?.metadata || null,
         externalAccountId: row?.external_account_id || null,
         updatedAt: row?.updated_at || null,
       };
     });
-
-    const usageTrendMap = new Map<string, { cost: number; count: number; timestamp: number }>();
-    for (const event of usageResult.events || []) {
-      if (!event.createdAt) continue;
-      const dateObj = new Date(event.createdAt);
-      if (Number.isNaN(dateObj.getTime())) continue;
-
-      const dateKey = dateObj.toLocaleDateString('en-US', {
-        month: 'short',
-        day: 'numeric',
-      });
-      const existing = usageTrendMap.get(dateKey) || { cost: 0, count: 0, timestamp: dateObj.getTime() };
-      usageTrendMap.set(dateKey, {
-        cost: existing.cost + Number(event.billedCost || 0),
-        count: existing.count + 1,
-        timestamp: Math.max(existing.timestamp, dateObj.getTime()),
-      });
-    }
-
-    const usageTrend = Array.from(usageTrendMap.entries())
-      .sort((a, b) => a[1].timestamp - b[1].timestamp)
-      .slice(-30)
-      .map(([date, data]) => ({
-        date,
-        cost: Number(data.cost.toFixed(4)),
-        events: data.count,
-      }));
 
     return NextResponse.json({
       preferences: {
@@ -114,18 +108,29 @@ export async function GET(request: NextRequest) {
       },
       integrations,
       balance: {
-        balance: balanceResult.visibleBalance,
-        formatted: formatSiteCreditsFromUsd(balanceResult.visibleBalance),
-        availableBalance: balanceResult.availableBalance,
-        reservedPending: balanceResult.reservedPending,
-        lifetimeCreditsAdded: balanceResult.lifetimeCreditsAdded,
-        lifetimeCreditsSpent: balanceResult.lifetimeCreditsSpent,
-        lastUpdated: balanceResult.updatedAt,
+        balance: planCreditResult.available,
+        formatted: `${formatProductCredits(planCreditResult.available)} credits`,
+        availableBalance: planCreditResult.available,
+        reservedPending: usageCreditSummary.pendingCredits,
+        lifetimeCreditsAdded: roundProductCredits(planCreditResult.available + usageCreditSummary.totalCredits),
+        lifetimeCreditsSpent: usageCreditSummary.totalCredits,
+        creditUnit: 'plan_credit',
+        planSlug: planCreditResult.subscription?.plan?.slug || null,
+        monthlyCreditGrant: planCreditResult.subscription?.plan?.monthlyCreditGrant || 0,
+        rolloverCredits: planCreditResult.rollover,
+        currentPlanCredits: planCreditResult.current,
+        topUpCredits: planCreditResult.topUp,
+        legacyBalance: legacyBalanceResult.visibleBalance,
+        legacyAvailableBalance: legacyBalanceResult.availableBalance,
+        legacyReservedPending: legacyBalanceResult.reservedPending,
+        legacyFormatted: formatSiteCreditsFromUsd(legacyBalanceResult.visibleBalance),
+        lastUpdated: legacyBalanceResult.updatedAt,
       },
       transactions: transactionsResult.transactions,
       transactionTotal: transactionsResult.total,
       usageEvents: usageResult.events,
-      usageTrend,
+      usageCreditSummary,
+      usageTrend: usageCreditSummary.trend,
     }, {
       headers: {
         'Cache-Control': 'no-cache, no-store, must-revalidate, max-age=0',

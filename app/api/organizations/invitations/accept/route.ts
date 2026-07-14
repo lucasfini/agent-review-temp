@@ -1,12 +1,14 @@
 import { NextRequest, NextResponse } from 'next/server';
 
 import { RouteAccessError, requireAuthenticatedUser } from '@/lib/api/route-auth';
+import { displayOrganizationName } from '@/lib/authz/organization-context';
 import { setActiveOrganizationForUser } from '@/lib/authz/organization-context';
 import { OrganizationAccessError } from '@/lib/authz/types';
 import { isDemoUser } from '@/lib/demo-mode';
 import { recordOrganizationAuditLog } from '@/lib/organizations/audit';
 import { acceptWorkspaceInvitation, WorkspaceTeamError } from '@/lib/organizations/team';
 import { supabaseAdmin } from '@/lib/supabase/server';
+import { notifyMemberJoined } from '@/lib/notifications/notification-events';
 
 export const dynamic = 'force-dynamic';
 export const revalidate = 0;
@@ -44,11 +46,23 @@ export async function POST(request: NextRequest) {
       },
     });
 
+    await notifyMemberJoined({
+      organizationId: result.invitation.organizationId,
+      actorUserId: user.id,
+      email: result.invitation.email,
+      idempotencyKey: `team_member_joined:${result.membership.id}`,
+      metadata: {
+        invitationId: result.invitation.id,
+        membershipId: result.membership.id,
+        role: result.invitation.role,
+      },
+    });
+
     return NextResponse.json({
       invitation: result.invitation,
       organization: {
         id: activeContext.organization.id,
-        name: activeContext.organization.name,
+        name: displayOrganizationName(activeContext.organization),
         type: activeContext.organization.type,
       },
       membership: {

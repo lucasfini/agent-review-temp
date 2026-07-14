@@ -218,11 +218,11 @@ describe('campaign and content library routes', () => {
     expect(mockListCampaignsForOrganizations).not.toHaveBeenCalled();
   });
 
-  it('creates private campaigns for signed-in users', async () => {
+  it('creates team campaigns by default in a team workspace', async () => {
     const { POST } = await import('@/app/api/campaigns/route');
     mockCreateCampaign.mockResolvedValue({
       ...campaign,
-      organizationId: 'personal-1',
+      organizationId: 'org-1',
       brandVoiceId: 'voice-1',
     });
 
@@ -238,16 +238,16 @@ describe('campaign and content library routes', () => {
 
     expect(response.status).toBe(201);
     expect(payload.campaign.brandVoiceId).toBe('voice-1');
-    expect(payload.campaign.scope).toBe('private');
+    expect(payload.campaign.scope).toBe('organization');
     expect(mockCreateCampaign).toHaveBeenCalledWith(
       expect.anything(),
-      'personal-1',
+      'org-1',
       'user-1',
       expect.objectContaining({ name: 'Launch campaign', brandVoiceId: 'voice-1' })
     );
   });
 
-  it('allows non-admin members to create private campaigns', async () => {
+  it('allows non-admin members to create private campaigns when requested', async () => {
     const { POST } = await import('@/app/api/campaigns/route');
     mockRequireStudioAssetContext.mockResolvedValue({
       user,
@@ -267,7 +267,7 @@ describe('campaign and content library routes', () => {
 
     const response = await POST(new Request('http://localhost/api/campaigns', {
       method: 'POST',
-      body: JSON.stringify({ organization_id: 'org-1', name: 'Member campaign' }),
+      body: JSON.stringify({ organization_id: 'org-1', visibility: 'private', name: 'Member campaign' }),
     }) as any);
     const payload = await response.json();
 
@@ -333,18 +333,7 @@ describe('campaign and content library routes', () => {
 
   it('blocks demo users from content library writes', async () => {
     const { POST } = await import('@/app/api/content-library/route');
-    mockRequirePermissionContext.mockResolvedValue({
-      user,
-      organization,
-      membership: ownerMembership,
-      permissionContext: {
-        userId: user.id,
-        organizationId: organization.id,
-        organizationType: organization.type,
-        role: ownerMembership.role,
-        isDemo: true,
-      },
-    });
+    mockIsDemoUser.mockReturnValue(true);
 
     const response = await POST(new Request('http://localhost/api/content-library', {
       method: 'POST',
@@ -355,6 +344,35 @@ describe('campaign and content library routes', () => {
     expect(response.status).toBe(403);
     expect(payload.error).toBe('Demo account is read-only');
     expect(mockCreateContentLibraryItem).not.toHaveBeenCalled();
+  });
+
+  it('creates content library items with private and workspace studio references', async () => {
+    const { POST } = await import('@/app/api/content-library/route');
+    mockCreateContentLibraryItem.mockResolvedValue({
+      ...contentItem,
+      libraryId: 'private-library-1',
+    });
+
+    const body = {
+      organization_id: 'org-1',
+      title: 'Draft in private collection',
+      libraryId: 'private-library-1',
+    };
+    const response = await POST(new Request('http://localhost/api/content-library', {
+      method: 'POST',
+      body: JSON.stringify(body),
+    }) as any);
+    const payload = await response.json();
+
+    expect(response.status).toBe(201);
+    expect(payload.contentItem.libraryId).toBe('private-library-1');
+    expect(mockCreateContentLibraryItem).toHaveBeenCalledWith(
+      expect.anything(),
+      'org-1',
+      'user-1',
+      expect.objectContaining(body),
+      { referenceOrganizationIds: ['personal-1', 'org-1'] }
+    );
   });
 
   it('updates an existing content library item by id', async () => {
@@ -374,26 +392,24 @@ describe('campaign and content library routes', () => {
       expect.anything(),
       'org-1',
       'item-1',
-      expect.objectContaining({ status: 'approved' })
+      expect.objectContaining({ status: 'approved' }),
+      { referenceOrganizationIds: ['personal-1', 'org-1'] }
     );
   });
 
-  it('blocks editors from approving drafts when approval is required', async () => {
+  it('allows editors to approve drafts directly', async () => {
     const { PATCH } = await import('@/app/api/content-library/[id]/route');
-    mockRequirePermissionContext.mockResolvedValue({
+    mockRequireStudioAssetContext.mockResolvedValue({
       user,
       organization,
       membership: memberMembership,
-      permissionContext: {
-        userId: user.id,
-        organizationId: organization.id,
-        organizationType: organization.type,
-        role: memberMembership.role,
-        isDemo: false,
-      },
+      privateOrganization,
+      privateOrganizationId: privateOrganization.id,
+      activeOrganizationId: organization.id,
+      organizationIds: [privateOrganization.id, organization.id],
     });
-    mockGetContentLibraryItem.mockResolvedValue({ ...contentItem, status: 'in_review' });
-    mockGetCampaign.mockResolvedValue({ ...campaign, approvalRequired: true });
+    mockGetContentLibraryItem.mockResolvedValue({ ...contentItem, status: 'draft' });
+    mockUpdateContentLibraryItem.mockResolvedValue({ ...contentItem, status: 'approved' });
 
     const response = await PATCH(new Request('http://localhost/api/content-library/item-1', {
       method: 'PATCH',
@@ -401,9 +417,58 @@ describe('campaign and content library routes', () => {
     }) as any, { params: Promise.resolve({ id: 'item-1' }) });
     const payload = await response.json();
 
-    expect(response.status).toBe(403);
-    expect(payload.error).toContain('do not have permission');
-    expect(mockUpdateContentLibraryItem).not.toHaveBeenCalled();
+    expect(response.status).toBe(200);
+    expect(payload.contentItem.status).toBe('approved');
+    expect(mockUpdateContentLibraryItem).toHaveBeenCalledWith(
+      expect.anything(),
+      'org-1',
+      'item-1',
+      expect.objectContaining({
+        status: 'approved',
+        approvedByUserId: 'user-1',
+        approved_by_user_id: 'user-1',
+        scheduledFor: null,
+        scheduled_for: null,
+      }),
+      { referenceOrganizationIds: ['personal-1', 'org-1'] }
+    );
+  });
+
+  it('allows editors to schedule drafts without requiring a scheduled date', async () => {
+    const { PATCH } = await import('@/app/api/content-library/[id]/route');
+    mockRequireStudioAssetContext.mockResolvedValue({
+      user,
+      organization,
+      membership: memberMembership,
+      privateOrganization,
+      privateOrganizationId: privateOrganization.id,
+      activeOrganizationId: organization.id,
+      organizationIds: [privateOrganization.id, organization.id],
+    });
+    mockGetContentLibraryItem.mockResolvedValue({ ...contentItem, status: 'draft' });
+    mockUpdateContentLibraryItem.mockResolvedValue({ ...contentItem, status: 'scheduled', scheduledFor: null });
+
+    const response = await PATCH(new Request('http://localhost/api/content-library/item-1', {
+      method: 'PATCH',
+      body: JSON.stringify({ organization_id: 'org-1', status: 'scheduled' }),
+    }) as any, { params: Promise.resolve({ id: 'item-1' }) });
+    const payload = await response.json();
+
+    expect(response.status).toBe(200);
+    expect(payload.contentItem.status).toBe('scheduled');
+    expect(mockUpdateContentLibraryItem).toHaveBeenCalledWith(
+      expect.anything(),
+      'org-1',
+      'item-1',
+      expect.objectContaining({
+        status: 'scheduled',
+        approvedByUserId: 'user-1',
+        approved_by_user_id: 'user-1',
+        publishedAt: null,
+        published_at: null,
+      }),
+      { referenceOrganizationIds: ['personal-1', 'org-1'] }
+    );
   });
 
   it('returns 404 when deleting a missing content library item', async () => {

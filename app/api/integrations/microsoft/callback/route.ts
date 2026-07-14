@@ -1,5 +1,5 @@
 import { NextRequest, NextResponse } from 'next/server';
-import { upsertConnection } from '../../_utils';
+import { integrationErrorResponse, signedOutIntegrationResponse, upsertConnection } from '../../_utils';
 
 export async function GET(request: NextRequest) {
   const { searchParams } = new URL(request.url);
@@ -7,12 +7,12 @@ export async function GET(request: NextRequest) {
   const state = searchParams.get('state');
 
   if (!code || !state) {
-    return NextResponse.json({ error: 'Missing code or state' }, { status: 400 });
+    return integrationErrorResponse({ provider: 'microsoft', code: 'OAUTH_LINK_EXPIRED', action: 'callback', status: 400 });
   }
 
   const storedState = request.cookies.get('ms_oauth_state')?.value;
   if (!storedState || storedState !== state) {
-    return NextResponse.json({ error: 'Invalid OAuth state' }, { status: 400 });
+    return integrationErrorResponse({ provider: 'microsoft', code: 'OAUTH_LINK_EXPIRED', action: 'callback', status: 400 });
   }
 
   const clientId = process.env.MS_CLIENT_ID;
@@ -21,7 +21,7 @@ export async function GET(request: NextRequest) {
   const tenant = process.env.MS_TENANT_ID || 'common';
 
   if (!clientId || !clientSecret || !redirectUri) {
-    return NextResponse.json({ error: 'Microsoft OAuth not configured' }, { status: 500 });
+    return integrationErrorResponse({ provider: 'microsoft', code: 'INTEGRATION_NOT_CONFIGURED', action: 'connect', status: 500 });
   }
 
   const tokenRes = await fetch(`https://login.microsoftonline.com/${tenant}/oauth2/v2.0/token`, {
@@ -39,7 +39,14 @@ export async function GET(request: NextRequest) {
 
   if (!tokenRes.ok) {
     const text = await tokenRes.text();
-    return NextResponse.json({ error: `Microsoft token error: ${text}` }, { status: 500 });
+    return integrationErrorResponse({
+      provider: 'microsoft',
+      code: 'RECONNECT_REQUIRED',
+      action: 'connect',
+      status: 401,
+      logPrefix: '[MICROSOFT CALLBACK] Token exchange failed:',
+      cause: text,
+    });
   }
 
   const tokenData = await tokenRes.json();
@@ -51,13 +58,13 @@ export async function GET(request: NextRequest) {
     headers: { Authorization: `Bearer ${accessToken}` }
   });
   if (!userRes.ok) {
-    return NextResponse.json({ error: 'Failed to fetch Microsoft user' }, { status: 500 });
+    return integrationErrorResponse({ provider: 'microsoft', code: 'RECONNECT_REQUIRED', action: 'connect', status: 401 });
   }
   const msUser = await userRes.json();
 
   const userId = request.cookies.get('ms_oauth_user')?.value;
   if (!userId) {
-    return NextResponse.json({ error: 'Missing OAuth user context' }, { status: 401 });
+    return signedOutIntegrationResponse();
   }
 
   await upsertConnection({
@@ -71,7 +78,7 @@ export async function GET(request: NextRequest) {
     metadata: { email: msUser.userPrincipalName, name: msUser.displayName }
   });
 
-  const response = NextResponse.redirect(new URL('/dashboard/settings', request.url));
+  const response = NextResponse.redirect(new URL('/dashboard/integrations', request.url));
   response.cookies.delete('ms_oauth_state');
   response.cookies.delete('ms_oauth_user');
   return response;

@@ -10,11 +10,21 @@ import { getInternalAppBaseUrl } from '@/lib/app-url';
 import { scheduleBackgroundTask } from '@/lib/background-task';
 import { RouteAccessError, requireProjectOwner } from '@/lib/api/route-auth';
 import { recordSubscriptionUsage } from '@/lib/billing/subscription-usage-counters';
+import {
+  notifyUploadFailed,
+  notifyUploadReceived,
+} from '@/lib/notifications/notification-events';
 
 export const runtime = 'nodejs';
 export const maxDuration = 300; // Allow background tasks to run up to 5 mins
 
 export async function POST(request: NextRequest) {
+  let notificationProject: {
+    id: string;
+    userId: string;
+    organizationId: string | null;
+    title: string | null;
+  } | null = null;
   try {
     const authHeader = request.headers.get('authorization');
 
@@ -31,6 +41,7 @@ export async function POST(request: NextRequest) {
       id: string;
       user_id: string;
       organization_id: string | null;
+      title: string | null;
       status: string;
       audio_file_name: string | null;
       audio_deleted_at: string | null;
@@ -38,12 +49,19 @@ export async function POST(request: NextRequest) {
     try {
       const ownership = await requireProjectOwner<{
         organization_id: string | null;
+        title: string | null;
         status: string;
         audio_file_name: string | null;
         audio_deleted_at: string | null;
-      }>(request, projectId, 'id, user_id, organization_id, status, audio_file_name, audio_deleted_at');
+      }>(request, projectId, 'id, user_id, organization_id, title, status, audio_file_name, audio_deleted_at');
       user = ownership.user;
       project = ownership.project;
+      notificationProject = {
+        id: project.id,
+        userId: project.user_id,
+        organizationId: project.organization_id,
+        title: project.title || null,
+      };
     } catch (error) {
       if (error instanceof RouteAccessError) {
         if (error.status === 401) {
@@ -101,10 +119,32 @@ export async function POST(request: NextRequest) {
         Key: objectKey,
       }));
       if (!head.ContentLength || head.ContentLength <= 0) {
+        await notifyUploadFailed({
+          organizationId: project.organization_id,
+          actorUserId: user.id,
+          projectId,
+          projectTitle: project.title || project.audio_file_name || null,
+          idempotencyKey: `upload_failed:empty:${projectId}`,
+          metadata: {
+            source: 'direct_upload_finalize',
+            error: 'Uploaded file is empty or unavailable',
+          },
+        });
         return NextResponse.json({ error: 'Uploaded file is empty or unavailable' }, { status: 400 });
       }
     } catch (error) {
       console.error('R2 verification failed:', error);
+      await notifyUploadFailed({
+        organizationId: project.organization_id,
+        actorUserId: user.id,
+        projectId,
+        projectTitle: project.title || project.audio_file_name || null,
+        idempotencyKey: `upload_failed:storage:${projectId}`,
+        metadata: {
+          source: 'direct_upload_finalize',
+          error: error instanceof Error ? error.message : 'Uploaded file not found in storage',
+        },
+      });
       return NextResponse.json({ error: 'Uploaded file not found in storage' }, { status: 400 });
     }
 
@@ -137,6 +177,17 @@ export async function POST(request: NextRequest) {
         userId: user.id,
         projectId,
         source: 'direct_upload',
+      },
+    });
+
+    await notifyUploadReceived({
+      organizationId: project.organization_id,
+      actorUserId: user.id,
+      projectId,
+      projectTitle: project.title || project.audio_file_name || null,
+      metadata: {
+        source: 'direct_upload_finalize',
+        objectKey,
       },
     });
 
@@ -181,6 +232,17 @@ export async function POST(request: NextRequest) {
                 .update({ status: 'failed', processing_stage: 'failed', processing_message: `Transcription failed: ${res.status}` })
                 .eq('id', projectId)
                 .neq('status', 'cancelled');
+              await notifyUploadFailed({
+                organizationId: project.organization_id,
+                actorUserId: user.id,
+                projectId,
+                projectTitle: project.title || project.audio_file_name || null,
+                idempotencyKey: `upload_failed:transcription_start:${projectId}:${res.status}`,
+                metadata: {
+                  source: 'direct_upload_finalize',
+                  status: res.status,
+                },
+              });
             }
           })
           .catch(async (error) => {
@@ -189,6 +251,17 @@ export async function POST(request: NextRequest) {
               .update({ status: 'failed', processing_stage: 'failed', processing_message: `Queue error: ${error.message}` })
               .eq('id', projectId)
               .neq('status', 'cancelled');
+            await notifyUploadFailed({
+              organizationId: project.organization_id,
+              actorUserId: user.id,
+              projectId,
+              projectTitle: project.title || project.audio_file_name || null,
+              idempotencyKey: `upload_failed:transcription_queue:${projectId}`,
+              metadata: {
+                source: 'direct_upload_finalize',
+                error: error instanceof Error ? error.message : 'Queue error',
+              },
+            });
           })
       );
     }
@@ -196,6 +269,19 @@ export async function POST(request: NextRequest) {
     return NextResponse.json({ success: true, message: 'Processing started' });
   } catch (error) {
     console.error('Finalize error:', error);
+    if (notificationProject) {
+      await notifyUploadFailed({
+        organizationId: notificationProject.organizationId,
+        actorUserId: notificationProject.userId,
+        projectId: notificationProject.id,
+        projectTitle: notificationProject.title,
+        idempotencyKey: `upload_failed:finalize:${notificationProject.id}`,
+        metadata: {
+          source: 'direct_upload_finalize',
+          error: error instanceof Error ? error.message : 'Failed to finalize upload',
+        },
+      });
+    }
     return NextResponse.json({ error: 'Failed to finalize upload' }, { status: 500 });
   }
 }

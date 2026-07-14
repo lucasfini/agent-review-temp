@@ -1,6 +1,6 @@
 "use client";
 
-import { useState, useEffect, useRef, useCallback, useMemo } from 'react';
+import { useState, useEffect, useRef, useMemo } from 'react';
 import Link from 'next/link';
 import Image from 'next/image';
 import { usePathname, useRouter, useSearchParams } from 'next/navigation';
@@ -8,15 +8,14 @@ import type { User as SupabaseUser } from '@supabase/supabase-js';
 import { useAuth } from '@/lib/auth/context';
 import { useCurrentOrganization } from '@/lib/hooks/useCurrentOrganization';
 import { isAdminEmail } from '@/lib/admin-access';
-import { formatNavCreditBalance, isNavCreditBalanceLow } from '@/lib/billing/nav-credit-display';
-import { isDemoUser } from '@/lib/demo-mode';
 import { PROJECT_MUTATION_EVENT, type ProjectMutationDetail } from '@/lib/project-events';
+import { LIBRARY_MUTATION_EVENT } from '@/lib/library-events';
 import { supabase } from '@/lib/supabase/client';
 import BrandLogo from '@/components/site/BrandLogo';
+import SiteThemeToggle from '@/components/site/SiteThemeToggle';
 import { createPortal } from 'react-dom';
 import { withOrganizationId } from '@/lib/organizations/current-organization';
 import type { ContentLibrary } from '@/lib/content-libraries';
-import { useTheme } from 'next-themes';
 import {
   Building2,
   ChevronDown,
@@ -25,6 +24,7 @@ import {
   BarChart3,
   Settings,
   CreditCard,
+  Plug,
   BriefcaseBusiness,
   BookOpenText,
   ClipboardList,
@@ -34,14 +34,12 @@ import {
   Menu,
   PackageCheck,
   X,
-  Plus,
-  Sun,
-  Moon,
   PanelLeftClose,
   PanelLeftOpen,
   Palette,
   FolderKanban,
   Sparkles,
+  Users,
 } from 'lucide-react';
 
 type NavItemDef = {
@@ -86,7 +84,9 @@ function getMobilePageTitle(pathname: string, activeSettingsSection: string | nu
   if (pathname === '/dashboard/analytics') return 'Analytics';
   if (pathname === '/dashboard/billing') return 'Billing';
   if (pathname === '/dashboard/usage') return 'Usage';
-  if (pathname === '/dashboard/contact') return 'Contact';
+  if (pathname === '/dashboard/team') return 'Team';
+  if (pathname === '/dashboard/integrations') return 'Integrations';
+  if (pathname === '/dashboard/contact') return 'Contact Us';
   if (pathname === '/dashboard/settings') {
     if (activeSettingsSection === 'workspace') return 'Workspace';
     if (activeSettingsSection === 'integrations') return 'Integrations';
@@ -128,25 +128,11 @@ function getUserAvatarUrl(user: SupabaseUser | null): string | null {
 }
 
 function ThemeToggle({ isCollapsed }: { isCollapsed?: boolean }) {
-  const { resolvedTheme, setTheme } = useTheme();
-  const [mounted, setMounted] = useState(false);
-
-  useEffect(() => setMounted(true), []);
-
-  if (!mounted) return <div className={isCollapsed ? 'h-9 w-9' : 'h-10 w-10'} />;
-
-  const isDark = resolvedTheme === 'dark';
-
   return (
-    <button
-      onClick={() => setTheme(isDark ? 'light' : 'dark')}
-      className={`flex items-center justify-center text-slate-500 dark:text-slate-400 hover:text-slate-900 dark:hover:text-white hover:bg-slate-100 dark:hover:bg-slate-800 transition-colors ${isCollapsed ? 'h-9 w-9 rounded-xl' : 'h-10 w-10 rounded-xl'
-        }`}
-      title={isDark ? 'Switch to light mode' : 'Switch to dark mode'}
-      aria-label={isDark ? 'Switch to light mode' : 'Switch to dark mode'}
-    >
-      {isDark ? <Sun className="h-4 w-4" /> : <Moon className="h-4 w-4" />}
-    </button>
+    <SiteThemeToggle
+      size={isCollapsed ? 'sm' : 'md'}
+      className="border-transparent bg-transparent text-slate-500 shadow-none hover:bg-slate-100 hover:text-slate-900 dark:border-transparent dark:bg-transparent dark:text-slate-400 dark:hover:bg-slate-800 dark:hover:text-white"
+    />
   );
 }
 
@@ -189,7 +175,7 @@ const sections: Array<{ label: string; items: NavItemDef[] }> = [
       { name: 'All Projects', href: '/dashboard/hub', icon: LayoutGrid },
       {
         name: 'Studio',
-        href: '/dashboard/studio/profile',
+        href: '/dashboard/studio',
         icon: Sparkles,
         children: [
           { name: 'Profile', href: '/dashboard/studio/profile', icon: Building2 },
@@ -202,7 +188,7 @@ const sections: Array<{ label: string; items: NavItemDef[] }> = [
         href: '/dashboard/library',
         icon: BookOpenText,
         children: [
-          { name: 'All saved', href: '/dashboard/library', icon: BookOpenText },
+          { name: 'All Saved', href: '/dashboard/library', icon: BookOpenText },
         ],
       },
     ],
@@ -218,6 +204,8 @@ const sections: Array<{ label: string; items: NavItemDef[] }> = [
     items: [
       { name: 'Billing', href: '/dashboard/billing', icon: CreditCard },
       { name: 'Usage', href: '/dashboard/usage', icon: BarChart3, tourAttr: 'usage-tab' },
+      { name: 'Team', href: '/dashboard/team', icon: Users },
+      { name: 'Integrations', href: '/dashboard/integrations', icon: Plug },
       { name: 'Contact Us', href: '/dashboard/contact', icon: Mail },
     ],
   },
@@ -271,14 +259,14 @@ function NavItem({
       {...(item.tourAttr ? { 'data-tour': item.tourAttr } : {})}
       aria-label={item.name}
       className={`group flex items-center ${isCollapsed ? 'justify-center' : 'gap-3'} px-3 ${mobile ? 'py-3 text-base' : 'py-2.5 text-sm'} font-medium rounded-xl transition-colors ${isActive
-        ? 'bg-blue-600 text-white shadow-sm shadow-blue-600/20 dark:bg-blue-500 dark:text-white'
-        : 'text-slate-600 dark:text-slate-200 hover:bg-slate-100 dark:hover:bg-slate-800 hover:text-slate-900 dark:hover:text-white'
+        ? 'bg-blue-500 text-white shadow-[0_12px_28px_-16px_rgba(59,130,246,0.95)]'
+        : 'text-slate-300 hover:bg-white/10 hover:text-white'
         }`}
     >
       <Icon
         className={`flex-shrink-0 ${mobile ? 'h-5 w-5' : isCollapsed ? 'h-5 w-5' : 'h-4 w-4'} ${isActive
           ? 'text-white'
-          : 'text-slate-400 dark:text-slate-300 group-hover:text-slate-700 dark:group-hover:text-slate-100'
+          : 'text-slate-400 group-hover:text-slate-100'
           }`}
       />
       {isCollapsed && (
@@ -334,15 +322,15 @@ function NavGroup({
         aria-expanded={isOpen}
         className={`group flex w-full items-center gap-3 rounded-xl px-3 py-2.5 text-sm font-medium transition-colors ${
           isActive
-            ? 'bg-slate-100 text-slate-900 dark:bg-slate-800 dark:text-white'
-            : 'text-slate-600 hover:bg-slate-100 hover:text-slate-900 dark:text-slate-200 dark:hover:bg-slate-800 dark:hover:text-white'
+            ? 'bg-blue-500 text-white shadow-[0_12px_28px_-16px_rgba(59,130,246,0.95)]'
+            : 'text-slate-300 hover:bg-white/10 hover:text-white'
         }`}
       >
         <Icon
           className={`h-4 w-4 flex-shrink-0 ${
             isActive
-              ? 'text-slate-700 dark:text-slate-100'
-              : 'text-slate-400 group-hover:text-slate-700 dark:text-slate-300 dark:group-hover:text-slate-100'
+              ? 'text-white'
+              : 'text-slate-400 group-hover:text-slate-100'
           }`}
         />
         <span className="min-w-0 flex-1 text-left">{item.name}</span>
@@ -458,16 +446,11 @@ function SidebarContent({
   currentLibraryId,
   activeProjectId,
   user,
-  balance,
-  balanceCreditUnit,
-  isLoadingBalance,
-  isLowBalance,
   recentProjects,
   onSignOut,
   onNavClick,
   isCollapsed,
   onToggleCollapse,
-  isDemo,
   hideChromeForCapture,
   navSections,
 }: {
@@ -476,23 +459,17 @@ function SidebarContent({
   currentLibraryId: string | null;
   activeProjectId: string | null;
   user: SupabaseUser | null;
-  balance: number | null;
-  balanceCreditUnit: string | null;
-  isLoadingBalance: boolean;
-  isLowBalance: boolean;
   recentProjects: RecentProject[];
   onSignOut: () => void;
   onNavClick?: () => void;
   isCollapsed: boolean;
   onToggleCollapse?: () => void;
-  isDemo?: boolean;
   hideChromeForCapture?: boolean;
   navSections: Array<{ label: string; items: NavItemDef[] }>;
 }) {
   const displayName = getDisplayName(user);
   const avatarUrl = getUserAvatarUrl(user);
-  const { resolvedTheme } = useTheme();
-  const logoTheme = resolvedTheme === 'light' ? 'light' : 'dark';
+  const logoTheme = 'dark';
   const emailLabel = user?.email ?? '';
 
   const isActive = (item: NavItemDef): boolean => {
@@ -520,14 +497,15 @@ function SidebarContent({
   };
 
   return (
-    <div className="flex flex-col h-full">
+    <div className="flex h-full min-h-0 flex-col">
       {/* Logo */}
       <div className={`flex-shrink-0 p-3 ${isCollapsed ? 'flex flex-col items-center gap-2 pt-4' : 'flex items-center justify-between'}`}>
         <Link
           href={user ? '/dashboard/hub' : '/'}
-          className={`flex h-10 items-center rounded-lg hover:bg-slate-100 dark:hover:bg-slate-800 transition-colors ${
+          className={`flex h-10 items-center rounded-lg transition-colors hover:bg-white/10 ${
             isCollapsed ? 'w-10 justify-center' : 'w-full max-w-[12.25rem] justify-start px-1'
           }`}
+          aria-label="AudioRepurpose home"
           title={isCollapsed ? 'AudioRepurpose' : undefined}
         >
           <BrandLogo
@@ -549,11 +527,11 @@ function SidebarContent({
       </div>
 
       {/* Grouped Navigation */}
-      <nav className="flex-1 px-3 overflow-y-auto overflow-x-visible space-y-5">
+      <nav className="min-h-0 flex-1 space-y-5 overflow-y-auto overflow-x-visible px-3">
         {navSections.map((section) => (
           <div key={section.label}>
             {!isCollapsed && (
-              <p className="px-3 mb-1 text-[10px] font-semibold tracking-widest text-slate-400 uppercase">
+              <p className="px-3 mb-1 text-[10px] font-semibold tracking-widest text-slate-500 uppercase">
                 {section.label}
               </p>
             )}
@@ -603,8 +581,8 @@ function SidebarContent({
                         href={`/dashboard/projects?id=${project.id}`}
                         onClick={onNavClick}
                         className={`group flex items-center gap-2 px-3 py-1.5 text-xs rounded-lg transition-all ${isActiveProject
-                          ? 'bg-slate-100 dark:bg-slate-800 text-slate-900 dark:text-slate-100'
-                          : 'text-slate-500 dark:text-slate-200 hover:bg-slate-100/80 dark:hover:bg-slate-800/50 hover:text-slate-900 dark:hover:text-white'
+                          ? 'bg-white/10 text-white'
+                          : 'text-slate-400 hover:bg-white/10 hover:text-white'
                           }`}
                       >
                         <span className={`flex-shrink-0 w-1.5 h-1.5 rounded-full ${statusDot}`} />
@@ -627,12 +605,11 @@ function SidebarContent({
 
           {isCollapsed ? (
             <div className="flex flex-col items-center gap-2 py-1">
-              <Link
-                href="/dashboard/settings?section=preferences"
-                onClick={onNavClick}
-                className="group relative flex h-9 w-9 items-center justify-center overflow-hidden rounded-xl border border-slate-200 bg-slate-50 text-xs font-semibold text-slate-700 shadow-sm transition-colors hover:bg-slate-100 dark:border-slate-800 dark:bg-slate-900 dark:text-slate-200 dark:hover:bg-slate-800"
-                title={displayName}
-                aria-label="Open settings"
+              <div
+                className="relative flex h-9 w-9 items-center justify-center overflow-hidden rounded-xl border border-white/10 bg-white/10 text-xs font-semibold text-slate-100 shadow-sm"
+                title={emailLabel || displayName}
+                role="img"
+                aria-label={`${emailLabel || displayName} profile`}
               >
                 {avatarUrl ? (
                   <Image
@@ -646,6 +623,15 @@ function SidebarContent({
                 ) : (
                   displayName.charAt(0).toUpperCase()
                 )}
+              </div>
+              <Link
+                href="/dashboard/settings?section=preferences"
+                onClick={onNavClick}
+                className="flex h-9 w-9 items-center justify-center rounded-xl border border-white/10 bg-white/5 text-slate-300 shadow-sm transition-colors hover:bg-white/10 hover:text-white"
+                title="Settings"
+                aria-label="Open settings"
+              >
+                <Settings className="h-4 w-4" />
               </Link>
               <ThemeToggle isCollapsed />
               <button
@@ -659,97 +645,45 @@ function SidebarContent({
             </div>
           ) : (
             <div className="overflow-hidden pb-2">
-              <div className="space-y-4">
-                <div className="flex items-center gap-2.5">
+              <div className="space-y-3">
+                <div className="flex min-w-0 items-center gap-3 rounded-xl px-1">
+                  {avatarUrl ? (
+                    <Image
+                      src={avatarUrl}
+                      alt={displayName}
+                      width={36}
+                      height={36}
+                      className="h-9 w-9 flex-shrink-0 rounded-xl border border-slate-300/70 object-cover shadow-sm dark:border-slate-600/60"
+                      referrerPolicy="no-referrer"
+                    />
+                  ) : (
+                    <div className="flex h-9 w-9 flex-shrink-0 items-center justify-center rounded-xl border border-slate-300/70 bg-gradient-to-br from-slate-100 to-slate-200 text-sm font-semibold text-slate-700 shadow-sm select-none dark:border-slate-600/60 dark:from-slate-800 dark:to-slate-700 dark:text-slate-100">
+                      {displayName.charAt(0).toUpperCase()}
+                    </div>
+                  )}
+                  <div className="min-w-0 flex-1">
+                    <p className="truncate text-sm font-semibold text-slate-900 dark:text-slate-100">
+                      {displayName}
+                    </p>
+                  </div>
                   <Link
                     href="/dashboard/settings?section=preferences"
                     onClick={onNavClick}
-                    className="flex min-w-0 flex-1 items-center gap-3 rounded-xl transition-colors hover:bg-slate-50 dark:hover:bg-slate-900/80 -m-1 p-1 group"
+                    className="flex h-9 w-9 flex-shrink-0 items-center justify-center rounded-xl border border-slate-200 bg-slate-50 text-slate-500 shadow-sm transition-colors hover:bg-slate-100 hover:text-slate-900 dark:border-slate-800 dark:bg-slate-900 dark:text-slate-300 dark:hover:bg-slate-800 dark:hover:text-white"
+                    title="Settings"
+                    aria-label="Open settings"
                   >
-                    {avatarUrl ? (
-                      <Image
-                        src={avatarUrl}
-                        alt={displayName}
-                        width={36}
-                        height={36}
-                        className="h-9 w-9 flex-shrink-0 rounded-xl border border-slate-300/70 object-cover shadow-sm dark:border-slate-600/60"
-                        referrerPolicy="no-referrer"
-                      />
-                    ) : (
-                      <div className="flex h-9 w-9 flex-shrink-0 items-center justify-center rounded-xl border border-slate-300/70 bg-gradient-to-br from-slate-100 to-slate-200 text-sm font-semibold text-slate-700 shadow-sm select-none dark:border-slate-600/60 dark:from-slate-800 dark:to-slate-700 dark:text-slate-100">
-                        {displayName.charAt(0).toUpperCase()}
-                      </div>
-                    )}
-                    <div className="min-w-0 flex-1">
-                      <p className="truncate text-sm font-semibold text-slate-900 dark:text-slate-100 group-hover:text-slate-950 dark:group-hover:text-white">
-                        {displayName}
-                      </p>
-                      {emailLabel && (
-                        <p className="truncate text-xs text-slate-500 dark:text-slate-400">
-                          {emailLabel}
-                        </p>
-                      )}
-                    </div>
+                    <Settings className="h-4 w-4" />
                   </Link>
-
-                  <div className="flex items-center gap-1">
-                    <Link
-                      href="/dashboard/settings?section=preferences"
-                      onClick={onNavClick}
-                      className="p-2 rounded-lg text-slate-500 dark:text-slate-400 hover:text-slate-900 dark:hover:text-white hover:bg-slate-100 dark:hover:bg-slate-800 transition-colors"
-                      aria-label="Open settings"
-                      title="Open settings"
-                    >
-                      <Settings className="h-4 w-4" />
-                    </Link>
-                  </div>
-                </div>
-
-                <div
-                  data-tour="credit-balance"
-                  className={`rounded-xl border px-3.5 py-2.5 ${
-                    isLowBalance
-                      ? 'border-amber-200 bg-amber-50 dark:border-amber-500/30 dark:bg-amber-500/10'
-                      : 'border-slate-200 bg-slate-50 dark:border-slate-800 dark:bg-slate-900/80'
-                  }`}
-                >
-                  <div className="min-w-0">
-                    <p className="text-[11px] font-semibold uppercase tracking-[0.16em] text-slate-500 dark:text-slate-400">
-                      Credits
-                    </p>
-                    <p className={`mt-1 text-sm font-semibold tabular-nums ${isLowBalance
-                      ? 'text-amber-800 dark:text-amber-200'
-                      : balance === null && !isLoadingBalance
-                      ? 'text-slate-500 dark:text-slate-400'
-                      : 'text-slate-900 dark:text-slate-100'
-                      }`}>
-                      {isLoadingBalance
-                        ? <span className="text-slate-400 dark:text-slate-500">—</span>
-                        : balance !== null
-                          ? formatNavCreditBalance(balance, balanceCreditUnit)
-                          : 'No credits'}
-                    </p>
-                  </div>
-
-                  {!isDemo && (
-                    <Link
-                      href="/dashboard/billing"
-                      onClick={onNavClick}
-                      className="mt-2.5 inline-flex w-full items-center justify-center gap-1 rounded-lg border border-slate-300 px-2.5 py-1.5 text-[11px] font-semibold text-slate-700 transition-colors hover:bg-white dark:border-slate-700 dark:text-slate-200 dark:hover:bg-slate-800"
-                    >
-                      <Plus className="h-3 w-3" />
-                      Add credits
-                    </Link>
-                  )}
                 </div>
 
                 <div className="grid grid-cols-[40px_minmax(0,1fr)] items-center gap-2.5">
-                  <div className="flex-shrink-0 rounded-xl border border-slate-200 dark:border-slate-800 bg-slate-50 dark:bg-slate-900/80">
+                  <div className="flex-shrink-0 rounded-xl border border-slate-200 bg-slate-50 dark:border-slate-800 dark:bg-slate-900/80">
                     <ThemeToggle />
                   </div>
                   <button
                     onClick={onSignOut}
-                    className="inline-flex min-w-0 items-center justify-center rounded-xl border border-slate-200 dark:border-slate-800 bg-slate-50 dark:bg-slate-900/80 px-3 py-2.5 text-sm font-medium text-slate-600 transition-colors hover:bg-slate-100 hover:text-red-600 dark:text-slate-300 dark:hover:bg-slate-800 dark:hover:text-red-400"
+                    className="inline-flex w-full min-w-0 items-center justify-center rounded-xl border border-slate-200 bg-slate-50 px-3 py-2.5 text-sm font-medium text-slate-600 transition-colors hover:bg-slate-100 hover:text-red-600 dark:border-slate-800 dark:bg-slate-900/80 dark:text-slate-300 dark:hover:bg-slate-800 dark:hover:text-red-400"
                   >
                     Sign out
                   </button>
@@ -772,19 +706,15 @@ export default function DashboardNav({
 } = {}) {
   const [isMobileMenuOpen, setIsMobileMenuOpen] = useState(false);
   const [localCollapsed, setLocalCollapsed] = useState(false);
-  const [balance, setBalance] = useState<number | null>(null);
-  const [balanceCreditUnit, setBalanceCreditUnit] = useState<string | null>(null);
-  const [isLoadingBalance, setIsLoadingBalance] = useState(true);
   const [recentProjects, setRecentProjects] = useState<RecentProject[]>([]);
   const [contentLibraries, setContentLibraries] = useState<ContentLibrary[]>([]);
+  const [libraryRefreshKey, setLibraryRefreshKey] = useState(0);
   const pathname = usePathname();
   const searchParams = useSearchParams();
   const router = useRouter();
   const { user, session, signOut } = useAuth();
   const { organization, organizationId } = useCurrentOrganization();
   const { organization: agencyOrganization } = useCurrentOrganization({ organizationType: 'internal_agency' });
-  const { resolvedTheme } = useTheme();
-  const isDemo = isDemoUser(user as { email?: string } | null);
   const hideChromeForCapture = searchParams.get('capture') === '1';
 
   const rawSettingsSection = searchParams.get('section');
@@ -802,34 +732,6 @@ export default function DashboardNav({
   const activeProjectId = searchParams.get('id');
   const collapsed = isCollapsed ?? localCollapsed;
   const setCollapsed = onCollapseChange ?? setLocalCollapsed;
-
-  const fetchBalance = useCallback(async () => {
-    if (!user || !session?.access_token) {
-      setIsLoadingBalance(false);
-      return;
-    }
-
-    try {
-      const response = await fetch(withOrganizationId('/api/billing/balance', organizationId), {
-        headers: { Authorization: `Bearer ${session.access_token}` },
-        cache: 'no-store',
-      });
-      if (response.ok) {
-        const data = await response.json();
-        setBalance(Number(data.balance || 0));
-        setBalanceCreditUnit(typeof data.creditUnit === 'string' ? data.creditUnit : null);
-      }
-    } catch (error) {
-      console.error('Error fetching balance:', error);
-    } finally {
-      setIsLoadingBalance(false);
-    }
-  }, [organizationId, session?.access_token, user]);
-
-  useEffect(() => {
-    setIsLoadingBalance(true);
-    fetchBalance();
-  }, [fetchBalance]);
 
   useEffect(() => {
     if (!user) {
@@ -867,7 +769,18 @@ export default function DashboardNav({
     return () => {
       isActive = false;
     };
-  }, [organizationId, session?.access_token, user]);
+  }, [libraryRefreshKey, organizationId, session?.access_token, user]);
+
+  useEffect(() => {
+    const handleLibraryMutation = () => {
+      setLibraryRefreshKey((current) => current + 1);
+    };
+
+    window.addEventListener(LIBRARY_MUTATION_EVENT, handleLibraryMutation);
+    return () => {
+      window.removeEventListener(LIBRARY_MUTATION_EVENT, handleLibraryMutation);
+    };
+  }, []);
 
   useEffect(() => {
     setIsMobileMenuOpen(false);
@@ -985,7 +898,6 @@ export default function DashboardNav({
         return;
       }
 
-      void fetchBalance();
       fetchRecentProjects();
     };
 
@@ -996,7 +908,7 @@ export default function DashboardNav({
       window.removeEventListener(PROJECT_MUTATION_EVENT, handleProjectMutation);
       supabase.removeChannel(channel);
     };
-  }, [fetchBalance, organizationId, session?.access_token, user]);
+  }, [organizationId, session?.access_token, user]);
 
   const handleSignOut = async () => {
     await signOut();
@@ -1014,7 +926,7 @@ export default function DashboardNav({
   const libraryItem = workspaceSection?.items.find((item) => item.name === 'Library');
   if (libraryItem) {
     libraryItem.children = [
-      { name: 'All saved', href: '/dashboard/library', icon: BookOpenText },
+      { name: 'All Saved', href: '/dashboard/library', icon: BookOpenText },
       ...contentLibraries.map((library) => ({
         name: library.name,
         href: `/dashboard/library?library=${encodeURIComponent(library.id)}`,
@@ -1048,23 +960,17 @@ export default function DashboardNav({
     });
   }
 
-  const isLowBalance = isNavCreditBalanceLow(balance, balanceCreditUnit);
-  const logoTheme = resolvedTheme === 'light' ? 'light' : 'dark';
+  const logoTheme = 'dark';
   const sharedProps = {
     pathname,
     activeSettingsSection,
     currentLibraryId,
     activeProjectId,
     user,
-    balance,
-    balanceCreditUnit,
-    isLoadingBalance,
-    isLowBalance,
     recentProjects,
     onSignOut: handleSignOut,
     isCollapsed: collapsed,
     onToggleCollapse: () => setCollapsed(!collapsed),
-    isDemo,
     hideChromeForCapture,
     navSections,
   };
@@ -1072,15 +978,15 @@ export default function DashboardNav({
   return (
     <>
       {/* Desktop Sidebar */}
-      <div className={`hidden md:flex md:flex-col md:fixed md:inset-y-0 transition-all duration-200 ${collapsed ? 'md:w-20' : 'md:w-64'}`}>
-        <div className="flex flex-col flex-grow border-r border-slate-200 bg-white/95 shadow-[1px_0_0_0_#f1f5f9] backdrop-blur dark:border-slate-800 dark:bg-slate-950/95 dark:shadow-none overflow-visible">
+      <div className={`hidden md:flex md:min-h-0 md:flex-col md:fixed md:inset-y-0 transition-all duration-200 ${collapsed ? 'md:w-20' : 'md:w-64'}`}>
+        <div className="themeable-dashboard-nav flex min-h-0 flex-grow flex-col overflow-visible border-r border-white/10 bg-[#061126]/98 shadow-[1px_0_0_0_rgba(255,255,255,0.04)] backdrop-blur">
           <SidebarContent {...sharedProps} />
         </div>
       </div>
 
       {/* Mobile top bar */}
       <div className="md:hidden">
-        <div className="sticky top-0 z-30 border-b border-slate-200/90 bg-white/95 px-4 py-3 shadow-sm backdrop-blur dark:border-slate-800/90 dark:bg-slate-950/95">
+        <div className="themeable-dashboard-nav sticky top-0 z-30 border-b border-white/10 bg-[#061126]/95 px-4 py-3 shadow-sm backdrop-blur">
           <div className="grid grid-cols-[auto_minmax(0,1fr)_auto] items-center gap-3">
             <div className="flex items-center gap-1">
               <button
@@ -1093,14 +999,14 @@ export default function DashboardNav({
               <Link
                 href="/dashboard/hub"
                 className="hidden rounded-lg p-1 text-slate-500 transition-colors hover:bg-slate-100 min-[375px]:inline-flex dark:text-slate-300 dark:hover:bg-slate-800"
-                aria-label="Go to project hub"
+                aria-label="AudioRepurpose home"
               >
                 <BrandLogo showText={false} showSubtitle={false} mode="icon" theme={logoTheme} size="sm" />
               </Link>
             </div>
 
             <div className="min-w-0 text-center">
-              <p className="truncate text-sm font-semibold text-slate-900 dark:text-slate-100">
+              <p className="truncate text-sm font-semibold text-slate-100">
                 {mobilePageTitle}
               </p>
             </div>
@@ -1129,7 +1035,7 @@ export default function DashboardNav({
             className="fixed inset-0 bg-black/50 dark:bg-black/75"
             onClick={() => setIsMobileMenuOpen(false)}
           />
-          <div className="relative flex h-full w-[min(88vw,20rem)] flex-col overflow-y-auto bg-white shadow-xl dark:bg-slate-950">
+          <div className="themeable-dashboard-nav relative flex h-full min-h-0 w-[min(88vw,20rem)] flex-col overflow-hidden bg-[#061126] shadow-xl">
             <button
               onClick={() => setIsMobileMenuOpen(false)}
               className="absolute top-3 right-3 z-10 p-2 rounded-lg text-slate-500 dark:text-slate-400 hover:text-slate-900 dark:hover:text-white hover:bg-slate-100 dark:hover:bg-slate-800 transition-colors"

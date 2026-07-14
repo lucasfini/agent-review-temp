@@ -13,25 +13,25 @@ export default async function AuthCodeErrorPage({ searchParams }: AuthCodeErrorP
   const message = resolved?.message
 
   return (
-    <div className="min-h-screen bg-slate-950 text-slate-100 flex items-center justify-center px-6">
-      <div className="w-full max-w-lg rounded-2xl border border-slate-800 bg-slate-900/60 p-8 shadow-2xl">
+    <div className="min-h-screen bg-white text-slate-900 flex items-center justify-center px-6 dark:bg-slate-950 dark:text-slate-100">
+      <div className="w-full max-w-lg rounded-2xl border border-slate-200 bg-slate-50 p-8 shadow-2xl dark:border-slate-800 dark:bg-slate-900/60">
         <h1 className="text-2xl font-bold">Google sign-in failed</h1>
-        <p className="mt-2 text-sm text-slate-400">
+        <p className="mt-2 text-sm text-slate-600 dark:text-slate-400">
           The OAuth callback could not exchange the authorization code for a session.
         </p>
 
-        <div className="mt-5 rounded-xl border border-slate-800 bg-slate-950/60 p-4 text-sm">
-          <div className="text-slate-400">Reason</div>
-          <div className="mt-1 font-medium text-slate-100">{reason}</div>
+        <div className="mt-5 rounded-xl border border-slate-200 bg-white p-4 text-sm dark:border-slate-800 dark:bg-slate-950/60">
+          <div className="text-slate-500 dark:text-slate-400">Reason</div>
+          <div className="mt-1 font-medium text-slate-900 dark:text-slate-100">{reason}</div>
           {message && (
             <>
-              <div className="mt-3 text-slate-400">Message</div>
-              <div className="mt-1 font-medium text-slate-100 break-words">{message}</div>
+              <div className="mt-3 text-slate-500 dark:text-slate-400">Message</div>
+              <div className="mt-1 font-medium text-slate-900 break-words dark:text-slate-100">{message}</div>
             </>
           )}
         </div>
 
-        <div className="mt-6 text-sm text-slate-400">
+        <div className="mt-6 text-sm text-slate-600 dark:text-slate-400">
           Check that your Google OAuth client and Supabase redirect URLs are configured correctly.
         </div>
 
@@ -44,7 +44,7 @@ export default async function AuthCodeErrorPage({ searchParams }: AuthCodeErrorP
           </Link>
           <Link
             href="/"
-            className="inline-flex items-center justify-center rounded-xl border border-slate-700 px-4 py-2 text-sm font-medium text-slate-200 hover:bg-slate-800 transition-colors"
+            className="inline-flex items-center justify-center rounded-xl border border-slate-300 px-4 py-2 text-sm font-medium text-slate-700 hover:bg-slate-100 transition-colors dark:border-slate-700 dark:text-slate-200 dark:hover:bg-slate-800"
           >
             Home
           </Link>

@@ -12,6 +12,7 @@ const mockGetWorkspaceMember = jest.fn();
 const mockSendWorkspaceInvitationEmail = jest.fn();
 const mockSetActiveOrganizationForUser = jest.fn();
 const mockRecordOrganizationAuditLog = jest.fn();
+const mockResolveInviteOrganization = jest.fn();
 const originalEnableDevInviteLinks = process.env.ENABLE_DEV_INVITE_LINKS;
 
 jest.mock('@/lib/authz/permissions', () => {
@@ -23,9 +24,15 @@ jest.mock('@/lib/authz/permissions', () => {
   };
 });
 
-jest.mock('@/lib/authz/organization-context', () => ({
-  setActiveOrganizationForUser: (...args: any[]) => mockSetActiveOrganizationForUser(...args),
-}));
+jest.mock('@/lib/authz/organization-context', () => {
+  const actual = jest.requireActual('@/lib/authz/organization-context');
+  return {
+    ...actual,
+    setActiveOrganizationForUser: (...args: any[]) => mockSetActiveOrganizationForUser(...args),
+    displayOrganizationName: (organization: any) =>
+      organization.type === 'personal_legacy' ? 'Personal Workspace' : organization.name,
+  };
+});
 
 jest.mock('@/lib/api/route-auth', () => {
   class RouteAccessError extends Error {
@@ -58,6 +65,7 @@ jest.mock('@/lib/organizations/team', () => {
     cancelWorkspaceInvitation: (...args: any[]) => mockCancelWorkspaceInvitation(...args),
     updateWorkspaceMember: (...args: any[]) => mockUpdateWorkspaceMember(...args),
     getWorkspaceSeatSummary: (...args: any[]) => mockGetWorkspaceSeatSummary(...args),
+    resolveInviteOrganization: (...args: any[]) => mockResolveInviteOrganization(...args),
     getWorkspaceMember: (...args: any[]) => mockGetWorkspaceMember(...args),
   };
 });
@@ -105,6 +113,7 @@ describe('workspace invitation routes', () => {
     mockSendWorkspaceInvitationEmail.mockReset();
     mockSetActiveOrganizationForUser.mockReset();
     mockRecordOrganizationAuditLog.mockReset();
+    mockResolveInviteOrganization.mockReset();
 
     mockRequireActiveOrganizationForUser.mockResolvedValue({
       user,
@@ -168,6 +177,10 @@ describe('workspace invitation routes', () => {
       organization,
       membership: { role: 'editor', status: 'active' },
     });
+    mockResolveInviteOrganization.mockResolvedValue({
+      organization,
+      isNewTeam: false,
+    });
   });
 
   afterEach(() => {
@@ -203,6 +216,116 @@ describe('workspace invitation routes', () => {
       invitedByEmail: 'owner@example.com',
       workspaceName: 'Acme Workspace',
     }));
+  });
+
+  it('creates invites against a team workspace when owner invites from personal workspace', async () => {
+    const { POST } = await import('@/app/api/organizations/invitations/route');
+    const personalOrganization = {
+      id: 'personal-org-1',
+      name: 'Owner Workspace',
+      type: 'personal_legacy' as const,
+      owner_user_id: 'user-1',
+    };
+    const teamOrganization = {
+      id: 'team-org-1',
+      name: 'Owner Workspace Team',
+      type: 'saas_customer' as const,
+      owner_user_id: 'user-1',
+    };
+
+    mockRequirePermissionContext.mockResolvedValue({
+      user,
+      organization: personalOrganization,
+      membership: ownerMembership,
+      permissionContext: {
+        userId: user.id,
+        organizationId: personalOrganization.id,
+        organizationType: personalOrganization.type,
+        role: ownerMembership.role,
+        isDemo: false,
+      },
+    });
+    mockResolveInviteOrganization.mockResolvedValue({
+      organization: teamOrganization,
+      isNewTeam: true,
+    });
+    mockSetActiveOrganizationForUser.mockResolvedValue({
+      organization: teamOrganization,
+      membership: ownerMembership,
+    });
+
+    const response = await POST(new Request('http://localhost/api/organizations/invitations', {
+      method: 'POST',
+      body: JSON.stringify({
+        organization_id: personalOrganization.id,
+        email: 'teammate@example.com',
+        role: 'editor',
+      }),
+    }) as any);
+    const payload = await response.json();
+
+    expect(response.status).toBe(201);
+    expect(payload.invitation.email).toBe('teammate@example.com');
+    expect(mockResolveInviteOrganization).toHaveBeenCalledWith({
+      supabase: expect.anything(),
+      ownerUserId: 'user-1',
+      fallbackWorkspaceName: 'Personal Workspace',
+    });
+    expect(mockCreateWorkspaceInvitation).toHaveBeenCalledWith(expect.objectContaining({
+      organizationId: 'team-org-1',
+      email: 'teammate@example.com',
+      role: 'editor',
+      invitedBy: 'user-1',
+    }));
+    expect(mockSetActiveOrganizationForUser).toHaveBeenCalledWith(
+      expect.anything(),
+      'user-1',
+      'team-org-1'
+    );
+    expect(mockSendWorkspaceInvitationEmail).toHaveBeenCalledWith(expect.objectContaining({
+      workspaceName: 'Owner Workspace Team',
+    }));
+  });
+
+  it('blocks creating a new team workspace when owner already has a different active team', async () => {
+    const { POST } = await import('@/app/api/organizations/invitations/route');
+    const { WorkspaceTeamError } = await import('@/lib/organizations/team');
+    const personalOrganization = {
+      id: 'personal-org-1',
+      name: 'Owner Workspace',
+      type: 'personal_legacy' as const,
+      owner_user_id: 'user-1',
+    };
+
+    mockRequirePermissionContext.mockResolvedValue({
+      user,
+      organization: personalOrganization,
+      membership: ownerMembership,
+      permissionContext: {
+        userId: user.id,
+        organizationId: personalOrganization.id,
+        organizationType: personalOrganization.type,
+        role: ownerMembership.role,
+        isDemo: false,
+      },
+    });
+    mockResolveInviteOrganization.mockRejectedValue(
+      new WorkspaceTeamError(409, 'You are already a member of a team workspace')
+    );
+
+    const response = await POST(new Request('http://localhost/api/organizations/invitations', {
+      method: 'POST',
+      body: JSON.stringify({
+        organization_id: personalOrganization.id,
+        email: 'teammate@example.com',
+        role: 'editor',
+      }),
+    }) as any);
+    const payload = await response.json();
+
+    expect(response.status).toBe(409);
+    expect(payload.error).toBe('You are already a member of a team workspace');
+    expect(mockCreateWorkspaceInvitation).not.toHaveBeenCalled();
   });
 
   it('exposes a local invite link without sending email when dev invite links are enabled', async () => {
@@ -333,6 +456,23 @@ describe('workspace invitation routes', () => {
     expect(payload.error).toContain('invited email address');
   });
 
+  it('surfaces team limit failures for invitees already on another team', async () => {
+    const { POST } = await import('@/app/api/organizations/invitations/accept/route');
+    const { WorkspaceTeamError } = await import('@/lib/organizations/team');
+    mockAcceptWorkspaceInvitation.mockRejectedValue(
+      new WorkspaceTeamError(409, 'You can only be a member of one team workspace at a time')
+    );
+
+    const response = await POST(new Request('http://localhost/api/organizations/invitations/accept', {
+      method: 'POST',
+      body: JSON.stringify({ token: 'raw-token' }),
+    }) as any);
+    const payload = await response.json();
+
+    expect(response.status).toBe(409);
+    expect(payload.error).toBe('You can only be a member of one team workspace at a time');
+  });
+
   it('blocks demo users from accepting workspace invites', async () => {
     const { POST } = await import('@/app/api/organizations/invitations/accept/route');
     mockRequireAuthenticatedUser.mockResolvedValue({ id: 'invitee-1', email: 'teammate@example.com' });
@@ -391,6 +531,41 @@ describe('workspace invitation routes', () => {
       remove: false,
       actorRole: 'owner',
     }));
+  });
+
+  it('blocks member management against personal workspaces', async () => {
+    const { PATCH } = await import('@/app/api/organizations/members/[id]/route');
+    const personalOrganization = {
+      id: 'personal-org-1',
+      name: 'Personal Workspace',
+      type: 'personal_legacy' as const,
+      owner_user_id: 'user-1',
+    };
+    mockRequirePermissionContext.mockResolvedValue({
+      user,
+      organization: personalOrganization,
+      membership: ownerMembership,
+      permissionContext: {
+        userId: user.id,
+        organizationId: personalOrganization.id,
+        organizationType: personalOrganization.type,
+        role: ownerMembership.role,
+        isDemo: false,
+      },
+    });
+
+    const response = await PATCH(
+      new Request('http://localhost/api/organizations/members/member-2', {
+        method: 'PATCH',
+        body: JSON.stringify({ organization_id: 'personal-org-1', role: 'admin' }),
+      }) as any,
+      { params: Promise.resolve({ id: 'member-2' }) }
+    );
+    const payload = await response.json();
+
+    expect(response.status).toBe(400);
+    expect(payload.error).toBe('Team workspace settings are only available for team workspaces');
+    expect(mockUpdateWorkspaceMember).not.toHaveBeenCalled();
   });
 
   it('blocks owners from assigning owner without owner actor role', async () => {

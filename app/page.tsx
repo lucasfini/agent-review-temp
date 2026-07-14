@@ -9,7 +9,7 @@ import {
   ArrowRight,
   ArrowUpRight,
   AudioLines,
-  Building2,
+  BookOpenText,
   Check,
   CheckCircle2,
   CircleCheck,
@@ -23,126 +23,48 @@ import {
   Monitor,
   Phone,
   PlayCircle,
+  Plug,
   SlidersHorizontal,
   Sparkles,
-  Sun,
   TrendingUp,
   User,
+  Users,
   Video,
-  X,
   Zap,
-  Moon,
   type LucideIcon,
 } from "lucide-react";
+import { LogoLockup } from "@/components/site/AudioRepurposeLogo";
+import {
+  MarketingNav,
+  ParallaxVisual,
+  gridStyle,
+  themeTokens,
+  useMarketingTheme,
+  type ThemeName,
+} from "@/components/site/marketing";
 import { cn } from "@/lib/utils";
 
-const SIGNUP_HREF = "#pricing";
-const LOGIN_HREF = "/auth/login";
-const CONTACT_HREF = "#pricing";
+const SIGNUP_HREF = "/auth/signup";
+const CONTACT_HREF = "/contact";
 const SHOW_LEGACY_ONE_SOURCE_SECTION = false;
 const SHOW_STANDALONE_SPEAKER_SECTION = false;
-
-type ThemeName = "light" | "dark";
-type ThemeVars = CSSProperties & Record<`--${string}`, string>;
 
 const NAV_LINKS = [
   { label: "Home", href: "#home", id: "home" },
   { label: "About Us", href: "#about", id: "about" },
   { label: "How it works", href: "#how-it-works", id: "how-it-works" },
   { label: "Features", href: "#features", id: "features" },
-  { label: "Pricing", href: "#pricing", id: "pricing" },
 ] as const;
-
-const themeTokens: Record<ThemeName, ThemeVars> = {
-  light: {
-    "--bg-home": "#F8FBFF",
-    "--bg-a": "#F8FBFF",
-    "--bg-b": "#F6FAFF",
-    "--bg-warm": "#F2F7FF",
-    "--bg-card": "#FFFFFF",
-    "--bg-card-soft": "#F6F8FF",
-    "--card": "#FFFFFF",
-    "--card-soft": "#F6F8FF",
-    "--text-main": "#050B24",
-    "--text-muted": "#52607A",
-    "--border-soft": "#E3E8F3",
-    "--warm": "#F59E0B",
-    "--bg": "#FAFBFF",
-    "--surface": "#FFFFFF",
-    "--surface-soft": "#F6F8FF",
-    "--text": "#050B24",
-    "--muted": "#52607A",
-    "--border": "#E3E8F3",
-    "--blue": "#1463FF",
-    "--purple": "#7C3AED",
-    "--success": "#20B26B",
-    "--warning": "#F59E0B",
-    "--grid-line": "rgba(35, 64, 120, 0.035)",
-    "--nav-bg": "rgba(255,255,255,0.84)",
-    "--nav-h": "var(--nav-height)",
-    "--container-max": "var(--container-width)",
-    "--container-x": "var(--page-gutter)",
-    "--section-y": "var(--section-padding-y)",
-    "--shadow-card": "0 18px 50px rgba(15, 23, 42, 0.06)",
-    "--shadow-card-hover": "0 24px 70px rgba(15, 23, 42, 0.09)",
-  },
-  dark: {
-    "--bg-home": "#050814",
-    "--bg-a": "#050814",
-    "--bg-b": "#0A1022",
-    "--bg-warm": "#071024",
-    "--bg-card": "#0F172A",
-    "--bg-card-soft": "#111C34",
-    "--card": "#0F172A",
-    "--card-soft": "#111C34",
-    "--text-main": "#F8FBFF",
-    "--text-muted": "#AAB5CC",
-    "--border-soft": "rgba(255,255,255,0.12)",
-    "--warm": "#FBBF24",
-    "--bg": "#050814",
-    "--surface": "#0B1020",
-    "--surface-soft": "#10182D",
-    "--text": "#F8FBFF",
-    "--muted": "#AAB5CC",
-    "--border": "rgba(255,255,255,0.12)",
-    "--blue": "#4F8BFF",
-    "--purple": "#A78BFA",
-    "--success": "#34D399",
-    "--warning": "#FBBF24",
-    "--grid-line": "rgba(255,255,255,0.035)",
-    "--nav-bg": "rgba(8,12,28,0.78)",
-    "--nav-h": "var(--nav-height)",
-    "--container-max": "var(--container-width)",
-    "--container-x": "var(--page-gutter)",
-    "--section-y": "var(--section-padding-y)",
-    "--shadow-card": "0 18px 60px rgba(0, 0, 0, 0.22)",
-    "--shadow-card-hover": "0 24px 78px rgba(0, 0, 0, 0.28)",
-  },
-};
-
-const gridStyle: CSSProperties = {
-  backgroundImage:
-    "linear-gradient(to right, var(--grid-line) 1px, transparent 1px), linear-gradient(to bottom, var(--grid-line) 1px, transparent 1px)",
-  backgroundSize: "28px 28px",
-};
 
 const smoothEase = [0.16, 1, 0.3, 1] as const;
 
 const fadeUp = {
-  hidden: { opacity: 0, y: 24 },
+  hidden: { opacity: 0, y: 24, filter: "blur(4px)" },
   show: {
     opacity: 1,
     y: 0,
-    transition: { duration: 0.54, ease: smoothEase },
-  },
-};
-
-const fadeDown = {
-  hidden: { opacity: 0, y: -18 },
-  show: {
-    opacity: 1,
-    y: 0,
-    transition: { duration: 0.5, ease: smoothEase },
+    filter: "blur(0px)",
+    transition: { duration: 0.58, ease: smoothEase },
   },
 };
 
@@ -175,111 +97,6 @@ const outputRows = [
   { label: "Short-form script", icon: PlayCircle, tone: "pink", checked: false },
   { label: "Quote captions", icon: "“”", tone: "blue", checked: false },
 ] as const;
-
-const pricingPlans = [
-  {
-    name: "Free",
-    description: "Try the full workflow\nwithout a card.",
-    price: "$0",
-    suffix: "forever",
-    icon: PlayCircle,
-    cta: "Start generating",
-    href: SIGNUP_HREF,
-    featured: false,
-    features: [
-      "300 credits/month",
-      "Up to 1 full 60-minute Repurpose Pack",
-      "Transcript, speaker labels, and summary",
-      "60-minute max upload",
-    ],
-  },
-  {
-    name: "Standard",
-    description: "For solo founders and\nsmall B2B workflows.",
-    price: "$49.99",
-    suffix: "/mo",
-    icon: TrendingUp,
-    cta: "Start Standard",
-    href: SIGNUP_HREF,
-    featured: false,
-    features: [
-      "3,000 credits/month",
-      "About 10 Repurpose Pack hours",
-      "$42.49/mo when billed annually",
-      "Content Kit, Repurpose Pack, and 2 brand voices",
-    ],
-  },
-  {
-    name: "Pro",
-    description: "For teams producing\nrecurring content.",
-    price: "$149",
-    suffix: "/mo",
-    icon: Sparkles,
-    cta: "Start Pro",
-    href: SIGNUP_HREF,
-    featured: true,
-    badge: "Most Popular",
-    features: [
-      "10,000 credits/month",
-      "About 33 Repurpose Pack hours",
-      "$126.65/mo when billed annually",
-      "3 seats, campaign calendar, templates, and intelligence",
-    ],
-  },
-  {
-    name: "Teams",
-    description: "For shared B2B content\noperations.",
-    price: "$399",
-    suffix: "/mo",
-    icon: Building2,
-    cta: "Contact sales",
-    href: CONTACT_HREF,
-    featured: false,
-    features: [
-      "35,000 pooled credits/month",
-      "About 117 Repurpose Pack hours",
-      "$339.15/mo when billed annually",
-      "5 seats, approvals, analytics, and centralized billing",
-    ],
-  },
-] as const;
-
-function getInitialTheme(): ThemeName {
-  if (typeof window === "undefined") return "light";
-
-  const stored = window.localStorage.getItem("audiorepurpose-theme");
-  if (stored === "light" || stored === "dark") return stored;
-
-  return window.matchMedia("(prefers-color-scheme: dark)").matches ? "dark" : "light";
-}
-
-function applyDocumentTheme(theme: ThemeName) {
-  document.documentElement.dataset.theme = theme;
-  document.documentElement.classList.toggle("dark", theme === "dark");
-  window.localStorage.setItem("audiorepurpose-theme", theme);
-}
-
-function useLandingTheme() {
-  const [theme, setTheme] = useState<ThemeName>("light");
-  const [mounted, setMounted] = useState(false);
-
-  useEffect(() => {
-    const nextTheme = getInitialTheme();
-    setTheme(nextTheme);
-    applyDocumentTheme(nextTheme);
-    setMounted(true);
-  }, []);
-
-  function toggleTheme() {
-    setTheme((current) => {
-      const nextTheme = current === "dark" ? "light" : "dark";
-      applyDocumentTheme(nextTheme);
-      return nextTheme;
-    });
-  }
-
-  return { theme, mounted, toggleTheme };
-}
 
 function useActiveSection() {
   const [activeId, setActiveId] = useState("");
@@ -458,6 +275,19 @@ function SectionFrame({
       )}
       style={sectionStyle}
     >
+      {hero ? (
+        <div className="hero-media" aria-hidden="true">
+          <Image
+            src="/images/audio-repurpose-hero-bg.webp"
+            alt=""
+            fill
+            priority
+            quality={95}
+            sizes="100vw"
+            className="object-cover"
+          />
+        </div>
+      ) : null}
       <div className="section-container">
         <div className="section-inner">{children}</div>
       </div>
@@ -583,21 +413,6 @@ function IconTile({
   );
 }
 
-function BrandLockup({ className }: { className?: string; theme?: ThemeName }) {
-  return (
-    <span className={cn("inline-flex items-center gap-2.5", className)}>
-      <span className="brand-mark" aria-hidden="true">
-        <span />
-        <span />
-        <span />
-      </span>
-      <span className="brand-name">
-        Audio <strong>Repurpose</strong>
-      </span>
-    </span>
-  );
-}
-
 function CheckLine({ children }: { children: React.ReactNode }) {
   return (
     <span className="inline-flex items-center gap-2 text-sm font-medium text-[var(--muted)]">
@@ -684,164 +499,17 @@ function ConnectorPath({
   );
 }
 
-function ThemeToggle({
-  theme,
-  mounted,
-  onToggleTheme,
-}: {
-  theme: ThemeName;
-  mounted: boolean;
-  onToggleTheme: () => void;
-}) {
-  const isDark = mounted && theme === "dark";
-  const Icon = isDark ? Sun : Moon;
-
-  return (
-    <button
-      type="button"
-      aria-label="Toggle color theme"
-      onClick={onToggleTheme}
-      className="inline-flex h-9 w-9 shrink-0 items-center justify-center rounded-full text-[var(--text-main)] transition duration-200 hover:bg-[color-mix(in_srgb,var(--text-main)_7%,transparent)] hover:text-[var(--blue)] focus:outline-none focus-visible:ring-2 focus-visible:ring-[var(--blue)] focus-visible:ring-offset-2 focus-visible:ring-offset-[var(--bg-home)] active:translate-y-0"
-    >
-      <Icon aria-hidden="true" className="h-4 w-4" />
-    </button>
-  );
-}
-
-function HeaderNav({
-  theme,
-  mounted,
-  onToggleTheme,
-}: {
-  theme: ThemeName;
-  mounted: boolean;
-  onToggleTheme: () => void;
-}) {
-  const [open, setOpen] = useState(false);
-  const activeId = useActiveSection();
-
-  return (
-    <motion.header
-      variants={fadeDown}
-      initial="show"
-      animate="show"
-      className="site-nav sticky top-0 z-50 h-[var(--nav-h)]"
-    >
-      <nav
-        aria-label="Primary"
-        className="nav-inner"
-      >
-        <Link
-          href="#home"
-          className="brand-lockup shrink-0 rounded-full"
-          onClick={() => setOpen(false)}
-        >
-          <BrandLockup theme={theme} />
-        </Link>
-
-        <div className="ml-auto hidden items-center justify-end gap-[clamp(14px,1.8vw,26px)] min-[900px]:flex">
-          <div className="flex items-center justify-end gap-[clamp(12px,1.4vw,24px)]">
-            {NAV_LINKS.map((link) => {
-              const isActive = activeId === link.id;
-              return (
-                <Link
-                  key={link.label}
-                  href={link.href}
-                  aria-current={isActive ? "page" : undefined}
-                  className={cn(
-                    "nav-link relative py-2 text-sm font-semibold transition duration-200 hover:text-[var(--blue)]",
-                    isActive
-                      ? "text-[var(--blue)]"
-                      : "text-[color-mix(in_srgb,var(--text-main)_78%,var(--text-muted))]",
-                  )}
-                >
-                  {link.label}
-                  {isActive ? (
-                    <span
-                      aria-hidden="true"
-                      className="absolute inset-x-0 bottom-0 h-0.5 rounded-full bg-[linear-gradient(90deg,var(--blue),var(--purple))]"
-                    />
-                  ) : null}
-                </Link>
-              );
-            })}
-          </div>
-          <div className="flex items-center gap-3">
-            <Link
-              href={LOGIN_HREF}
-              className="nav-login"
-            >
-              Log in
-            </Link>
-            <PrimaryButton href={SIGNUP_HREF} className="nav-primary h-10 px-4">
-              Start free
-            </PrimaryButton>
-          </div>
-          <ThemeToggle theme={theme} mounted={mounted} onToggleTheme={onToggleTheme} />
-        </div>
-
-        <div className="ml-auto flex items-center gap-2 min-[900px]:hidden">
-          <PrimaryButton href={SIGNUP_HREF} className="hidden h-9 rounded-lg px-3 text-xs min-[460px]:inline-flex">
-            Start free
-          </PrimaryButton>
-          <button
-            type="button"
-            onClick={() => setOpen((value) => !value)}
-            aria-label={open ? "Close navigation menu" : "Open navigation menu"}
-            aria-expanded={open}
-            className="inline-flex h-9 w-9 items-center justify-center rounded-lg text-[var(--text)] transition hover:bg-[color-mix(in_srgb,var(--blue)_9%,transparent)] hover:text-[var(--blue)] focus:outline-none focus-visible:ring-2 focus-visible:ring-[var(--blue)] focus-visible:ring-offset-2 focus-visible:ring-offset-[var(--bg)]"
-          >
-            {open ? <X aria-hidden="true" className="h-5 w-5" /> : <span className="space-y-1.5" aria-hidden="true"><span className="block h-0.5 w-5 rounded bg-current" /><span className="block h-0.5 w-5 rounded bg-current" /><span className="block h-0.5 w-5 rounded bg-current" /></span>}
-          </button>
-          <ThemeToggle theme={theme} mounted={mounted} onToggleTheme={onToggleTheme} />
-        </div>
-      </nav>
-
-      {open ? (
-        <div className="absolute inset-x-0 top-[var(--nav-h)] px-[var(--container-x)] min-[900px]:hidden">
-          <div className="mx-auto grid w-full max-w-[var(--container-max)] box-border gap-1 rounded-[18px] border border-[var(--border)] bg-[color-mix(in_srgb,var(--surface)_96%,transparent)] p-3 shadow-[0_18px_55px_rgba(15,23,42,0.10)]">
-            {NAV_LINKS.map((link) => (
-              <Link
-                key={link.label}
-                href={link.href}
-                aria-current={activeId === link.id ? "page" : undefined}
-                onClick={() => setOpen(false)}
-                className={cn(
-                  "nav-link relative rounded-xl px-4 py-3 text-sm font-semibold transition",
-                  activeId === link.id
-                    ? "text-[var(--blue)]"
-                    : "text-[var(--text)] hover:bg-[var(--surface-soft)]",
-                )}
-              >
-                {link.label}
-              </Link>
-            ))}
-            <div className="mt-2 grid grid-cols-2 gap-2">
-              <SecondaryButton href={LOGIN_HREF} className="h-10 px-4">
-                Log in
-              </SecondaryButton>
-              <PrimaryButton href={SIGNUP_HREF} className="h-10 px-4">
-                Start free
-              </PrimaryButton>
-            </div>
-          </div>
-        </div>
-      ) : null}
-    </motion.header>
-  );
-}
-
 function HeroSection() {
   return (
     <SectionFrame id="home" compact band="home" hero>
       <div className="hero-layout">
-        <motion.div variants={stagger} initial="show" animate="show" className="hero-content min-w-0">
+        <motion.div variants={stagger} initial="hidden" animate="show" className="hero-content min-w-0">
           <motion.h1
             variants={fadeUp}
             className="hero-title font-serif text-[var(--text)]"
           >
-            <span className="hero-title-main">Upload once.</span>
-            <span className="hero-title-accent">Repurpose everywhere.</span>
+            <span className="hero-title-main">Make every recording</span>
+            <span className="hero-title-accent">publish-ready.</span>
           </motion.h1>
           <motion.p
             variants={fadeUp}
@@ -851,11 +519,11 @@ function HeroSection() {
           </motion.p>
           <motion.div variants={fadeUp} className="hero-actions">
             <PrimaryButton href={SIGNUP_HREF} className="hero-primary">
-              Start free
+              Sign up for free
             </PrimaryButton>
-            <SecondaryButton href={CONTACT_HREF} className="hero-secondary">
-              Book a demo
-            </SecondaryButton>
+            <p className="text-sm font-medium text-[var(--muted)]">
+              No credit card required
+            </p>
           </motion.div>
         </motion.div>
       </div>
@@ -868,7 +536,7 @@ function OneSourceSection() {
     <SectionFrame id="legacy-product-preview" compact band="b" grid>
       <motion.div
         variants={stagger}
-        initial="show"
+        initial="hidden"
         whileInView="show"
         viewport={{ once: true, amount: 0.22 }}
         className="text-center"
@@ -891,7 +559,7 @@ function OneSourceSection() {
 
       <motion.div
         variants={slowStagger}
-        initial="show"
+        initial="hidden"
         whileInView="show"
         viewport={{ once: true, amount: 0.18 }}
         className="mt-7 grid items-start gap-[var(--card-gap)] xl:grid-cols-[0.9fr_1.35fr_0.95fr]"
@@ -1032,19 +700,18 @@ function OneSourceSection() {
 
 function AboutSection() {
   const aboutOutputs = [
-    ["LinkedIn post", "Ready to review", "blue", "in"],
-    ["X thread", "Draft generated", "black", "X"],
-    ["Newsletter section", "Needs your voice", "purple", Mail],
-    ["Blog outline", "Ready to review", "green", FileText],
-    ["Show notes", "Draft generated", "amber", Mic],
-    ["Quote captions", "Ready to review", "blue", "“”"],
-    ["Short-form script", "Needs your voice", "pink", PlayCircle],
+    ["Speaker transcript", "Attribution captured", "blue", AudioLines],
+    ["Key decisions", "Pulled from source", "purple", CheckCircle2],
+    ["Customer language", "Quotes preserved", "green", "“”"],
+    ["Objections", "Tagged for follow-up", "amber", FileText],
+    ["Topic themes", "Clustered by signal", "blue", Sparkles],
+    ["Open questions", "Ready for review", "pink", CircleCheck],
   ] as const;
 
   const benefits = [
-    ["Save hours every week", Clock],
-    ["Stop starting from blank pages", FileText],
-    ["Keep your message consistent", CheckCircle2],
+    ["Capture context before it disappears", Clock],
+    ["Keep evidence tied to the source", FileText],
+    ["Share the same story across the team", CheckCircle2],
   ] as const;
 
   return (
@@ -1052,41 +719,39 @@ function AboutSection() {
       <div className="section-grid items-center xl:grid-cols-[0.95fr_1.05fr]">
         <motion.div
           variants={stagger}
-          initial="show"
+          initial="hidden"
           whileInView="show"
           viewport={{ once: true, amount: 0.18 }}
           className="max-w-[660px]"
         >
           <motion.div variants={fadeUp}>
-            <PillBadge icon={Sparkles}>
-              ABOUT AUDIOREPURPOSE
+            <PillBadge icon={Sparkles} className="normal-case tracking-normal">
+              About AudioRepurpose
             </PillBadge>
           </motion.div>
           <motion.h2
             variants={fadeUp}
             className="section-title mt-3 font-serif font-semibold"
           >
-            You already made the content.
-            <br />
-            Now make it <GradientText>work everywhere.</GradientText>
+            Your conversations are full of <GradientText>usable signal.</GradientText>
           </motion.h2>
           <motion.p variants={fadeUp} className="section-copy mt-4 max-w-[620px] text-[var(--muted)]">
-            Your best ideas are already living inside calls, demos, webinars, podcasts, founder updates, and customer conversations. The problem is not creating more from scratch. The problem is turning what you already have into posts, newsletters, scripts, summaries, quotes, and campaign assets without losing your week to copy-paste work.
+            Product feedback, sales objections, founder points of view, and customer language usually stay trapped in recordings. AudioRepurpose turns those moments into a source of record your team can trust before anyone starts drafting.
           </motion.p>
           <motion.p variants={fadeUp} className="section-copy mt-3 max-w-[580px] font-semibold text-[var(--text)]">
-            AudioRepurpose helps teams save time by turning one useful recording into a repeatable content system.
+            Start with the conversation, keep the context attached, and decide what is worth using.
           </motion.p>
           <motion.div variants={fadeUp} className="mt-5 flex flex-col gap-3 sm:flex-row sm:items-center">
             <PrimaryButton>Start free</PrimaryButton>
             <span className="text-sm font-medium text-[var(--muted)]">
-              Upload once. Review before publishing. Use the drafts everywhere.
+              Built for teams that want useful content without losing the proof behind it.
             </span>
           </motion.div>
         </motion.div>
 
         <motion.div
           variants={slowStagger}
-          initial="show"
+          initial="hidden"
           whileInView="show"
           viewport={{ once: true, amount: 0.16 }}
           className="grid gap-[var(--card-gap)]"
@@ -1096,7 +761,7 @@ function AboutSection() {
               <div className="flex flex-col gap-4 sm:flex-row sm:items-start sm:justify-between">
                 <div>
                   <p className="text-xs font-bold uppercase tracking-[0.16em] text-[var(--blue)]">
-                    One recording. A week of content.
+                    Source intelligence
                   </p>
                   <h3 className="mt-2 text-2xl font-bold">Customer call · 45:21</h3>
                   <p className="mt-1 text-sm text-[var(--muted)]">Product feedback with ACME Inc.</p>
@@ -1120,7 +785,7 @@ function AboutSection() {
               </div>
 
               <div className="mt-4 rounded-2xl border border-[color-mix(in_srgb,var(--blue)_18%,var(--border))] bg-[color-mix(in_srgb,var(--blue)_7%,var(--surface))] px-4 py-3 text-sm font-semibold text-[var(--text)]">
-                Built from the source you already had.
+                The recording becomes a shared reference, not another forgotten file.
               </div>
             </Surface>
           </motion.div>
@@ -1158,7 +823,7 @@ function SpeakerSection() {
       <div className="speaker-grid section-grid items-center xl:grid-cols-[minmax(0,1.04fr)_minmax(380px,0.78fr)]">
         <motion.div
           variants={stagger}
-          initial="show"
+          initial="hidden"
           whileInView="show"
           viewport={{ once: true, amount: 0.18 }}
           className="speaker-copy"
@@ -1193,7 +858,7 @@ function SpeakerSection() {
 
         <motion.div
           variants={fadeUp}
-          initial="show"
+          initial="hidden"
           whileInView="show"
           viewport={{ once: true, amount: 0.28 }}
           className="speaker-card-wrap"
@@ -1265,50 +930,50 @@ function SpeakerSection() {
 
 function FeaturesSection() {
   const featureOutputs = [
-    ["LinkedIn post", "in", "blue", true],
-    ["X thread", "X", "black", true],
+    ["Transcript brief", FileText, "blue", true],
+    ["Insight digest", Sparkles, "purple", true],
+    ["Quote bank", "“”", "green", true],
+    ["LinkedIn draft", "in", "blue", true],
     ["Newsletter draft", Mail, "purple", true],
-    ["Blog outline", FileText, "green", true],
-    ["Show notes", Mic, "amber", true],
+    ["Show notes", Mic, "amber", false],
+    ["Blog outline", FileText, "green", false],
     ["Short-form script", PlayCircle, "pink", false],
-    ["Quote captions", "“”", "blue", false],
-    ["Campaign assets", Sparkles, "purple", false],
   ] as const;
 
   const featureModules = [
     {
-      title: "Speaker-labeled transcripts",
-      body: "Know who said what without cleaning the whole file.",
+      title: "Source-backed transcripts",
+      body: "Speaker labels, timestamps, and source context stay attached to generated assets.",
       icon: AudioLines,
       tone: "blue",
     },
     {
-      title: "Summaries",
-      body: "Turn long recordings into concise briefs.",
+      title: "Analysis brief",
+      body: "Summaries, topics, decisions, objections, and opportunities are pulled into one review surface.",
       icon: FileText,
       tone: "purple",
     },
     {
-      title: "Insights",
-      body: "Pull out themes, pain points, opportunities, and useful talking points.",
+      title: "Reusable angles",
+      body: "Find the ideas, customer language, and proof points that can support stronger campaigns.",
       icon: Sparkles,
       tone: "blue",
     },
     {
-      title: "Quotes",
-      body: "Find reusable lines for posts, decks, and campaigns.",
+      title: "Output controls",
+      body: "Choose the formats that match the source instead of generating every possible draft.",
       icon: CheckCircle2,
       tone: "green",
     },
     {
-      title: "Tone controls",
-      body: "Generate drafts in Professional, Casual, Educational, Storytelling, Witty, Bold, or Thought Leader styles.",
+      title: "Voice and tone controls",
+      body: "Generate with a consistent voice, then tune the draft for the channel and audience.",
       icon: SlidersHorizontal,
       tone: "purple",
     },
     {
-      title: "Review-ready drafts",
-      body: "Keep humans in control before anything gets published.",
+      title: "Approval-ready drafts",
+      body: "Keep review, edits, and final decisions in the workflow before anything leaves the workspace.",
       icon: CircleCheck,
       tone: "green",
     },
@@ -1318,7 +983,7 @@ function FeaturesSection() {
     <SectionFrame id="features" compact band="a" className="features-section">
       <motion.div
         variants={stagger}
-        initial="show"
+        initial="hidden"
         whileInView="show"
         viewport={{ once: true, amount: 0.2 }}
         className="text-center"
@@ -1330,23 +995,24 @@ function FeaturesSection() {
           variants={fadeUp}
           className="section-title mx-auto mt-3 font-serif font-semibold"
         >
-          One source becomes <GradientText>every asset</GradientText> your team needs.
+          Control what gets generated,
+          <br className="hidden sm:block" /> reviewed, and <GradientText>used.</GradientText>
         </motion.h2>
         <motion.p variants={fadeUp} className="section-copy mx-auto mt-2.5 max-w-2xl text-[var(--muted)]">
-          Choose the outputs you need, adjust the tone, and review every draft before it goes live.
+          Features are organized around the editing loop: understand the source, select the right outputs, tune the voice, and approve the drafts that are worth shipping.
         </motion.p>
       </motion.div>
 
       <motion.div
         variants={slowStagger}
-        initial="show"
+        initial="hidden"
         whileInView="show"
         viewport={{ once: true, amount: 0.14 }}
         className="features-layout mt-8 grid items-start gap-[var(--section-gap)]"
       >
         <motion.div variants={fadeUp}>
           <Surface className="p-[var(--card-padding)]">
-            <h3 className="text-lg font-bold">Choose your outputs</h3>
+            <h3 className="text-lg font-bold">Configure the content kit</h3>
             <div className="mt-3 grid gap-1.5 sm:grid-cols-2">
               {featureOutputs.map(([label, icon, tone, checked]) => (
                 <div
@@ -1370,7 +1036,7 @@ function FeaturesSection() {
               ))}
             </div>
             <PrimaryButton href={SIGNUP_HREF} className="mt-3 h-10 w-full">
-              Preview selected drafts
+              Generate selected kit
             </PrimaryButton>
           </Surface>
         </motion.div>
@@ -1394,7 +1060,7 @@ function HowItWorksSection() {
     <SectionFrame id="how-it-works" compact band="b" className="how-section">
       <motion.div
         variants={stagger}
-        initial="show"
+        initial="hidden"
         whileInView="show"
         viewport={{ once: true, amount: 0.22 }}
         className="section-header"
@@ -1406,18 +1072,18 @@ function HowItWorksSection() {
           variants={fadeUp}
           className="section-title mx-auto mt-3 font-serif font-semibold"
         >
-          From source to finished
+          From raw source to
           <br />
-          content in <GradientText>3 steps.</GradientText>
+          reviewed drafts in <GradientText>3 steps.</GradientText>
         </motion.h2>
         <motion.p variants={fadeUp} className="section-subtitle">
-          AudioRepurpose turns any conversation into content your team can use everywhere.
+          A focused path from recording to reviewed assets.
         </motion.p>
       </motion.div>
 
       <motion.div
         variants={slowStagger}
-        initial="show"
+        initial="hidden"
         whileInView="show"
         viewport={{ once: true, amount: 0.15 }}
         className="workflow-showcase"
@@ -1436,13 +1102,117 @@ function HowItWorksSection() {
       </motion.div>
       <motion.div
         variants={fadeUp}
-        initial="show"
+        initial="hidden"
         whileInView="show"
         viewport={{ once: true, amount: 0.3 }}
         className="workflow-proof-line"
       >
         <Sparkles aria-hidden="true" className="h-5 w-5 text-[var(--blue)]" />
-        One source. Endless content. Always on brand.
+        Source captured. Context extracted. Drafts ready for review.
+      </motion.div>
+    </SectionFrame>
+  );
+}
+
+function ProductExpansionSection() {
+  const productAreas = [
+    {
+      title: "Upload",
+      body: "Upload audio, import source files, choose modules, and keep source context attached.",
+      href: "/product/upload",
+      icon: CloudUpload,
+      tone: "amber" as const,
+    },
+    {
+      title: "Teams",
+      body: "Collaborate across roles, workspaces, shared assets, and review flows.",
+      href: "/product/teams",
+      icon: Users,
+      tone: "green" as const,
+    },
+    {
+      title: "Studio",
+      body: "Manage profiles, voices, campaign plans, and reusable brand context.",
+      href: "/product/studio",
+      icon: Sparkles,
+      tone: "purple" as const,
+    },
+    {
+      title: "Library",
+      body: "Save drafts, collections, reusable assets, and approved content.",
+      href: "/product/library",
+      icon: BookOpenText,
+      tone: "blue" as const,
+    },
+    {
+      title: "Integrations",
+      body: "Connect supported tools and bring external source material into the workflow.",
+      href: "/product/integrations",
+      icon: Plug,
+      tone: "purple" as const,
+    },
+    {
+      title: "Analysis",
+      body: "Review transcripts, extract insights, coach quality, and define goals.",
+      href: "/product/analysis",
+      icon: TrendingUp,
+      tone: "green" as const,
+    },
+  ];
+
+  return (
+    <SectionFrame id="product-overview" compact band="b" grid className="features-section">
+      <motion.div
+        variants={stagger}
+        initial="hidden"
+        whileInView="show"
+        viewport={{ once: true, amount: 0.2 }}
+        className="text-center"
+      >
+        <motion.div variants={fadeUp}>
+          <PillBadge icon={Sparkles}>EXPLORE THE PRODUCT</PillBadge>
+        </motion.div>
+        <motion.h2 variants={fadeUp} className="section-title mx-auto mt-3 font-serif font-semibold">
+          Explore each <GradientText>product layer.</GradientText>
+        </motion.h2>
+        <motion.p variants={fadeUp} className="section-copy mx-auto mt-2.5 max-w-2xl text-[var(--muted)]">
+          Each page focuses on a different part of the workspace, from upload and team review to reusable context, storage, integrations, and analysis.
+        </motion.p>
+      </motion.div>
+
+      <ParallaxVisual distance={18} rotate={0} className="mt-8">
+        <motion.div
+          variants={slowStagger}
+          initial="hidden"
+          whileInView="show"
+          viewport={{ once: true, amount: 0.14 }}
+          className="grid gap-[var(--card-gap)] md:grid-cols-2 xl:grid-cols-3"
+        >
+          {productAreas.map(({ title, body, href, icon, tone }) => (
+            <motion.div key={title} variants={fadeUp}>
+              <Link
+                href={href}
+                className="group block h-full rounded-[22px] focus:outline-none focus-visible:ring-2 focus-visible:ring-[var(--blue)] focus-visible:ring-offset-2 focus-visible:ring-offset-[var(--bg)]"
+              >
+                <Surface className="flex h-full flex-col p-[var(--card-padding)]">
+                  <IconTile Icon={icon} tone={tone} />
+                  <h3 className="mt-4 text-xl font-bold">{title}</h3>
+                  <p className="mt-2 text-sm leading-6 text-[var(--muted)]">{body}</p>
+                  <span className="mt-auto inline-flex items-center gap-2 pt-5 text-sm font-bold text-[var(--blue)] transition group-hover:translate-x-0.5">
+                    View page
+                    <ArrowUpRight aria-hidden="true" className="h-4 w-4" />
+                  </span>
+                </Surface>
+              </Link>
+            </motion.div>
+          ))}
+        </motion.div>
+      </ParallaxVisual>
+
+      <motion.div variants={fadeUp} initial="hidden" whileInView="show" viewport={{ once: true, amount: 0.3 }} className="mt-6 flex justify-center">
+        <SecondaryButton href="/product/upload" className="h-11 rounded-full px-6">
+          Start with Upload
+        </SecondaryButton>
       </motion.div>
     </SectionFrame>
   );
@@ -1461,11 +1231,7 @@ function ProcessAddSource() {
     { label: "Customer call", mark: Phone, tone: "blue" },
     { label: "Webinar", mark: Video, tone: "blue" },
     { label: "Demo", mark: Monitor, tone: "blue" },
-    { label: "Founder update", mark: User, tone: "purple" },
-    { label: "YouTube", mark: PlayCircle, tone: "red" },
-    { label: "Teams", mark: Building2, tone: "purple" },
-    { label: "Granola AI", mark: "G", tone: "green" },
-    { label: "Slack", mark: Zap, tone: "amber" },
+    { label: "Slack note", mark: Zap, tone: "amber" },
   ] as const;
 
   return (
@@ -1475,11 +1241,11 @@ function ProcessAddSource() {
         <h3 className="workflow-card-title">Add the source</h3>
       </div>
       <p className="workflow-card-copy">
-        Upload a call, meeting, webinar, demo, or podcast — or capture from integrations.
+        Upload a recording or bring in source material from connected tools.
       </p>
 
       <div className="source-picker">
-        <p className="source-label">Upload directly or capture from integrations</p>
+        <p className="source-label">Start from the source your team already has</p>
         <div className="source-grid">
           {sourceInputs.map(({ label, mark, tone }) => {
             const Mark = mark;
@@ -1510,7 +1276,7 @@ function ProcessAddSource() {
       <div className="upload-dropzone">
         <CloudUpload aria-hidden="true" className="h-5 w-5 text-[var(--blue)]" />
         <div>
-          <p>Or drag &amp; drop a file here</p>
+          <p>Drag &amp; drop a file</p>
           <span>MP4, MOV, MP3, WAV, M4A</span>
         </div>
       </div>
@@ -1540,24 +1306,22 @@ function WorkflowTranscriptEntry({
 
 function ProcessRunSystem() {
   const insights = [
-    "One source of truth",
-    "Automated repurposing",
-    "Faster publishing",
-    "Scalable content engine",
+    "Speaker attribution",
+    "Decision summary",
+    "Customer language",
   ] as const;
 
   const topics = [
-    "Product updates",
-    "Workflow automation",
-    "Team efficiency",
-    "Announcements",
+    "Pricing feedback",
+    "Buying objections",
+    "Expansion signals",
   ] as const;
 
   return (
     <div className="workflow-card workflow-card-system workflow-card--center">
       <div className="workflow-card-header">
         <NumberBadge>2</NumberBadge>
-        <h3 className="workflow-card-title">Run the content system</h3>
+        <h3 className="workflow-card-title">Extract the signal</h3>
       </div>
 
       <div className="content-system-panel">
@@ -1567,13 +1331,10 @@ function ProcessRunSystem() {
             <span>AI</span>
           </div>
           <WorkflowTranscriptEntry time="00:12" speaker="Speaker 1">
-            Thanks for joining today. Let&apos;s dive into the product update.
+            Thanks for joining today. What slowed the rollout down?
           </WorkflowTranscriptEntry>
           <WorkflowTranscriptEntry time="00:28" speaker="Speaker 2">
-            The new workflow saves time and keeps everything in one place.
-          </WorkflowTranscriptEntry>
-          <WorkflowTranscriptEntry time="00:45" speaker="Speaker 1">
-            Great. Let&apos;s walk through how teams can use this.
+            The team understood the value, but the handoff between sales and success was unclear.
           </WorkflowTranscriptEntry>
 
           <div className="workflow-waveform-row">
@@ -1590,7 +1351,7 @@ function ProcessRunSystem() {
             <p>Summary</p>
           </div>
           <p className="summary-copy">
-            Productivity updates, workflow automation, and key announcements to help teams move faster.
+            A customer rollout stalled because the team lacked a clear post-sale handoff.
           </p>
           <div className="summary-divider" />
           <p className="insights-title">Key insights</p>
@@ -1648,19 +1409,17 @@ function ProcessPublishOutputs() {
     { label: "LinkedIn post", icon: "in", tone: "blue", tileColor: "#0A66C2" },
     { label: "X thread", icon: "X", tone: "black", tileColor: "#050505" },
     { label: "Newsletter draft", icon: Mail, tone: "purple", tileColor: "#7C3AED" },
-    { label: "Show notes", icon: Mic, tone: "purple", tileColor: "#4F63FF" },
     { label: "Blog draft", icon: FileText, tone: "green", tileColor: "#22B573" },
-    { label: "Quote captions", icon: Sparkles, tone: "amber", tileColor: "#F59E0B" },
   ] as const;
 
   return (
     <div className="workflow-card workflow-card-outputs workflow-card--outputs">
       <div className="workflow-card-header">
         <NumberBadge>3</NumberBadge>
-        <h3 className="workflow-card-title">Publish the outputs</h3>
+        <h3 className="workflow-card-title">Review the drafts</h3>
       </div>
       <p className="workflow-card-copy">
-        Multiple formats. Every channel. Ready to go.
+        Edit, approve, and move the strongest assets into your content workflow.
       </p>
       <div className="output-grid">
         {outputs.map((output) => (
@@ -1677,117 +1436,13 @@ function ProcessPublishOutputs() {
   );
 }
 
-function PricingSection() {
-  return (
-    <SectionFrame id="pricing" compact band="b" grid className="pricing-section">
-      <motion.div
-        variants={stagger}
-        initial="show"
-        whileInView="show"
-        viewport={{ once: true, amount: 0.22 }}
-        className="text-center"
-      >
-        <motion.div variants={fadeUp}>
-          <PillBadge className="normal-case tracking-normal">Simple, transparent pricing</PillBadge>
-        </motion.div>
-        <motion.h2
-          variants={fadeUp}
-          className="section-title mx-auto mt-3 font-serif font-semibold"
-        >
-          Plans for <GradientText>recurring content operations</GradientText>
-        </motion.h2>
-        <motion.p variants={fadeUp} className="section-copy mx-auto mt-2 text-[var(--muted)]">
-          Choose the plan that fits your team’s content engine.
-        </motion.p>
-      </motion.div>
-
-      <motion.div
-        variants={slowStagger}
-        initial="show"
-        whileInView="show"
-        viewport={{ once: true, amount: 0.15 }}
-        className="pricing-grid mx-auto mt-8 grid gap-[var(--card-gap)] md:grid-cols-2 xl:grid-cols-4"
-      >
-        {pricingPlans.map((plan) => (
-          <motion.div
-            key={plan.name}
-            variants={fadeUp}
-            className={cn("relative", plan.featured && "order-first xl:order-none")}
-          >
-            {plan.featured ? (
-              <div className="absolute left-1/2 top-0 z-10 -translate-x-1/2 -translate-y-1/2 rounded-full bg-[#07112F] px-5 py-2 text-xs font-bold text-white shadow-[0_14px_30px_rgba(7,17,47,0.20)]">
-                <span className="inline-flex items-center gap-2">
-                  <Sparkles aria-hidden="true" className="h-3.5 w-3.5" />
-                  {"badge" in plan ? plan.badge : "Recommended"}
-                </span>
-              </div>
-            ) : null}
-            <Surface
-              className={cn(
-                "flex h-full flex-col p-[var(--card-padding)]",
-                plan.featured && "border-[#AEBBFF] shadow-[0_24px_80px_rgba(124,58,237,0.13)] ring-1 ring-[#CBD8FF]",
-              )}
-            >
-              <IconTile Icon={plan.icon} tone={plan.featured ? "purple" : "blue"} className="h-10 w-10" />
-              <h3 className="mt-4 text-2xl font-bold">{plan.name}</h3>
-              <p className="mt-2 min-h-[44px] whitespace-pre-line text-sm leading-6 text-[var(--muted)]">
-                {plan.description}
-              </p>
-              <div className="my-4 h-px bg-[#E7EDF7]" />
-              <div>
-                <span className="text-3xl font-extrabold">{plan.price}</span>
-                {"suffix" in plan && typeof plan.suffix === "string" ? <span className="ml-1 text-lg font-medium text-[var(--muted)]">{plan.suffix}</span> : null}
-                {"subtitle" in plan && typeof plan.subtitle === "string" ? <p className="mt-1 text-sm text-[var(--muted)]">{plan.subtitle}</p> : null}
-              </div>
-              <div className="mt-4 grid gap-2.5">
-                {plan.features.map((feature) => (
-                  <p key={feature} className="flex items-start gap-3 text-sm font-medium text-[var(--muted)]">
-                    <CheckCircle2 aria-hidden="true" className="mt-0.5 h-4 w-4 shrink-0 text-[var(--blue)]" />
-                    {feature}
-                  </p>
-                ))}
-              </div>
-              <div className="mt-auto pt-4">
-                {plan.featured ? (
-                  <PrimaryButton href={plan.href} className="h-11 w-full">
-                    {plan.cta}
-                  </PrimaryButton>
-                ) : (
-                  <SecondaryButton href={plan.href} className="h-11 w-full">
-                    {plan.cta}
-                    <ArrowRight aria-hidden="true" className="h-4 w-4" />
-                  </SecondaryButton>
-                )}
-              </div>
-            </Surface>
-          </motion.div>
-        ))}
-      </motion.div>
-
-      <motion.div
-        variants={fadeUp}
-        initial="show"
-        whileInView="show"
-        viewport={{ once: true, amount: 0.3 }}
-        className="mx-auto mt-4 flex max-w-4xl flex-col items-center justify-center gap-3 rounded-2xl border border-[var(--border)] bg-[color-mix(in_srgb,var(--surface)_84%,transparent)] px-[var(--card-padding)] py-3 text-center text-sm font-medium text-[var(--muted)] shadow-[0_14px_38px_rgba(15,23,42,0.05)] sm:flex-row sm:gap-4"
-      >
-        <span className="inline-flex h-8 w-8 shrink-0 items-center justify-center rounded-full bg-[#F0F5FF] text-[var(--blue)]">
-          <Zap aria-hidden="true" className="h-4 w-4" />
-        </span>
-        Credits are monthly processing capacity, not cash value. Paid plans can add 12-month top-ups when production spikes.
-      </motion.div>
-
-    </SectionFrame>
-  );
-}
-
 function FinalConversionSection({ theme }: { theme: ThemeName }) {
   return (
     <SectionFrame id="final-cta" compact band="b" grid className="final-cta-section">
       <div className="grid gap-[var(--card-gap)]">
         <motion.div
           variants={stagger}
-          initial="show"
+          initial="hidden"
           whileInView="show"
           viewport={{ once: true, amount: 0.16 }}
         >
@@ -1795,14 +1450,14 @@ function FinalConversionSection({ theme }: { theme: ThemeName }) {
             <Surface className="grid overflow-hidden p-0 xl:grid-cols-[0.48fr_0.52fr]">
               <div className="p-[var(--card-padding)]">
                 <h2 className="section-title font-serif font-semibold">
-                  Turn company
+                  Put the next
                   <br />
-                  knowledge into content
+                  useful conversation
                   <br />
-                  <GradientText>that compounds.</GradientText>
+                  <GradientText>to work.</GradientText>
                 </h2>
                 <p className="section-copy mt-4 max-w-[480px] text-[var(--muted)]">
-                  Upload a conversation and AudioRepurpose turns it into speaker-attributed transcripts and multi-channel drafts—so you can build a repeatable content engine.
+                  Start with one recording, verify the source, and move the strongest ideas into review-ready assets your team can actually use.
                 </p>
                 <div className="mt-5 flex flex-col gap-3 sm:flex-row">
                   <PrimaryButton>Start free</PrimaryButton>
@@ -1819,6 +1474,7 @@ function FinalConversionSection({ theme }: { theme: ThemeName }) {
                   alt="A professional team reviewing content on a laptop in a bright office."
                   fill
                   loading="eager"
+                  quality={95}
                   sizes="(min-width: 1024px) 55vw, 100vw"
                   className="object-cover object-[center_42%]"
                 />
@@ -1837,20 +1493,20 @@ function FinalConversionSection({ theme }: { theme: ThemeName }) {
           <motion.div variants={fadeUp} className="mt-4">
             <Surface className="grid gap-0 overflow-hidden p-0 md:grid-cols-3">
               <FeatureStripItem
-                Icon={AudioLines}
-                title="Speaker-attributed transcripts"
-                body="Clear, accurate, and easy to scan."
+                Icon={CloudUpload}
+                title="Upload or import"
+                body="Start from meetings, calls, webinars, or supported sources."
               />
               <FeatureStripItem
                 Icon={Sparkles}
-                title="Multi-channel drafts"
-                body="LinkedIn, X, newsletters, and more."
+                title="Find the signal"
+                body="Surface ideas, quotes, decisions, and useful angles."
                 tone="purple"
               />
               <FeatureStripItem
                 Icon={CircleCheck}
-                title="Review before publishing"
-                body="You stay in control of what goes live."
+                title="Approve the assets"
+                body="Edit and ship only the drafts that fit the source."
                 tone="purple"
                 last
               />
@@ -1860,14 +1516,14 @@ function FinalConversionSection({ theme }: { theme: ThemeName }) {
 
         <motion.footer
           variants={fadeUp}
-          initial="show"
+          initial="hidden"
           whileInView="show"
           viewport={{ once: true, amount: 0.16 }}
         >
           <Surface className="overflow-hidden p-0">
             <div className="grid gap-[var(--card-gap)] p-[var(--card-padding)] xl:grid-cols-[1.35fr_0.8fr_0.8fr_0.8fr_0.85fr]">
               <div className="xl:border-r xl:border-[var(--border)] xl:pr-10">
-                <BrandLockup theme={theme} />
+                <LogoLockup size="sm" theme={theme} />
                 <p className="mt-3 max-w-xs text-sm leading-6 text-[var(--muted)]">
                   AI-powered content repurposing for teams
                   <br />
@@ -1884,11 +1540,12 @@ function FinalConversionSection({ theme }: { theme: ThemeName }) {
               <FooterColumn
                 title="Product"
                 links={[
-                  ["Home", "#home"],
-                  ["About Us", "#about"],
-                  ["How it works", "#how-it-works"],
-                  ["Features", "#features"],
-                  ["Pricing", "#pricing"],
+                  ["Upload", "/product/upload"],
+                  ["Teams", "/product/teams"],
+                  ["Studio", "/product/studio"],
+                  ["Library", "/product/library"],
+                  ["Integrations", "/product/integrations"],
+                  ["Analysis", "/product/analysis"],
                 ]}
               />
               <FooterColumn
@@ -2008,20 +1665,21 @@ function SocialIcon({
 }
 
 export default function AudioRepurposeLandingPage() {
-  const { theme, mounted, toggleTheme } = useLandingTheme();
+  const { theme } = useMarketingTheme();
+  const activeId = useActiveSection();
   useSectionFocus();
 
   return (
     <MotionConfig reducedMotion="user">
       <PageShell theme={theme}>
-        <HeaderNav theme={theme} mounted={mounted} onToggleTheme={toggleTheme} />
+        <MarketingNav theme={theme} activeSectionId={activeId} />
         <HeroSection />
         <AboutSection />
         <HowItWorksSection />
+        <ProductExpansionSection />
         {SHOW_LEGACY_ONE_SOURCE_SECTION ? <OneSourceSection /> : null}
         <FeaturesSection />
         {SHOW_STANDALONE_SPEAKER_SECTION ? <SpeakerSection /> : null}
-        <PricingSection />
         <FinalConversionSection theme={theme} />
       </PageShell>
     </MotionConfig>

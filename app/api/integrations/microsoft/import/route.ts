@@ -1,5 +1,5 @@
 import { NextRequest, NextResponse } from 'next/server';
-import { getConnection, getDecryptedTokens } from '../../_utils';
+import { getConnection, getDecryptedTokens, integrationErrorResponse, signedOutIntegrationResponse } from '../../_utils';
 import { supabaseAdmin } from '@/lib/supabase/server';
 import { importRecording } from '@/lib/integrations/importer';
 import { billingErrorResponse } from '@/lib/billing/middleware';
@@ -9,7 +9,8 @@ import { releaseReservation } from '@/lib/billing/credit';
 import { resolveOrganizationIdForWrite } from '@/lib/authz/organization-context';
 import { runEntitlementGuard } from '@/lib/billing/entitlement-guards';
 import { recordSubscriptionUsage } from '@/lib/billing/subscription-usage-counters';
-import { assertPlanUploadDuration, createPlanCreditReservation } from '@/lib/billing/plan-credits';
+import { createPlanCreditReservation, resolvePlanUploadDuration } from '@/lib/billing/plan-credits';
+import { getUploadProcessingReservationExpiresAt } from '@/lib/billing/plan-upload-limits';
 import { estimateAudioProductCredits } from '@/lib/billing/product-credits';
 
 async function ensureAuth(request: NextRequest) {
@@ -23,27 +24,27 @@ async function ensureAuth(request: NextRequest) {
 export async function POST(request: NextRequest) {
   try {
     const user = await ensureAuth(request);
-    if (!user) return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
+    if (!user) return signedOutIntegrationResponse();
 
     const body = await request.json().catch(() => ({}));
     const itemId = body?.itemId;
     const analysisOptions = normalizeAnalysisOptions(body?.analysisOptions);
     const performanceLevel = body?.performanceLevel || getProcessingTierForAnalysis(analysisOptions);
-    const estimatedDurationSeconds = typeof body?.estimatedDurationSeconds === 'number'
-      ? Math.max(1, Math.round(body.estimatedDurationSeconds))
-      : 60 * 60;
+    const organizationId = await resolveOrganizationIdForWrite(user.id);
+    const resolvedDuration = await resolvePlanUploadDuration({
+      organizationId,
+      userId: user.id,
+      durationSeconds: typeof body?.estimatedDurationSeconds === 'number'
+        ? body.estimatedDurationSeconds
+        : null,
+    });
+    const estimatedDurationSeconds = resolvedDuration.durationSeconds;
+    const subscription = resolvedDuration.subscription;
 
     const estimatedCost = await estimateTranscriptionCostAsync({
       durationSeconds: estimatedDurationSeconds,
       tier: performanceLevel,
       analysisOptions,
-    });
-
-    const organizationId = await resolveOrganizationIdForWrite(user.id);
-    const subscription = await assertPlanUploadDuration({
-      organizationId,
-      userId: user.id,
-      durationSeconds: estimatedDurationSeconds,
     });
     const entitlementGuard = await runEntitlementGuard({
       organizationId,
@@ -56,6 +57,7 @@ export async function POST(request: NextRequest) {
         metadata: {
           provider: 'microsoft',
           estimatedDurationSeconds,
+          durationSource: resolvedDuration.durationSource,
         },
       },
     });
@@ -64,14 +66,14 @@ export async function POST(request: NextRequest) {
     }
 
     if (!itemId) {
-      return NextResponse.json({ error: 'Missing itemId' }, { status: 400 });
+      return integrationErrorResponse({ provider: 'microsoft', code: 'BAD_REQUEST', action: 'import', status: 400 });
     }
 
     const connection = await getConnection(user.id, 'microsoft');
-    if (!connection) return NextResponse.json({ error: 'Microsoft not connected' }, { status: 404 });
+    if (!connection) return integrationErrorResponse({ provider: 'microsoft', code: 'RECONNECT_REQUIRED', action: 'import', status: 404, userId: user.id });
 
     const { accessToken } = getDecryptedTokens(connection);
-    if (!accessToken) return NextResponse.json({ error: 'Microsoft token missing' }, { status: 401 });
+    if (!accessToken) return integrationErrorResponse({ provider: 'microsoft', code: 'RECONNECT_REQUIRED', action: 'import', status: 401, userId: user.id });
 
     const existing = await supabaseAdmin
       .from('integration_imports')
@@ -91,19 +93,34 @@ export async function POST(request: NextRequest) {
 
     if (!itemRes.ok) {
       const text = await itemRes.text();
-      return NextResponse.json({ error: `Microsoft Graph error: ${text}` }, { status: 500 });
+      return integrationErrorResponse({
+        provider: 'microsoft',
+        code: itemRes.status === 401 || itemRes.status === 403 ? 'RECONNECT_REQUIRED' : 'LIST_FAILED',
+        action: 'import',
+        status: itemRes.status === 401 || itemRes.status === 403 ? 401 : 500,
+        logPrefix: '[MICROSOFT IMPORT] Provider metadata error:',
+        cause: text,
+        userId: user.id,
+      });
     }
 
     const item = await itemRes.json();
     const downloadUrl = item['@microsoft.graph.downloadUrl'];
     if (!downloadUrl) {
-      return NextResponse.json({ error: 'Download URL not available' }, { status: 400 });
+      return integrationErrorResponse({ provider: 'microsoft', code: 'DOWNLOAD_FAILED', action: 'download', status: 400 });
     }
 
     const downloadRes = await fetch(downloadUrl);
     if (!downloadRes.ok) {
       const text = await downloadRes.text();
-      return NextResponse.json({ error: `Microsoft download error: ${text}` }, { status: 500 });
+      return integrationErrorResponse({
+        provider: 'microsoft',
+        code: 'DOWNLOAD_FAILED',
+        action: 'download',
+        status: 500,
+        logPrefix: '[MICROSOFT IMPORT] Provider download error:',
+        cause: text,
+      });
     }
 
     const arrayBuffer = await downloadRes.arrayBuffer();
@@ -129,8 +146,9 @@ export async function POST(request: NextRequest) {
         productCreditWorkflow: performanceLevel,
         analysisOptions,
         estimatedDurationSeconds,
+        durationSource: resolvedDuration.durationSource,
       },
-      expiresAt: new Date(Date.now() + (2 * 60 * 60 * 1000)).toISOString(),
+      expiresAt: getUploadProcessingReservationExpiresAt(),
     });
 
     let result;
@@ -147,6 +165,7 @@ export async function POST(request: NextRequest) {
         reservationId: reservation.id,
         reservationHoldAmount: estimatedProductCredits,
         reservationEstimatedCost: estimatedCost.total,
+        estimatedDurationSeconds,
         externalSource: { provider: 'microsoft', recordingId: itemId }
       });
     } catch (importError) {
@@ -189,6 +208,6 @@ export async function POST(request: NextRequest) {
     const billingResponse = billingErrorResponse(error);
     if (billingResponse.status === 402) return billingResponse;
     console.error('[MICROSOFT IMPORT] Failed:', error);
-    return NextResponse.json({ error: 'Import failed' }, { status: 500 });
+    return integrationErrorResponse({ provider: 'microsoft', code: 'IMPORT_FAILED', action: 'import', status: 500 });
   }
 }

@@ -10,6 +10,8 @@ import {
   BookOpen,
   Upload,
   BarChart3,
+  CalendarDays,
+  Download,
   AlertCircle,
   Loader2,
   FileText,
@@ -31,6 +33,7 @@ import { InsightsHeader } from '@/components/analytics/InsightsHeader';
 import { ProjectAnalysisSection } from '@/components/analytics/ProjectAnalysisSection';
 import { RunAnalysisSection } from '@/components/analytics/RunAnalysisSection';
 import { FeatureHelp } from '@/components/ui/feature-help';
+import { DashboardHeaderAction, DashboardPageHeader } from '@/components/dashboard/shell';
 import { getDashboardErrorMessage, logDashboardLoad } from '@/lib/dashboard-load-state';
 import { withOrganizationId } from '@/lib/organizations/current-organization';
 
@@ -1467,7 +1470,7 @@ export default function AnalyticsPage() {
   // ============================================================================
 
   return (
-    <div className="p-3 sm:p-4 lg:p-6 bg-white dark:bg-slate-800/50 min-h-screen">
+    <div className="min-h-screen bg-slate-50 p-3 sm:p-4 lg:p-6 dark:bg-[#061126]">
       {analyticsError && (
         <div className="max-w-7xl mx-auto mb-4 rounded-lg border border-red-800/40 bg-red-900/20 px-4 py-3 text-sm text-red-300">
           {analyticsError}
@@ -1484,28 +1487,32 @@ export default function AnalyticsPage() {
       />
       <div className="max-w-7xl mx-auto space-y-6">
 
-        {/* ================================================================== */}
-        {/* HEADER: Title + Controls */}
-        {/* ================================================================== */}
-        <div className="flex items-start justify-between gap-3">
-          <div>
-            <h1 className="text-2xl font-bold text-slate-900 dark:text-slate-50">Analytics</h1>
-          </div>
-          <div className="ml-auto flex items-center gap-1 self-start rounded-lg border border-slate-200 bg-white p-1 shadow-sm dark:border-slate-800 dark:bg-slate-900">
-            {(['7d', '30d', '90d'] as const).map((range) => (
-              <button
-                key={range}
-                onClick={() => setTimeRange(range)}
-                className={`px-3 py-1.5 rounded-md text-sm font-medium transition-colors ${timeRange === range
-                    ? 'text-blue-600 dark:text-blue-400'
-                    : 'text-slate-500 dark:text-slate-400 hover:text-slate-900 dark:hover:text-slate-50'
-                  }`}
-              >
-                {range.toUpperCase()}
-              </button>
-            ))}
-          </div>
-        </div>
+        <DashboardPageHeader
+          icon={BarChart3}
+          title="Analytics"
+          description="Track performance, usage trends, and content activity."
+          actions={(
+            <>
+              <div className="flex items-center gap-1 rounded-lg border border-white/15 bg-white/5 p-1">
+                <CalendarDays className="ml-2 h-4 w-4 text-slate-400" />
+                {(['7d', '30d', '90d'] as const).map((range) => (
+                  <button
+                    key={range}
+                    onClick={() => setTimeRange(range)}
+                    className={`rounded-md px-3 py-1.5 text-sm font-semibold transition-colors ${
+                      timeRange === range
+                        ? 'bg-blue-500 text-white'
+                        : 'text-slate-300 hover:bg-white/10 hover:text-white'
+                    }`}
+                  >
+                    {range.toUpperCase()}
+                  </button>
+                ))}
+              </div>
+              <DashboardHeaderAction type="button" icon={Download} variant="primary">Export Report</DashboardHeaderAction>
+            </>
+          )}
+        />
 
         <div className="flex flex-wrap items-center gap-3">
           <ProjectSwitcher

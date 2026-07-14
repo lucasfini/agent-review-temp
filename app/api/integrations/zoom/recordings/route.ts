@@ -1,5 +1,5 @@
 import { NextRequest, NextResponse } from 'next/server';
-import { getConnection, getDecryptedTokens, upsertConnection } from '../../_utils';
+import { getConnection, getDecryptedTokens, integrationErrorResponse, signedOutIntegrationResponse, upsertConnection } from '../../_utils';
 import { supabaseAdmin } from '@/lib/supabase/server';
 
 async function refreshZoomToken(connection: any) {
@@ -53,17 +53,17 @@ async function refreshZoomToken(connection: any) {
 export async function GET(request: NextRequest) {
   const authHeader = request.headers.get('authorization');
   if (!authHeader) {
-    return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
+    return signedOutIntegrationResponse();
   }
   const token = authHeader.replace('Bearer ', '');
   const { data: { user } } = await supabaseAdmin.auth.getUser(token);
   if (!user) {
-    return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
+    return signedOutIntegrationResponse();
   }
 
   let connection = await getConnection(user.id, 'zoom');
   if (!connection) {
-    return NextResponse.json({ error: 'Zoom not connected' }, { status: 404 });
+    return integrationErrorResponse({ provider: 'zoom', code: 'RECONNECT_REQUIRED', action: 'list', status: 404, userId: user.id });
   }
 
   const expiresAt = connection.expires_at ? new Date(connection.expires_at).getTime() : null;
@@ -73,7 +73,7 @@ export async function GET(request: NextRequest) {
 
   const { accessToken } = getDecryptedTokens(connection);
   if (!accessToken) {
-    return NextResponse.json({ error: 'Zoom token missing' }, { status: 401 });
+    return integrationErrorResponse({ provider: 'zoom', code: 'RECONNECT_REQUIRED', action: 'list', status: 401, userId: user.id });
   }
 
   const to = new Date();
@@ -89,7 +89,15 @@ export async function GET(request: NextRequest) {
 
   if (!res.ok) {
     const text = await res.text();
-    return NextResponse.json({ error: `Zoom API error: ${text}` }, { status: 500 });
+    return integrationErrorResponse({
+      provider: 'zoom',
+      code: res.status === 401 || res.status === 403 ? 'RECONNECT_REQUIRED' : 'LIST_FAILED',
+      action: 'list',
+      status: res.status === 401 || res.status === 403 ? 401 : 500,
+      logPrefix: '[ZOOM RECORDINGS] Provider API error:',
+      cause: text,
+      userId: user.id,
+    });
   }
 
   const data = await res.json();

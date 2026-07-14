@@ -11,6 +11,11 @@ import {
   WorkspaceTeamError,
 } from '@/lib/organizations/team';
 import { supabaseAdmin } from '@/lib/supabase/server';
+import {
+  notifyMemberRemoved,
+  notifyOrganization,
+  notifyRoleUpdated,
+} from '@/lib/notifications/notification-events';
 
 export const dynamic = 'force-dynamic';
 export const revalidate = 0;
@@ -31,6 +36,12 @@ export async function PATCH(
     const { user, organization, membership, permissionContext } = await requirePermissionContext(request, {
       requestedOrganizationId: requestedOrganizationIdFrom(request, body),
     });
+    if (organization.type !== 'saas_customer') {
+      return NextResponse.json(
+        { error: 'Team workspace settings are only available for team workspaces' },
+        { status: 400 }
+      );
+    }
 
     if (permissionContext.isDemo) {
       return NextResponse.json({ error: 'Demo account is read-only' }, { status: 403 });
@@ -66,6 +77,17 @@ export async function PATCH(
           nextRole: member.role,
         },
       });
+      await notifyMemberRemoved({
+        organizationId: organization.id,
+        actorUserId: user.id,
+        email: member.email,
+        idempotencyKey: `team_member_removed:${member.id}`,
+        metadata: {
+          memberId: member.id,
+          previousRole: previousMember?.role || null,
+          nextRole: member.role,
+        },
+      });
     } else if (body.role === 'owner') {
       await recordOrganizationAuditLog({
         supabase: supabaseAdmin,
@@ -75,6 +97,21 @@ export async function PATCH(
         resourceType: 'organization_member',
         resourceId: member.id,
         metadata: {
+          previousRole: previousMember?.role || null,
+          nextRole: member.role,
+          email: member.email,
+        },
+      });
+      await notifyOrganization({
+        organizationId: organization.id,
+        actorUserId: user.id,
+        type: 'ownership_transferred',
+        title: 'Owner updated',
+        body: `${member.email || 'A teammate'} is now the workspace owner.`,
+        href: '/dashboard/team',
+        idempotencyKey: `ownership_transferred:${member.id}:${Date.now()}`,
+        metadata: {
+          memberId: member.id,
           previousRole: previousMember?.role || null,
           nextRole: member.role,
           email: member.email,
@@ -92,6 +129,18 @@ export async function PATCH(
           previousRole: previousMember.role,
           nextRole: member.role,
           email: member.email,
+        },
+      });
+      await notifyRoleUpdated({
+        organizationId: organization.id,
+        actorUserId: user.id,
+        email: member.email,
+        role: member.role,
+        idempotencyKey: `team_member_role_changed:${member.id}:${member.role}`,
+        metadata: {
+          memberId: member.id,
+          previousRole: previousMember.role,
+          nextRole: member.role,
         },
       });
     }

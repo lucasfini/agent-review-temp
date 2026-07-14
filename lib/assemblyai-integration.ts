@@ -337,7 +337,7 @@ Benefits of AssemblyAI:
 - Supports 99 languages with diarization in 95
 
 Pricing:
-- Free tier: $50 credits + 60 minutes/month
+- Free tier: vendor trial credits
 - Pay as you go: $0.21/hour of audio (Universal-3 Pro)
 - No hidden costs, includes all features
 

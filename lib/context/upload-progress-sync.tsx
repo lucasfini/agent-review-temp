@@ -10,6 +10,11 @@ import type { TierLevel } from '@/lib/tier-config';
 import type { AnalysisOptions } from '@/lib/analysis-options';
 import { normalizeAnalysisOptions } from '@/lib/analysis-options';
 import { ESTIMATED_BITRATE_BPS } from '@/lib/upload-constants';
+import { estimateAudioProductCredits } from '@/lib/billing/product-credits';
+import {
+  getPresignedUploadNetworkErrorMessage,
+  getPresignedUploadStatusErrorMessage,
+} from '@/lib/upload-error-messages';
 import {
   loadPersistedQueueRunningState,
   loadPersistedQueuedUploads,
@@ -18,7 +23,7 @@ import {
 } from '@/lib/upload-queue-storage';
 import { toast } from 'sonner';
 
-type IntegrationProvider = 'zoom' | 'microsoft' | 'youtube';
+type IntegrationProvider = 'zoom' | 'microsoft' | 'youtube' | 'google_drive' | 'notion' | 'onedrive' | 'slack' | 'granola';
 
 export interface QueuedRosterSpeaker {
   name: string;
@@ -41,8 +46,14 @@ export interface UploadedFile {
   analysisOptions: AnalysisOptions;
   displayName: string;
   estimatedDurationSeconds?: number;
+  estimatedCredits?: number;
+  remainingCreditsAfterUpload?: number | null;
+  billingErrorCode?: string;
+  topUpsEnabled?: boolean;
+  topUpPath?: string | null;
+  upgradeRequired?: boolean;
   sourceUrl?: string;
-  sourceType?: 'local' | 'url' | 'youtube' | 'direct' | 'zoom' | 'microsoft';
+  sourceType?: 'local' | 'url' | 'youtube' | 'direct' | 'zoom' | 'microsoft' | 'google_drive' | 'notion' | 'onedrive' | 'slack' | 'granola';
   importPayload?: Record<string, unknown>;
   speakerCount?: number;
   rosterSpeakers?: QueuedRosterSpeaker[];
@@ -75,14 +86,25 @@ interface UploadProgressSyncContextValue {
 
 const UploadProgressSyncContext = createContext<UploadProgressSyncContextValue | null>(null);
 
-async function readErrorMessage(response: Response, fallback: string) {
+class ApiRequestError extends Error {
+  constructor(message: string, public readonly payload: Record<string, any> = {}) {
+    super(message);
+    this.name = 'ApiRequestError';
+  }
+}
+
+async function readErrorPayload(response: Response, fallback: string) {
   try {
     const data = await response.json();
-    if (typeof data?.error === 'string' && data.error.trim()) return data.error;
+    const message = typeof data?.message === 'string' && data.message.trim()
+      ? data.message
+      : typeof data?.error === 'string' && data.error.trim()
+        ? data.error
+        : fallback;
+    return { ...data, message };
   } catch {
-    // ignore
+    return { message: fallback };
   }
-  return fallback;
 }
 
 async function getMediaDurationSeconds(file: File): Promise<number | undefined> {
@@ -293,7 +315,7 @@ export function UploadProgressSyncProvider({ children }: { children: ReactNode }
   }, [clearTrackedUploadState]);
 
   const processImportedRecording = useCallback(async (uploadedFile: UploadedFile) => {
-    if (!uploadedFile.importPayload || !uploadedFile.sourceType || !['zoom', 'microsoft', 'youtube'].includes(uploadedFile.sourceType)) {
+    if (!uploadedFile.importPayload || !uploadedFile.sourceType || !['zoom', 'microsoft', 'youtube', 'google_drive', 'notion', 'onedrive', 'slack', 'granola'].includes(uploadedFile.sourceType)) {
       setUploadedFiles(prev => prev.map(f =>
         f.id === uploadedFile.id ? {
           ...f,
@@ -312,9 +334,19 @@ export function UploadProgressSyncProvider({ children }: { children: ReactNode }
       prev.map(f => f.id === uploadedFile.id ? {
         ...f,
         status: 'processing',
+        estimatedCredits: uploadedFile.estimatedDurationSeconds
+          ? estimateAudioProductCredits({
+              durationSeconds: uploadedFile.estimatedDurationSeconds,
+              tier: uploadedFile.processingTier,
+            })
+          : uploadedFile.estimatedCredits,
         processingStage: 'transcribing',
         stageProgress: 0,
-        processingMessage: 'Importing recording...',
+        processingMessage: uploadedFile.sourceType === 'notion'
+          ? 'Importing Notion page...'
+          : uploadedFile.sourceType === 'granola'
+            ? 'Importing Granola notes...'
+            : 'Importing recording...',
         progress: calculateOverallProgress(f.processingTier, 'transcribing', 0),
       } : f)
     );
@@ -330,14 +362,17 @@ export function UploadProgressSyncProvider({ children }: { children: ReactNode }
         },
         body: JSON.stringify({
           ...uploadedFile.importPayload,
+          performanceLevel: uploadedFile.processingTier,
           analysisOptions: normalizeAnalysisOptions(uploadedFile.analysisOptions),
         }),
       });
 
       if (!res.ok) {
-        throw new Error(await readErrorMessage(res, 'Import failed.'));
+        const errorPayload = await readErrorPayload(res, 'Import failed.');
+        throw new ApiRequestError(errorPayload.message, errorPayload);
       }
 
+      window.dispatchEvent(new Event('audiorepurpose:notifications-refresh'));
       setUploadedFiles(prev => prev.filter(f => f.id !== uploadedFile.id));
     } catch (error) {
       console.error('Recording import error:', error);
@@ -346,6 +381,10 @@ export function UploadProgressSyncProvider({ children }: { children: ReactNode }
           ...f,
           status: 'error',
           error: error instanceof Error ? error.message : 'Import failed.',
+          billingErrorCode: error instanceof ApiRequestError ? error.payload.code : undefined,
+          topUpsEnabled: error instanceof ApiRequestError ? Boolean(error.payload.topUpsEnabled) : undefined,
+          topUpPath: error instanceof ApiRequestError ? error.payload.topUpPath ?? null : undefined,
+          upgradeRequired: error instanceof ApiRequestError ? Boolean(error.payload.upgradeRequired) : undefined,
           processingStage: 'failed',
           processingMessage: 'Import failed',
           stageProgress: 0,
@@ -382,6 +421,18 @@ export function UploadProgressSyncProvider({ children }: { children: ReactNode }
       const estimatedDurationSeconds = uploadedFile.estimatedDurationSeconds
         || await getMediaDurationSeconds(uploadedFile.file)
         || estimateDurationSecondsFromFileSize(uploadedFile.file);
+      const estimatedCredits = estimateAudioProductCredits({
+        durationSeconds: estimatedDurationSeconds,
+        tier: fileProcessingTier,
+      });
+
+      setUploadedFiles(prev =>
+        prev.map(f => f.id === uploadedFile.id ? {
+          ...f,
+          estimatedDurationSeconds,
+          estimatedCredits,
+        } : f)
+      );
 
       const payload: any = {
         fileName: uploadedFile.file.name,
@@ -409,14 +460,28 @@ export function UploadProgressSyncProvider({ children }: { children: ReactNode }
       });
 
       if (!initResponse.ok) {
-        const errorData = await initResponse.json().catch(() => ({ error: 'Upload initialization failed' }));
-        throw new Error(errorData.error || `Init failed with status ${initResponse.status}`);
+        const errorPayload = await readErrorPayload(initResponse, 'Upload initialization failed');
+        throw new ApiRequestError(errorPayload.message || `Init failed with status ${initResponse.status}`, errorPayload);
       }
 
-      const { presignedUrl, objectKey, projectId, audioFingerprint, uploadToken } = await initResponse.json();
+      const { presignedUrl, objectKey, projectId, audioFingerprint, uploadToken, billing } = await initResponse.json();
+      window.dispatchEvent(new Event('audiorepurpose:notifications-refresh'));
 
       setUploadedFiles(prev =>
-        prev.map(f => f.id === uploadedFile.id ? { ...f, projectId } : f)
+        prev.map(f => f.id === uploadedFile.id ? {
+          ...f,
+          projectId,
+          estimatedCredits: typeof billing?.estimatedCredits === 'number'
+            ? billing.estimatedCredits
+            : f.estimatedCredits,
+          remainingCreditsAfterUpload: typeof billing?.remainingCreditsAfterUpload === 'number'
+            ? billing.remainingCreditsAfterUpload
+            : f.remainingCreditsAfterUpload,
+          topUpsEnabled: typeof billing?.topUpsEnabled === 'boolean'
+            ? billing.topUpsEnabled
+            : f.topUpsEnabled,
+          topUpPath: typeof billing?.topUpPath === 'string' ? billing.topUpPath : f.topUpPath,
+        } : f)
       );
 
       if (controller.signal.aborted || cancelledUploadsRef.current.has(uploadedFile.id)) {
@@ -449,11 +514,11 @@ export function UploadProgressSyncProvider({ children }: { children: ReactNode }
           if (xhr.status >= 200 && xhr.status < 300) {
             resolve();
           } else {
-            reject(new Error(`S3 Upload failed with status ${xhr.status}`));
+            reject(new Error(getPresignedUploadStatusErrorMessage(xhr.status, xhr.statusText)));
           }
         });
 
-        xhr.addEventListener('error', () => reject(new Error('Network error during upload')));
+        xhr.addEventListener('error', () => reject(new Error(getPresignedUploadNetworkErrorMessage())));
         xhr.addEventListener('abort', () => {
           const abortError = new Error('Upload cancelled');
           abortError.name = 'AbortError';
@@ -492,6 +557,7 @@ export function UploadProgressSyncProvider({ children }: { children: ReactNode }
         const errorData = await finalizeResponse.json().catch(() => ({ error: 'Finalize failed' }));
         throw new Error(errorData.error || `Finalize failed with status ${finalizeResponse.status}`);
       }
+      window.dispatchEvent(new Event('audiorepurpose:notifications-refresh'));
 
       setUploadedFiles(prev =>
         prev.map(f => f.id === uploadedFile.id ? {
@@ -536,6 +602,10 @@ export function UploadProgressSyncProvider({ children }: { children: ReactNode }
               ...f,
               status: 'error',
               error: errorMessage,
+              billingErrorCode: error instanceof ApiRequestError ? error.payload.code : undefined,
+              topUpsEnabled: error instanceof ApiRequestError ? Boolean(error.payload.topUpsEnabled) : f.topUpsEnabled,
+              topUpPath: error instanceof ApiRequestError ? error.payload.topUpPath ?? null : f.topUpPath,
+              upgradeRequired: error instanceof ApiRequestError ? Boolean(error.payload.upgradeRequired) : f.upgradeRequired,
               processingStage: 'failed',
               processingMessage: errorMessage,
               stageProgress: 0,

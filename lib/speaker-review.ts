@@ -59,6 +59,14 @@ function isConfirmedReviewSegment(segment: any): boolean {
   return segment?.reviewStatus === 'confirmed';
 }
 
+function isOpenReviewIndex(
+  speakerData: SpeakerDataLike | null | undefined,
+  index: number
+): boolean {
+  const segment = speakerData?.segments?.[index];
+  return !segment || !isConfirmedReviewSegment(segment);
+}
+
 export function isRiskyConfidenceReason(reason: string | null | undefined): boolean {
   return reason === 'acoustic_only' ||
     reason === 'transition_short' ||
@@ -71,6 +79,7 @@ export function getStoredReviewSegmentIndices(speakerData: SpeakerDataLike | nul
   if (!Array.isArray(stored)) return [];
   return stored
     .filter((value): value is number => typeof value === 'number' && Number.isInteger(value) && value >= 0)
+    .filter((index) => isOpenReviewIndex(speakerData, index))
     .sort((a, b) => a - b);
 }
 
@@ -81,11 +90,33 @@ export function getStoredReviewItems(speakerData: SpeakerDataLike | null | undef
     .filter((item): item is { index: number; speakerId: string; reasons?: string[]; primaryReason?: string } => (
       typeof item?.index === 'number' && typeof item?.speakerId === 'string'
     ))
+    .filter((item) => isOpenReviewIndex(speakerData, item.index))
     .sort((a, b) => a.index - b.index);
 }
 
 function isGenericSpeakerName(name: string | null | undefined): boolean {
   return /^speaker\s+\d+$/i.test(String(name || '').trim());
+}
+
+function getSpeakerNameForSuggestion(
+  speakerData: SpeakerDataLike | null | undefined,
+  speakerId: string
+): string | null {
+  const speaker = speakerData?.speakers?.[speakerId];
+  return speaker?.customName ||
+    speaker?.finalName ||
+    speaker?.extractedName?.name ||
+    speaker?.fallbackName ||
+    speaker?.name ||
+    null;
+}
+
+function isOpenSpeakerNameSuggestion(
+  speakerData: SpeakerDataLike | null | undefined,
+  speakerId: string
+): boolean {
+  const currentName = getSpeakerNameForSuggestion(speakerData, speakerId);
+  return !currentName || isGenericSpeakerName(currentName);
 }
 
 function isValidSuggestionName(name: string | null | undefined): name is string {
@@ -105,7 +136,8 @@ export function getSpeakerSuggestionsFromSpeakerData(
       .filter((suggestion): suggestion is SpeakerSuggestion => (
         typeof suggestion?.speakerId === 'string' &&
         isValidSuggestionName(suggestion?.suggestedName) &&
-        typeof suggestion?.confidence === 'number'
+        typeof suggestion?.confidence === 'number' &&
+        isOpenSpeakerNameSuggestion(speakerData, suggestion.speakerId)
       ))
       .sort((a, b) => {
         if (b.confidence !== a.confidence) return b.confidence - a.confidence;
@@ -126,9 +158,7 @@ export function getSpeakerSuggestionsFromSpeakerData(
 
     const speakerId = proposal?.targetSpeakerId || proposal?.sourceSpeakerId;
     if (!speakerId) continue;
-    const speaker = speakerData?.speakers?.[speakerId];
-    const currentName = speaker?.finalName || speaker?.name || speaker?.fallbackName;
-    if (currentName && !isGenericSpeakerName(currentName)) {
+    if (!isOpenSpeakerNameSuggestion(speakerData, speakerId)) {
       continue;
     }
 
@@ -171,6 +201,9 @@ export function formatReviewReason(reason: string | null | undefined): string {
   if (reason.startsWith('uncertain:acoustic_only')) return 'Acoustic only';
   if (reason.startsWith('uncertain:conflicted_anchors')) return 'Conflicting anchors';
   if (reason === 'contradiction_alias') return 'Ownership contradiction';
+  if (reason === 'assignment_contradiction') return 'Ownership contradiction';
+  if (reason === 'low_assignment_confidence') return 'Low confidence';
+  if (reason === 'requires_review') return 'Needs review';
   if (reason === 'anchor_turn') return 'Anchor turn';
   if (reason === 'early_turn') return 'Early turn';
   if (reason === 'representative_substantive') return 'Representative sample';
